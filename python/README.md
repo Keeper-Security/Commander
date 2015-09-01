@@ -42,19 +42,27 @@ TBD command reference will go here...
 VIM configuration used by Craig:
 
 ```
-mkdir -p ~/.vim/autoload ~/.vim/bundle && \
-curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
-
-cd ~/.vim/bundle && \
-git clone git@github.com:hdima/python-syntax.git 
+git clone https://github.com/sentientmachine/Pretty-Vim-Python.git
+mv Pretty-Vim-Python/* ~/.vim/
 ```
 
-~/.vimrc:
+Update ~/.vimrc:
 
 ```
-execute pathogen#infect()
+set tabstop=4
+set shiftwidth=4
+set expandtab
+set softtabstop=4
+set smartindent
+set autoindent
+set hlsearch
+set incsearch
+set showmatch
+set number
+
 syntax on
-filetype plugin indent on
+colorscheme molokai
+highlight Comment cterm=bold
 ```
 
 Basic Info:

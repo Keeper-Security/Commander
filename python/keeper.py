@@ -2,7 +2,6 @@
 
 import argparse
 import json
-# from pprint import pprint
 
 version = '0.1'
 
@@ -70,6 +69,8 @@ if command:
 
 if password:
     print ('Password: *******')
+
+
 
 
 
