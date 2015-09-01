@@ -22,10 +22,10 @@ Example file:
 }
 ```
 
-### Usage
+### Command-Line Usage
 
 ```
-**$ python3 keeper.py**
+python3 keeper.py
 ```
 
 You can login via the email/password/mfa stored in the config file,
@@ -33,6 +33,9 @@ or you will be prompted to enter your email, master pass and
 optional MFA token on the command prompt.
 
 Once you are logged in, you can execute a variety of things.
+
+TBD command reference will go here...
+
 
 ### Helpful documentation
 
