@@ -39,6 +39,24 @@ TBD command reference will go here...
 
 ### Helpful documentation
 
+VIM configuration used by Craig:
+
+```
+mkdir -p ~/.vim/autoload ~/.vim/bundle && \
+curl -LSso ~/.vim/autoload/pathogen.vim https://tpo.pe/pathogen.vim
+
+cd ~/.vim/bundle && \
+git clone git@github.com:hdima/python-syntax.git 
+```
+
+~/.vimrc:
+
+```
+execute pathogen#infect()
+syntax on
+filetype plugin indent on
+```
+
 Basic Info:
 
     [Python3 Tutorials](https://docs.python.org/3/index.html)

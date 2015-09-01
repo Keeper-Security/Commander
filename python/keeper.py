@@ -1,11 +1,8 @@
-#
 # Keeper Commander for Python
-#  by Craig
-#
 
 import argparse
 import json
-from pprint import pprint
+# from pprint import pprint
 
 version = '0.1'
 
@@ -18,7 +15,7 @@ debug = True
 gui = False
 
 try:
-    with open(CONFIG_FILENAME) as config_file:    
+    with open(CONFIG_FILENAME) as config_file:
 
         print('Loading config from ' + CONFIG_FILENAME)
         config = json.load(config_file)
@@ -43,12 +40,13 @@ try:
 
 except IOError:
 
-    parser = argparse.ArgumentParser(description='Keeper Commander version ' + version)
+    parser = argparse.ArgumentParser(
+        description='Keeper Commander version ' + version)
     parser.add_argument("email", help="Email address of the Keeper profile")
     parser.add_argument("command", help="Command to run")
-    parser.add_argument("--debug", help="Turn on debug mode", 
+    parser.add_argument("--debug", help="Turn on debug mode",
                         action="store_true")
-    parser.add_argument("--gui", help="GUI mode", 
+    parser.add_argument("--gui", help="GUI mode",
                         action="store_true")
     args = parser.parse_args()
     email = args.email
@@ -72,6 +70,9 @@ if command:
 
 if password:
     print ('Password: *******')
+
+
+
 
 
 
