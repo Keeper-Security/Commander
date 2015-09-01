@@ -63,6 +63,10 @@ set number
 syntax on
 colorscheme molokai
 highlight Comment cterm=bold
+
+:set textwidth=79                                                                  
+:set colorcolumn=+1                                                                
+
 ```
 
 Basic Info:
