@@ -25,7 +25,7 @@ Example file:
 ### Usage
 
 ```
-python3 keeper.py 
+**$ python3 keeper.py**
 ```
 
 You can login via the email/password/mfa stored in the config file,
@@ -38,21 +38,18 @@ Once you are logged in, you can execute a variety of things.
 
 Basic Info:
 
-    https://docs.python.org/3/index.html
+    [Python3 Tutorials](https://docs.python.org/3/index.html)
 
 Command line parsing:
 
-    https://docs.python.org/3/howto/argparse.html#id1
+    [Command line parser](https://docs.python.org/3/howto/argparse.html)
 
 pprint:
 
-    https://docs.python.org/3/library/pprint.html
+    [pprint](https://docs.python.org/3/library/pprint.html)
 
 json:
 
-    https://docs.python.org/3/library/json.html
-
-### Using Keeper Commander
-
+    [JSON parser](https://docs.python.org/3/library/json.html)
 
 
