@@ -10,6 +10,12 @@ This is the codebase for a Python3 interface to Keeper.
 3. Create a config.json file.  Keeper Commander loads default 
 configuration from the config.json file in the current folder.
 
+### Dependencies
+
+```
+pip3 install requests
+```
+
 Example file:
 
 ```
@@ -85,4 +91,5 @@ json:
 
     [JSON parser](https://docs.python.org/3/library/json.html)
 
-
+requests:
+    [Requests Module](http://requests.readthedocs.org/en/latest/)

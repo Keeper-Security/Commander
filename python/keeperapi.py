@@ -1,4 +1,6 @@
+import sys
 import json
+import requests
 
 VERSION = '0.1'
 
@@ -33,4 +35,24 @@ class KeeperAPI:
 
     def go(self):
         print('Go baby!')
+        if not self.server:
+            print('Error: server is not defined.')
+            sys.exit()
 
+        if not self.email:
+            print('Error: email is not defined.')
+            sys.exit()
+
+        if not self.password:
+            print('Error: password is not defined.')
+            sys.exit()
+
+        if not self.command:
+            print('Prompt user for command')
+            self.command = self.promptCommand()
+
+        print('Logging in...')
+        self.login() 
+
+    def promptCommand(self):
+        print('prompting for command string')
