@@ -1,5 +1,6 @@
 # Keeper Commander for Python
 
+import sys
 import argparse
 import json
 import keeperapi
@@ -9,10 +10,33 @@ CONFIG_FILENAME = 'config.json'
 
 params = KeeperParams()
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+print('\n')
+print(bcolors.OKBLUE,' _  __  ' + bcolors.ENDC)
+print(bcolors.OKBLUE,'| |/ /___ ___ _ __  ___ _ _ ®' + bcolors.ENDC)
+print(bcolors.OKBLUE,'| \' </ -_) -_) \'_ \\/ -_) \'_|' + bcolors.ENDC)
+print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
+print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
+print('')
+print(bcolors.FAIL,' Keeper Commander v1.0' + bcolors.ENDC)
+print(bcolors.FAIL,' © 2015 Keeper Security Inc.' + bcolors.ENDC)
+print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
+print('')
+print('')
+
 try:
     with open(CONFIG_FILENAME) as config_file:
 
-        print('Loading config from ' + CONFIG_FILENAME)
+        #print('Loading config from ' + CONFIG_FILENAME)
         config = json.load(config_file)
 
         if 'email' in config:
@@ -51,5 +75,43 @@ except IOError:
     params.debug = args.debug
 
 # parse command line if not set
-params.dump()
+# params.dump()
+
+try:
+    while not params.server:
+        params.server = input("Enter Server name (e.g. keeperapp.com): ")
+    
+    while not params.email:
+        params.email = input("Enter Keeper email: ")
+    
+    while not params.password:
+        params.password = input("Enter Master Password: ")
+
+    if not params.mfa_token:
+        params.mfa_token = input("2FA token: ")
+    
+    while not params.command:
+        params.command = input("Command >> ")
+        if params.command == 'list':
+            keeperapi.list(params)
+        elif params.command == '?':
+            print('\n\nCommands:\n')
+            print('1. list   ... display all folder/title/uid')
+            print('2. show   ... display record details')
+            print('3. set    ... sets record info')
+            print('4. delete ... deletes record')
+            print('5. share  ... share record to a user')
+            print('6. help   ... show this screen')
+            print('7. help <command> ... show help info')
+            print('')
+        elif params.command == 'list':
+            pass
+        elif params.command == 'search':
+            pass
+    
+
+except (KeyboardInterrupt, SystemExit):
+    print('\nGoodbye.\n');
+    sys.exit()
+
 
