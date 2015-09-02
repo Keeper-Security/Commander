@@ -13,13 +13,13 @@ configuration from the config.json file in the current folder.
 Example file:
 
 ```
-{ 
-  "email":"craiglurey@gmail.com", 
-  "password":"123456", 
-  "mfa":"113355", 
-  "debug":true, 
-  "gui":false 
-}
+{                                                                               
+    "server":"https://dev2.keeperapp.com/v2/",                                  
+    "email":"myusername@gmail.com",                                             
+    "password":"123456",                                                       
+    "mfa_token":"",                                                             
+    "debug":true                                                                
+}                                                                               
 ```
 
 ### Command-Line Usage

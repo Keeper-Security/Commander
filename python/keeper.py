@@ -2,16 +2,11 @@
 
 import argparse
 import json
-
-version = '0.1'
+from keeperapi import KeeperAPI
 
 CONFIG_FILENAME = 'config.json'
-email = ''
-password = ''
-mfa = ''
-command = ''
-debug = True
-gui = False
+
+keeper = KeeperAPI()
 
 try:
     with open(CONFIG_FILENAME) as config_file:
@@ -20,60 +15,39 @@ try:
         config = json.load(config_file)
 
         if 'email' in config:
-            email = config['email']
+            keeper.email = config['email']
 
         if 'command' in config:
-            command = config['command']
+            keeper.command = config['command']
+
+        if 'server' in config:
+            keeper.server = config['server']
 
         if 'password' in config:
-            password = config['password']
+            keeper.password = config['password']
 
-        if 'mfa' in config:
-            mfa = config['mfa']
-
-        if 'gui' in config:
-            gui = config['gui']
+        if 'mfa_token' in config:
+            keeper.mfa_token = config['mfa_token']
 
         if 'debug' in config:
             debug = config['debug']
 
 except IOError:
 
-    parser = argparse.ArgumentParser(
-        description='Keeper Commander version ' + version)
+    parser = argparse.ArgumentParser(description='Keeper Commander')
     parser.add_argument("email", help="Email address of the Keeper profile")
     parser.add_argument("command", help="Command to run")
+    parser.add_argument("server", help="Server to connect")
     parser.add_argument("--debug", help="Turn on debug mode",
                         action="store_true")
-    parser.add_argument("--gui", help="GUI mode",
-                        action="store_true")
     args = parser.parse_args()
-    email = args.email
-    password = args.password
-    command = args.command
-    mfa = args.mfa
-    debug = args.debug
-    gui = args.gui
 
-if debug:
-    print ("Debug turned on")
+    keeper.email = args.email
+    keeper.password = args.password
+    keeper.command = args.command
+    keeper.server = args.server
+    keeper.mfa_token = args.mfa_token
+    keeper.debug = args.debug
 
-if gui:
-    print ("GUI mode turned on")
-
-if email:
-    print ('Email: ' + email)
-
-if command:
-    print ('Command: ' + command)
-
-if password:
-    print ('Password: *******')
-
-
-
-
-
-
-
-
+keeper.dump()
+keeper.go()
