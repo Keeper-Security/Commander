@@ -70,9 +70,7 @@ syntax on
 colorscheme molokai
 highlight Comment cterm=bold
 
-:set textwidth=79                                                                  
-:set colorcolumn=+1                                                                
-
+:set colorcolumn=79                                                                
 ```
 
 Basic Info:

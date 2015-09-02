@@ -4,55 +4,32 @@ import requests
 
 VERSION = '0.1'
 
-class KeeperAPI:
-    """Communicates with the Keeper API"""
-
-    def __init__(self):
-        self.server = ''
-        self.email = ''
-        self.password = ''
-        self.mfa_token = ''
-        self.command = ''
-        self.debug = True
-
-    def dump(self):
-        if self.debug == True:
-            print ('Version: ' + VERSION)
-            print ('Server: ' + self.server)
-            print ('Email: ' + self.email)
-            print ('Password: ' + self.password)
-            print ('MFA token: ' + self.mfa_token)
-            print ('Command: ' + self.command)
-
-    def login(self):
+def login(params):
+    if params.debug:
         print('Login')
 
-    def logout(self):
+    validate()
+
+def logout(params):
+    if params.debug:
         print('Logout')
 
-    def ping(self):
+def ping(params):
+    if params.debug:
         print('Ping')
 
-    def go(self):
-        print('Go baby!')
-        if not self.server:
-            print('Error: server is not defined.')
-            sys.exit()
+def validate(params):
+    if params.debug:
+        print('Validating params')
 
-        if not self.email:
-            print('Error: email is not defined.')
-            sys.exit()
+    if not params.server:
+        print('Error: server is not defined.')
+        sys.exit()
 
-        if not self.password:
-            print('Error: password is not defined.')
-            sys.exit()
+    if not params.email:
+        print('Error: email is not defined.')
+        sys.exit()
 
-        if not self.command:
-            print('Prompt user for command')
-            self.command = self.promptCommand()
-
-        print('Logging in...')
-        self.login() 
-
-    def promptCommand(self):
-        print('prompting for command string')
+    if not params.password:
+        print('Error: password is not defined.')
+        sys.exit()

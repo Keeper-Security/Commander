@@ -2,11 +2,12 @@
 
 import argparse
 import json
-from keeperapi import KeeperAPI
+import keeperapi
+from keeperparams import KeeperParams
 
 CONFIG_FILENAME = 'config.json'
 
-keeper = KeeperAPI()
+params = KeeperParams()
 
 try:
     with open(CONFIG_FILENAME) as config_file:
@@ -15,22 +16,22 @@ try:
         config = json.load(config_file)
 
         if 'email' in config:
-            keeper.email = config['email']
+            params.email = config['email']
 
         if 'command' in config:
-            keeper.command = config['command']
+            params.command = config['command']
 
         if 'server' in config:
-            keeper.server = config['server']
+            params.server = config['server']
 
         if 'password' in config:
-            keeper.password = config['password']
+            params.password = config['password']
 
         if 'mfa_token' in config:
-            keeper.mfa_token = config['mfa_token']
+            params.mfa_token = config['mfa_token']
 
         if 'debug' in config:
-            debug = config['debug']
+            params.debug = config['debug']
 
 except IOError:
 
@@ -42,12 +43,13 @@ except IOError:
                         action="store_true")
     args = parser.parse_args()
 
-    keeper.email = args.email
-    keeper.password = args.password
-    keeper.command = args.command
-    keeper.server = args.server
-    keeper.mfa_token = args.mfa_token
-    keeper.debug = args.debug
+    params.email = args.email
+    params.password = args.password
+    params.command = args.command
+    params.server = args.server
+    params.mfa_token = args.mfa_token
+    params.debug = args.debug
 
-keeper.dump()
-keeper.go()
+# parse command line if not set
+params.dump()
+
