@@ -27,10 +27,28 @@ print(bcolors.OKBLUE,'| \' </ -_) -_) \'_ \\/ -_) \'_|' + bcolors.ENDC)
 print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
 print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
 print('')
-print(bcolors.FAIL,' Keeper Commander v1.0' + bcolors.ENDC)
+print(bcolors.FAIL,' Keeper Commander v1.2' + bcolors.ENDC)
 print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
 print('')
 print('')
+
+def do_command(params):
+    if params.command == 'list':
+        keeperapi.list(params)
+    elif params.command == '?':
+        print('\n\nCommands:\n')
+        print('1. list   ... display all folder/title/uid')
+        print('2. show   ... display record details')
+        print('3. set    ... sets record info')
+        print('4. delete ... deletes record')
+        print('5. share  ... share record to a user')
+        print('6. help   ... show this screen')
+        print('7. help <command> ... show help info')
+        print('')
+    else:
+        pass
+
+    return
 
 try:
     with open(CONFIG_FILENAME) as config_file:
@@ -82,33 +100,25 @@ except IOError:
 
 try:
     while not params.server:
-        params.server = input("Enter Server name (e.g. keeperapp.com): ")
+        params.server = input("Server (e.g. keeperapp.com): ")
     
     while not params.email:
-        params.email = input("Enter Keeper email: ")
+        params.email = input("Email: ")
     
     while not params.password:
-        params.password = input("Enter Master Password: ")
+        params.password = input("Master Password: ")
 
-    while not params.command:
-        params.command = input("Command >> ")
-        if params.command == 'list':
-            keeperapi.list(params)
-        elif params.command == '?':
-            print('\n\nCommands:\n')
-            print('1. list   ... display all folder/title/uid')
-            print('2. show   ... display record details')
-            print('3. set    ... sets record info')
-            print('4. delete ... deletes record')
-            print('5. share  ... share record to a user')
-            print('6. help   ... show this screen')
-            print('7. help <command> ... show help info')
-            print('')
-        elif params.command == 'list':
-            keeperapi.list(params)
+    print ("Logging in...")
+    keeperapi.login(params)
+
+    if params.command:
+        do_command()
+    else:
+        while True:
+            params.command = input("Keeper >> ")
+            do_command(params)
 
 except (KeyboardInterrupt, SystemExit):
     print('\nGoodbye.\n');
     sys.exit()
-
 

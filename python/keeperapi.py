@@ -16,9 +16,9 @@ COUNTRY = 'US'
 
 def login(params):
     """Login to the server and get session token"""
-    if params.debug:
-        print('== Login ==')
     
+    myheaders = {'user-agent': USER_AGENT}
+
     # Check basic required fields
     validate(params)
     
@@ -33,17 +33,15 @@ def login(params):
                    'Keeper-Agent':'Commander',
                    'username':params.email}                                           
 
-        myheaders = {'user-agent': USER_AGENT}                                        
-
         r = requests.post(params.server, headers=myheaders, json=payload)             
                                                                                     
         if params.debug:                                                              
-            print('Request server: [' + params.server + ']')                          
+            print('Request server:  [' + params.server + ']')                          
             print('Request headers: [' + str(myheaders) + ']')                        
-            print('Request JSON: [' + str(payload) + ']')                             
-            print('Response Code: [' + str(r.status_code) + ']')                      
-            print('Response Headers: [' + str(r.headers) + ']')                       
-            print('Response content: [' + str(r.text) + ']')                          
+            print('Request JSON:    [' + str(payload) + ']')                             
+            print('Response Code:   [' + str(r.status_code) + ']')                      
+            print('Response Headers:[' + str(r.headers) + ']')                       
+            print('Response content:[' + str(r.text) + ']')                          
 
         # server doesn't include == at the end, but this module expects it
         params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
@@ -52,41 +50,43 @@ def login(params):
         if params.debug: print('Got salt = '+str(params.salt))
         if params.debug: print('Got iterations = '+str(params.iterations))
 
-        sys.exit()
+        prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
+        tmp_auth_verifier = base64.urlsafe_b64encode(
+            PBKDF2(params.password, params.salt, 
+                32, params.iterations, prf))
 
-        params.auth_verifier = PBKDF2(params.password, params.salt, 
-                   dkLen=32, count=ITERATIONS, prf=myprf)
+        # converts b'xxxx' to xxxx
+        params.auth_verifier = tmp_auth_verifier.decode()
 
-    myprf=HMAC.new(params.password,params.salt,SHA256).digest();
-    if params.debug: print('Generated myprf: ' + str(myprf))
-
-
-    if params.debug:
-        print('Generated PBKDF2: ' + str(bytes))
+        if params.debug: print('Generated auth verifier: ' + 
+            str(params.auth_verifier))
 
     payload = {'command':'login', 
                'version':2, 
-               'auth_response':auth_verifier,
+               'auth_response':params.auth_verifier,
                'language':LANGUAGE,
                'country':COUNTRY, 
+               'Keeper-Agent':'Commander',
                'mfa_token':params.mfa_token,
                'mfa_type':params.mfa_type, 
                'username':params.email}
 
-    myheaders = {'user-agent': USER_AGENT}
-    
-    if params.debug: 
-        print('Request server: [' + params.server + ']')
-        print('Request headers: [' + str(myheaders) + ']')
-        print('Request JSON: [' + str(payload) + ']')
+    r = requests.post(params.server, headers=myheaders, json=payload)             
+    response_json = r.json()
 
-    r = requests.post(params.server, headers=myheaders, json=payload)
+    if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
+        if params.debug: print('Auth Success')
+        params.session_token = response_json['session_token']
 
-    if params.debug: 
-        print('Response Code: [' + str(r.status_code) + ']')
-        print('Response Headers: [' + str(r.headers) + ']')
-        print('Response content: [' + str(r.text) + ']')
-               
+    if params.debug:                                                              
+        print('Request server:  [' + params.server + ']')                          
+        print('Request headers: [' + str(myheaders) + ']')                        
+        print('Request JSON:    [' + str(payload) + ']')                             
+        print('Response Code:   [' + str(r.status_code) + ']')                      
+        print('Response Headers:[' + str(r.headers) + ']')                       
+        print('Response content:[' + str(r.text) + ']')                          
+        print('Session Token:   [' + str(params.session_token) + ']')                          
+
 def gen_salt():
         # probably wrong TBD
         return base64.b64encode(Random.new().read(16)).decode('utf-8')
