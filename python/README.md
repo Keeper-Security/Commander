@@ -5,7 +5,7 @@ This is the codebase for a Python3 interface to Keeper.
 
 ### Installation 
 
-1. Install Python3 from python.org.
+1. Install Python3 from python.org and modules below.
 2. Set up a Keeper account from https://keepersecurity.com
 3. Create a config.json file.  Keeper Commander loads default 
 configuration from the config.json file in the current folder.
@@ -14,18 +14,20 @@ configuration from the config.json file in the current folder.
 
 ```
 pip3 install requests
+pip3 install pycrypto
 ```
 
 Example file:
 
 ```
 {                                                                               
-    "server":"https://dev2.keeperapp.com/v2/",                                  
-    "email":"myusername@gmail.com",                                             
-    "password":"123456",                                                       
-    "mfa_token":"",                                                             
-    "debug":true                                                                
-}                                                                               
+    "server":"https://dev2.keeperapp.com/v2/",
+    "email":"myusername@gmail.com",
+    "password":"123456",
+    "mfa_token":"",
+    "mfa_type":"",
+    "debug":true
+}
 ```
 
 ### Command-Line Usage
@@ -90,4 +92,9 @@ json:
     [JSON parser](https://docs.python.org/3/library/json.html)
 
 requests:
+
     [Requests Module](http://requests.readthedocs.org/en/latest/)
+
+pycrypto:
+
+    [PYCrypto Module](https://www.dlitz.net/software/pycrypto/api/current/)

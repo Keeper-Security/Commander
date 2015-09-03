@@ -28,7 +28,6 @@ print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
 print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
 print('')
 print(bcolors.FAIL,' Keeper Commander v1.0' + bcolors.ENDC)
-print(bcolors.FAIL,' © 2015 Keeper Security Inc.' + bcolors.ENDC)
 print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
 print('')
 print('')
@@ -54,6 +53,9 @@ try:
         if 'mfa_token' in config:
             params.mfa_token = config['mfa_token']
 
+        if 'mfa_type' in config:
+            params.mfa_type = config['mfa_type']
+
         if 'debug' in config:
             params.debug = config['debug']
 
@@ -72,6 +74,7 @@ except IOError:
     params.command = args.command
     params.server = args.server
     params.mfa_token = args.mfa_token
+    params.mfa_type = args.mfa_type
     params.debug = args.debug
 
 # parse command line if not set
@@ -87,9 +90,6 @@ try:
     while not params.password:
         params.password = input("Enter Master Password: ")
 
-    if not params.mfa_token:
-        params.mfa_token = input("2FA token: ")
-    
     while not params.command:
         params.command = input("Command >> ")
         if params.command == 'list':
@@ -105,10 +105,7 @@ try:
             print('7. help <command> ... show help info')
             print('')
         elif params.command == 'list':
-            pass
-        elif params.command == 'search':
-            pass
-    
+            keeperapi.list(params)
 
 except (KeyboardInterrupt, SystemExit):
     print('\nGoodbye.\n');
