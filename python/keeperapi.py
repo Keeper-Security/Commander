@@ -74,7 +74,10 @@ def login(params):
     r = requests.post(params.server, headers=myheaders, json=payload)             
     response_json = r.json()
 
-    if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
+    if (
+        response_json['result_code'] == 'auth_success' and 
+        response_json['result'] == 'success'
+        ):
         if params.debug: print('Auth Success')
         params.session_token = response_json['session_token']
 
@@ -88,13 +91,9 @@ def login(params):
         print('Session Token:   [' + str(params.session_token) + ']')                          
 
 def gen_salt():
-        # probably wrong TBD
-        return base64.b64encode(Random.new().read(16)).decode('utf-8')
+        return base64.b64encode(Random.new().read(16)).decode('utf-8') # TBD
 
 def list(params):
-    if params.debug:
-        print('== List ==')
-
     if not params.session_token:
         login(params)
 

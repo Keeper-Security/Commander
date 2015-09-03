@@ -32,18 +32,28 @@ print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
 print('')
 print('')
 
+def goodbye():
+    print('\nGoodbye.\n');
+    sys.exit()
+
 def do_command(params):
     if params.command == 'list':
         keeperapi.list(params)
+    elif params.command == 'quit': 
+        goodbye()
+    elif params.command == 'exit': 
+        goodbye()
     elif params.command == '?':
         print('\n\nCommands:\n')
         print('1. list   ... display all folder/title/uid')
         print('2. show   ... display record details')
-        print('3. set    ... sets record info')
-        print('4. delete ... deletes record')
-        print('5. share  ... share record to a user')
-        print('6. help   ... show this screen')
-        print('7. help <command> ... show help info')
+        print('3. clear  ... clear the screen')
+        print('4. set    ... sets record info')
+        print('5. delete ... deletes record')
+        print('6. share  ... share record to a user')
+        print('7. help   ... show this screen')
+        print('8. help <command> ... show help info')
+        print('8. quit   ... exit Keeper')
         print('')
     else:
         pass
@@ -119,6 +129,5 @@ try:
             do_command(params)
 
 except (KeyboardInterrupt, SystemExit):
-    print('\nGoodbye.\n');
-    sys.exit()
+    goodbye()
 
