@@ -34,13 +34,13 @@ class KeeperParams:
             print ('Command: ' + self.command)
 
         if self.session_token:
-            print ('Session Token: ' + self.session_token)
+            print ('Session Token: ' + str(self.session_token))
 
         if self.salt:
-            print ('Salt: ' + self.salt)
+            print ('Salt: ' + str(self.salt))
 
         if self.iterations:
-            print ('Iterations: ' + self.iterations)
+            print ('Iterations: ' + str(self.iterations))
 
         if self.debug:
             print ('Debug: ' + str(self.debug))

@@ -3,7 +3,10 @@
 import sys
 import argparse
 import json
+import getpass
 import keeperapi
+from keepererror import AuthenticationError                                       
+from keepererror import CommunicationError                                        
 from keeperparams import KeeperParams
 
 CONFIG_FILENAME = 'config.json'
@@ -37,13 +40,14 @@ def goodbye():
     sys.exit()
 
 def do_command(params):
-    if params.command == 'list':
+
+    if (params.command == 'quit' or params.command == 'exit'): 
+        return False 
+    elif params.command == 'list':
         keeperapi.list(params)
-    elif params.command == 'quit': 
-        goodbye()
-    elif params.command == 'exit': 
-        goodbye()
-    elif params.command == '?':
+    elif params.command == '':
+        pass
+    else:
         print('\n\nCommands:\n')
         print('1. list   ... display all folder/title/uid')
         print('2. show   ... display record details')
@@ -55,10 +59,8 @@ def do_command(params):
         print('8. help <command> ... show help info')
         print('8. quit   ... exit Keeper')
         print('')
-    else:
-        pass
 
-    return
+    return True
 
 try:
     with open(CONFIG_FILENAME) as config_file:
@@ -88,46 +90,51 @@ try:
             params.debug = config['debug']
 
 except IOError:
+    pass
 
-    parser = argparse.ArgumentParser(description='Keeper Commander')
-    parser.add_argument("email", help="Email address of the Keeper profile")
-    parser.add_argument("command", help="Command to run")
-    parser.add_argument("server", help="Server to connect")
-    parser.add_argument("--debug", help="Turn on debug mode",
-                        action="store_true")
-    args = parser.parse_args()
+# email, command, debug
+parser = argparse.ArgumentParser(usage='%(prog)s [options]', 
+                                 description='Keeper Commander')
+parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
+parser.add_argument("email", nargs='?', help='Email address')
+parser.add_argument("command", nargs='?', help='Command to run')
 
+args = parser.parse_args()                                                     
+
+if args.email:
     params.email = args.email
-    params.password = args.password
+
+if args.command:
     params.command = args.command
-    params.server = args.server
-    params.mfa_token = args.mfa_token
-    params.mfa_type = args.mfa_type
+
+if args.debug:
     params.debug = args.debug
 
-# parse command line if not set
-# params.dump()
-
 try:
-    while not params.server:
-        params.server = input("Server (e.g. keeperapp.com): ")
-    
+
+    if not params.server:
+        params.server = 'https://keeperapp.com/v2/'
+
     while not params.email:
-        params.email = input("Email: ")
+        params.email = getpass.getpass(prompt='Email: ', stream=None) 
     
     while not params.password:
-        params.password = input("Master Password: ")
+        params.password = getpass.getpass(prompt='Password: ', stream=None) 
 
-    print ("Logging in...")
-    keeperapi.login(params)
+    while True:
+        try:
+            if not do_command(params):
+                raise KeyboardInterrupt 
+        except CommunicationError as e:
+            print ("Communication Error:" + str(e.message))
+        except AuthenticationError as e:
+            print ("AuthenticationError Error: " + str(e.message))
+        except KeyboardInterrupt:
+            raise
+        except:
+            print('A weird exception occurred.')
 
-    if params.command:
-        do_command()
-    else:
-        while True:
-            params.command = input("Keeper >> ")
-            do_command(params)
-
-except (KeyboardInterrupt, SystemExit):
+        params.command = input("Keeper >> ")
+                
+except KeyboardInterrupt:
     goodbye()
-

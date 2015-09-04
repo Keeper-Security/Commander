@@ -2,6 +2,9 @@ import sys
 import json
 import requests
 import base64
+import getpass
+from keepererror import AuthenticationError
+from keepererror import CommunicationError
 from Crypto.Hash import SHA256, HMAC
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Cipher import AES
@@ -18,11 +21,8 @@ def login(params):
     """Login to the server and get session token"""
     
     myheaders = {'user-agent': USER_AGENT}
-
-    # Check basic required fields
     validate(params)
     
-    # get salt from the server
     if not params.salt:
         if params.debug: print('Getting salt & iterations from server')
 
@@ -33,69 +33,134 @@ def login(params):
                    'Keeper-Agent':'Commander',
                    'username':params.email}                                           
 
-        r = requests.post(params.server, headers=myheaders, json=payload)             
+        try:
+            r = requests.post(params.server, headers=myheaders, json=payload)             
                                                                                     
+            # server doesn't include == at the end, but this module expects it
+            params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
+            params.iterations = r.json()['iterations']
+    
+            prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
+            tmp_auth_verifier = base64.urlsafe_b64encode(
+                PBKDF2(params.password, params.salt, 
+                    32, params.iterations, prf))
+    
+            # converts b'xxxx' to xxxx
+            params.auth_verifier = tmp_auth_verifier.decode()
+    
+            if params.debug: print('Generated auth verifier: ' + 
+                str(params.auth_verifier))
+
+            if params.debug:                                                              
+                print('>>> Request server:[' + params.server + ']')                          
+                print('>>> Request headers:[' + str(myheaders) + ']')                        
+                print('>>> Request JSON:[' + str(payload) + ']')                             
+                print('')
+                print('<<< Response Code:[' + str(r.status_code) + ']')                      
+                print('<<< Response Headers:[' + str(r.headers) + ']')                       
+                print('<<< Response content:[' + str(r.text) + ']')                          
+                print('<<< Auth Verifier:['+str(params.auth_verifier)+']')                          
+
+        except:
+            raise CommunicationError(sys.exc_info()[0])
+
+
+    success = False
+    while not success:
+
+        if params.mfa_token:
+            payload = {
+                   'command':'login', 
+                   'version':2, 
+                   'auth_response':params.auth_verifier,
+                   'language':LANGUAGE,
+                   'country':COUNTRY, 
+                   'Keeper-Agent':'Commander',
+                   '2fa_token':params.mfa_token,
+                   '2fa_type':params.mfa_type, 
+                   'username':params.email
+                  }
+
+        else:
+            payload = {
+                   'command':'login', 
+                   'version':2, 
+                   'auth_response':params.auth_verifier,
+                   'language':LANGUAGE,
+                   'country':COUNTRY, 
+                   'Keeper-Agent':'Commander',
+                   'username':params.email
+                  }
+
+        try:
+            r = requests.post(params.server, headers=myheaders, json=payload)             
+        except:
+            raise CommunicationError(sys.exc_info()[0])
+
+        response_json = r.json()
+
         if params.debug:                                                              
-            print('Request server:  [' + params.server + ']')                          
-            print('Request headers: [' + str(myheaders) + ']')                        
-            print('Request JSON:    [' + str(payload) + ']')                             
-            print('Response Code:   [' + str(r.status_code) + ']')                      
-            print('Response Headers:[' + str(r.headers) + ']')                       
-            print('Response content:[' + str(r.text) + ']')                          
+            print('>>> Request server:[' + params.server + ']')                          
+            print('>>> Request headers:[' + str(myheaders) + ']')                        
+            print('>>> Request JSON:[' + str(payload) + ']')                             
+            print('')
+            print('<<< Response Code:[' + str(r.status_code) + ']')                      
+            print('<<< Response Headers:[' + str(r.headers) + ']')                       
+            print('<<< Response content:[' + str(r.text) + ']')                          
+            print('<<< Session Token:['+str(params.session_token)+']')                          
 
-        # server doesn't include == at the end, but this module expects it
-        params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
-        params.iterations = r.json()['iterations']
+        if (
+            response_json['result_code'] == 'auth_success' and 
+            response_json['result'] == 'success'
+            ):
+            if params.debug: print('Auth Success')
 
-        if params.debug: print('Got salt = '+str(params.salt))
-        if params.debug: print('Got iterations = '+str(params.iterations))
+            if 'session_token' in response_json:
+                params.session_token = response_json['session_token']
 
-        prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
-        tmp_auth_verifier = base64.urlsafe_b64encode(
-            PBKDF2(params.password, params.salt, 
-                32, params.iterations, prf))
+            if 'device_token' in response_json:
+                params.mfa_token = response_json['device_token']
 
-        # converts b'xxxx' to xxxx
-        params.auth_verifier = tmp_auth_verifier.decode()
+            if params.mfa_token:
+                params.mfa_type = 'device_token'
 
-        if params.debug: print('Generated auth verifier: ' + 
-            str(params.auth_verifier))
+            if params.debug: params.dump() 
 
-    payload = {'command':'login', 
-               'version':2, 
-               'auth_response':params.auth_verifier,
-               'language':LANGUAGE,
-               'country':COUNTRY, 
-               'Keeper-Agent':'Commander',
-               'mfa_token':params.mfa_token,
-               'mfa_type':params.mfa_type, 
-               'username':params.email}
+            success = True
 
-    r = requests.post(params.server, headers=myheaders, json=payload)             
-    response_json = r.json()
+        elif ( response_json['result_code'] == 'need_totp' or
+               response_json['result_code'] == 'invalid_device_token' or
+               response_json['result_code'] == 'invalid_totp'):
+            try:
+                params.mfa_token = '' 
+                params.mfa_type = 'one_time'
 
-    if (
-        response_json['result_code'] == 'auth_success' and 
-        response_json['result'] == 'success'
-        ):
-        if params.debug: print('Auth Success')
-        params.session_token = response_json['session_token']
+                while not params.mfa_token:
+                    params.mfa_token = getpass.getpass(
+                        prompt='2FA Code: ', stream=None)
 
-    if params.debug:                                                              
-        print('Request server:  [' + params.server + ']')                          
-        print('Request headers: [' + str(myheaders) + ']')                        
-        print('Request JSON:    [' + str(payload) + ']')                             
-        print('Response Code:   [' + str(r.status_code) + ']')                      
-        print('Response Headers:[' + str(r.headers) + ']')                       
-        print('Response content:[' + str(r.text) + ']')                          
-        print('Session Token:   [' + str(params.session_token) + ']')                          
+            except (KeyboardInterrupt, SystemExit):                                        
+                return 
+                
+        elif response_json['result_code'] == 'auth_failed':
+            raise AuthenticationError(response_json['result_code'])
 
-def gen_salt():
-        return base64.b64encode(Random.new().read(16)).decode('utf-8') # TBD
+        elif response_json['result_code'] == 'throttled':
+            raise AuthenticationError(response_json['message'])
+
+        elif response_json['result_code']:
+            raise AuthenticationError(response_json['result_code'])
+
+        else:
+            raise CommunicationError('Unknown problem')
 
 def list(params):
     if not params.session_token:
-        login(params)
+        try:
+            login(params)
+        except:
+            raise
+            
 
 def validate(params):
     if not params.server:
