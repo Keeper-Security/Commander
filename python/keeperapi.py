@@ -36,7 +36,7 @@ def login(params):
         try:
             r = requests.post(params.server, headers=myheaders, json=payload)             
                                                                                     
-            # server doesn't include == at the end, but this module expects it
+            # server doesn't include == at the end, but the module expects it
             params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
             params.iterations = r.json()['iterations']
     

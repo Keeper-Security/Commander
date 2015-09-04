@@ -43,21 +43,25 @@ def do_command(params):
 
     if (params.command == 'quit' or params.command == 'exit'): 
         return False 
+    elif params.command == 'login':
+        keeperapi.login(params)
+    elif params.command == 'logout':
+        params.logout()
+    elif params.command == 'clear':
+        print(chr(27) + "[2J") 
     elif params.command == 'list':
         keeperapi.list(params)
     elif params.command == '':
         pass
     else:
         print('\n\nCommands:\n')
-        print('1. list   ... display all folder/title/uid')
-        print('2. show   ... display record details')
-        print('3. clear  ... clear the screen')
-        print('4. set    ... sets record info')
-        print('5. delete ... deletes record')
-        print('6. share  ... share record to a user')
-        print('7. help   ... show this screen')
-        print('8. help <command> ... show help info')
-        print('8. quit   ... exit Keeper')
+        print('1. login           ... authenticate with server')
+        print('2. logout          ... clear params and logout')
+        print('3. search [string] ... find a record')
+        print('4. get [UID]       ... display record details')
+        print('5. clear           ... clear the screen')
+        print('6. help            ... show this screen')
+        print('7. quit            ... exit Keeper')
         print('')
 
     return True
@@ -96,8 +100,8 @@ except IOError:
 parser = argparse.ArgumentParser(usage='%(prog)s [options]', 
                                  description='Keeper Commander')
 parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
-parser.add_argument("email", nargs='?', help='Email address')
-parser.add_argument("command", nargs='?', help='Command to run')
+parser.add_argument("--email", nargs='?', help='Email address')
+parser.add_argument("--command", nargs='?', help='Command to run')
 
 args = parser.parse_args()                                                     
 
@@ -138,3 +142,4 @@ try:
                 
 except KeyboardInterrupt:
     goodbye()
+

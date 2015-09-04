@@ -7,8 +7,9 @@ This is the codebase for a Python3 interface to Keeper.
 
 1. Install Python3 from python.org and modules below.
 2. Set up a Keeper account from https://keepersecurity.com
-3. Create a config.json file.  Keeper Commander loads default 
-configuration from the config.json file in the current folder.
+3. Optionally create a config.json file.  Commander loads default 
+configuration info from the config.json file in the current folder.
+Command line arguments will override the configuration file.
 
 ### Dependencies
 
