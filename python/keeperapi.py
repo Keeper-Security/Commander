@@ -3,6 +3,7 @@ import json
 import requests
 import base64
 import getpass
+import time
 from keepererror import AuthenticationError
 from keepererror import CommunicationError
 from Crypto.Hash import SHA256, HMAC
@@ -16,11 +17,13 @@ USER_AGENT = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) ' +
              'Chrome/40.0.2214.111 Safari/537.36')
 LANGUAGE = 'en'
 COUNTRY = 'US'
+HEADERS = {'user-agent': USER_AGENT}
+
+current_milli_time = lambda: int(round(time.time() * 1000))
 
 def login(params):
     """Login to the server and get session token"""
     
-    myheaders = {'user-agent': USER_AGENT}
     validate(params)
     
     if not params.salt:
@@ -32,14 +35,14 @@ def login(params):
                    'username':params.email}                                           
 
         try:
-            r = requests.post(params.server, headers=myheaders, json=payload)             
+            r = requests.post(params.server, headers=HEADERS, json=payload)             
         except:
             raise CommunicationError(sys.exc_info()[0])
                                                                                     
         if params.debug:                                                              
             print('')
             print('>>> Request server:[' + params.server + ']')                          
-            print('>>> Request headers:[' + str(myheaders) + ']')                        
+            print('>>> Request headers:[' + str(HEADERS) + ']')                        
             print('>>> Request JSON:[' + str(payload) + ']')                             
             print('')
             print('<<< Response Code:[' + str(r.status_code) + ']')                      
@@ -94,7 +97,7 @@ def login(params):
                   }
 
         try:
-            r = requests.post(params.server, headers=myheaders, json=payload)             
+            r = requests.post(params.server, headers=HEADERS, json=payload)             
         except:
             raise CommunicationError(sys.exc_info()[0])
 
@@ -103,7 +106,7 @@ def login(params):
         if params.debug:                                                              
             print('')
             print('>>> Request server:[' + params.server + ']')                          
-            print('>>> Request headers:[' + str(myheaders) + ']')                        
+            print('>>> Request headers:[' + str(HEADERS) + ']')                        
             print('>>> Request JSON:[' + str(payload) + ']')                             
             print('')
             print('<<< Response Code:[' + str(r.status_code) + ']')                      
@@ -122,6 +125,7 @@ def login(params):
 
             if 'device_token' in response_json:
                 params.mfa_token = response_json['device_token']
+                print('Device token: ' + str(params.mfa_token))
 
             if params.mfa_token:
                 params.mfa_type = 'device_token'
@@ -163,6 +167,50 @@ def list(params):
         except:
             raise
             
+    payload = {
+               'include':[
+                   'header',
+                   'records',
+                   'users',
+                   'roles'
+               ],
+               'revision':0,
+               'client_time':current_milli_time(),
+               'device_id':'Commander', 
+               'device_name':'Commander', 
+               'command':'sync_down', 
+               'protocol_version':1, 
+               'language':LANGUAGE,
+               'country':COUNTRY, 
+               'Keeper-Agent':'Commander',
+               '2fa_token':params.mfa_token,
+               '2fa_type':params.mfa_type, 
+               'session_token':params.session_token, 
+               'username':params.email
+              }
+
+    try:
+        r = requests.post(params.server, headers=HEADERS, json=payload)             
+    except:
+        raise CommunicationError(sys.exc_info()[0])
+
+    response_json = r.json()
+
+    if params.debug:                                                              
+        print('')
+        print('>>> Request server:[' + params.server + ']')                          
+        print('>>> Request headers:[' + str(HEADERS) + ']')                        
+        print('>>> Request JSON:[' + str(payload) + ']')                             
+        print('')
+        print('<<< Response Code:[' + str(r.status_code) + ']')                      
+        print('<<< Response Headers:[' + str(r.headers) + ']')                       
+        print('<<< Response content:[' + str(r.text) + ']')                          
+
+    if response_json['result'] == 'success':
+        print('Appears to have worked.')
+    else :
+        raise CommunicationError('Unknown problem')
+
 
 def validate(params):
     if not params.server:
