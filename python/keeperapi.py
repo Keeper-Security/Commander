@@ -24,8 +24,6 @@ def login(params):
     validate(params)
     
     if not params.salt:
-        if params.debug: print('Getting salt & iterations from server')
-
         payload = {'command':'account_summary',                                                 
                    'include':['license','settings','group','keys'],
                    'language':LANGUAGE,                                               
@@ -35,34 +33,37 @@ def login(params):
 
         try:
             r = requests.post(params.server, headers=myheaders, json=payload)             
-                                                                                    
-            # server doesn't include == at the end, but the module expects it
-            params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
-            params.iterations = r.json()['iterations']
-    
-            prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
-            tmp_auth_verifier = base64.urlsafe_b64encode(
-                PBKDF2(params.password, params.salt, 
-                    32, params.iterations, prf))
-    
-            # converts b'xxxx' to xxxx
-            params.auth_verifier = tmp_auth_verifier.decode()
-    
-            if params.debug: print('Generated auth verifier: ' + 
-                str(params.auth_verifier))
-
-            if params.debug:                                                              
-                print('>>> Request server:[' + params.server + ']')                          
-                print('>>> Request headers:[' + str(myheaders) + ']')                        
-                print('>>> Request JSON:[' + str(payload) + ']')                             
-                print('')
-                print('<<< Response Code:[' + str(r.status_code) + ']')                      
-                print('<<< Response Headers:[' + str(r.headers) + ']')                       
-                print('<<< Response content:[' + str(r.text) + ']')                          
-                print('<<< Auth Verifier:['+str(params.auth_verifier)+']')                          
-
         except:
             raise CommunicationError(sys.exc_info()[0])
+                                                                                    
+        if params.debug:                                                              
+            print('')
+            print('>>> Request server:[' + params.server + ']')                          
+            print('>>> Request headers:[' + str(myheaders) + ']')                        
+            print('>>> Request JSON:[' + str(payload) + ']')                             
+            print('')
+            print('<<< Response Code:[' + str(r.status_code) + ']')                      
+            print('<<< Response Headers:[' + str(r.headers) + ']')                       
+            print('<<< Response content:[' + str(r.text) + ']')                          
+
+        if not 'salt' in r.json():
+            if r.json()['result_code'] == 'auth_failed':
+                raise AuthenticationError('Pre-auth failed.')
+
+        # server doesn't include == at the end, but the module expects it
+        params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
+        params.iterations = r.json()['iterations']
+    
+        prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
+        tmp_auth_verifier = base64.urlsafe_b64encode(
+            PBKDF2(params.password, params.salt, 
+                32, params.iterations, prf))
+
+        # converts b'xxxx' to xxxx
+        params.auth_verifier = tmp_auth_verifier.decode()
+
+        if params.debug:                                                              
+            print('<<< Auth Verifier:['+str(params.auth_verifier)+']')                          
 
 
     success = False
@@ -100,6 +101,7 @@ def login(params):
         response_json = r.json()
 
         if params.debug:                                                              
+            print('')
             print('>>> Request server:[' + params.server + ']')                          
             print('>>> Request headers:[' + str(myheaders) + ']')                        
             print('>>> Request JSON:[' + str(payload) + ']')                             

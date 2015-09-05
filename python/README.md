@@ -5,20 +5,31 @@ This is the codebase for a Python3 interface to Keeper.
 
 ### Installation 
 
-1. Install Python3 from python.org and modules below.
-2. Set up a Keeper account from https://keepersecurity.com
-3. Optionally create a config.json file.  Commander loads default 
-configuration info from the config.json file in the current folder.
-Command line arguments will override the configuration file.
-
-### Dependencies
+1. Install Python3 from python.org and the below modules:
 
 ```
 pip3 install requests
 pip3 install pycrypto
 ```
 
-Example file:
+2. Set up a Keeper account from https://keepersecurity.com if you don't 
+already have one.
+
+3. Execute command line program as described below or use 
+a config.json file to streamline usage.  Command line arguments will 
+override the configuration file.
+
+### Command-line overrides
+
+./keeper
+
+./keeper --debug
+
+./keeper --debug --email=email@company.com --command="get ASLK4nf42k3jd"
+
+### Auto-configuration file
+
+Place the file config.json in the install folder.  Example below:
 
 ```
 {                                                                               
@@ -31,19 +42,12 @@ Example file:
 }
 ```
 
-### Command-Line Usage
-
-```
-python3 keeper.py
-```
-
-You can login via the email/password/mfa stored in the config file,
-or you will be prompted to enter your email, master pass and 
-optional MFA token on the command prompt.
+If you don't provide an email or password, you will be prompted
+for this information when using Commander.
 
 Once you are logged in, you can execute a variety of things.
 
-TBD command reference will go here...
+### Commands
 
 
 ### Helpful documentation

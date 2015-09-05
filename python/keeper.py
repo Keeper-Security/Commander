@@ -96,8 +96,8 @@ try:
 except IOError:
     pass
 
-# email, command, debug
-parser = argparse.ArgumentParser(usage='%(prog)s [options]', 
+# email, command, debug are optional
+parser = argparse.ArgumentParser(usage='keeper [options]', 
                                  description='Keeper Commander')
 parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
 parser.add_argument("--email", nargs='?', help='Email address')
@@ -138,7 +138,10 @@ try:
         except:
             print('A weird exception occurred.')
 
-        params.command = input("Keeper >> ")
+        try:
+            params.command = input("Keeper >> ")
+        except EOFError:
+            pass
                 
 except KeyboardInterrupt:
     goodbye()

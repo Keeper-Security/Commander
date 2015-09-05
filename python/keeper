@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 keeper.py
+python3 keeper.py "$@"
