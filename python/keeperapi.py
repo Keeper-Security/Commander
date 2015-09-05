@@ -24,8 +24,6 @@ current_milli_time = lambda: int(round(time.time() * 1000))
 def login(params):
     """Login to the server and get session token"""
     
-    validate(params)
-    
     if not params.salt:
         payload = {'command':'account_summary',                                                 
                    'include':['license','settings','group','keys'],
@@ -169,10 +167,10 @@ def list(params):
             
     payload = {
                'include':[
-                   'header',
-                   'records',
-                   'users',
-                   'roles'
+                   'sfheaders',
+                   'sfrecords',
+                   'sfusers',
+                   'sfteams'
                ],
                'revision':0,
                'client_time':current_milli_time(),
@@ -211,16 +209,3 @@ def list(params):
     else :
         raise CommunicationError('Unknown problem')
 
-
-def validate(params):
-    if not params.server:
-        print('Error: server is not defined.')
-        sys.exit()
-
-    if not params.email:
-        print('Error: email is not defined.')
-        sys.exit()
-
-    if not params.password:
-        print('Error: password is not defined.')
-        sys.exit()

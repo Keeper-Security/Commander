@@ -122,8 +122,10 @@ try:
     while not params.email:
         params.email = getpass.getpass(prompt='Email: ', stream=None) 
     
-    while not params.password:
-        params.password = getpass.getpass(prompt='Password: ', stream=None) 
+    # only prompt for password when no device token
+    if not params.mfa_token:
+        while not params.password:
+            params.password = getpass.getpass(prompt='Password: ', stream=None) 
 
     while True:
         try:
