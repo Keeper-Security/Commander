@@ -77,7 +77,8 @@ syntax on
 colorscheme molokai
 highlight Comment cterm=bold
 
-:set colorcolumn=79                                                                
+highlight OverLength ctermbg=red ctermfg=white guibg=#592929
+match OverLength /\%81v.\+/
 ```
 
 Basic Info:
