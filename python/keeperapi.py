@@ -25,12 +25,12 @@ def login(params):
     """Login to the server and get session token"""
     
     if not params.salt:
-        payload = {'command':'account_summary',                                                 
+        payload = {'command':'account_summary',
                    'include':['license','settings','group','keys'],
-                   'language':LANGUAGE,                                               
-                   'country':COUNTRY,                                                 
+                   'language':LANGUAGE,
+                   'country':COUNTRY,
                    'Keeper-Agent':'Commander',
-                   'username':params.email}                                           
+                   'username':params.email}
 
         try:
             r = requests.post(params.server, headers=HEADERS, json=payload)             
@@ -188,24 +188,58 @@ def list(params):
               }
 
     try:
-        r = requests.post(params.server, headers=HEADERS, json=payload)             
+        r = requests.post(params.server, headers=HEADERS, json=payload)        
     except:
         raise CommunicationError(sys.exc_info()[0])
 
     response_json = r.json()
 
-    if params.debug:                                                              
+    if params.debug:                                                         
         print('')
-        print('>>> Request server:[' + params.server + ']')                          
-        print('>>> Request headers:[' + str(HEADERS) + ']')                        
-        print('>>> Request JSON:[' + str(payload) + ']')                             
+        print('>>> Request server:[' + params.server + ']')
+        print('>>> Request headers:[' + str(HEADERS) + ']')
+        print('>>> Request JSON:[' + str(payload) + ']')
         print('')
-        print('<<< Response Code:[' + str(r.status_code) + ']')                      
-        print('<<< Response Headers:[' + str(r.headers) + ']')                       
-        print('<<< Response content:[' + str(r.text) + ']')                          
+        print('<<< Response Code:[' + str(r.status_code) + ']')
+        print('<<< Response Headers:[' + str(r.headers) + ']')
+        print('<<< Response content:[' + json.dumps(response_json, 
+            sort_keys=True, indent=4) + ']')
 
     if response_json['result'] == 'success':
-        print('Appears to have worked.')
+        success, json_to_show = decrypt_data(response_json)
+        if success:
+            print('Data retrieved and decrypted.')
+            display_folders_titles_uids()
     else :
         raise CommunicationError('Unknown problem')
 
+
+def decrypt_data(json_to_decrypt):
+    if not json:
+        return False
+
+    if not 'private_key' in json_to_decrypt:
+        print('Unable to decrypt: no private key provided.')
+        return False
+
+    print('Decrypting private_key')
+    json_to_decrypt['private_key']
+
+    if 'shared_folders' in json_to_decrypt:
+        pass
+
+    if 'records' in json_to_decrypt:
+        pass
+
+    if 'non_shared_data' in json_to_decrypt:
+        pass
+
+    if 'record_meta_data' in json_to_decrypt:
+        pass
+
+    if 'pending_shares_from' in json_to_decrypt:
+        if json_to_decrypt['pending_shares_from']:
+            print('FYI: You have pending share requests.')
+
+def display_folders_titles_uids(json_to_show):
+    pass
