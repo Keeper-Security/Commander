@@ -3,7 +3,8 @@ class KeeperParams:
 
     def __init__(self,server='',email='',password='',mfa_token='',
                  mfa_type='',command='',session_token='',
-                 salt='',iterations='',debug=False):
+                 salt='',iterations='',encrypted_private_key='',
+                 encryption_params='',debug=False):
         self.server = server 
         self.email = email 
         self.password = password 
@@ -12,6 +13,8 @@ class KeeperParams:
         self.session_token = session_token 
         self.salt = salt 
         self.iterations = iterations 
+        self.encrypted_private_key = encrypted_private_key
+        self.encryption_params = encryption_params
         self.debug = debug
 
     def logout(self):
@@ -45,6 +48,12 @@ class KeeperParams:
 
         if self.iterations:
             print ('>> Iterations: ' + str(self.iterations))
+
+        if self.encrypted_private_key:
+            print ('>> Encrypted Priv Key: ' + str(self.encrypted_private_key))
+
+        if self.encryption_params:
+            print ('>> Encryption Params: ' + str(self.encryption_params))
 
         if self.debug:
             print ('>> Debug: ' + str(self.debug))

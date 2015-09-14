@@ -73,6 +73,7 @@ def login(params):
         if params.mfa_token:
             payload = {
                    'command':'login', 
+                   'include':['keys'],
                    'version':2, 
                    'auth_response':params.auth_verifier,
                    'language':LANGUAGE,
@@ -109,7 +110,8 @@ def login(params):
             print('')
             print('<<< Response Code:[' + str(r.status_code) + ']')                      
             print('<<< Response Headers:[' + str(r.headers) + ']')                       
-            print('<<< Response content:[' + str(r.text) + ']')                          
+            print('<<< Response content:[' + json.dumps(response_json, 
+                sort_keys=True, indent=4) + ']')
             print('<<< Session Token:['+str(params.session_token)+']')                          
 
         if (
@@ -123,10 +125,19 @@ def login(params):
 
             if 'device_token' in response_json:
                 params.mfa_token = response_json['device_token']
-                print('Device token: ' + str(params.mfa_token))
+                print('----> Device token: ' + str(params.mfa_token))
 
             if params.mfa_token:
                 params.mfa_type = 'device_token'
+
+            if 'keys' in response_json:
+                params.encrypted_private_key = \
+                    response_json['keys']['encrypted_private_key']
+                
+                params.encryption_params = \
+                    response_json['keys']['encryption_params']
+
+                decrypt_data_key(params)
 
             if params.debug: params.dump() 
 
@@ -143,7 +154,7 @@ def login(params):
                     params.mfa_token = getpass.getpass(
                         prompt='2FA Code: ', stream=None)
 
-            except (KeyboardInterrupt, SystemExit):                                        
+            except (KeyboardInterrupt, SystemExit):
                 return 
                 
         elif response_json['result_code'] == 'auth_failed':
@@ -213,6 +224,14 @@ def list(params):
     else :
         raise CommunicationError('Unknown problem')
 
+def decrypt_data_key(params):
+    """ Decrypt the data key and private key returned by the server """
+    decoded_private_key = base64.urlsafe_b64decode(
+        params.encrypted_private_key+'==')
+    decoded_encryption_params = base64.urlsafe_b64decode(
+        params.encryption_params+'==')
+    print('Decoded private key: ' + str(decoded_private_key))
+    print('Decoded encryption params: ' + str(decoded_encryption_params))
 
 def decrypt_data(json_to_decrypt):
     if not json:
