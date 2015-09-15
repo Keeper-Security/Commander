@@ -9,10 +9,16 @@ from keepererror import CommunicationError
 from Crypto.Hash import SHA256, HMAC
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Cipher import AES
+from Crypto.Cipher import PKCS1_v1_5
 from Crypto import Random
+from Crypto.PublicKey import RSA
 
 CLIENT_VERSION = 'c9.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
+
+BS = 16
+pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
+unpad = lambda s : s[0:-ord(s[-1])]
 
 def login(params):
     """Login to the server and get session token"""
@@ -209,32 +215,44 @@ def sync_down(params):
         if 'revision' in response_json:
             params.revision = response_json['revision']
     
-        # TBD partial sync stuff doesnt work yet
-        #if 'removed_records' in response_json:
-        #    for uid in response_json['removed_records']:
-        #        for record in record_cache:
-        #            if record['record_uid'] == uid 
-        #                params.record_cache.remove(record)
+        if 'removed_records' in response_json:
+            for uid in response_json['removed_records']:
+                del params.record_cache[uid]
     
-        # TBD partial sync stuff doesnt work
-        #if 'removed_shared_folders' in response_json:
-        #    for uid in response_json['removed_shared_folders']:
-        #        for shared_folder in shared_folder_cache:
-        #            if shared_folder['shared_folder_uid'] == uid 
-        #                params.shared_folder_cache.remove(shared_folder)
-        
+        if 'removed_shared_folders' in response_json:
+            for shared_folder in response_json['removed_shared_folders']:
+                if 'records' in shared_folder:
+                    for record in shared_folder['records']: 
+                        if 'record_uid' in record:
+                            record_uid = record['record_uid']
+                            if record_uid in params.record_cache:
+                                if not params.record_cache[record_uid]['owner']:
+                                    if num_folders_with_record(record_uid) == 1:
+                                        del params.record_cache[record_uid]
+            for uid in response_json['removed_shared_folders']:
+                del params.shared_folder_cache[uid]
+
         if 'record_meta_data' in response_json:
             for meta_data in response_json['record_meta_data']:
-                print('meta_data: ' + str(meta_data)) 
-                params.meta_data_cache[meta_data['record_uid']] = meta_data
+                # convert type=2 to type=1 
+                if meta_data['record_key_type'] == 2:
+                    if params.debug: print('Converting type2 key')
+                    if params.debug: print('private key: ' + str(params.private_key))
+                    # params.private_key.decode('utf-8')
+                    key = RSA.importKey(params.private_key)
+                    cipher = PKCS1_v1_5.new(key)
+                    #message = cipher.decrypt(meta_data['record_key'], sentinel)
+                # TBD
+                #params.meta_data_cache[meta_data['record_uid']] = meta_data
     
+        if 'shared_folders' in response_json:
+            for shared_folder in response_json['shared_folders']:
+                params.shared_folder_cache[shared_folder['shared_folder_uid']] \
+                    = shared_folder
+
         if 'records' in response_json:
             for record in response_json['records']:
                 params.record_cache[record['record_uid']] = record
-
-        if 'shared_folders' in response_json:
-            for shared_folder in response_json['shared_folders']:
-                params.shared_folder_cache[shared_folder['shared_folder_uid']] = shared_folder
 
         if 'pending_shares_from' in response_json:
             print('FYI: You have pending share requests.')
@@ -248,6 +266,19 @@ def sync_down(params):
 
     else :
         raise CommunicationError('Unknown problem')
+
+def num_folders_with_record(record_uid):
+    counter = 0
+
+    for shared_folder in params.shared_folder_cache:
+        if 'records' in shared_folder:
+            for record in shared_folder['records']:
+                if 'record_uid' in record:
+                    if record['record_uid'] == record_uid:
+                        counter += 1
+
+    return counter
+
 
 def decrypt_data_key(params):
     """ Decrypt the data key returned by the server 
@@ -328,13 +359,14 @@ def decrypt_private_key(params):
     iv = decoded_private_key[0:16]
     ciphertext = decoded_private_key[16:len(decoded_private_key)]
 
-    print('decrypted data key: ' + str(params.data_key))
-
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-    decrypted_private_key = cipher.decrypt(ciphertext)
+    params.private_key = cipher.decrypt(ciphertext)
     
+    TBD!!!! unpad()
+
+
     if params.debug: 
-        print('decrypted private key: ' + str(decrypted_private_key))
+        print('private key: ' + str(params.private_key))
     
 
 def display_folders_titles_uids(json_to_show):
