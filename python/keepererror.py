@@ -34,3 +34,13 @@ class CommunicationError(Error):
     def __init__(self, message):
         self.message = message
 
+
+class CryptoError(Error):
+    """Exception raised with cryptography issues
+
+    Attributes:
+        message -- explanation of crypto error
+    """
+
+    def __init__(self, message):
+        self.message = message

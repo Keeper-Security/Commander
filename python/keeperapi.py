@@ -11,7 +11,7 @@ from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Cipher import AES
 from Crypto import Random
 
-VERSION = '0.1'
+CLIENT_VERSION = 'c9.0.0'
 USER_AGENT = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) ' + 
              'AppleWebKit/537.36 (KHTML, like Gecko) ' + 
              'Chrome/40.0.2214.111 Safari/537.36')
@@ -27,9 +27,7 @@ def login(params):
     if not params.salt:
         payload = {'command':'account_summary',
                    'include':['license','settings','group','keys'],
-                   'language':LANGUAGE,
-                   'country':COUNTRY,
-                   'Keeper-Agent':'Commander',
+                   'client_version':CLIENT_VERSION,
                    'username':params.email}
 
         try:
@@ -76,9 +74,7 @@ def login(params):
                    'include':['keys'],
                    'version':2, 
                    'auth_response':params.auth_verifier,
-                   'language':LANGUAGE,
-                   'country':COUNTRY, 
-                   'Keeper-Agent':'Commander',
+                   'client_version':CLIENT_VERSION,
                    '2fa_token':params.mfa_token,
                    '2fa_type':params.mfa_type, 
                    'username':params.email
@@ -89,9 +85,7 @@ def login(params):
                    'command':'login', 
                    'version':2, 
                    'auth_response':params.auth_verifier,
-                   'language':LANGUAGE,
-                   'country':COUNTRY, 
-                   'Keeper-Agent':'Commander',
+                   'client_version':CLIENT_VERSION,
                    'username':params.email
                   }
 
@@ -189,9 +183,7 @@ def list(params):
                'device_name':'Commander', 
                'command':'sync_down', 
                'protocol_version':1, 
-               'language':LANGUAGE,
-               'country':COUNTRY, 
-               'Keeper-Agent':'Commander',
+               'client_version':CLIENT_VERSION,
                '2fa_token':params.mfa_token,
                '2fa_type':params.mfa_type, 
                'session_token':params.session_token, 
@@ -225,13 +217,55 @@ def list(params):
         raise CommunicationError('Unknown problem')
 
 def decrypt_data_key(params):
-    """ Decrypt the data key and private key returned by the server """
-    decoded_private_key = base64.urlsafe_b64decode(
-        params.encrypted_private_key+'==')
+    """ Decrypt the data key returned by the server """
     decoded_encryption_params = base64.urlsafe_b64decode(
         params.encryption_params+'==')
-    print('Decoded private key: ' + str(decoded_private_key))
-    print('Decoded encryption params: ' + str(decoded_encryption_params))
+
+    if decoded_encryption_params.__len__() != 100:
+        raise CryptoError('Invalid encryption params: bad params length')
+
+    # https://docs.python.org/3/library/stdtypes.html#int.from_bytes
+    version = int.from_bytes(decoded_encryption_params[0:1], 
+                              byteorder='big', signed=False)
+    iterations = int.from_bytes(decoded_encryption_params[1:4], 
+                                 byteorder='big', signed=False)
+    salt = decoded_encryption_params[4:20]
+    encrypted_data_key = decoded_encryption_params[20:100]
+    iv = encrypted_data_key[0:16]
+    ciphertext = encrypted_data_key[16:80]
+
+    if params.debug:
+        print('version: ' + str(version))
+        print('iterations: ' + str(iterations))
+        print('salt: ' + str(salt))
+        print('encrypted_data_key: ' + str(encrypted_data_key))
+        print('iv: ' + str(iv))
+        print('ciphertext: ' + str(ciphertext))
+
+    if iterations < 1000:
+        raise CryptoError('Invalid encryption parameters: iterations too low')
+
+    # generate decryption key from master pass and the encryption params
+    prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
+    key = PBKDF2(params.password, salt, 32, iterations, prf)
+
+    if params.debug: print('cipher key: ' + str(key))
+
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    decrypted_data_key = cipher.decrypt(ciphertext)
+
+    if decrypted_data_key[0:32] != decrypted_data_key[32:64]:
+        raise CryptoError('Invalid data key: failed mirror verification')
+
+    if params.debug: print('decrypted_data_key: ' + str(decrypted_data_key))
+
+
+    # decrypt the data key using 
+
+    # deal with the private key 
+    decoded_private_key = base64.urlsafe_b64decode(
+        params.encrypted_private_key+'==')
+
 
 def decrypt_data(json_to_decrypt):
     if not json:

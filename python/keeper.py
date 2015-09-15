@@ -135,10 +135,12 @@ try:
             print ("Communication Error:" + str(e.message))
         except AuthenticationError as e:
             print ("AuthenticationError Error: " + str(e.message))
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as e:
             raise
         except:
-            print('A weird exception occurred.')
+            # kill the app on this - other error
+            print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
+            raise
 
         try:
             params.command = input("Keeper >> ")
