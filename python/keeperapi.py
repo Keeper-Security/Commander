@@ -31,19 +31,19 @@ def login(params):
                    'username':params.email}
 
         try:
-            r = requests.post(params.server, headers=HEADERS, json=payload)             
+            r = requests.post(params.server, headers=HEADERS, json=payload)
         except:
             raise CommunicationError(sys.exc_info()[0])
-                                                                                    
-        if params.debug:                                                              
+
+        if params.debug:
             print('')
-            print('>>> Request server:[' + params.server + ']')                          
-            print('>>> Request headers:[' + str(HEADERS) + ']')                        
-            print('>>> Request JSON:[' + str(payload) + ']')                             
+            print('>>> Request server:[' + params.server + ']')
+            print('>>> Request headers:[' + str(HEADERS) + ']')
+            print('>>> Request JSON:[' + str(payload) + ']')
             print('')
-            print('<<< Response Code:[' + str(r.status_code) + ']')                      
-            print('<<< Response Headers:[' + str(r.headers) + ']')                       
-            print('<<< Response content:[' + str(r.text) + ']')                          
+            print('<<< Response Code:[' + str(r.status_code) + ']')
+            print('<<< Response Headers:[' + str(r.headers) + ']')
+            print('<<< Response content:[' + str(r.text) + ']')
 
         if not 'salt' in r.json():
             if r.json()['result_code'] == 'auth_failed':
@@ -61,8 +61,8 @@ def login(params):
         # converts b'xxxx' to xxxx
         params.auth_verifier = tmp_auth_verifier.decode()
 
-        if params.debug:                                                              
-            print('<<< Auth Verifier:['+str(params.auth_verifier)+']')                          
+        if params.debug:
+            print('<<< Auth Verifier:['+str(params.auth_verifier)+']')
 
 
     success = False
@@ -90,7 +90,7 @@ def login(params):
                   }
 
         try:
-            r = requests.post(params.server, headers=HEADERS, json=payload)             
+            r = requests.post(params.server, headers=HEADERS, json=payload)
         except:
             raise CommunicationError(sys.exc_info()[0])
 
@@ -98,15 +98,15 @@ def login(params):
 
         if params.debug:                                                              
             print('')
-            print('>>> Request server:[' + params.server + ']')                          
-            print('>>> Request headers:[' + str(HEADERS) + ']')                        
-            print('>>> Request JSON:[' + str(payload) + ']')                             
+            print('>>> Request server:[' + params.server + ']')
+            print('>>> Request headers:[' + str(HEADERS) + ']')
+            print('>>> Request JSON:[' + str(payload) + ']')
             print('')
-            print('<<< Response Code:[' + str(r.status_code) + ']')                      
-            print('<<< Response Headers:[' + str(r.headers) + ']')                       
+            print('<<< Response Code:[' + str(r.status_code) + ']')
+            print('<<< Response Headers:[' + str(r.headers) + ']')
             print('<<< Response content:[' + json.dumps(response_json, 
                 sort_keys=True, indent=4) + ']')
-            print('<<< Session Token:['+str(params.session_token)+']')                          
+            print('<<< Session Token:['+str(params.session_token)+']')
 
         if (
             response_json['result_code'] == 'auth_success' and 
@@ -133,7 +133,7 @@ def login(params):
 
                 decrypt_data_key(params)
 
-            if params.debug: params.dump() 
+            if params.debug: params.dump()
 
             success = True
 
@@ -191,7 +191,7 @@ def list(params):
               }
 
     try:
-        r = requests.post(params.server, headers=HEADERS, json=payload)        
+        r = requests.post(params.server, headers=HEADERS, json=payload)
     except:
         raise CommunicationError(sys.exc_info()[0])
 
