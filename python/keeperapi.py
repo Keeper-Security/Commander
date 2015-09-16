@@ -6,6 +6,7 @@ import getpass
 import time
 from keepererror import AuthenticationError
 from keepererror import CommunicationError
+from keepererror import CryptoError
 from Crypto.Hash import SHA256, HMAC
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Cipher import AES
@@ -16,10 +17,11 @@ from Crypto.PublicKey import RSA
 CLIENT_VERSION = 'c9.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
 
-# PKCS7 padding helpers
+# PKCS7 padding helpers for our private key
 BS = 16
 pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
-unpad = lambda s : s[0:-ord(s[-1])]
+unpad_binary = lambda s : s[0:-s[-1]]
+unpad_char = lambda s : s[0:-ord(s[-1])]
 
 def login(params):
     """Login to the server and get session token"""
@@ -236,12 +238,16 @@ def sync_down(params):
             for meta_data in response_json['record_meta_data']:
                 # convert type=2 to type=1 
                 if meta_data['record_key_type'] == 2:
-                    if params.debug: print('Converting type2 key')
-                    if params.debug: print('private key: ' + str(params.private_key))
-                    # params.private_key.decode('utf-8')
-                    key = RSA.importKey(params.private_key)
-                    cipher = PKCS1_v1_5.new(key)
-                    #message = cipher.decrypt(meta_data['record_key'], sentinel)
+                    if params.debug: 
+                        print('Convering type 1 key: ' + \
+                            str(meta_data['record_key']))
+
+                    decoded_key = base64.urlsafe_b64decode(
+                        meta_data['record_key'] +'==')
+                    type1key = params.rsa_key.decrypt(decoded_key)
+
+                    if params.debug: 
+                        print('Type 1 record key: ' + str(type1key)) 
                 # TBD
                 #params.meta_data_cache[meta_data['record_uid']] = meta_data
     
@@ -255,7 +261,7 @@ def sync_down(params):
                 params.record_cache[record['record_uid']] = record
 
         if 'pending_shares_from' in response_json:
-            print('FYI: You have pending share requests.')
+            print('FYI: You have pending share requests.') #TBD prompt user 
 
         if params.debug:
             print('--- Meta Data Cache: ' + str(params.meta_data_cache))
@@ -320,7 +326,7 @@ def decrypt_data_key(params):
 
     # decrypt the <encrypted data key>
     cipher = AES.new(key, AES.MODE_CBC, iv)
-    decrypted_data_key = unpad(cipher.decrypt(ciphertext))
+    decrypted_data_key = cipher.decrypt(ciphertext)
 
     # validate the key is formatted correctly
     if len(decrypted_data_key) != 64:
@@ -332,7 +338,7 @@ def decrypt_data_key(params):
     if params.debug: print('Decrypted data key with success.')
 
     # save the encryption params 
-    params.data_key = decrypted_data_key[0:32] 
+    params.data_key = decrypted_data_key[:32] 
 
 
 def decrypt_private_key(params):
@@ -356,12 +362,13 @@ def decrypt_private_key(params):
 
     if params.debug: print('decoded private key: ' + str(decoded_private_key))
 
-    iv = decoded_private_key[0:16]
-    ciphertext = decoded_private_key[16:len(decoded_private_key)]
+    iv = decoded_private_key[:16]
+    ciphertext = decoded_private_key[16:]
 
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-    params.private_key = unpad(cipher.decrypt(ciphertext))
-    
+    params.private_key = unpad_binary(cipher.decrypt(ciphertext))
+    params.rsa_key = RSA.importKey(params.private_key)
+   
     if params.debug: 
         print('private key: ' + str(params.private_key))
     
