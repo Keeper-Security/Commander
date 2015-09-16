@@ -16,6 +16,7 @@ from Crypto.PublicKey import RSA
 CLIENT_VERSION = 'c9.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
 
+# PKCS7 padding helpers
 BS = 16
 pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
 unpad = lambda s : s[0:-ord(s[-1])]
@@ -129,11 +130,6 @@ def login(params):
 
                 decrypt_data_key(params)
                 decrypt_private_key(params)
-
-<<<<<<< HEAD
-            if params.debug: params.dump()
-=======
->>>>>>> 76c42890c4e7a2d56f93a6619fee2e98405dbfaa
 
             success = True
 
@@ -324,7 +320,7 @@ def decrypt_data_key(params):
 
     # decrypt the <encrypted data key>
     cipher = AES.new(key, AES.MODE_CBC, iv)
-    decrypted_data_key = cipher.decrypt(ciphertext)
+    decrypted_data_key = unpad(cipher.decrypt(ciphertext))
 
     # validate the key is formatted correctly
     if len(decrypted_data_key) != 64:
@@ -364,11 +360,8 @@ def decrypt_private_key(params):
     ciphertext = decoded_private_key[16:len(decoded_private_key)]
 
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-    params.private_key = cipher.decrypt(ciphertext)
+    params.private_key = unpad(cipher.decrypt(ciphertext))
     
-    TBD!!!! unpad()
-
-
     if params.debug: 
         print('private key: ' + str(params.private_key))
     
