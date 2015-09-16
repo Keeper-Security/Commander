@@ -5,8 +5,8 @@ import argparse
 import json
 import getpass
 import keeperapi
-from keepererror import AuthenticationError                                       
-from keepererror import CommunicationError                                        
+from keepererror import AuthenticationError
+from keepererror import CommunicationError
 from keeperparams import KeeperParams
 
 CONFIG_FILENAME = 'config.json'
@@ -49,13 +49,13 @@ def do_command(params):
         params.logout()
     elif params.command == 'clear':
         print(chr(27) + "[2J") 
-    elif params.command == 'list':
-        keeperapi.list(params)
+    elif params.command == 'sync_down':
+        keeperapi.sync_down(params)
     elif params.command == '':
         pass
     else:
         print('\n\nCommands:\n')
-        print('1. login           ... authenticate with server')
+        print('1. sync_down       ... sync all records')
         print('2. logout          ... clear params and logout')
         print('3. search [string] ... find a record')
         print('4. get [UID]       ... display record details')

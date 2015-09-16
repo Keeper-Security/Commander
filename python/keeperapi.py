@@ -9,17 +9,16 @@ from keepererror import CommunicationError
 from Crypto.Hash import SHA256, HMAC
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Cipher import AES
+from Crypto.Cipher import PKCS1_v1_5
 from Crypto import Random
+from Crypto.PublicKey import RSA
 
 CLIENT_VERSION = 'c9.0.0'
-USER_AGENT = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) ' + 
-             'AppleWebKit/537.36 (KHTML, like Gecko) ' + 
-             'Chrome/40.0.2214.111 Safari/537.36')
-LANGUAGE = 'en'
-COUNTRY = 'US'
-HEADERS = {'user-agent': USER_AGENT}
-
 current_milli_time = lambda: int(round(time.time() * 1000))
+
+BS = 16
+pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
+unpad = lambda s : s[0:-ord(s[-1])]
 
 def login(params):
     """Login to the server and get session token"""
@@ -31,14 +30,13 @@ def login(params):
                    'username':params.email}
 
         try:
-            r = requests.post(params.server, headers=HEADERS, json=payload)
+            r = requests.post(params.server, json=payload)
         except:
             raise CommunicationError(sys.exc_info()[0])
 
         if params.debug:
             print('')
             print('>>> Request server:[' + params.server + ']')
-            print('>>> Request headers:[' + str(HEADERS) + ']')
             print('>>> Request JSON:[' + str(payload) + ']')
             print('')
             print('<<< Response Code:[' + str(r.status_code) + ']')
@@ -90,16 +88,15 @@ def login(params):
                   }
 
         try:
-            r = requests.post(params.server, headers=HEADERS, json=payload)
+            r = requests.post(params.server, json=payload)
         except:
             raise CommunicationError(sys.exc_info()[0])
 
         response_json = r.json()
 
-        if params.debug:                                                              
+        if params.debug:
             print('')
             print('>>> Request server:[' + params.server + ']')
-            print('>>> Request headers:[' + str(HEADERS) + ']')
             print('>>> Request JSON:[' + str(payload) + ']')
             print('')
             print('<<< Response Code:[' + str(r.status_code) + ']')
@@ -127,13 +124,16 @@ def login(params):
             if 'keys' in response_json:
                 params.encrypted_private_key = \
                     response_json['keys']['encrypted_private_key']
-                
                 params.encryption_params = \
                     response_json['keys']['encryption_params']
 
                 decrypt_data_key(params)
+                decrypt_private_key(params)
 
+<<<<<<< HEAD
             if params.debug: params.dump()
+=======
+>>>>>>> 76c42890c4e7a2d56f93a6619fee2e98405dbfaa
 
             success = True
 
@@ -163,7 +163,7 @@ def login(params):
         else:
             raise CommunicationError('Unknown problem')
 
-def list(params):
+def sync_down(params):
     if not params.session_token:
         try:
             login(params)
@@ -177,7 +177,7 @@ def list(params):
                    'sfusers',
                    'sfteams'
                ],
-               'revision':0,
+               'revision':params.revision,
                'client_time':current_milli_time(),
                'device_id':'Commander', 
                'device_name':'Commander', 
@@ -191,16 +191,15 @@ def list(params):
               }
 
     try:
-        r = requests.post(params.server, headers=HEADERS, json=payload)
+        r = requests.post(params.server, json=payload)
     except:
         raise CommunicationError(sys.exc_info()[0])
 
     response_json = r.json()
 
-    if params.debug:                                                         
+    if params.debug:
         print('')
         print('>>> Request server:[' + params.server + ']')
-        print('>>> Request headers:[' + str(HEADERS) + ']')
         print('>>> Request JSON:[' + str(payload) + ']')
         print('')
         print('<<< Response Code:[' + str(r.status_code) + ']')
@@ -209,22 +208,104 @@ def list(params):
             sort_keys=True, indent=4) + ']')
 
     if response_json['result'] == 'success':
-        success, json_to_show = decrypt_data(response_json)
-        if success:
-            print('Data retrieved and decrypted.')
-            display_folders_titles_uids()
+
+        if 'full_sync' in response_json:
+            if response_json['full_sync']:
+                if params.debug: print('Full Sync response')
+                params.record_cache = {}  
+                params.meta_data_cache = {}  
+                params.shared_folder_cache = {}  
+
+        if 'revision' in response_json:
+            params.revision = response_json['revision']
+    
+        if 'removed_records' in response_json:
+            for uid in response_json['removed_records']:
+                del params.record_cache[uid]
+    
+        if 'removed_shared_folders' in response_json:
+            for shared_folder in response_json['removed_shared_folders']:
+                if 'records' in shared_folder:
+                    for record in shared_folder['records']: 
+                        if 'record_uid' in record:
+                            record_uid = record['record_uid']
+                            if record_uid in params.record_cache:
+                                if not params.record_cache[record_uid]['owner']:
+                                    if num_folders_with_record(record_uid) == 1:
+                                        del params.record_cache[record_uid]
+            for uid in response_json['removed_shared_folders']:
+                del params.shared_folder_cache[uid]
+
+        if 'record_meta_data' in response_json:
+            for meta_data in response_json['record_meta_data']:
+                # convert type=2 to type=1 
+                if meta_data['record_key_type'] == 2:
+                    if params.debug: print('Converting type2 key')
+                    if params.debug: print('private key: ' + str(params.private_key))
+                    # params.private_key.decode('utf-8')
+                    key = RSA.importKey(params.private_key)
+                    cipher = PKCS1_v1_5.new(key)
+                    #message = cipher.decrypt(meta_data['record_key'], sentinel)
+                # TBD
+                #params.meta_data_cache[meta_data['record_uid']] = meta_data
+    
+        if 'shared_folders' in response_json:
+            for shared_folder in response_json['shared_folders']:
+                params.shared_folder_cache[shared_folder['shared_folder_uid']] \
+                    = shared_folder
+
+        if 'records' in response_json:
+            for record in response_json['records']:
+                params.record_cache[record['record_uid']] = record
+
+        if 'pending_shares_from' in response_json:
+            print('FYI: You have pending share requests.')
+
+        if params.debug:
+            print('--- Meta Data Cache: ' + str(params.meta_data_cache))
+            print('--- Record Cache: ' + str(params.record_cache))
+            print('--- Folders Cache: ' + str(params.shared_folder_cache))
+
+        # Decrypt the data!
+
     else :
         raise CommunicationError('Unknown problem')
 
+def num_folders_with_record(record_uid):
+    counter = 0
+
+    for shared_folder in params.shared_folder_cache:
+        if 'records' in shared_folder:
+            for record in shared_folder['records']:
+                if 'record_uid' in record:
+                    if record['record_uid'] == record_uid:
+                        counter += 1
+
+    return counter
+
+
 def decrypt_data_key(params):
-    """ Decrypt the data key returned by the server """
+    """ Decrypt the data key returned by the server 
+    Format:
+    1 byte: Version number (currently only 1)
+    3 bytes: Iterations, unsigned integer, big endian
+    16 bytes: salt
+    80 bytes: encrypted data key (broken down further below)
+    16 bytes: IV
+    64 bytes: ciphertextIn
+    Key for encrypting the data key: 
+        PBKDF2_with_HMAC_SHA256(iterations, salt, master password, 256-bit)
+    Encryption method: 256-bit AES, CBC mode, no padding
+    Verification: the decrypted ciphertext should contain two 32 byte values, 
+        identical to each other.
+    """
+
     decoded_encryption_params = base64.urlsafe_b64decode(
         params.encryption_params+'==')
 
-    if decoded_encryption_params.__len__() != 100:
+    if len(decoded_encryption_params) != 100:
         raise CryptoError('Invalid encryption params: bad params length')
 
-    # https://docs.python.org/3/library/stdtypes.html#int.from_bytes
     version = int.from_bytes(decoded_encryption_params[0:1], 
                               byteorder='big', signed=False)
     iterations = int.from_bytes(decoded_encryption_params[1:4], 
@@ -234,65 +315,63 @@ def decrypt_data_key(params):
     iv = encrypted_data_key[0:16]
     ciphertext = encrypted_data_key[16:80]
 
-    if params.debug:
-        print('version: ' + str(version))
-        print('iterations: ' + str(iterations))
-        print('salt: ' + str(salt))
-        print('encrypted_data_key: ' + str(encrypted_data_key))
-        print('iv: ' + str(iv))
-        print('ciphertext: ' + str(ciphertext))
-
     if iterations < 1000:
         raise CryptoError('Invalid encryption parameters: iterations too low')
 
-    # generate decryption key from master pass and the encryption params
+    # generate cipher key from master password and encryption params
     prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
     key = PBKDF2(params.password, salt, 32, iterations, prf)
 
-    if params.debug: print('cipher key: ' + str(key))
-
+    # decrypt the <encrypted data key>
     cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted_data_key = cipher.decrypt(ciphertext)
+
+    # validate the key is formatted correctly
+    if len(decrypted_data_key) != 64:
+        raise CryptoError('Invalid data key length')
 
     if decrypted_data_key[0:32] != decrypted_data_key[32:64]:
         raise CryptoError('Invalid data key: failed mirror verification')
 
-    if params.debug: print('decrypted_data_key: ' + str(decrypted_data_key))
+    if params.debug: print('Decrypted data key with success.')
+
+    # save the encryption params 
+    params.data_key = decrypted_data_key[0:32] 
 
 
-    # decrypt the data key using 
-
-    # deal with the private key 
+def decrypt_private_key(params):
+    """ Decrypt the RSA private key
+    PKCS1 formatted private key, which is described by the ASN.1 type:
+    RSAPrivateKey ::= SEQUENCE {
+          version           Version,
+          modulus           INTEGER,  -- n
+          publicExponent    INTEGER,  -- e
+          privateExponent   INTEGER,  -- d
+          prime1            INTEGER,  -- p
+          prime2            INTEGER,  -- q
+          exponent1         INTEGER,  -- d mod (p-1)
+          exponent2         INTEGER,  -- d mod (q-1)
+          coefficient       INTEGER,  -- (inverse of q) mod p
+          otherPrimeInfos   OtherPrimeInfos OPTIONAL
+    }
+    """
     decoded_private_key = base64.urlsafe_b64decode(
         params.encrypted_private_key+'==')
 
+    if params.debug: print('decoded private key: ' + str(decoded_private_key))
 
-def decrypt_data(json_to_decrypt):
-    if not json:
-        return False
+    iv = decoded_private_key[0:16]
+    ciphertext = decoded_private_key[16:len(decoded_private_key)]
 
-    if not 'private_key' in json_to_decrypt:
-        print('Unable to decrypt: no private key provided.')
-        return False
+    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+    params.private_key = cipher.decrypt(ciphertext)
+    
+    TBD!!!! unpad()
 
-    print('Decrypting private_key')
-    json_to_decrypt['private_key']
 
-    if 'shared_folders' in json_to_decrypt:
-        pass
-
-    if 'records' in json_to_decrypt:
-        pass
-
-    if 'non_shared_data' in json_to_decrypt:
-        pass
-
-    if 'record_meta_data' in json_to_decrypt:
-        pass
-
-    if 'pending_shares_from' in json_to_decrypt:
-        if json_to_decrypt['pending_shares_from']:
-            print('FYI: You have pending share requests.')
+    if params.debug: 
+        print('private key: ' + str(params.private_key))
+    
 
 def display_folders_titles_uids(json_to_show):
     pass
