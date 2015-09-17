@@ -195,6 +195,21 @@ def sync_down(params):
 
     response_json = r.json()
 
+    if response_json['result_code'] == 'auth_failed':
+        if params.debug: print('Re-authorizing.')
+
+        try:
+            login(params)
+        except:
+            raise
+
+    try:
+        r = requests.post(params.server, json=payload)
+    except:
+        raise CommunicationError(sys.exc_info()[0])
+
+    response_json = r.json()
+
     if params.debug:
         print('')
         print('>>> Request server:[' + params.server + ']')
@@ -378,22 +393,11 @@ def decrypt_private_key(params):
           otherPrimeInfos   OtherPrimeInfos OPTIONAL
     }
     """
-    if params.debug: print('DEBUG 1: params.encrypted_private_key: ' + str(params.encrypted_private_key))
-
     decoded_private_key = base64.urlsafe_b64decode(
         params.encrypted_private_key+'==')
 
-    if params.debug: print('DEBUG 2: decoded_private_key: ' + str(decoded_private_key))
-
     iv = decoded_private_key[:16]
-
-    if params.debug: print('DEBUG 3: iv: ' + str(iv))
-
     ciphertext = decoded_private_key[16:]
-
-    if params.debug: print('DEBUG 4: ciphertext: ' + str(ciphertext)) 
-    if params.debug: print('DEBUG 5: params.data_key: ' + str(params.data_key)) 
-
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
     decrypted_private_key = cipher.decrypt(ciphertext)
     params.private_key = unpad_binary(decrypted_private_key)
