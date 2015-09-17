@@ -4,7 +4,8 @@ class KeeperParams:
     def __init__(self,server='',email='',password='',mfa_token='',
                  mfa_type='',command='',session_token='',
                  salt='',iterations='',encrypted_private_key='',
-                 encryption_params='',data_key='',private_key='',revision=0,
+                 encryption_params='',data_key='',private_key='',
+                 revision=0, rsa_key='',
                  record_cache={}, meta_data_cache={}, shared_folder_cache={},
                  debug=False):
         self.server = server 
@@ -23,6 +24,7 @@ class KeeperParams:
         self.record_cache = record_cache
         self.meta_data_cache = meta_data_cache
         self.shared_folder_cache = shared_folder_cache
+        self.rsa_key = rsa_key
         self.debug = debug
 
     def logout(self):
@@ -68,6 +70,9 @@ class KeeperParams:
 
         if self.private_key:
             print ('>> Private Key: ' + str(self.private_key))
+
+        if self.rsa_key:
+            print ('>> RSA Key: ' + str(self.rsa_key))
 
         if self.debug:
             print ('>> Debug: ' + str(self.debug))

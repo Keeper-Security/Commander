@@ -4,15 +4,15 @@ import requests
 import base64
 import getpass
 import time
+import os
 from keepererror import AuthenticationError
 from keepererror import CommunicationError
 from keepererror import CryptoError
-from Crypto.Hash import SHA256, HMAC
-from Crypto.Protocol.KDF import PBKDF2
-from Crypto.Cipher import AES
-from Crypto.Cipher import PKCS1_v1_5
 from Crypto import Random
+from Crypto.Hash import SHA256, HMAC, SHA
+from Crypto.Protocol.KDF import PBKDF2
 from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_v1_5
 
 CLIENT_VERSION = 'c9.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
@@ -239,18 +239,39 @@ def sync_down(params):
                 # convert type=2 to type=1 
                 if meta_data['record_key_type'] == 2:
                     if params.debug: 
-                        print('Convering type 1 key: ' + \
-                            str(meta_data['record_key']))
+                        print('Converting RSA-encrypted key')
 
+                    # decrypt the type2 key using their RSA key
                     decoded_key = base64.urlsafe_b64decode(
                         meta_data['record_key'] +'==')
-                    type1key = params.rsa_key.decrypt(decoded_key)
+                    dsize = SHA.digest_size
+                    sentinel = Random.new().read(15+dsize)
+                    cipher = PKCS1_v1_5.new(params.rsa_key)
+                    raw_key = cipher.decrypt(decoded_key, sentinel)
+
+                    if len(raw_key) != 32:
+                        raise CryptoError('Invalid record key length')
 
                     if params.debug: 
-                        print('Type 1 record key: ' + str(type1key)) 
-                # TBD
-                #params.meta_data_cache[meta_data['record_uid']] = meta_data
+                        print('Before: ' + str(meta_data['record_key'])) 
+                        print('After: ' + str(raw_key)) 
+
+                    # re-encrypt as type1 key with user's data key
+                    cipher = AES.new(params.data_key, \
+                                    AES.MODE_CBC, os.urandom(16))
+                    type1key = cipher.encrypt(raw_key)
+
+                    # store b64 encoded
+                    meta_data['record_key'] = base64.urlsafe_b64encode(type1key)
+                    meta_data['record_key_type'] = 1 
+
+                    if params.debug: 
+                        print('encrypted record key: ' + str(type1key)) 
+                        print('base64: ' + str(meta_data['record_key'])) 
+
+                params.meta_data_cache[meta_data['record_uid']] = meta_data
     
+
         if 'shared_folders' in response_json:
             for shared_folder in response_json['shared_folders']:
                 params.shared_folder_cache[shared_folder['shared_folder_uid']] \
@@ -332,7 +353,7 @@ def decrypt_data_key(params):
     if len(decrypted_data_key) != 64:
         raise CryptoError('Invalid data key length')
 
-    if decrypted_data_key[0:32] != decrypted_data_key[32:64]:
+    if decrypted_data_key[:32] != decrypted_data_key[32:]:
         raise CryptoError('Invalid data key: failed mirror verification')
 
     if params.debug: print('Decrypted data key with success.')
@@ -357,20 +378,33 @@ def decrypt_private_key(params):
           otherPrimeInfos   OtherPrimeInfos OPTIONAL
     }
     """
+    if params.debug: print('DEBUG 1: params.encrypted_private_key: ' + str(params.encrypted_private_key))
+
     decoded_private_key = base64.urlsafe_b64decode(
         params.encrypted_private_key+'==')
 
-    if params.debug: print('decoded private key: ' + str(decoded_private_key))
+    if params.debug: print('DEBUG 2: decoded_private_key: ' + str(decoded_private_key))
 
     iv = decoded_private_key[:16]
+
+    if params.debug: print('DEBUG 3: iv: ' + str(iv))
+
     ciphertext = decoded_private_key[16:]
 
+    if params.debug: print('DEBUG 4: ciphertext: ' + str(ciphertext)) 
+    if params.debug: print('DEBUG 5: params.data_key: ' + str(params.data_key)) 
+
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-    params.private_key = unpad_binary(cipher.decrypt(ciphertext))
+    decrypted_private_key = cipher.decrypt(ciphertext)
+    params.private_key = unpad_binary(decrypted_private_key)
+
+    if params.debug: print('RSA key: ' + str(decrypted_private_key))
+    if params.debug: print('base64 RSA key: ' + str(params.private_key))
+
     params.rsa_key = RSA.importKey(params.private_key)
    
     if params.debug: 
-        print('private key: ' + str(params.private_key))
+        print('RSA private key: ' + str(params.private_key))
     
 
 def display_folders_titles_uids(json_to_show):
