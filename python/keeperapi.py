@@ -284,16 +284,23 @@ def sync_down(params):
                         print('encrypted record key: ' + str(type1key)) 
                         print('base64: ' + str(meta_data['record_key'])) 
 
+                # add to local cache
                 params.meta_data_cache[meta_data['record_uid']] = meta_data
     
 
         if 'shared_folders' in response_json:
             for shared_folder in response_json['shared_folders']:
+                # perform in-place decryption of the data
+                if shared_folder['key_type'] == 1:
+                    
+                if shared_folder['key_type'] == 2:
+                
                 params.shared_folder_cache[shared_folder['shared_folder_uid']] \
                     = shared_folder
 
         if 'records' in response_json:
             for record in response_json['records']:
+                # perform in-place decryption of the data
                 params.record_cache[record['record_uid']] = record
 
         if 'pending_shares_from' in response_json:
