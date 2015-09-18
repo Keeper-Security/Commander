@@ -162,13 +162,10 @@ def login(params):
             raise CommunicationError('Unknown problem')
 
 def sync_down(params):
-    if not params.session_token:
-        try:
-            login(params)
-        except:
-            raise
-            
-    payload = {
+    """Sync full or partial data down to the client"""
+
+    def make_json(params):
+        return {
                'include':[
                    'sfheaders',
                    'sfrecords',
@@ -186,8 +183,16 @@ def sync_down(params):
                '2fa_type':params.mfa_type, 
                'session_token':params.session_token, 
                'username':params.email
-              }
-
+        }
+        
+    if not params.session_token:
+        try:
+            login(params)
+        except:
+            raise
+            
+    payload = make_json(params)
+    
     try:
         r = requests.post(params.server, json=payload)
     except:
@@ -202,6 +207,8 @@ def sync_down(params):
             login(params)
         except:
             raise
+
+    payload = make_json(params)
 
     try:
         r = requests.post(params.server, json=payload)
@@ -291,10 +298,33 @@ def sync_down(params):
         if 'shared_folders' in response_json:
             for shared_folder in response_json['shared_folders']:
                 # perform in-place decryption of the data
+                decoded_key = base64.urlsafe_b64decode(
+                    shared_folder['shared_folder_key'] +'==')
+
                 if shared_folder['key_type'] == 1:
-                    
+                    # decrypt key with data_key 
+                    iv = decoded_key[:16]
+                    ciphertext = decoded_key[16:]
+                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+                    raw_key = unpad_binary(cipher.decrypt(ciphertext))
+
                 if shared_folder['key_type'] == 2:
-                
+                    # decrypt key rsa_key
+                    dsize = SHA.digest_size
+                    sentinel = Random.new().read(15+dsize)
+                    cipher = PKCS1_v1_5.new(params.rsa_key)
+                    raw_key = cipher.decrypt(decoded_key, sentinel)
+
+                if params.debug: 
+                    print('Type=' + str(shared_folder['key_type']) + \
+                        'Record Key: ' + str(raw_key))
+                if len(raw_key) != 32:
+                    raise CryptoError('Invalid record key length')
+                    
+                # save the decrypted key
+                shared_folder['shared_folder_key'] = raw_key
+
+                # cache the folder
                 params.shared_folder_cache[shared_folder['shared_folder_uid']] \
                     = shared_folder
 
