@@ -302,14 +302,14 @@ def sync_down(params):
                     shared_folder['shared_folder_key'] +'==')
 
                 if shared_folder['key_type'] == 1:
-                    # decrypt key with data_key 
+                    # decrypt folder key with data_key 
                     iv = decoded_key[:16]
                     ciphertext = decoded_key[16:]
                     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
                     raw_key = unpad_binary(cipher.decrypt(ciphertext))
 
                 if shared_folder['key_type'] == 2:
-                    # decrypt key rsa_key
+                    # decrypt folder key with RSA key
                     dsize = SHA.digest_size
                     sentinel = Random.new().read(15+dsize)
                     cipher = PKCS1_v1_5.new(params.rsa_key)
@@ -317,14 +317,26 @@ def sync_down(params):
 
                 if params.debug: 
                     print('Type=' + str(shared_folder['key_type']) + \
-                        'Record Key: ' + str(raw_key))
+                        ' Record Key: ' + str(raw_key))
+
                 if len(raw_key) != 32:
-                    raise CryptoError('Invalid record key length')
+                    raise CryptoError('Invalid folder key length')
                     
                 # save the decrypted key
                 shared_folder['shared_folder_key'] = raw_key
 
-                # cache the folder
+                # decrypt the folder name
+                decoded_folder_name = base64.urlsafe_b64decode(
+                    shared_folder['name'] +'==')
+                iv = decoded_folder_name[:16]
+                ciphertext = decoded_folder_name[16:]
+                cipher = AES.new(raw_key, AES.MODE_CBC, iv)
+                folder_name = unpad_binary(cipher.decrypt(ciphertext))
+
+                if params.debug: print('Folder name: ' + str(folder_name))
+                shared_folder['name'] = folder_name
+
+                # add to local cache
                 params.shared_folder_cache[shared_folder['shared_folder_uid']] \
                     = shared_folder
 
