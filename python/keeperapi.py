@@ -59,7 +59,7 @@ def login(params):
             PBKDF2(params.password, params.salt, 
                 32, params.iterations, prf))
 
-        # converts b'xxxx' to xxxx
+        # converts bytestream (b') to string 
         params.auth_verifier = tmp_auth_verifier.decode()
 
         if params.debug:
@@ -256,9 +256,9 @@ def sync_down(params):
             for uid in response_json['removed_shared_folders']:
                 del params.shared_folder_cache[uid]
 
+        # convert record keys from RSA to AES-256
         if 'record_meta_data' in response_json:
             for meta_data in response_json['record_meta_data']:
-                # convert type=2 to type=1 
                 if meta_data['record_key_type'] == 2:
                     if params.debug: 
                         print('Converting RSA-encrypted key')
@@ -269,22 +269,24 @@ def sync_down(params):
                     dsize = SHA.digest_size
                     sentinel = Random.new().read(15+dsize)
                     cipher = PKCS1_v1_5.new(params.rsa_key)
-                    raw_key = cipher.decrypt(decoded_key, sentinel)
+                    unencrypted_key = cipher.decrypt(decoded_key, sentinel)
 
-                    if len(raw_key) != 32:
+                    if len(unencrypted_key) != 32:
                         raise CryptoError('Invalid record key length')
 
                     if params.debug: 
                         print('Before: ' + str(meta_data['record_key'])) 
-                        print('After: ' + str(raw_key)) 
+                        print('After: ' + str(unencrypted_key)) 
 
                     # re-encrypt as type1 key with user's data key
-                    cipher = AES.new(params.data_key, \
-                                    AES.MODE_CBC, os.urandom(16))
-                    type1key = cipher.encrypt(raw_key)
+                    iv = os.urandom(16)
+                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+                    type1key = iv + cipher.encrypt(unencrypted_key)
 
-                    # store b64 encoded
-                    meta_data['record_key'] = base64.urlsafe_b64encode(type1key)
+                    # store as b64 encoded string
+                    # note: decode() converts bytestream (b') to string
+                    meta_data['record_key'] = \
+                        base64.urlsafe_b64encode(type1key).decode()
                     meta_data['record_key_type'] = 1 
 
                     if params.debug: 
@@ -295,9 +297,9 @@ def sync_down(params):
                 params.meta_data_cache[meta_data['record_uid']] = meta_data
     
 
+        # decrypt shared folder keys and folder name
         if 'shared_folders' in response_json:
             for shared_folder in response_json['shared_folders']:
-                # perform in-place decryption of the data
                 decoded_key = base64.urlsafe_b64decode(
                     shared_folder['shared_folder_key'] +'==')
 
@@ -306,31 +308,31 @@ def sync_down(params):
                     iv = decoded_key[:16]
                     ciphertext = decoded_key[16:]
                     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-                    raw_key = unpad_binary(cipher.decrypt(ciphertext))
+                    unencrypted_key = unpad_binary(cipher.decrypt(ciphertext))
 
                 if shared_folder['key_type'] == 2:
                     # decrypt folder key with RSA key
                     dsize = SHA.digest_size
                     sentinel = Random.new().read(15+dsize)
                     cipher = PKCS1_v1_5.new(params.rsa_key)
-                    raw_key = cipher.decrypt(decoded_key, sentinel)
+                    unencrypted_key = cipher.decrypt(decoded_key, sentinel)
 
                 if params.debug: 
                     print('Type=' + str(shared_folder['key_type']) + \
-                        ' Record Key: ' + str(raw_key))
+                        ' Record Key: ' + str(unencrypted_key))
 
-                if len(raw_key) != 32:
+                if len(unencrypted_key) != 32:
                     raise CryptoError('Invalid folder key length')
                     
                 # save the decrypted key
-                shared_folder['shared_folder_key'] = raw_key
+                shared_folder['shared_folder_key'] = unencrypted_key
 
                 # decrypt the folder name
                 decoded_folder_name = base64.urlsafe_b64decode(
                     shared_folder['name'] +'==')
                 iv = decoded_folder_name[:16]
                 ciphertext = decoded_folder_name[16:]
-                cipher = AES.new(raw_key, AES.MODE_CBC, iv)
+                cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
                 folder_name = unpad_binary(cipher.decrypt(ciphertext))
 
                 if params.debug: print('Folder name: ' + str(folder_name))
@@ -340,10 +342,71 @@ def sync_down(params):
                 params.shared_folder_cache[shared_folder['shared_folder_uid']] \
                     = shared_folder
 
+                print('Shared folder cache: ' + str(params.shared_folder_cache))
+
+        # decrypt records 
         if 'records' in response_json:
             for record in response_json['records']:
-                # perform in-place decryption of the data
-                params.record_cache[record['record_uid']] = record
+                record_uid = record['record_uid']
+
+                if params.debug: 
+                    print('Looking for record key on ' + str(record_uid))
+
+                if record_uid in params.meta_data_cache:
+                    # merge meta data into record
+                    record.update(params.meta_data_cache[record_uid])
+                   
+                unencrypted_key = ''
+                if 'record_key' in record:
+                    # decrypt record key with my data key
+                    if params.debug: print('Record: ' + str(record))
+                    record_key = record['record_key']
+                    decoded_key = base64.urlsafe_b64decode(record_key+'==')
+                    iv = decoded_key[:16]
+                    ciphertext = decoded_key[16:]
+                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+                    unencrypted_key = cipher.decrypt(ciphertext)[:32]
+                    if params.debug: 
+                        print('...unencrypted_key=' + str(unencrypted_key))
+                else: 
+                    # If record has no record_key, look in a shared folder
+                    for shared_folder_uid in params.shared_folder_cache:
+                        shared_folder = \
+                            params.shared_folder_cache[shared_folder_uid]
+                        sf_key = shared_folder['shared_folder_key']
+                        if 'records' in shared_folder:
+                            sf_records = shared_folder['records']
+                            for sf_record in sf_records:
+                                if 'record_uid' in sf_record:
+                                    if sf_record['record_uid'] == record_uid:
+                                        if 'record_key' in sf_record:
+                                            sf_rec_key = sf_record['record_key']
+                                            record['record_key'] = sf_rec_key
+
+                                            decoded_key = \
+                                                base64.urlsafe_b64decode(
+                                                sf_rec_key +'==')
+                                             
+                                            iv = decoded_key[:16]
+                                            ciphertext = decoded_key[16:]
+                                            cipher = AES.new(sf_key, \
+                                                AES.MODE_CBC, iv)
+                                            unencrypted_key = \
+                                                cipher.decrypt(ciphertext)[:32]
+
+                if unencrypted_key:
+                    if len(unencrypted_key) != 32:
+                        raise CryptoError('Invalid record key length')
+
+                    # save the decrypted key
+                    record['record_key'] = unencrypted_key
+                else:
+                    raise CryptoError('No record key found')
+
+                if params.debug: print('Got record key: ' + str(unencrypted_key))
+
+                # now perform in-place decryption of the record data
+                # TBD
 
         if 'pending_shares_from' in response_json:
             print('FYI: You have pending share requests.') #TBD prompt user 
