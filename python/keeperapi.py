@@ -344,7 +344,7 @@ def sync_down(params):
 
                 print('Shared folder cache: ' + str(params.shared_folder_cache))
 
-        # decrypt records 
+        # decrypt record keys
         if 'records' in response_json:
             for record in response_json['records']:
                 record_uid = record['record_uid']
@@ -403,20 +403,32 @@ def sync_down(params):
                 else:
                     raise CryptoError('No record key found')
 
+
                 if params.debug: print('Got record key: ' + str(unencrypted_key))
 
-                # now perform in-place decryption of the record data
-                # TBD
+                # decrypt record data and extra with record key
+                decoded_data = base64.urlsafe_b64decode(record['data'] +'==')
+                iv = decoded_data[:16]
+                ciphertext = decoded_data[16:]
+                cipher = AES.new(record['record_key'], AES.MODE_CBC, iv)
+                record['data'] = unpad_binary(cipher.decrypt(ciphertext))
+
+                decoded_extra = base64.urlsafe_b64decode(record['extra'] +'==')
+                iv = decoded_extra[:16]
+                ciphertext = decoded_extra[16:]
+                cipher = AES.new(record['record_key'], AES.MODE_CBC, iv)
+                record['extra'] = unpad_binary(cipher.decrypt(ciphertext))
+
+                # Store the record in the cache
+                params.record_cache[record_uid] = record 
 
         if 'pending_shares_from' in response_json:
-            print('FYI: You have pending share requests.') #TBD prompt user 
+            print('Note: You have pending share requests.')
 
         if params.debug:
             print('--- Meta Data Cache: ' + str(params.meta_data_cache))
             print('--- Record Cache: ' + str(params.record_cache))
             print('--- Folders Cache: ' + str(params.shared_folder_cache))
-
-        # Decrypt the data!
 
     else :
         raise CommunicationError('Unknown problem')
