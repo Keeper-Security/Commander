@@ -1,6 +1,7 @@
 import sys
 import json
 import base64
+import re
 from record import Record
 
 def formatted_list(params):
@@ -95,3 +96,53 @@ def formatted_record(params,record_uid):
         print('{0:>20s}: {1:<20s}'.format('Notes',rec.notes))
 
     print('') 
+
+def formatted_search(params, searchstring):
+    """Search and display folders/titles/uids"""
+
+    if not params.record_cache:
+        print('No record cache.  Sync down first.')
+        return
+
+    p = re.compile(searchstring)
+
+    rec = Record()
+    all_recs = []
+
+    for record_uid in params.record_cache:
+
+        record = params.record_cache[record_uid]
+        data = json.loads(record['data'].decode('utf-8'))
+
+        rec = Record()
+        rec.record_uid = record_uid
+        rec.folder = data['folder']
+        rec.title = data['title']
+        rec.login = data['secret2']
+        rec.password = data['secret1']
+        rec.notes = data['notes']
+        rec.link = data['link']
+        rec.custom_fields = data['custom']
+
+        if p.match(rec.record_uid + rec.folder + rec.title + \
+                   rec.login + rec.password + rec.notes + \
+                   rec.link + str(rec.custom_fields) ):
+            all_recs.append(rec)
+
+    # Sort by folder+title
+    all_recs.sort(key=lambda x: (x.folder + x.title).lower(), reverse=False)
+
+    if len(all_recs) > 0:
+        print('')
+        print('   #  {0:<20s}   {1:<20s} {2:<20s}'.format(
+            'Record UID', 'Folder', 'Title'))
+        print('      {0:<20s}   {1:<20s} {2:<20s}'.format(
+            '-----------', '------', '-----'))
+    
+        i = 1
+        for r in all_recs:
+            print('{0:4d}. {1:<20s} {2:<20s} {3:}'.format(
+               i, r.record_uid, r.folder[:20], r.title[:100]))
+            i = i+1
+    
+        print('')

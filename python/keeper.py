@@ -43,33 +43,33 @@ def goodbye():
 
 def do_command(params):
 
-    if ( params.command == 'quit' or \
-         params.command == 'exit' or \
-         params.command == 'q'): 
+    if (params.command == 'q'): 
         return False 
-    elif ((params.command == 'login') or (params.command == 'li')):
-        keeperapi.login(params)
-    elif ((params.command == 'ls') or (params.command == 'list')):
-        display.formatted_list(params)
-    elif (params.command[:3] == 'get'): 
-        display.formatted_record(params, params.command[4:])
+
+    elif (params.command == 'l'): 
+        display.formatted_search(params, '')
+
     elif (params.command[:1] == 'g'): 
         display.formatted_record(params, params.command[2:])
-    elif ((params.command == 'logout') or (params.command == 'lo')):
-        params.logout()
-    elif ((params.command == 'clear') or (params.command == 'c')):
+
+    elif (params.command == 'c'):
         print(chr(27) + "[2J") 
-    elif ((params.command == 'sync_down') or (params.command == 'sd')):
+
+    elif (params.command[:1] == 's'): 
+        display.formatted_search(params, params.command[2:])
+
+    elif (params.command == 'd'):
         keeperapi.sync_down(params)
+
     elif params.command == '':
         pass
+
     else:
         print('\n\nCommands:\n')
-        print('  sd        ... sync down all records')
-        print('  lo        ... logout')
-        print('  li        ... login')
-        print('  s /regex/ ... search with regex')
-        print('  g <UID>   ... show record details for uid')
+        print('  d         ... download & decrypt data')
+        print('  l         ... list folders and titles')
+        print('  s <regex> ... search with regular expression')
+        print('  g <uid>   ... get record details for uid')
         print('  c         ... clear the screen')
         print('  q         ... quit')
         print('')
