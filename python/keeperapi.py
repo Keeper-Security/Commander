@@ -342,7 +342,6 @@ def sync_down(params):
                 params.shared_folder_cache[shared_folder['shared_folder_uid']] \
                     = shared_folder
 
-                print('Shared folder cache: ' + str(params.shared_folder_cache))
 
         # decrypt record keys
         if 'records' in response_json:
@@ -429,6 +428,11 @@ def sync_down(params):
             print('--- Meta Data Cache: ' + str(params.meta_data_cache))
             print('--- Record Cache: ' + str(params.record_cache))
             print('--- Folders Cache: ' + str(params.shared_folder_cache))
+
+        if len(params.record_cache) == 1:
+            print('-> Cached 1 record')
+        else:
+            print('-> Cached ' + str(len(params.record_cache)) + ' records')
 
     else :
         raise CommunicationError('Unknown problem')

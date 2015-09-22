@@ -12,6 +12,7 @@ from keeperparams import KeeperParams
 CONFIG_FILENAME = 'config.json'
 
 params = KeeperParams()
+stack = [] 
 
 class bcolors:
     HEADER = '\033[95m'
@@ -41,28 +42,34 @@ def goodbye():
 
 def do_command(params):
 
-    if (params.command == 'quit' or params.command == 'exit'): 
+    if ( params.command == 'quit' or \
+         params.command == 'exit' or \
+         params.command == 'q'): 
         return False 
-    elif params.command == 'login':
+    elif ((params.command == 'login') or (params.command == 'li')):
         keeperapi.login(params)
-    elif params.command == 'logout':
+    elif ((params.command == 'logout') or (params.command == 'lo')):
         params.logout()
-    elif params.command == 'clear':
+    elif ((params.command == 'clear') or (params.command == 'c')):
         print(chr(27) + "[2J") 
-    elif params.command == 'sync_down':
+    elif ((params.command == 'sync_down') or (params.command == 'sd')):
         keeperapi.sync_down(params)
     elif params.command == '':
         pass
     else:
         print('\n\nCommands:\n')
-        print('1. sync_down       ... sync all records')
-        print('2. logout          ... clear params and logout')
-        print('3. search [string] ... find a record')
-        print('4. get [UID]       ... display record details')
-        print('5. clear           ... clear the screen')
-        print('6. help            ... show this screen')
-        print('7. quit            ... exit Keeper')
+        print('  sd        ... sync down all records')
+        print('  lo        ... logout')
+        print('  li        ... login')
+        print('  s /regex/ ... search with regex')
+        print('  g <UID>   ... show record details for uid')
+        print('  c         ... clear the screen')
+        print('  q         ... quit')
         print('')
+
+    if params.command:
+        stack.append(params.command)
+        stack.reverse()
 
     return True
 
@@ -127,7 +134,16 @@ try:
         while not params.password:
             params.password = getpass.getpass(prompt='Password: ', stream=None) 
 
+    # go into interactive mode
     while True:
+        if not params.command:
+            try:
+                params.command = input("Keeper > ") 
+            except KeyboardInterrupt:
+                print('')
+            except EOFError:
+                raise KeyboardInterrupt 
+
         try:
             if not do_command(params):
                 raise KeyboardInterrupt 
@@ -138,15 +154,11 @@ try:
         except KeyboardInterrupt as e:
             raise
         except:
-            # kill the app on this - other error
             print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
             raise
 
-        try:
-            params.command = input("Keeper >> ")
-        except EOFError:
-            pass
-                
+        params.command = ''
+
 except KeyboardInterrupt:
     goodbye()
 
