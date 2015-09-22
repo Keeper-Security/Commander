@@ -5,6 +5,7 @@ import argparse
 import json
 import getpass
 import keeperapi
+import display
 from keepererror import AuthenticationError
 from keepererror import CommunicationError
 from keeperparams import KeeperParams
@@ -48,6 +49,12 @@ def do_command(params):
         return False 
     elif ((params.command == 'login') or (params.command == 'li')):
         keeperapi.login(params)
+    elif ((params.command == 'ls') or (params.command == 'list')):
+        display.formatted_list(params)
+    elif (params.command[:3] == 'get'): 
+        display.formatted_record(params, params.command[4:])
+    elif (params.command[:1] == 'g'): 
+        display.formatted_record(params, params.command[2:])
     elif ((params.command == 'logout') or (params.command == 'lo')):
         params.logout()
     elif ((params.command == 'clear') or (params.command == 'c')):
