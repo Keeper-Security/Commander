@@ -4,50 +4,28 @@ import base64
 import re
 from record import Record
 
-def formatted_list(params):
-    """Display list of folders/titles/uids"""
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
-    if not params.record_cache:
-        print('No records to display')
-        return
-
-    print('') 
-    print('   #  {0:<20s}   {1:<20s} {2:<20s}'.format(
-        'Record UID', 'Folder', 'Title'))
-    print('      {0:<20s}   {1:<20s} {2:<20s}'.format(
-        '-----------', '------', '-----'))
-
-    rec = Record() 
-    all_recs = []
-
-    for record_uid in params.record_cache:
-
-        record = params.record_cache[record_uid]
-        data = json.loads(record['data'].decode('utf-8')) 
-
-        rec = Record()
-        rec.record_uid = record_uid 
-        rec.folder = data['folder']
-        rec.title = data['title']
-        rec.login = data['secret2']
-        rec.password = data['secret1']
-        rec.notes = data['notes']
-        rec.link = data['link']
-        rec.custom_fields = data['custom']
-        all_recs.append(rec)
-
-    # Sort by folder+title
-    all_recs.sort(key=lambda x: (x.folder + x.title).lower(), reverse=False)
-
-    # display list
-    i = 1
-    for r in all_recs:
-        print('{0:4d}. {1:<20s} {2:<20s} {3:}'.format(
-           i, r.record_uid, r.folder[:20], r.title[:100]))
-        i = i+1
-        
-    print('') 
-
+def welcome():
+    print('\n')
+    print(bcolors.OKBLUE,' _  __  ' + bcolors.ENDC)
+    print(bcolors.OKBLUE,'| |/ /___ ___ _ __  ___ _ _ ®' + bcolors.ENDC)
+    print(bcolors.OKBLUE,'| \' </ -_) -_) \'_ \\/ -_) \'_|' + bcolors.ENDC)
+    print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
+    print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
+    print('')
+    print(bcolors.FAIL,' Keeper Commander v1.2' + bcolors.ENDC)
+    print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
+    print('')
+    print('')
 
 def formatted_record(params,record_uid):    
 
@@ -104,7 +82,8 @@ def formatted_search(params, searchstring):
         print('No record cache.  Sync down first.')
         return
 
-    p = re.compile(searchstring)
+    print('Searching for ' + searchstring)
+    p = re.compile(searchstring.lower())
 
     rec = Record()
     all_recs = []
@@ -124,9 +103,12 @@ def formatted_search(params, searchstring):
         rec.link = data['link']
         rec.custom_fields = data['custom']
 
-        if p.match(rec.record_uid + rec.folder + rec.title + \
-                   rec.login + rec.password + rec.notes + \
-                   rec.link + str(rec.custom_fields) ):
+        target = rec.record_uid + rec.folder + rec.title + \
+                 rec.login + rec.password + rec.notes + \
+                 rec.link + str(rec.custom_fields);
+        target = target.lower()
+
+        if p.search(target):
             all_recs.append(rec)
 
     # Sort by folder+title
@@ -146,3 +128,24 @@ def formatted_search(params, searchstring):
             i = i+1
     
         print('')
+
+    # Under 5 recs, just display on the screen
+    if len(all_recs) < 5:
+        for r in all_recs:
+            formatted_record(params, r.record_uid)
+
+
+def formatted_history(history):
+    """ Show the history of commands"""
+
+    if not history: return
+    if len(history) == 0: return
+
+    print('')
+    print('Command history:')
+    print('----------------')
+
+    for h in history:
+        print(h)
+
+    print('')

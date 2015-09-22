@@ -15,27 +15,7 @@ CONFIG_FILENAME = 'config.json'
 params = KeeperParams()
 stack = [] 
 
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-print('\n')
-print(bcolors.OKBLUE,' _  __  ' + bcolors.ENDC)
-print(bcolors.OKBLUE,'| |/ /___ ___ _ __  ___ _ _ ®' + bcolors.ENDC)
-print(bcolors.OKBLUE,'| \' </ -_) -_) \'_ \\/ -_) \'_|' + bcolors.ENDC)
-print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
-print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
-print('')
-print(bcolors.FAIL,' Keeper Commander v1.2' + bcolors.ENDC)
-print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
-print('')
-print('')
+display.welcome()
 
 def goodbye():
     print('\nGoodbye.\n');
@@ -61,6 +41,17 @@ def do_command(params):
     elif (params.command == 'd'):
         keeperapi.sync_down(params)
 
+    elif (params.command == 'h'):
+        display.formatted_history(stack) 
+
+    elif (params.command == 'debug'): 
+        if params.debug: 
+            params.debug = False
+            print('Debug OFF')
+        else:
+            params.debug = True
+            print('Debug ON')
+
     elif params.command == '':
         pass
 
@@ -71,12 +62,14 @@ def do_command(params):
         print('  s <regex> ... search with regular expression')
         print('  g <uid>   ... get record details for uid')
         print('  c         ... clear the screen')
+        print('  h         ... show command history')
         print('  q         ... quit')
         print('')
 
     if params.command:
-        stack.append(params.command)
-        stack.reverse()
+        if params.command != 'h':
+            stack.append(params.command)
+            stack.reverse()
 
     return True
 

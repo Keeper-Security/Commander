@@ -430,9 +430,10 @@ def sync_down(params):
             print('--- Folders Cache: ' + str(params.shared_folder_cache))
 
         if len(params.record_cache) == 1:
-            print('-> Cached 1 record')
+            print('...Downloaded & Decrypted 1 Record')
         else:
-            print('-> Cached ' + str(len(params.record_cache)) + ' records')
+            print('...Downloaded & Decrypted ' + \
+                str(len(params.record_cache)) + ' Records')
 
     else :
         raise CommunicationError('Unknown problem')
