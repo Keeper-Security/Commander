@@ -1,3 +1,14 @@
+#  _  __  
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|            
+#
+# Keeper Commander 
+# Copyright 2015 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import sys
 import json
 import base64
@@ -29,7 +40,7 @@ def welcome():
 
 def formatted_record(params,record_uid):    
 
-    record_uid.strip()
+    record_uid = record_uid.strip()
 
     if not record_uid:
         print('No record UID provided')

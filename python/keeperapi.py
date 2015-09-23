@@ -1,3 +1,14 @@
+#  _  __  
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|            
+#
+# Keeper Commander 
+# Copyright 2015 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import sys
 import json
 import requests
@@ -5,6 +16,7 @@ import base64
 import getpass
 import time
 import os
+from record import Record
 from keepererror import AuthenticationError
 from keepererror import CommunicationError
 from keepererror import CryptoError
@@ -14,10 +26,11 @@ from Crypto.Protocol.KDF import PBKDF2
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_v1_5
 
+# Client version match required for server calls
 CLIENT_VERSION = 'c9.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
 
-# PKCS7 padding helpers for our private key
+# PKCS7 padding helpers 
 BS = 16
 pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
 unpad_binary = lambda s : s[0:-s[-1]]
@@ -26,11 +39,17 @@ unpad_char = lambda s : s[0:-ord(s[-1])]
 def login(params):
     """Login to the server and get session token"""
     
-    if not params.salt:
-        payload = {'command':'account_summary',
-                   'include':['license','settings','group','keys'],
-                   'client_version':CLIENT_VERSION,
-                   'username':params.email}
+    if not params.auth_verifier:
+        if params.debug:
+            print('No auth verifier, sending pre-auth request')
+
+        payload = {
+               'command':'login', 
+               'include':['keys'],
+               'version':2, 
+               'client_version':CLIENT_VERSION,
+               'username':params.email
+              }
 
         try:
             r = requests.post(params.server, json=payload)
@@ -47,6 +66,10 @@ def login(params):
             print('<<< Response content:[' + str(r.text) + ']')
 
         if not 'salt' in r.json():
+            if r.json()['result_code'] == 'Failed_to_find_user':
+                raise AuthenticationError('User account [' + \
+                    str(params.email) + '] not found.')
+
             if r.json()['result_code'] == 'auth_failed':
                 raise AuthenticationError('Pre-auth failed.')
 
@@ -84,6 +107,7 @@ def login(params):
         else:
             payload = {
                    'command':'login', 
+                   'include':['keys'],
                    'version':2, 
                    'auth_response':params.auth_verifier,
                    'client_version':CLIENT_VERSION,
@@ -123,15 +147,28 @@ def login(params):
 
             if params.mfa_token:
                 params.mfa_type = 'device_token'
+            else:
+                params.mfa_type = ''
 
             if 'keys' in response_json:
-                params.encrypted_private_key = \
-                    response_json['keys']['encrypted_private_key']
-                params.encryption_params = \
-                    response_json['keys']['encryption_params']
+                if 'encrypted_private_key' in response_json['keys']:
+                    params.encrypted_private_key = \
+                        response_json['keys']['encrypted_private_key']
+                else:
+                    raise CommunicationError('Encrypted private ' + \
+                      'key not found. You are probably using the wrong server.')
+
+                if 'encryption_params' in response_json['keys']:
+                    params.encryption_params = \
+                        response_json['keys']['encryption_params']
+                else:
+                    print('Encryption parameters not found.')
 
                 decrypt_data_key(params)
                 decrypt_private_key(params)
+
+            else:
+                print('Hmm... keys not provided in login response.')
 
             success = True
 
@@ -150,7 +187,7 @@ def login(params):
                 return 
                 
         elif response_json['result_code'] == 'auth_failed':
-            raise AuthenticationError(response_json['result_code'])
+            raise AuthenticationError('Authentication failed.')
 
         elif response_json['result_code'] == 'throttled':
             raise AuthenticationError(response_json['message'])
@@ -163,6 +200,12 @@ def login(params):
 
 def sync_down(params):
     """Sync full or partial data down to the client"""
+
+    if not params.server:
+        raise CommunicationError('No server provided')
+
+    if not params.email:
+        raise CommunicationError('No username provided')
 
     def make_json(params):
         return {
@@ -209,6 +252,12 @@ def sync_down(params):
             raise
 
     payload = make_json(params)
+
+    if not params.data_key:
+        raise CryptoError('Unable to sync: no data key')
+
+    if not params.rsa_key:
+        raise CryptoError('Unable to sync: no RSA private key')
 
     try:
         r = requests.post(params.server, json=payload)
@@ -466,6 +515,8 @@ def decrypt_data_key(params):
     Verification: the decrypted ciphertext should contain two 32 byte values, 
         identical to each other.
     """
+    if not params.encryption_params:
+        raise CryptoError('Invalid encryption params: empty')
 
     decoded_encryption_params = base64.urlsafe_b64decode(
         params.encryption_params+'==')
@@ -539,10 +590,112 @@ def decrypt_private_key(params):
     if params.debug: 
         print('RSA private key: ' + str(params.private_key))
     
+
 def rotate_password(params, record_uid):
     """ Rotate the password for the specified record UID.
     If additional configuration params are included for Active
     Directory, we will automatically update AD according to those
     specifications. """ 
-    pass
+
+    record_uid = record_uid.strip()
+
+    if not record_uid:
+        print('No record UID provided')
+        return
+
+    if not params.record_cache:
+        print('No record cache.  Sync down first.')
+        return
+
+    if not record_uid in params.record_cache:
+        print('Record UID not found.')
+        return
+
+    cached_rec = params.record_cache[record_uid]
+
+    if params.debug: print('Cached Rec: ' + str(cached_rec))
+    data = json.loads(cached_rec['data'].decode('utf-8')) 
+
+    rec = Record()
+    rec.record_uid = record_uid 
+    rec.folder = data['folder']
+    rec.title = data['title']
+    rec.login = data['secret2']
+    rec.password = data['secret1']
+    rec.notes = data['notes']
+    rec.link = data['link']
+    rec.custom_fields = data['custom']
+
+    if not params.server:
+        raise CommunicationError('No server provided')
+
+    if not params.email:
+        raise CommunicationError('No username provided')
+
+    # TBD rotate password......
+
+
+    # TBD re-encrypt the record.....
+
+
+    def make_json(params):
+        return {
+               'revision':params.revision,
+               'client_time':current_milli_time(),
+               'device_id':'Commander', 
+               'device_name':'Commander', 
+               'command':'sync_down', 
+               'protocol_version':1, 
+               'client_version':CLIENT_VERSION,
+               '2fa_token':params.mfa_token,
+               '2fa_type':params.mfa_type, 
+               'session_token':params.session_token, 
+               'username':params.email
+        }
+        
+    if not params.session_token:
+        try:
+            login(params)
+        except:
+            raise
+            
+    payload = make_json(params)
+    
+    try:
+        r = requests.post(params.server, json=payload)
+    except:
+        raise CommunicationError(sys.exc_info()[0])
+
+    response_json = r.json()
+
+    if response_json['result_code'] == 'auth_failed':
+        if params.debug: print('Re-authorizing.')
+
+        try:
+            login(params)
+        except:
+            raise
+
+    payload = make_json(params)
+
+    if not params.data_key:
+        raise CryptoError('Unable to upload: no data key')
+
+    try:
+        r = requests.post(params.server, json=payload)
+    except:
+        raise CommunicationError(sys.exc_info()[0])
+
+    response_json = r.json()
+
+    if params.debug:
+        print('')
+        print('>>> Request server:[' + params.server + ']')
+        print('>>> Request JSON:[' + str(payload) + ']')
+        print('')
+        print('<<< Response Code:[' + str(r.status_code) + ']')
+        print('<<< Response Headers:[' + str(r.headers) + ']')
+        print('<<< Response content:[' + json.dumps(response_json, 
+            sort_keys=True, indent=4) + ']')
+
 

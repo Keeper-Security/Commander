@@ -1,3 +1,14 @@
+#  _  __  
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|            
+#
+# Keeper Commander 
+# Copyright 2015 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 class KeeperParams:
     """Defines the input parameters for the session"""
 
@@ -5,13 +16,15 @@ class KeeperParams:
                  mfa_type='',command='',session_token='',
                  salt='',iterations='',encrypted_private_key='',
                  encryption_params='',data_key='',private_key='',
-                 revision=0, rsa_key='',
+                 revision=0, rsa_key='', auth_verifier='',
                  record_cache={}, meta_data_cache={}, shared_folder_cache={},
                  debug=False):
+        self.auth_verifier = auth_verifier 
         self.server = server 
         self.email = email 
         self.password = password 
         self.mfa_token = mfa_token 
+        self.mfa_type = mfa_type 
         self.command = command 
         self.session_token = session_token 
         self.salt = salt 

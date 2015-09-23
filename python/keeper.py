@@ -1,4 +1,13 @@
-# Keeper Commander for Python
+#  _  __  
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|            
+#
+# Keeper Commander 
+# Copyright 2015 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
 
 import sys
 import argparse
@@ -137,6 +146,10 @@ try:
     if not params.mfa_token:
         while not params.password:
             params.password = getpass.getpass(prompt='Password: ', stream=None) 
+
+    # start with a sync download
+    if not params.command:
+        params.command = 'd'
 
     # go into interactive mode
     while True:
