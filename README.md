@@ -1,7 +1,7 @@
-## Keeper&reg; Commander 
-### Programmatic interface to *Keeper&reg; Password Manager & Digital Vault.*
+## Keeper Commander 
+### Integration Platform for Keeper&reg; Password Manager & Digital Vault.
 
-<img src="hand.png">
+<img src="hand.jpg" style="width:400px;">
 
 ### Keeper Overview
 
