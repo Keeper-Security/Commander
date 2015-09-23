@@ -1,7 +1,7 @@
-Keeper Commander for Python3
+Keeper Commander for Python 3
 ----
 
-This is the codebase for a Python3 interface to Keeper.
+This is the codebase for a Python 3 interface to Keeper.
 
 ### Installation 
 
@@ -19,67 +19,75 @@ already have one.
 a config.json file to streamline usage.  Command line arguments will 
 override the configuration file.
 
-### Command-line overrides
+### Command line usage
 
 ./keeper
 
-./keeper --debug
+### Optional parameters
 
-./keeper --debug --email=email@company.com --command="get ASLK4nf42k3jd"
+./keeper --email=email@company.com 
 
 ### Auto-configuration file
 
-Place the file config.json in the install folder.  Example below:
+For faster access, create a file called config.json and
+place the file in your install folder.  Here's an example file:
 
 ```
 {                                                                               
     "server":"https://dev2.keeperapp.com/v2/",
-    "email":"myusername@gmail.com",
+    "email":"email@company.com",
     "password":"123456",
-    "mfa_token":"",
-    "mfa_type":"",
-    "debug":true
+    "debug":false
 }
 ```
 
 If you don't provide an email or password, you will be prompted
 for this information when using Commander.
 
-Once you are logged in, you can execute a variety of things.
+If you have Two-Factor Authentication enabled on your Keeper account 
+(highly recommended), Keeper Commander will prompt you the first time
+you login.  After successfully logging in, you will be provided 
+a device token. This device token needs to be saved for subsequent
+calls.  For example:
+
+<img src="images/saving_token.png">
+
+Now copy this device token and save it into your config.json file:
+
+```
+{                                                                               
+    "server":"https://dev2.keeperapp.com/v2/",
+    "email":"email@company.com",
+    "password":"123456",
+    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
+    "mfa_type":"device_token",
+    "debug":false
+}
+```
+
+The next time you login, you will be authenticated automatically.
 
 ### Commands
 
+To see a list of supported commands, simply type 'h':
+
+```
+Keeper > ?
+
+Commands:
+
+  d         ... download & decrypt data
+  l         ... list folders and titles
+  s <regex> ... search with regular expression
+  g <uid>   ... get record details for uid
+  r <uid>   ... rotate password for uid
+  c         ... clear the screen
+  h         ... show command history
+  q         ... quit
+
+```
 
 ### Helpful documentation
-
-VIM configuration used by Craig:
-
-```
-git clone https://github.com/sentientmachine/Pretty-Vim-Python.git
-mv Pretty-Vim-Python/* ~/.vim/
-```
-
-Update ~/.vimrc:
-
-```
-set tabstop=4
-set shiftwidth=4
-set expandtab
-set softtabstop=4
-set smartindent
-set autoindent
-set hlsearch
-set incsearch
-set showmatch
-set number
-
-syntax on
-colorscheme molokai
-highlight Comment cterm=bold
-
-highlight OverLength ctermbg=red ctermfg=white guibg=#592929
-match OverLength /\%81v.\+/
-```
 
 Basic Info:
 

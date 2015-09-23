@@ -29,13 +29,16 @@ def do_command(params):
     elif (params.command == 'l'): 
         display.formatted_search(params, '')
 
-    elif (params.command[:1] == 'g'): 
+    elif (params.command[:2] == 'g '): 
         display.formatted_record(params, params.command[2:])
+
+    elif (params.command[:2] == 'r '): 
+        keeperapi.rotate_password(params, params.command[2:])
 
     elif (params.command == 'c'):
         print(chr(27) + "[2J") 
 
-    elif (params.command[:1] == 's'): 
+    elif (params.command[:2] == 's '): 
         display.formatted_search(params, params.command[2:])
 
     elif (params.command == 'd'):
@@ -61,6 +64,7 @@ def do_command(params):
         print('  l         ... list folders and titles')
         print('  s <regex> ... search with regular expression')
         print('  g <uid>   ... get record details for uid')
+        print('  r <uid>   ... rotate password for uid')
         print('  c         ... clear the screen')
         print('  h         ... show command history')
         print('  q         ... quit')

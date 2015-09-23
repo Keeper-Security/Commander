@@ -539,6 +539,10 @@ def decrypt_private_key(params):
     if params.debug: 
         print('RSA private key: ' + str(params.private_key))
     
-
-def display_folders_titles_uids(json_to_show):
+def rotate_password(params, record_uid):
+    """ Rotate the password for the specified record UID.
+    If additional configuration params are included for Active
+    Directory, we will automatically update AD according to those
+    specifications. """ 
     pass
+
