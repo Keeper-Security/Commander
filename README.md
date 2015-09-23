@@ -1,7 +1,7 @@
 ## Keeper Commander 
-### Integration Platform for Keeper&reg; Password Manager & Digital Vault.
-
-<img src="hand.jpg" style="width:400px;">
+*Terminal-based Zero-Knowledge Password Manager* 
+----
+<img src="hand.jpg" style="max-width:400px;">
 
 ### Keeper Overview
 
@@ -55,19 +55,19 @@ Mac, Unix, Linux and Windows
 ### Requirements
 To use Commander, you currently need to set up a Python 3 environment.
 Installation instructions can be found in the 
-[python](https://github.com/Keeper-Security/commander) folder.
+[python](https://github.com/Keeper-Security/commander/python) folder.
 
 ### Use Cases
 
-#### Command-line Vault Access
+* Terminal/Console Vault Access
 
-Commander can be instantiated from a terminal session via SSH or local.  
-Quick access to frequently used data or updates can be performed without 
-a user interface.  Any information that the named user has access to 
-will be available for access via the Commander interface.  
-This includes shared records and shared folders.
+Commander can be launched directly from any Unix/Linux/Mac/PC terminal 
+on a local session or via SSH. Quick access to frequently used data 
+or updates can be performed without a user interface.  Any information 
+that the named user has access to will be available for access via the 
+Commander interface.  This includes shared records and shared folders.
 
-#### Password Reset
+* Password Reset
 
 Commander can be configured to modify a particular password record 
 (such as generating a new randomized password) and synchronize those changes 
