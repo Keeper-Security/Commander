@@ -1,9 +1,56 @@
 ## Keeper Commander 
-*Terminal-based Zero-Knowledge Password Manager* 
 ----
-<img src="hand.jpg" style="max-width:400px;">
+Commander is a command-line and SDK interface to *Keeper&reg; Password Manager 
+&amp; Digital Vault*.  Keeper Commander can be used to interactively access 
+your Keeper Vault via a standard terminal or SSH console, or it can be used as
+an SDK for integrating your back-end into Keeper's encrypted cloud storage.
 
-### Keeper Overview
+### Commander Features
+
+* Terminal-based access to your Keeper vault 
+* Login, download and decrypt your vault records  
+* Search for content with regular expressions
+* Display vault record details
+* Change or rotate a password
+* Push password resets to external systems (Active Directory, MySQL, etc...) 
+
+### Security
+
+Keeper is a zero-knowledge platform.  This means that the server does not 
+have access to your Keeper Master Password or the crypto keys used to 
+encrypt and decrypt your data.  The cryptography is performed on the 
+*client device* (e.g. mobile app, desktop app, Commander).
+
+When you create a Keeper account from our 
+[web app](https://keepersecurity.com/vault) or 
+[mobile/desktop app](https://keepersecurity.com/download), you are asked
+to create a master password and a security question &amp; answer.  Keeper
+then creates your crypto keys, RSA keys and encryption parameters 
+(iv, salt, iterations).  Your RSA private key is encrypted with your data
+key, and your data key is encrypted with your master password.  The
+encrypted version of your data key is stored in Keeper's Cloud Security
+Vault and provided to you after successful authentication.
+
+When you login to Keeper on any device (or on Commander), your master password 
+is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt 
+your data key.  The data key is used to decrypt individual record keys.  
+Finally, your record keys are then used to decrypt your stored vault 
+information (e.g. your Facebook password).
+
+When saving information to your vault, Keeper stores only the encrypted
+data, which can only be decrypted on your client device.  
+
+All of this cryptography is packaged and wrapped into a simple and 
+easy-to-use interface.  Commander gives you the power to access, store
+and syncronize encrypted vault records with ease.
+
+To learn about Keeper's security, certifications and implementation details, 
+visit the [Security Disclosure](https://keepersecurity.com/security.html) page
+on our website.
+
+### About Keeper
+
+<img src="hand.jpg" style="max-width:400px;">
 
 Keeper is the world's most downloaded password keeper and secure digital 
 vault for protecting and managing your passwords and other secret information. 
@@ -34,21 +81,7 @@ Keeper's Features &amp; Benefits
 * Zero-Knowledge security architecture
 * TRUSTe and SOC-2 Certified
 
-To learn about Keeper's security, 
-visit our [Security Disclosure](https://keepersecurity.com/security.html).
-
 ----
-### About Commander
-
-Commander is the most secure and efficient solution to create, customize and 
-manage your stored Keeper content.  Keeper Commander is a zero-knowledge 
-command-line and programmatic interface that allows developers to 
-create, customize and manage content in their vault.
-
-Commander can automate key functions and interact with the Keeper 
-Vault on via command line terminal or can be extended programmatically 
-using the provided baseline code.
-
 ### Supported Platforms
 Mac, Unix, Linux and Windows
 
