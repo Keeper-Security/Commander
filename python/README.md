@@ -3,7 +3,22 @@ Keeper Commander for Python 3
 
 This is the codebase for a Python 3 interface to Keeper.
 
-<img src="screenshot.jpg">
+Here's a preview of what Keeper Commander can do:
+
+#### Logging in  
+<img src="images/screenshot1.png">
+
+#### Listing available commands 
+<img src="images/screenshot2.png">
+
+#### Searching for records
+<img src="images/screenshot3.png">
+
+#### Getting record details 
+<img src="images/screenshot4.png">
+
+#### Logging out 
+<img src="images/screenshot4.png">
 
 ### Installation 
 
