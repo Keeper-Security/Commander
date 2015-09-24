@@ -55,7 +55,7 @@ place the file in your install folder.  Here's an example file:
 
 ```
 {                                                                               
-    "server":"https://dev2.keeperapp.com/v2/",
+    "server":"https://keeperapp.com/v2/",
     "email":"email@company.com",
     "password":"123456",
     "debug":false
@@ -73,7 +73,7 @@ calls. Save this device into your config.json file:
 
 ```
 {                                                                               
-    "server":"https://dev2.keeperapp.com/v2/",
+    "server":"https://keeperapp.com/v2/",
     "email":"email@company.com",
     "password":"123456",
     "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
