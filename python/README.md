@@ -6,19 +6,19 @@ This is the codebase for a Python 3 interface to Keeper.
 Here's a preview of what Keeper Commander can do:
 
 #### Logging in  
-<img src="images/screenshot1.png">
+<img src="images/screenshot1.png" width="625">
 
 #### Listing available commands 
-<img src="images/screenshot2.png">
+<img src="images/screenshot2.png" width="625">
 
 #### Searching for records
-<img src="images/screenshot3.png">
+<img src="images/screenshot3.png" width="625">
 
 #### Getting record details 
-<img src="images/screenshot4.png">
+<img src="images/screenshot4.png" width="625">
 
 #### Rotating a password 
-<img src="images/screenshot5.png">
+<img src="images/screenshot5.png" width="625">
 
 The above screenshots are using the terminal version.
 You can make the necessary hooks in the Commander source code
