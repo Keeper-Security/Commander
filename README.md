@@ -14,7 +14,7 @@ Commander is a command-line and SDK interface to *Keeper&reg; Password Manager &
 * Push password resets to external systems (Active Directory, MySQL, etc...) 
 
 ### Installation  
-To jump right in to Commander, simply download the [Python](https://github.com/Keeper-Security/commander/python) code and you'll be up and running in a few minutes.
+To jump right in to Commander, simply download the [source code](https://github.com/Keeper-Security/commander/tree/master/python) and you'll be up and running in a few minutes.
 
 ### Support 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
