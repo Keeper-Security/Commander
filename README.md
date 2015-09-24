@@ -23,13 +23,13 @@ We're here to help.  If you need help integrating Keeper into your environment, 
 
 Keeper is a zero-knowledge platform.  This means that the server does not have access to your Keeper Master Password or the crypto keys used to encrypt and decrypt your data.  The cryptography is performed on the *client device* (e.g. iPhone, Android, Desktop, Commander).
 
-When you create a Keeper account from our [web app](https://keepersecurity.com/vault) or [mobile/desktop app](https://keepersecurity.com/download), you are asked to create a master password and a security question.  The Keeper app creates your crypto keys, RSA keys and encryption parameters (iv, salt, iterations).  Your RSA private key is encrypted with your data key, and your data key is encrypted with your master password.  The encrypted version of your data key is stored in Keeper's Cloud Security Vault and provided to you after successful device authentication.
+When you create a Keeper account from our [web app](https://keepersecurity.com/vault) or [mobile/desktop app](https://keepersecurity.com/download), you are asked to create a Master Password and a security question.  The Keeper app creates your crypto keys, RSA keys and encryption parameters (iv, salt, iterations).  Your RSA private key is encrypted with your data key, and your data key is encrypted with your Master Password.  The encrypted version of your data key is stored in Keeper's Cloud Security Vault and provided to you after successful device authentication.
 
-When you login to Keeper on any device (or on Commander), your master password is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt your data key.  The data key is used to decrypt individual record keys.  Finally, your record keys are then used to decrypt your stored vault information (e.g. your Facebook password).
+When you login to Keeper on any device (or on Commander), your Master Password is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt your data key.  The data key is used to decrypt individual record keys.  Finally, your record keys are then used to decrypt your stored vault information (e.g. your Facebook password).
 
-When saving information to your vault, Keeper stores only the encrypted data, which can only be decrypted on your client device.  
+When storing information to your vault, Keeper stores and syncronizes the encrypted data.
 
-For added security, you can enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings scree.  When logging into Commander, you will be asked for a one time passcode.  After successful authentication, you will be provided with a device token to use for subsequent requests.
+For added security, you can enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings screen.  When logging into Commander with Two-Factor Authentication turned on, you will be asked for a one time passcode.  After successful authentication, you will be provided with a device token that can be used for subsequent requests without having to re-authenticate.
 
 All of this cryptography is packaged and wrapped into a simple and easy-to-use interface.  Commander gives you the power to access, store and syncronize encrypted vault records with ease.
 
@@ -63,10 +63,6 @@ Keeper's Features &amp; Benefits
 * Zero-Knowledge security architecture
 * TRUSTe and SOC-2 Certified
 
-Supported Platforms
-* iOS, Android, Mac, Windows, Unix, Linux, Kindle
-* Chrome, Safari, Firefox, Internet Explorer
-
 ### Keeper Website
 [https://keepersecurity.com](https://keepersecurity.com)
 
@@ -98,4 +94,18 @@ Keeper is free for local password management on your device.  Premium subscripti
 [Mac App Store](https://keepersecurity.com/macreview)
 
 [Windows Store](http://apps.microsoft.com/windows/en-us/app/keeper/07fe8361-f512-4873-91a1-acd0cb4c851d)
+
+### Web-Based Apps and Browser Extensions
+
+[Online Vault](https://keepersecurity.com/vault)
+
+[Admin Console](https://keepersecurity.com/console) for Keeper Enterprise admins
+
+[FastFill for Chrome](https://chrome.google.com/webstore/detail/keeper-browser-extension/bfogiafebfohielmmehodmfbbebbbpei)
+
+[FastFill for Firefox](https://s3.amazonaws.com/keepersecurity/ext/update/firefox/keeper.xpi)
+
+[FastFill for Safari](https://s3.amazonaws.com/keepersecurity/ext/update/safari/keeper.safariextz)
+
+[FastFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
 
