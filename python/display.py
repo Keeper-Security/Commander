@@ -33,8 +33,8 @@ def welcome():
     print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
     print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
     print('')
-    print(bcolors.FAIL,' Keeper Commander v1.2' + bcolors.ENDC)
-    print(bcolors.FAIL,' www.keepersecurity.com' + bcolors.ENDC)
+    print(bcolors.FAIL,'Commander v1.2' + bcolors.ENDC)
+    print(bcolors.FAIL,'www.keepersecurity.com' + bcolors.ENDC)
     print('')
     print('')
 

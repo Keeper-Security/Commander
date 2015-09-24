@@ -3,6 +3,8 @@ Keeper Commander for Python 3
 
 This is the codebase for a Python 3 interface to Keeper.
 
+<img src="screenshot.jpg">
+
 ### Installation 
 
 1. Install Python3 from python.org and the below modules:
