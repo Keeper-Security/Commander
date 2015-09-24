@@ -17,9 +17,9 @@ import getpass
 import time
 import os
 from record import Record
-from keepererror import AuthenticationError
-from keepererror import CommunicationError
-from keepererror import CryptoError
+from error import AuthenticationError
+from error import CommunicationError
+from error import CryptoError
 from Crypto import Random
 from Crypto.Hash import SHA256, HMAC, SHA
 from Crypto.Protocol.KDF import PBKDF2
@@ -143,7 +143,15 @@ def login(params):
 
             if 'device_token' in response_json:
                 params.mfa_token = response_json['device_token']
-                print('----> Device token: ' + str(params.mfa_token))
+                # save token to config
+                params.config['mfa_type'] = 'device_token';
+                params.config['mfa_token'] = params.mfa_token 
+                try:
+                    with open(params.config_filename, 'w') as f:
+                        json.dump(params.config, f, ensure_ascii=False)
+                        print('Updated mfa_token in ' + params.config_filename)
+                except:
+                    print('Unable to update mfa_token') 
 
             if params.mfa_token:
                 params.mfa_type = 'device_token'

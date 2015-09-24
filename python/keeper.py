@@ -13,15 +13,18 @@ import sys
 import argparse
 import json
 import getpass
-import keeperapi
+import api
 import display
-from keepererror import AuthenticationError
-from keepererror import CommunicationError
-from keeperparams import KeeperParams
+from error import AuthenticationError
+from error import CommunicationError
+from params import KeeperParams
 
-CONFIG_FILENAME = 'config.json'
+# Import plugins/*.py
+import importdir
+importdir.do("plugins", globals())
 
 params = KeeperParams()
+params.config_filename = 'config.json'
 stack = [] 
 
 display.welcome()
@@ -42,7 +45,7 @@ def do_command(params):
         display.formatted_record(params, params.command[2:])
 
     elif (params.command[:2] == 'r '): 
-        keeperapi.rotate_password(params, params.command[2:])
+        api.rotate_password(params, params.command[2:])
 
     elif (params.command == 'c'):
         print(chr(27) + "[2J") 
@@ -51,7 +54,7 @@ def do_command(params):
         display.formatted_search(params, params.command[2:])
 
     elif (params.command == 'd'):
-        keeperapi.sync_down(params)
+        api.sync_down(params)
 
     elif (params.command == 'h'):
         display.formatted_history(stack) 
@@ -87,31 +90,36 @@ def do_command(params):
     return True
 
 try:
-    with open(CONFIG_FILENAME) as config_file:
+    with open(params.config_filename) as config_file:
 
         #print('Loading config from ' + CONFIG_FILENAME)
-        config = json.load(config_file)
+        try:
+            params.config = json.load(config_file)
 
-        if 'email' in config:
-            params.email = config['email']
+            if 'email' in params.config:
+                params.email = params.config['email']
+    
+            if 'command' in params.config:
+                params.command = params.config['command']
+    
+            if 'server' in params.config:
+                params.server = params.config['server']
+    
+            if 'password' in params.config:
+                params.password = params.config['password']
+    
+            if 'mfa_token' in params.config:
+                params.mfa_token = params.config['mfa_token']
+    
+            if 'mfa_type' in params.config:
+                params.mfa_type = params.config['mfa_type']
+    
+            if 'debug' in params.config:
+                params.debug = params.config['debug']
 
-        if 'command' in config:
-            params.command = config['command']
-
-        if 'server' in config:
-            params.server = config['server']
-
-        if 'password' in config:
-            params.password = config['password']
-
-        if 'mfa_token' in config:
-            params.mfa_token = config['mfa_token']
-
-        if 'mfa_type' in config:
-            params.mfa_type = config['mfa_type']
-
-        if 'debug' in config:
-            params.debug = config['debug']
+        except:
+            print('Error: Unable to parse JSON file ' + CONFIG_FILENAME);
+            goodbye()
 
 except IOError:
     pass

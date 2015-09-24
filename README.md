@@ -5,14 +5,17 @@
 ----
 Commander is a command-line and SDK interface to *Keeper&reg; Password Manager &amp; Digital Vault*.  Keeper Commander can be used to interactively access your Keeper Vault via a standard terminal or SSH console, or it can be used as an SDK for integrating your back-end into Keeper's zero-knowledge Cloud Security Vault&trade;.
 
+Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the change to all users with privileged access to the record.  Using our connector plugins, you can then perform the password reset directly on the source (e.g. the database, active directory, etc...).  Using Commander to rotate passwords, combined with the flexibility of Keeper's secure record sharing features provides you with the most secure and flexible way to grant and revoke access to extremely confidential data.
+
 ### Commander Features
 
-* Terminal-based access to your Keeper vault 
+* Terminal access to your Keeper vault 
 * Login, download and decrypt your vault records  
 * Search for content with regular expressions
 * Display vault record details
 * Change or rotate a password
 * Push password resets to external systems (Active Directory, MySQL, etc...) 
+* Grant and revoke access to specified users
 
 ### Installation  
 To jump right in to Commander, simply download the [source code](https://github.com/Keeper-Security/commander/tree/master/python) and you'll be up and running in a few minutes.

@@ -12,13 +12,16 @@
 class KeeperParams:
     """Defines the input parameters for the session"""
 
-    def __init__(self,server='',email='',password='',mfa_token='',
+    def __init__(self,config_filename='',config={}, server='',
+                 email='',password='',mfa_token='',
                  mfa_type='',command='',session_token='',
                  salt='',iterations='',encrypted_private_key='',
                  encryption_params='',data_key='',private_key='',
                  revision=0, rsa_key='', auth_verifier='',
                  record_cache={}, meta_data_cache={}, shared_folder_cache={},
                  debug=False):
+        self.config_filename = config_filename
+        self.config = config
         self.auth_verifier = auth_verifier 
         self.server = server 
         self.email = email 
