@@ -1,6 +1,6 @@
 ## Keeper Commander 
 
-<img src="python/images/mac.png">
+<img src="python/images/mac.png" width="709" height="727">
 
 ----
 Commander is a command-line and SDK interface to *Keeper&reg; Password Manager &amp; Digital Vault*.  Keeper Commander can be used to interactively access your Keeper Vault via a standard terminal or SSH console, or it can be used as an SDK for integrating your back-end into Keeper's zero-knowledge Cloud Security Vault&trade;.
