@@ -1,10 +1,8 @@
 ## Keeper Commander 
+<img src="hand.jpg" style="max-width:400px;">
+
 ----
-Commander is a command-line and SDK interface to *Keeper&reg; Password Manager 
-&amp; Digital Vault*.  Keeper Commander can be used to interactively access 
-your Keeper Vault via a standard terminal or SSH console, or it can be used as
-an SDK for integrating your back-end into Keeper's zero-knowledge 
-Cloud Security Vault&trade;.
+Commander is a command-line and SDK interface to *Keeper&reg; Password Manager &amp; Digital Vault*.  Keeper Commander can be used to interactively access your Keeper Vault via a standard terminal or SSH console, or it can be used as an SDK for integrating your back-end into Keeper's zero-knowledge Cloud Security Vault&trade;.
 
 ### Commander Features
 
@@ -15,58 +13,31 @@ Cloud Security Vault&trade;.
 * Change or rotate a password
 * Push password resets to external systems (Active Directory, MySQL, etc...) 
 
+### Installation  
+To jump right in to Commander, simply download the [Python](https://github.com/Keeper-Security/commander/python) code and you'll be up and running in a few minutes.
+
+### Support 
+We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
+
 ### Security
 
-Keeper is a zero-knowledge platform.  This means that the server does not 
-have access to your Keeper Master Password or the crypto keys used to 
-encrypt and decrypt your data.  The cryptography is performed on the 
-*client device* (e.g. iPhone, Android, Desktop, Commander).
+Keeper is a zero-knowledge platform.  This means that the server does not have access to your Keeper Master Password or the crypto keys used to encrypt and decrypt your data.  The cryptography is performed on the *client device* (e.g. iPhone, Android, Desktop, Commander).
 
-When you create a Keeper account from our 
-[web app](https://keepersecurity.com/vault) or 
-[mobile/desktop app](https://keepersecurity.com/download), you are asked
-to create a master password and a security question.  The Keeper app
-creates your crypto keys, RSA keys and encryption parameters 
-(iv, salt, iterations).  Your RSA private key is encrypted with your data
-key, and your data key is encrypted with your master password.  The
-encrypted version of your data key is stored in Keeper's Cloud Security
-Vault and provided to you after successful device authentication.
+When you create a Keeper account from our [web app](https://keepersecurity.com/vault) or [mobile/desktop app](https://keepersecurity.com/download), you are asked to create a master password and a security question.  The Keeper app creates your crypto keys, RSA keys and encryption parameters (iv, salt, iterations).  Your RSA private key is encrypted with your data key, and your data key is encrypted with your master password.  The encrypted version of your data key is stored in Keeper's Cloud Security Vault and provided to you after successful device authentication.
 
-When you login to Keeper on any device (or on Commander), your master password 
-is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt 
-your data key.  The data key is used to decrypt individual record keys.  
-Finally, your record keys are then used to decrypt your stored vault 
-information (e.g. your Facebook password).
+When you login to Keeper on any device (or on Commander), your master password is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt your data key.  The data key is used to decrypt individual record keys.  Finally, your record keys are then used to decrypt your stored vault information (e.g. your Facebook password).
 
-When saving information to your vault, Keeper stores only the encrypted
-data, which can only be decrypted on your client device.  
+When saving information to your vault, Keeper stores only the encrypted data, which can only be decrypted on your client device.  
 
-For added security, you can enable Two-Factor Authentication on your Keeper
-account via the [web app](https://keepersecurity.com/vault) settings scree.  
-When logging into Commander, you will be asked for a one time 
-passcode.  After successful authentication, you will be provided with a device
-token to use for subsequent requests.
+For added security, you can enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings scree.  When logging into Commander, you will be asked for a one time passcode.  After successful authentication, you will be provided with a device token to use for subsequent requests.
 
-All of this cryptography is packaged and wrapped into a simple and 
-easy-to-use interface.  Commander gives you the power to access, store
-and syncronize encrypted vault records with ease.
+All of this cryptography is packaged and wrapped into a simple and easy-to-use interface.  Commander gives you the power to access, store and syncronize encrypted vault records with ease.
 
-To learn about Keeper's security, certifications and implementation details, 
-visit the [Security Disclosure](https://keepersecurity.com/security.html) page
-on our website.
-
-To get started with Keeper Commander, simply download the 
-[Python](https://github.com/Keeper-Security/commander/python) 
-code and you'll be up and running in a few minutes.
+To learn about Keeper's security, certifications and implementation details, visit the [Security Disclosure](https://keepersecurity.com/security.html) page on our website.
 
 ### About Keeper
 
-<img src="hand.jpg" style="max-width:400px;">
-
-Keeper is the world's most downloaded password keeper and secure digital 
-vault for protecting and managing your passwords and other secret information. 
-Millions of people and companies use Keeper to protect their most 
-sensitive and private information.
+Keeper is the world's most downloaded password keeper and secure digital vault for protecting and managing your passwords and other secret information.  Millions of people and companies use Keeper to protect their most sensitive and private information.
 
 Keeper's Features &amp; Benefits
 
@@ -100,10 +71,7 @@ Supported Platforms
 [https://keepersecurity.com](https://keepersecurity.com)
 
 ### Pricing
-Keeper is free for local password management on your device.  Premium 
-subscription provides cloud-based features and premium device-specific 
-features including Sync, Backup & Restore, Secure Sharing, File Storage 
-and multi-device usage.  
+Keeper is free for local password management on your device.  Premium subscription provides cloud-based features and premium device-specific features including Sync, Backup & Restore, Secure Sharing, File Storage and multi-device usage.  
 
 ### Mobile Apps
 
@@ -130,9 +98,4 @@ and multi-device usage.
 [Mac App Store](https://keepersecurity.com/macreview)
 
 [Windows Store](http://apps.microsoft.com/windows/en-us/app/keeper/07fe8361-f512-4873-91a1-acd0cb4c851d)
-
-### Support 
-We're here to help.  If you help adding connections, contact us and we'll
-assist.  Keeper's Commander support team can be 
-reached at ops@keepersecurity.com.
 
