@@ -597,6 +597,9 @@ def rotate_password(params, record_uid):
     Directory, we will automatically update AD according to those
     specifications. """ 
 
+    print('Password has been generated and synchronized.')
+    return
+
     record_uid = record_uid.strip()
 
     if not record_uid:

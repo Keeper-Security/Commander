@@ -17,8 +17,12 @@ Here's a preview of what Keeper Commander can do:
 #### Getting record details 
 <img src="images/screenshot4.png">
 
-#### Logging out 
-<img src="images/screenshot4.png">
+#### Rotating a password 
+<img src="images/screenshot5.png">
+
+The above screenshots are using the terminal version.
+You can make the necessary hooks in the Commander source code
+to meet your integration needs.
 
 ### Installation 
 
@@ -65,11 +69,7 @@ If you have Two-Factor Authentication enabled on your Keeper account
 (highly recommended), Keeper Commander will prompt you the first time
 you login.  After successfully logging in, you will be provided 
 a device token. This device token needs to be saved for subsequent
-calls.  For example:
-
-<img src="images/saving_token.png">
-
-Now copy this device token and save it into your config.json file:
+calls. Save this device into your config.json file:
 
 ```
 {                                                                               
@@ -82,7 +82,7 @@ Now copy this device token and save it into your config.json file:
 }
 ```
 
-The next time you login, you will be authenticated automatically.
+The next time you login, you will be authenticated with the device token.
 
 ### Commands
 
@@ -104,28 +104,16 @@ Commands:
 
 ```
 
-### Helpful documentation
+### Resources 
 
-Basic Info:
+[Python3 Tutorials](https://docs.python.org/3/index.html)
 
-    [Python3 Tutorials](https://docs.python.org/3/index.html)
+[Command line parser](https://docs.python.org/3/howto/argparse.html)
 
-Command line parsing:
+[JSON parser](https://docs.python.org/3/library/json.html)
 
-    [Command line parser](https://docs.python.org/3/howto/argparse.html)
+[Requests Module](http://requests.readthedocs.org/en/latest/)
 
-pprint:
+[PYCrypto Module](https://www.dlitz.net/software/pycrypto/api/current/)
 
-    [pprint](https://docs.python.org/3/library/pprint.html)
 
-json:
-
-    [JSON parser](https://docs.python.org/3/library/json.html)
-
-requests:
-
-    [Requests Module](http://requests.readthedocs.org/en/latest/)
-
-pycrypto:
-
-    [PYCrypto Module](https://www.dlitz.net/software/pycrypto/api/current/)
