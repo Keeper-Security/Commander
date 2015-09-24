@@ -67,7 +67,7 @@ Keeper's Features &amp; Benefits
 [https://keepersecurity.com](https://keepersecurity.com)
 
 ### Pricing
-Keeper is free for local password management on your device.  Premium subscription provides cloud-based features and premium device-specific features including Sync, Backup & Restore, Secure Sharing, File Storage and multi-device usage.  
+Keeper is free for local password management on your device.  Premium subscription provides cloud-based features and premium device-specific features including Sync, Backup & Restore, Secure Sharing, File Storage and multi-device usage.  More info about our consumer and enterprise pricing plans can be found [here](https://keepersecurity.com/pricing.html). 
 
 ### Mobile Apps
 
@@ -99,8 +99,6 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Online Vault](https://keepersecurity.com/vault)
 
-[Admin Console](https://keepersecurity.com/console) for Keeper Enterprise admins
-
 [FastFill for Chrome](https://chrome.google.com/webstore/detail/keeper-browser-extension/bfogiafebfohielmmehodmfbbebbbpei)
 
 [FastFill for Firefox](https://s3.amazonaws.com/keepersecurity/ext/update/firefox/keeper.xpi)
@@ -108,4 +106,6 @@ Keeper is free for local password management on your device.  Premium subscripti
 [FastFill for Safari](https://s3.amazonaws.com/keepersecurity/ext/update/safari/keeper.safariextz)
 
 [FastFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
+
+[Enterprise Admin Console](https://keepersecurity.com/console)
 
