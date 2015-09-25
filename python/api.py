@@ -16,6 +16,7 @@ import base64
 import getpass
 import time
 import os
+import generator
 from record import Record
 from error import AuthenticationError
 from error import CommunicationError
@@ -605,37 +606,54 @@ def rotate_password(params, record_uid):
     Directory, we will automatically update AD according to those
     specifications. """ 
 
-    print('Password has been generated and synchronized.')
-    return
-
     record_uid = record_uid.strip()
 
     if not record_uid:
         print('No record UID provided')
-        return
+        return False
 
     if not params.record_cache:
         print('No record cache.  Sync down first.')
-        return
+        return False
 
     if not record_uid in params.record_cache:
         print('Record UID not found.')
-        return
+        return False
 
+    # get the record object
     cached_rec = params.record_cache[record_uid]
 
     if params.debug: print('Cached Rec: ' + str(cached_rec))
-    data = json.loads(cached_rec['data'].decode('utf-8')) 
 
-    rec = Record()
-    rec.record_uid = record_uid 
-    rec.folder = data['folder']
-    rec.title = data['title']
-    rec.login = data['secret2']
-    rec.password = data['secret1']
-    rec.notes = data['notes']
-    rec.link = data['link']
-    rec.custom_fields = data['custom']
+    # extract data and extra from record
+    data = json.loads(cached_rec['data'].decode('utf-8')) 
+    extra = json.loads(cached_rec['extra'].decode('utf-8')) 
+
+    # check for edit permissions
+    can_edit = False
+    if 'can_edit' in cached_rec:
+        if params.debug: print('Edit permissions found in record')
+        can_edit = True
+
+    # If record permission not there, check shared folders
+    if can_edit == False:
+        for shared_folder_uid in params.shared_folder_cache:
+            shared_folder = params.shared_folder_cache[shared_folder_uid]
+            sf_key = shared_folder['shared_folder_key']
+            if 'records' in shared_folder:
+                sf_records = shared_folder['records']
+                for sf_record in sf_records:
+                    if 'record_uid' in sf_record:
+                        if sf_record['record_uid'] == record_uid:
+                            if 'can_edit' in sf_record:
+                                can_edit = True
+                                if params.debug: 
+                                    print('Edit permissions found in folder')
+                                break
+
+    if not can_edit:
+        print('You do not have permissions to edit this record.')
+        return False
 
     if not params.server:
         raise CommunicationError('No server provided')
@@ -643,11 +661,97 @@ def rotate_password(params, record_uid):
     if not params.email:
         raise CommunicationError('No username provided')
 
-    # TBD rotate password......
+    # save previous password
+    if params.debug: print('Data: ' + str(data))
+    if params.debug: print('Extra: ' + str(data))
+
+    # Backup old password
+    modified_time = current_milli_time()
+    custom_dict = {}
+    custom_dict['name'] = 'password_'+str(modified_time)
+    custom_dict['value'] =  data['secret2']
+    custom_dict['type'] =  'text' 
+
+    # serialize this dict
+    serialized = json.dumps(custom_dict)
+
+    # load as json
+    custom_dict_json = json.loads(serialized)
+
+    # Append to the current structure
+    data['custom'].append(custom_dict_json)
+    
+    if params.debug: 
+        print('Old password: ' + str(data['secret2']))
+
+    # generate a new password
+    data['secret2'] = generator.generate() 
+
+    if params.debug: 
+        print('New password: ' + str(data['secret2']))
+
+    if params.debug: 
+        print('New record data: ' + str(data))
+
+    # Update the record cache with the cleartext data
+    params.record_cache[record_uid]['data'] = data
+
+    if params.debug: 
+        print('New record: ' + str(params.record_cache[record_uid]))
+        print('Data: ' + str(data))
+        print('Extra: ' + str(extra))
+
+    # Convert the data and extra dictionary to string object
+    # with double quotes instead of single quotes
+    data_serialized = json.dumps(data)
+    extra_serialized = json.dumps(extra)
+
+    if params.debug: print('data_serialized: ' + str(data_serialized))
+    if params.debug: print('extra_serialized: ' + str(extra_serialized))
+
+    # encrypt data and extra
+    if not 'record_key' in params.record_cache[record_uid]:
+        raise CryptoError('No record_key found for ' + record_uid)
+
+    record_key = params.record_cache[record_uid]['record_key']
+    iv = os.urandom(16)
+    cipher = AES.new(record_key, AES.MODE_CBC, iv)
+    encrypted_data = iv + cipher.encrypt(pad(data_serialized))
+
+    iv = os.urandom(16)
+    cipher = AES.new(record_key, AES.MODE_CBC, iv)
+    encrypted_extra = iv + cipher.encrypt(pad(extra_serialized))
+
+    if params.debug: print('encrypted_data: ' + str(encrypted_data))
+    if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
+
+    encoded_data = base64.urlsafe_b64encode(encrypted_data)
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra)
+
+    if params.debug: print('encoded_data: ' + str(encoded_data))
+    if params.debug: print('encoded_extra: ' + str(encoded_extra))
+
+    # build a record object
+    new_record = {}
+    new_record['record_uid'] = record_uid
+    new_record['version'] = 2 
+    new_record['data'] = encoded_data
+    new_record['extra'] = encoded_extra
+    new_record['client_modified_time'] = modified_time
+    new_record['revision'] = params.record_cache[record_uid]['revision']
+
+    # need to add encrypted record key, shared folder key, etc....
 
 
-    # TBD re-encrypt the record.....
 
+
+
+    print('new_record: ' + str(new_record))
+    return False
+
+    # create updated records
+    update_records = []
+    update_records.append(encoded)
 
     def make_json(params):
         return {
@@ -655,7 +759,8 @@ def rotate_password(params, record_uid):
                'client_time':current_milli_time(),
                'device_id':'Commander', 
                'device_name':'Commander', 
-               'command':'sync_down', 
+               'command':'record_update', 
+               'update_records':update_records,
                'protocol_version':1, 
                'client_version':CLIENT_VERSION,
                '2fa_token':params.mfa_token,
@@ -709,4 +814,9 @@ def rotate_password(params, record_uid):
         print('<<< Response content:[' + json.dumps(response_json, 
             sort_keys=True, indent=4) + ']')
 
+   
+    # Check response
+
+
+    return True
 

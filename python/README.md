@@ -29,8 +29,9 @@ to meet your integration needs.
 1. Install Python3 from python.org and the below modules:
 
 ```
-pip3 install requests
-pip3 install pycrypto
+sudo pip3 install requests
+sudo pip3 install pycrypto
+sudo pip3 install PyMySQL
 ```
 
 2. Set up a Keeper account from https://keepersecurity.com if you don't 
