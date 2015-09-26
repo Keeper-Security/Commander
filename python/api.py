@@ -17,6 +17,7 @@ import getpass
 import time
 import os
 import generator
+import datetime
 from record import Record
 from error import AuthenticationError
 from error import CommunicationError
@@ -664,10 +665,14 @@ def rotate_password(params, record_uid):
     if params.debug: print('Data: ' + str(data))
     if params.debug: print('Extra: ' + str(data))
 
+    # generate friendly datestamp
+    modified_time = int(round(time.time()))
+    modified_time_milli = modified_time * 1000 
+    datestamp = datetime.datetime.fromtimestamp(modified_time).strftime('%Y-%m-%d %H:%M:%S')
+
     # Backup old password
-    modified_time = current_milli_time()
     custom_dict = {}
-    custom_dict['name'] = 'password_'+str(modified_time)
+    custom_dict['name'] = 'Password @ '+str(datestamp)
     custom_dict['value'] =  data['secret2']
     custom_dict['type'] =  'text' 
 
@@ -745,7 +750,7 @@ def rotate_password(params, record_uid):
     new_record['version'] = 2 
     new_record['data'] = encoded_data
     new_record['extra'] = encoded_extra
-    new_record['client_modified_time'] = modified_time
+    new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = params.record_cache[record_uid]['revision']
     new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
     new_record['shared_folder_uid'] = found_shared_folder_uid 
@@ -826,12 +831,30 @@ def rotate_password(params, record_uid):
                 sort_keys=True, indent=4) + ']')
 
     if response_json['result'] == 'success':
+        new_revision = 0
+        if 'update_records' in response_json:
+            for info in response_json['update_records']:
+                if info['record_uid'] == record_uid:
+                    if info['status'] == 'success':
+                        # all records in the transaction get the 
+                        # same revision.  this just checks 100% success
+                        new_revision = response_json['revision']
+             
+        if new_revision == 0:
+            print('Error: Revision not updated')
+            return False
+
+        if new_revision == new_record['revision']:
+            print('Error: Revision did not change')
+            return False
+
         print('Rotation successful for record_uid=' + \
-            str(new_record['record_uid']) + ' revision=' + \
-            str(new_record['revision']))
+            str(new_record['record_uid']) + ', revision=' + \
+            str(new_record['revision']), ', new_revision=' + \
+            str(new_revision))
 
-        # TBD: save the new revision to the cache
-
+        # update local cache
+        params.record_cache[record_uid]['revision'] = new_revision
 
     else :
         if response_json['result_code']:
