@@ -67,9 +67,11 @@ def formatted_record(params,record_uid):
     rec.notes = data['notes']
     rec.link = data['link']
     rec.custom_fields = data['custom']
+    rec.revision = cached_rec['revision']
 
     print('') 
     print('{0:>20s}: {1:<20s}'.format('UID',rec.record_uid))
+    print('{0:>20s}: {1}'.format('Revision',rec.revision))
     if rec.folder: print('{0:>20s}: {1:<20s}'.format('Folder',rec.folder))
     if rec.title: print('{0:>20s}: {1:<20s}'.format('Title',rec.title))
     if rec.login: print('{0:>20s}: {1:<20s}'.format('Login',rec.login))

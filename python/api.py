@@ -260,20 +260,15 @@ def sync_down(params):
         except:
             raise
 
-    payload = make_json(params)
+        payload = make_json(params)
 
-    if not params.data_key:
-        raise CryptoError('Unable to sync: no data key')
+        try:
+            r = requests.post(params.server, json=payload)
+        except:
+            raise CommunicationError(sys.exc_info()[0])
 
-    if not params.rsa_key:
-        raise CryptoError('Unable to sync: no RSA private key')
+        response_json = r.json()
 
-    try:
-        r = requests.post(params.server, json=payload)
-    except:
-        raise CommunicationError(sys.exc_info()[0])
-
-    response_json = r.json()
 
     if params.debug:
         print('')
@@ -455,28 +450,32 @@ def sync_down(params):
                     if len(unencrypted_key) != 32:
                         raise CryptoError('Invalid record key length')
 
-                    # save the decrypted key
-                    record['record_key'] = unencrypted_key
+                    # save the decrypted key in record_key_unencrypted
+                    record['record_key_unencrypted'] = unencrypted_key
                 else:
                     raise CryptoError('No record key found')
 
-
-                if params.debug: print('Got record key: ' + str(unencrypted_key))
+                if params.debug: 
+                    print('Got record key: ' + str(unencrypted_key))
 
                 # decrypt record data and extra with record key
                 decoded_data = base64.urlsafe_b64decode(record['data'] +'==')
                 iv = decoded_data[:16]
                 ciphertext = decoded_data[16:]
-                cipher = AES.new(record['record_key'], AES.MODE_CBC, iv)
+                cipher = AES.new(record['record_key_unencrypted'], \
+                    AES.MODE_CBC, iv)
                 record['data'] = unpad_binary(cipher.decrypt(ciphertext))
 
                 decoded_extra = base64.urlsafe_b64decode(record['extra'] +'==')
                 iv = decoded_extra[:16]
                 ciphertext = decoded_extra[16:]
-                cipher = AES.new(record['record_key'], AES.MODE_CBC, iv)
+                cipher = AES.new(\
+                    record['record_key_unencrypted'], AES.MODE_CBC, iv)
                 record['extra'] = unpad_binary(cipher.decrypt(ciphertext))
 
                 # Store the record in the cache
+                if params.debug: print('record is ' + str(isinstance(record, dict)))
+                if params.debug: print('params.record_cache is ' + str(isinstance(params.record_cache, dict)))
                 params.record_cache[record_uid] = record 
 
         if 'pending_shares_from' in response_json:
@@ -623,8 +622,6 @@ def rotate_password(params, record_uid):
     # get the record object
     cached_rec = params.record_cache[record_uid]
 
-    if params.debug: print('Cached Rec: ' + str(cached_rec))
-
     # extract data and extra from record
     data = json.loads(cached_rec['data'].decode('utf-8')) 
     extra = json.loads(cached_rec['extra'].decode('utf-8')) 
@@ -636,6 +633,7 @@ def rotate_password(params, record_uid):
         can_edit = True
 
     # If record permission not there, check shared folders
+    found_shared_folder_uid = ''
     if can_edit == False:
         for shared_folder_uid in params.shared_folder_cache:
             shared_folder = params.shared_folder_cache[shared_folder_uid]
@@ -645,6 +643,7 @@ def rotate_password(params, record_uid):
                 for sf_record in sf_records:
                     if 'record_uid' in sf_record:
                         if sf_record['record_uid'] == record_uid:
+                            found_shared_folder_uid = shared_folder_uid
                             if 'can_edit' in sf_record:
                                 can_edit = True
                                 if params.debug: 
@@ -694,7 +693,11 @@ def rotate_password(params, record_uid):
         print('New record data: ' + str(data))
 
     # Update the record cache with the cleartext data
-    params.record_cache[record_uid]['data'] = data
+    if params.debug: print('data is ' + str(isinstance(data, dict)))
+    if params.debug: print('params.record_cache is ' + str(isinstance(params.record_cache, dict)))
+
+    # convert dict back to json then encode it 
+    params.record_cache[record_uid]['data'] = json.dumps(data).encode()
 
     if params.debug: 
         print('New record: ' + str(params.record_cache[record_uid]))
@@ -710,23 +713,28 @@ def rotate_password(params, record_uid):
     if params.debug: print('extra_serialized: ' + str(extra_serialized))
 
     # encrypt data and extra
+    if not 'record_key_unencrypted' in params.record_cache[record_uid]:
+        raise CryptoError('No record_key_unencrypted found for ' + record_uid)
+
     if not 'record_key' in params.record_cache[record_uid]:
         raise CryptoError('No record_key found for ' + record_uid)
 
-    record_key = params.record_cache[record_uid]['record_key']
+    record_key_unencrypted = \
+        params.record_cache[record_uid]['record_key_unencrypted']
     iv = os.urandom(16)
-    cipher = AES.new(record_key, AES.MODE_CBC, iv)
+    cipher = AES.new(record_key_unencrypted, AES.MODE_CBC, iv)
     encrypted_data = iv + cipher.encrypt(pad(data_serialized))
 
     iv = os.urandom(16)
-    cipher = AES.new(record_key, AES.MODE_CBC, iv)
+    cipher = AES.new(record_key_unencrypted, AES.MODE_CBC, iv)
     encrypted_extra = iv + cipher.encrypt(pad(extra_serialized))
 
     if params.debug: print('encrypted_data: ' + str(encrypted_data))
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
 
-    encoded_data = base64.urlsafe_b64encode(encrypted_data)
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra)
+    # note: decode() converts bytestream (b') to string
+    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode()
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode()
 
     if params.debug: print('encoded_data: ' + str(encoded_data))
     if params.debug: print('encoded_extra: ' + str(encoded_extra))
@@ -739,23 +747,17 @@ def rotate_password(params, record_uid):
     new_record['extra'] = encoded_extra
     new_record['client_modified_time'] = modified_time
     new_record['revision'] = params.record_cache[record_uid]['revision']
+    new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
+    new_record['shared_folder_uid'] = found_shared_folder_uid 
 
-    # need to add encrypted record key, shared folder key, etc....
-
-
-
-
-
-    print('new_record: ' + str(new_record))
-    return False
+    if params.debug: print('new_record: ' + str(new_record))
 
     # create updated records
     update_records = []
-    update_records.append(encoded)
+    update_records.append(new_record)
 
-    def make_json(params):
+    def make_json(params, update_records):
         return {
-               'revision':params.revision,
                'client_time':current_milli_time(),
                'device_id':'Commander', 
                'device_name':'Commander', 
@@ -775,28 +777,10 @@ def rotate_password(params, record_uid):
         except:
             raise
             
-    payload = make_json(params)
+    payload = make_json(params, update_records)
+
+    if params.debug: print('payload: ' + str(payload))
     
-    try:
-        r = requests.post(params.server, json=payload)
-    except:
-        raise CommunicationError(sys.exc_info()[0])
-
-    response_json = r.json()
-
-    if response_json['result_code'] == 'auth_failed':
-        if params.debug: print('Re-authorizing.')
-
-        try:
-            login(params)
-        except:
-            raise
-
-    payload = make_json(params)
-
-    if not params.data_key:
-        raise CryptoError('Unable to upload: no data key')
-
     try:
         r = requests.post(params.server, json=payload)
     except:
@@ -814,9 +798,44 @@ def rotate_password(params, record_uid):
         print('<<< Response content:[' + json.dumps(response_json, 
             sort_keys=True, indent=4) + ']')
 
-   
-    # Check response
+    if response_json['result_code'] == 'auth_failed':
+        if params.debug: print('Re-authorizing.')
 
+        try:
+            login(params)
+        except:
+            raise
+
+        payload = make_json(params, update_records)
+
+        try:
+            r = requests.post(params.server, json=payload)
+        except:
+            raise CommunicationError(sys.exc_info()[0])
+    
+        response_json = r.json()
+    
+        if params.debug:
+            print('')
+            print('>>> Request server:[' + params.server + ']')
+            print('>>> Request JSON:[' + str(payload) + ']')
+            print('')
+            print('<<< Response Code:[' + str(r.status_code) + ']')
+            print('<<< Response Headers:[' + str(r.headers) + ']')
+            print('<<< Response content:[' + json.dumps(response_json, 
+                sort_keys=True, indent=4) + ']')
+
+    if response_json['result'] == 'success':
+        print('Rotation successful for record_uid=' + \
+            str(new_record['record_uid']) + ' revision=' + \
+            str(new_record['revision']))
+
+        # TBD: save the new revision to the cache
+
+
+    else :
+        if response_json['result_code']:
+            raise CommunicationError('Unexpected problem: ' + \
+                response_json['result_code'])
 
     return True
-
