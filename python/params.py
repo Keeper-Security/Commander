@@ -14,7 +14,7 @@ class KeeperParams:
 
     def __init__(self,config_filename='',config={}, server='',
                  email='',password='',mfa_token='',
-                 mfa_type='',command='',session_token='',
+                 mfa_type='',command='',commands=[],session_token='',
                  salt='',iterations='',encrypted_private_key='',
                  encryption_params='',data_key='',private_key='',
                  revision=0, rsa_key='', auth_verifier='',
@@ -29,6 +29,7 @@ class KeeperParams:
         self.mfa_token = mfa_token 
         self.mfa_type = mfa_type 
         self.command = command 
+        self.commands = commands 
         self.session_token = session_token 
         self.salt = salt 
         self.iterations = iterations 
@@ -65,6 +66,9 @@ class KeeperParams:
 
         if self.command:
             print ('>> Command: ' + self.command)
+
+        if self.commands:
+            print ('>> Commands: ' + str(self.commands))
 
         if self.session_token:
             print ('>> Session Token: ' + str(self.session_token))

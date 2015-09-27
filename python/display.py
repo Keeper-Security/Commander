@@ -94,7 +94,7 @@ def formatted_search(params, searchstring):
         print('No record cache.  Sync down first.')
         return
 
-    print('Searching for ' + searchstring)
+    if searchstring != '': print('Searching for ' + searchstring)
     p = re.compile(searchstring.lower())
 
     rec = Record()

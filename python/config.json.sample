@@ -4,5 +4,6 @@
     "password":"",
     "mfa_token":"",
     "mfa_type":"",
-    "debug":true
+    "debug":false,
+    "commands":[]
 }

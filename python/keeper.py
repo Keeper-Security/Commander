@@ -99,9 +99,6 @@ try:
             if 'email' in params.config:
                 params.email = params.config['email']
     
-            if 'command' in params.config:
-                params.command = params.config['command']
-    
             if 'server' in params.config:
                 params.server = params.config['server']
     
@@ -114,6 +111,9 @@ try:
             if 'mfa_type' in params.config:
                 params.mfa_type = params.config['mfa_type']
     
+            if 'commands' in params.config:
+                params.commands = params.config['commands']
+
             if 'debug' in params.config:
                 params.debug = params.config['debug']
 
@@ -128,16 +128,8 @@ except IOError:
 parser = argparse.ArgumentParser(usage='keeper [options]', 
                                  description='Keeper Commander')
 parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
-parser.add_argument("--email", nargs='?', help='Email address')
-parser.add_argument("--command", nargs='?', help='Command to run')
 
 args = parser.parse_args()                                                     
-
-if args.email:
-    params.email = args.email
-
-if args.command:
-    params.command = args.command
 
 if args.debug:
     params.debug = args.debug
@@ -154,6 +146,25 @@ try:
     if not params.mfa_token:
         while not params.password:
             params.password = getpass.getpass(prompt='Password: ', stream=None) 
+
+    # if commands are provided, execute those then exit
+    if params.commands:
+        for c in params.commands: 
+            params.command = c
+            print('Executing [' + params.command + ']...')
+            try:
+                if not do_command(params):
+                    print('Command ' + params.command + ' failed.')
+            except CommunicationError as e:
+                print ("Communication Error:" + str(e.message))
+            except AuthenticationError as e:
+                print ("AuthenticationError Error: " + str(e.message))
+            except:
+                print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
+
+            params.command = '' 
+
+        goodbye()
 
     # start with a sync download
     if not params.command:

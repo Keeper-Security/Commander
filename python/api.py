@@ -56,6 +56,7 @@ def login(params):
         try:
             r = requests.post(params.server, json=payload)
         except:
+            print('Comm error during login')
             raise CommunicationError(sys.exc_info()[0])
 
         if params.debug:
@@ -190,10 +191,14 @@ def login(params):
                 params.mfa_type = 'one_time'
 
                 while not params.mfa_token:
-                    params.mfa_token = getpass.getpass(
-                        prompt='2FA Code: ', stream=None)
+                    try:
+                        params.mfa_token = getpass.getpass(
+                            prompt='Two-Factor Code: ', stream=None)
+                    except (KeyboardInterrupt):
+                        print('Cancelled')
+                        raise
 
-            except (KeyboardInterrupt, SystemExit):
+            except (EOFError, KeyboardInterrupt, SystemExit):
                 return 
                 
         elif response_json['result_code'] == 'auth_failed':
@@ -266,6 +271,7 @@ def sync_down(params):
         try:
             r = requests.post(params.server, json=payload)
         except:
+            print('Comm error after re-authorizing')
             raise CommunicationError(sys.exc_info()[0])
 
         response_json = r.json()
@@ -488,13 +494,17 @@ def sync_down(params):
             print('--- Folders Cache: ' + str(params.shared_folder_cache))
 
         if len(params.record_cache) == 1:
-            print('...Downloaded & Decrypted 1 Record')
+            print('Downloaded & Decrypted [1] Record')
         else:
-            print('...Downloaded & Decrypted ' + \
-                str(len(params.record_cache)) + ' Records')
+            print('Downloaded & Decrypted [' + \
+                str(len(params.record_cache)) + '] Records')
 
     else :
-        raise CommunicationError('Unknown problem')
+        if response_json['result_code'] == 'auth_failed':
+            raise CommunicationError('Authentication Failed. ' + \
+                'Check email, password or Two-Factor code.')
+        else:            
+            raise CommunicationError('Unknown comm problem')
 
 def num_folders_with_record(record_uid):
     counter = 0
@@ -816,6 +826,7 @@ def rotate_password(params, record_uid):
         try:
             r = requests.post(params.server, json=payload)
         except:
+            print('Comm error during re-auth')
             raise CommunicationError(sys.exc_info()[0])
     
         response_json = r.json()
