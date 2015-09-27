@@ -32,6 +32,8 @@ sudo pip3 install pycrypto
 sudo pip3 install PyMySQL
 ```
 
+NOTE: Keeper Commander is only compatible with Python 3.  Do not use with older 2.x versions.
+
 2. Set up a Keeper account from https://keepersecurity.com if you don't already have one.
 
 3. Execute command line program as described below or use a config.json file to streamline usage.  Command line arguments will override the configuration file.
@@ -122,28 +124,25 @@ Commands:
 
 ### Download Command (d)
 
-This command downloads all 
+This command downloads all records from the account, decrypts the data key, private key, decrypts records and shared folders. 
 
 ### List Command (l)
 
+This command displays the Record UID, Folder and Title for all records.
+
 ### Search Command (s)
+
+This command allows you to search across all record data and display the Record UID, Folder and Title for matching records.
 
 ### Get Command (g)
 
+This command displays the full record details for a specified Record UID.  The Record UID can be determined by looking at the response from the "l" or "s" commands.
+
 ### Rotate Command (r)
 
+This command rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
 
+### Help 
 
-### Resources 
-
-[Python3 Tutorials](https://docs.python.org/3/index.html)
-
-[Command line parser](https://docs.python.org/3/howto/argparse.html)
-
-[JSON parser](https://docs.python.org/3/library/json.html)
-
-[Requests Module](http://requests.readthedocs.org/en/latest/)
-
-[PYCrypto Module](https://www.dlitz.net/software/pycrypto/api/current/)
-
+If you need assistance, email our dev ops team at ops@keepersecurity.com.
 
