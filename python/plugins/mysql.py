@@ -15,10 +15,10 @@ class MySQL:
     """Commander Plugin for MySQL Database Server"""
     def __init__(self, host='', port=3306, 
                  pem_file='', user='', password='', db=''):
-        self.host = server
+        self.host = host
         self.port = port
         self.pem_file = pem_file
-        self.user = username
+        self.user = user
         self.password = password
         self.db = db
 

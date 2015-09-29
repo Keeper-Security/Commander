@@ -15,13 +15,10 @@ import json
 import getpass
 import api
 import display
+import importlib
 from error import AuthenticationError
 from error import CommunicationError
 from params import KeeperParams
-
-# Import plugins/*.py
-import importdir
-importdir.do("plugins", globals())
 
 params = KeeperParams()
 params.config_filename = 'config.json'
@@ -114,6 +111,9 @@ try:
             if 'commands' in params.config:
                 params.commands = params.config['commands']
 
+            if 'plugins' in params.config:
+                params.plugins = params.config['plugins']
+
             if 'debug' in params.config:
                 params.debug = params.config['debug']
 
@@ -133,6 +133,22 @@ args = parser.parse_args()
 
 if args.debug:
     params.debug = args.debug
+
+# import all specified plugins into 
+# an array we can access later
+params.imported_plugins = {} 
+for module_name in params.plugins:
+    try:
+        full_name = 'plugins.' + module_name
+        if params.debug: print('Importing ' + str(full_name))
+        params.imported_plugins[module_name] = \
+            importlib.import_module(full_name)
+    except:
+        print('Unable to load module ' + full_name)
+        goodbye()
+
+# Note: to access a plugin:
+# foo = params.imported_plugins['foo'].Foo()
 
 try:
 

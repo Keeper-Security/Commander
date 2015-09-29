@@ -29,10 +29,15 @@ The above screenshots are using the terminal version.  You can make the necessar
 ```
 sudo pip3 install requests
 sudo pip3 install pycrypto
-sudo pip3 install PyMySQL
 ```
 
-NOTE: Keeper Commander is only compatible with Python 3.  Do not use with older 2.x versions.
+NOTE: Keeper Commander is only compatible with Python 3.4+
+
+Keeper supports plugins for various 3rd party systems for password reset integration.  Depending on the plugin, you will need to install the modules required.  For example, to support our MySQL plugin:
+
+```
+sudo pip3 install PyMySQL
+```
 
 2. Set up a Keeper account from https://keepersecurity.com if you don't already have one.
 
@@ -58,6 +63,7 @@ Here's an example config.json file:
     "email":"your_email_here",
     "password":"your_password_here",
     "debug":false,
+    "plugins":[],
     "commands":[]
 }
 ```
@@ -76,10 +82,11 @@ Example:
 
 ```
 {                                                                               
+    "debug":false,
     "server":"https://keeperapp.com/v2/",
     "email":"admin@company.com",
     "password":"somereallystrongpassword",
-    "debug":false,
+    "plugins":[],
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
 }
 ```
@@ -92,15 +99,38 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 
 ```
 {                                                                               
+    "debug":false,
     "server":"https://keeperapp.com/v2/",
     "email":"email@company.com",
     "password":"123456",
     "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
     "mfa_type":"device_token",
-    "debug":false,
+    "plugins":[],
     "commands":["r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
 }
 ```
+
+### Plugins
+
+Keeper Commander can talk to external systems for the purpose of resetting a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add the module name to the config file.  Example:
+
+```
+{                                                                               
+    "debug":false,
+    "server":"https://keeperapp.com/v2/",
+    "email":"email@company.com",
+    "password":"123456",
+    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
+    "mfa_type":"device_token",
+    "plugins":[],
+    "commands":["r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"],
+    "plugins":["active_directory", "mysql"]
+}
+```
+
+When a plugin is added to this list, Commander will search in the plugins/ folder to load the module based on the name provided (e.g. mysql.py and active_directory.py).
+
+Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, just let us know.
 
 ### Commands
 
@@ -122,25 +152,23 @@ Commands:
 
 ```
 
-### Download Command (d)
+* d (lownload): Downloads all records from the account, decrypts the data key, private key, decrypts records and shared folders. 
 
-This command downloads all records from the account, decrypts the data key, private key, decrypts records and shared folders. 
+* l (list): Displays the Record UID, Folder and Title for all records.
 
-### List Command (l)
+* s (search): search across all record data and display the Record UID, Folder and Title for matching records.
 
-This command displays the Record UID, Folder and Title for all records.
+* g (get): displays the full record details for a specified Record UID.  The Record UID can be determined by looking at the response from the "l" or "s" commands.
 
-### Search Command (s)
+* r (rotate): rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
 
-This command allows you to search across all record data and display the Record UID, Folder and Title for matching records.
+### Remote password reset 
 
-### Get Command (g)
+TBD discuss the plugin and how to configure a record for password rotation.
 
-This command displays the full record details for a specified Record UID.  The Record UID can be determined by looking at the response from the "l" or "s" commands.
+### Troubleshooting
 
-### Rotate Command (r)
-
-This command rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
+TBD
 
 ### Help 
 

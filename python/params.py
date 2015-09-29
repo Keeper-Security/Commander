@@ -10,13 +10,14 @@
 #
 
 class KeeperParams:
-    """Defines the input parameters for the session"""
+    """ Global storage of data during the session """
 
     def __init__(self,config_filename='',config={}, server='',
                  email='',password='',mfa_token='',
-                 mfa_type='',command='',commands=[],session_token='',
-                 salt='',iterations='',encrypted_private_key='',
-                 encryption_params='',data_key='',private_key='',
+                 mfa_type='',command='',commands=[],plugins=[],
+                 session_token='',salt='',iterations='',
+                 encrypted_private_key='', encryption_params='',
+                 data_key='',private_key='',
                  revision=0, rsa_key='', auth_verifier='',
                  record_cache={}, meta_data_cache={}, shared_folder_cache={},
                  debug=False):
@@ -30,6 +31,7 @@ class KeeperParams:
         self.mfa_type = mfa_type 
         self.command = command 
         self.commands = commands 
+        self.plugins = plugins 
         self.session_token = session_token 
         self.salt = salt 
         self.iterations = iterations 
@@ -43,58 +45,4 @@ class KeeperParams:
         self.shared_folder_cache = shared_folder_cache
         self.rsa_key = rsa_key
         self.debug = debug
-
-    def logout(self):
-        self.mfa_token = '' 
-        self.session_token = '' 
-
-    def dump(self):
-        if self.server:
-            print ('>> Server: ' + self.server)
-
-        if self.email:
-            print ('>> Email: ' + self.email)
-
-        if self.password:
-            print ('>> Password: ' + self.password)
-
-        if self.mfa_token:
-            print ('>> 2FA token: ' + self.mfa_token)
-
-        if self.mfa_type:
-            print ('>> 2FA type: ' + self.mfa_type)
-
-        if self.command:
-            print ('>> Command: ' + self.command)
-
-        if self.commands:
-            print ('>> Commands: ' + str(self.commands))
-
-        if self.session_token:
-            print ('>> Session Token: ' + str(self.session_token))
-
-        if self.salt:
-            print ('>> Salt: ' + str(self.salt))
-
-        if self.iterations:
-            print ('>> Iterations: ' + str(self.iterations))
-
-        if self.encrypted_private_key:
-            print ('>> Encrypted Priv Key: ' + str(self.encrypted_private_key))
-
-        if self.encryption_params:
-            print ('>> Encryption Params: ' + str(self.encryption_params))
-
-        if self.data_key:
-            print ('>> Data Key: ' + str(self.data_key))
-
-        if self.private_key:
-            print ('>> Private Key: ' + str(self.private_key))
-
-        if self.rsa_key:
-            print ('>> RSA Key: ' + str(self.rsa_key))
-
-        if self.debug:
-            print ('>> Debug: ' + str(self.debug))
-
 
