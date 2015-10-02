@@ -831,6 +831,9 @@ def rotate_password(params, record_uid):
     new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
     new_record['shared_folder_uid'] = found_shared_folder_uid 
 
+    if 'udata' in params.record_cache[record_uid]:
+        new_record['udata'] = params.record_cache[record_uid]['udata']
+        
     if params.debug: print('new_record: ' + str(new_record))
 
     # create updated records
