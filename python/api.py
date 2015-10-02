@@ -509,6 +509,7 @@ def sync_down(params):
 
                 elif 'data' in record:
                     # encrypted with record key
+                    if params.debug: print('Got data')
                     decoded_data = \
                         base64.urlsafe_b64decode(record['data'] +'==')
                     iv = decoded_data[:16]
@@ -517,9 +518,11 @@ def sync_down(params):
                         AES.MODE_CBC, iv)
                     record['data'] = unpad_binary(cipher.decrypt(ciphertext))
                 else:
-                    record['data'] = '' 
+                    if params.debug: print('No data')
+                    record['data'] = b'{}' 
     
                 if 'extra' in record:
+                    if params.debug: print('Got extra')
                     decoded_extra = \
                         base64.urlsafe_b64decode(record['extra'] +'==')
                     iv = decoded_extra[:16]
@@ -528,14 +531,16 @@ def sync_down(params):
                         record['record_key_unencrypted'], AES.MODE_CBC, iv)
                     record['extra'] = unpad_binary(cipher.decrypt(ciphertext))
                 else:
-                    record['extra'] = '' 
+                    if params.debug: print('No extra')
+                    record['extra'] = b'{}' 
 
                 # Store the record in the cache
                 if params.debug: 
-                    print('record is ' + str(isinstance(record, dict)))
-                if params.debug: 
-                    print('params.record_cache is ' + \
+                    print('record is dict: ' + str(isinstance(record, dict)))
+                    print('params.record_cache is dict: ' + \
                         str(isinstance(params.record_cache, dict)))
+                    print('record is ' + str(record))
+
                 params.record_cache[record_uid] = record 
 
 
@@ -732,7 +737,7 @@ def rotate_password(params, record_uid):
 
     # save previous password
     if params.debug: print('Data: ' + str(data))
-    if params.debug: print('Extra: ' + str(data))
+    if params.debug: print('Extra: ' + str(extra))
 
     # generate friendly datestamp
     modified_time = int(round(time.time()))
