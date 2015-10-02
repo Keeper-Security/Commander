@@ -298,12 +298,15 @@ def sync_down(params):
 
         if 'revision' in response_json:
             params.revision = response_json['revision']
+            if params.debug: print('Getting revision ' + str(params.revision))
     
         if 'removed_records' in response_json:
+            if params.debug: print('Processing removed records')
             for uid in response_json['removed_records']:
                 del params.record_cache[uid]
     
         if 'removed_shared_folders' in response_json:
+            if params.debug: print('Processing removed shared folders')
             for shared_folder in response_json['removed_shared_folders']:
                 if 'records' in shared_folder:
                     for record in shared_folder['records']: 
@@ -318,10 +321,32 @@ def sync_down(params):
 
         # convert record keys from RSA to AES-256
         if 'record_meta_data' in response_json:
+            if params.debug: print('Processing record_meta_data')
             for meta_data in response_json['record_meta_data']:
+
+                if params.debug: print('meta data: ' + str(meta_data))
+
+                if not 'record_key' in meta_data: 
+                    # old record that doesn't have a record key so make one
+                    if params.debug: print('...no record key.  creating...')
+                    unencrypted_key = os.urandom(32)
+                    iv = os.urandom(16)
+                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+                    type1key = iv + cipher.encrypt(unencrypted_key)
+
+                    if params.debug: print('generated key=' + str(type1key))
+
+                    # store as b64 encoded string
+                    # note: decode() converts bytestream (b') to string
+                    meta_data['record_key'] = \
+                        base64.urlsafe_b64encode(type1key).decode()
+                    meta_data['record_key_type'] = 1
+
+                    # temporary flag for decryption routine below
+                    meta_data['old_record_flag'] = True 
+
                 if meta_data['record_key_type'] == 2:
-                    if params.debug: 
-                        print('Converting RSA-encrypted key')
+                    if params.debug: print('Converting RSA-encrypted key')
 
                     # decrypt the type2 key using their RSA key
                     decoded_key = base64.urlsafe_b64decode(
@@ -354,11 +379,13 @@ def sync_down(params):
                         print('base64: ' + str(meta_data['record_key'])) 
 
                 # add to local cache
+                if params.debug: print('Adding meta data to cache')
                 params.meta_data_cache[meta_data['record_uid']] = meta_data
     
 
         # decrypt shared folder keys and folder name
         if 'shared_folders' in response_json:
+            if params.debug: print('Processing shared_folders')
             for shared_folder in response_json['shared_folders']:
                 decoded_key = base64.urlsafe_b64decode(
                     shared_folder['shared_folder_key'] +'==')
@@ -405,6 +432,7 @@ def sync_down(params):
 
         # decrypt record keys
         if 'records' in response_json:
+            if params.debug: print('Processing records')
             for record in response_json['records']:
                 record_uid = record['record_uid']
 
@@ -465,25 +493,51 @@ def sync_down(params):
                 if params.debug: 
                     print('Got record key: ' + str(unencrypted_key))
 
-                # decrypt record data and extra with record key
-                decoded_data = base64.urlsafe_b64decode(record['data'] +'==')
-                iv = decoded_data[:16]
-                ciphertext = decoded_data[16:]
-                cipher = AES.new(record['record_key_unencrypted'], \
-                    AES.MODE_CBC, iv)
-                record['data'] = unpad_binary(cipher.decrypt(ciphertext))
+                ''' Decrypt the record data and extra... '''
 
-                decoded_extra = base64.urlsafe_b64decode(record['extra'] +'==')
-                iv = decoded_extra[:16]
-                ciphertext = decoded_extra[16:]
-                cipher = AES.new(\
-                    record['record_key_unencrypted'], AES.MODE_CBC, iv)
-                record['extra'] = unpad_binary(cipher.decrypt(ciphertext))
+                if ('old_record_flag' in record) and record['old_record_flag']:
+                    # special case for super old records that are encrypted
+                    # with the data key. no extra exists for these.
+                    if params.debug: print('Old record type...')
+                    decoded_data = \
+                        base64.urlsafe_b64decode(record['data'] +'==')
+                    iv = decoded_data[:16]
+                    ciphertext = decoded_data[16:]
+                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+                    record['data'] = unpad_binary(cipher.decrypt(ciphertext))
+                    record['record_key_type'] = 1 
+
+                elif 'data' in record:
+                    # encrypted with record key
+                    decoded_data = \
+                        base64.urlsafe_b64decode(record['data'] +'==')
+                    iv = decoded_data[:16]
+                    ciphertext = decoded_data[16:]
+                    cipher = AES.new(record['record_key_unencrypted'], \
+                        AES.MODE_CBC, iv)
+                    record['data'] = unpad_binary(cipher.decrypt(ciphertext))
+                else:
+                    record['data'] = '' 
+    
+                if 'extra' in record:
+                    decoded_extra = \
+                        base64.urlsafe_b64decode(record['extra'] +'==')
+                    iv = decoded_extra[:16]
+                    ciphertext = decoded_extra[16:]
+                    cipher = AES.new(\
+                        record['record_key_unencrypted'], AES.MODE_CBC, iv)
+                    record['extra'] = unpad_binary(cipher.decrypt(ciphertext))
+                else:
+                    record['extra'] = '' 
 
                 # Store the record in the cache
-                if params.debug: print('record is ' + str(isinstance(record, dict)))
-                if params.debug: print('params.record_cache is ' + str(isinstance(params.record_cache, dict)))
+                if params.debug: 
+                    print('record is ' + str(isinstance(record, dict)))
+                if params.debug: 
+                    print('params.record_cache is ' + \
+                        str(isinstance(params.record_cache, dict)))
                 params.record_cache[record_uid] = record 
+
 
         if 'pending_shares_from' in response_json:
             print('Note: You have pending share requests.')
@@ -634,8 +688,13 @@ def rotate_password(params, record_uid):
     cached_rec = params.record_cache[record_uid]
 
     # extract data and extra from record
-    data = json.loads(cached_rec['data'].decode('utf-8')) 
-    extra = json.loads(cached_rec['extra'].decode('utf-8')) 
+    if 'data' in cached_rec:
+        data = json.loads(cached_rec['data'].decode('utf-8')) 
+    else: data = {}
+
+    if 'extra' in cached_rec:
+        extra = json.loads(cached_rec['extra'].decode('utf-8')) 
+    else: extra = {}
 
     # check for edit permissions
     can_edit = False
@@ -678,7 +737,8 @@ def rotate_password(params, record_uid):
     # generate friendly datestamp
     modified_time = int(round(time.time()))
     modified_time_milli = modified_time * 1000 
-    datestamp = datetime.datetime.fromtimestamp(modified_time).strftime('%Y-%m-%d %H:%M:%S')
+    datestamp = datetime.datetime.fromtimestamp(
+        modified_time).strftime('%Y-%m-%d %H:%M:%S')
 
     # Backup old password
     custom_dict = {}
@@ -709,7 +769,8 @@ def rotate_password(params, record_uid):
 
     # Update the record cache with the cleartext data
     if params.debug: print('data is ' + str(isinstance(data, dict)))
-    if params.debug: print('params.record_cache is ' + str(isinstance(params.record_cache, dict)))
+    if params.debug: print('params.record_cache is ' + \
+        str(isinstance(params.record_cache, dict)))
 
     # convert dict back to json then encode it 
     params.record_cache[record_uid]['data'] = json.dumps(data).encode()
