@@ -35,6 +35,7 @@ current_milli_time = lambda: int(round(time.time() * 1000))
 # PKCS7 padding helpers 
 BS = 16
 pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
+pad_binary = lambda s: s + ((BS - len(s) % BS) * chr(BS - len(s) % BS)).encode()
 unpad_binary = lambda s : s[0:-s[-1]]
 unpad_char = lambda s : s[0:-ord(s[-1])]
 
@@ -332,14 +333,15 @@ def sync_down(params):
                     unencrypted_key = os.urandom(32)
                     iv = os.urandom(16)
                     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-                    type1key = iv + cipher.encrypt(unencrypted_key)
+                    type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
 
                     if params.debug: print('generated key=' + str(type1key))
 
                     # store as b64 encoded string
                     # note: decode() converts bytestream (b') to string
+                    # note2: remove == from the end 
                     meta_data['record_key'] = \
-                        base64.urlsafe_b64encode(type1key).decode()
+                        (base64.urlsafe_b64encode(type1key).decode()).rstrip('==')
                     meta_data['record_key_type'] = 1
 
                     # temporary flag for decryption routine below
@@ -366,12 +368,13 @@ def sync_down(params):
                     # re-encrypt as type1 key with user's data key
                     iv = os.urandom(16)
                     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-                    type1key = iv + cipher.encrypt(unencrypted_key)
+                    type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
 
                     # store as b64 encoded string
                     # note: decode() converts bytestream (b') to string
+                    # note2: remove == from the end 
                     meta_data['record_key'] = \
-                        base64.urlsafe_b64encode(type1key).decode()
+                        (base64.urlsafe_b64encode(type1key).decode()).rstrip('==')
                     meta_data['record_key_type'] = 1 
 
                     if params.debug: 
@@ -745,11 +748,11 @@ def rotate_password(params, record_uid):
     datestamp = datetime.datetime.fromtimestamp(
         modified_time).strftime('%Y-%m-%d %H:%M:%S')
 
-    # Backup old password
+    # Backup old password in a custom field
     custom_dict = {}
     custom_dict['name'] = 'Password @ '+str(datestamp)
-    custom_dict['value'] =  data['secret2']
-    custom_dict['type'] =  'text' 
+    custom_dict['value'] = data['secret2']
+    custom_dict['type'] = 'text' 
 
     # serialize this dict
     serialized = json.dumps(custom_dict)

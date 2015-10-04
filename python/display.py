@@ -102,6 +102,8 @@ def formatted_record(params,record_uid):
     
     if len(rec.custom_fields) > 0:
         for c in rec.custom_fields:
+            if not 'value' in c: c['value'] = ''
+            if not 'name' in c: c['name'] = ''
             print('{0:>20s}: {1:<s}'.format(c['name'], c['value']))
 
     if rec.notes:
