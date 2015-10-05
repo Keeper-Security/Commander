@@ -24,7 +24,9 @@ The above screenshots are using the terminal version.  You can make the necessar
 
 ### Installation 
 
-1. Install Python3 from python.org and the below modules:
+1. Install Python3 from python.org
+
+2. Install the below modules
 
 ```
 sudo pip3 install requests
