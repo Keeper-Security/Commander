@@ -53,6 +53,9 @@ def do_command(params):
     elif (params.command == 'd'):
         api.sync_down(params)
 
+    elif (params.command == 'a'):
+        api.add_record(params)
+
     elif (params.command == 'h'):
         display.formatted_history(stack) 
 
@@ -74,6 +77,7 @@ def do_command(params):
         print('  s <regex> ... search with regular expression')
         print('  g <uid>   ... get record details for uid')
         print('  r <uid>   ... rotate password for uid')
+        print('  a         ... add a new record interactively')
         print('  c         ... clear the screen')
         print('  h         ... show command history')
         print('  q         ... quit')

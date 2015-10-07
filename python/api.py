@@ -341,7 +341,8 @@ def sync_down(params):
                     # note: decode() converts bytestream (b') to string
                     # note2: remove == from the end 
                     meta_data['record_key'] = \
-                        (base64.urlsafe_b64encode(type1key).decode()).rstrip('==')
+                        (base64.urlsafe_b64encode(
+                            type1key).decode()).rstrip('==')
                     meta_data['record_key_type'] = 1
 
                     # temporary flag for decryption routine below
@@ -374,7 +375,8 @@ def sync_down(params):
                     # note: decode() converts bytestream (b') to string
                     # note2: remove == from the end 
                     meta_data['record_key'] = \
-                        (base64.urlsafe_b64encode(type1key).decode()).rstrip('==')
+                        (base64.urlsafe_b64encode(
+                            type1key).decode()).rstrip('==')
                     meta_data['record_key_type'] = 1 
 
                     if params.debug: 
@@ -673,10 +675,7 @@ def decrypt_private_key(params):
     
 
 def rotate_password(params, record_uid):
-    """ Rotate the password for the specified record UID.
-    If additional configuration params are included for Active
-    Directory, we will automatically update AD according to those
-    specifications. """ 
+    """ Rotate the password for the specified record UID """
 
     record_uid = record_uid.strip()
 
@@ -945,3 +944,246 @@ def rotate_password(params, record_uid):
                 response_json['result_code'])
 
     return True
+
+
+def add_record(params, record=Record(), shared_folder_uid=''):
+    """ Create a new record with passed-in data or interactively.
+        The shared folder UID is also optional 
+    """
+
+    record_uid = generate_record_uid()
+    
+    if params.debug: print('record UID: ' + record_uid)
+
+    if record_uid in params.record_cache:
+        print('Record UID already exists.')
+        return False
+
+    if not record.title:
+        while not record.title:
+            record.title = input("... Title (req'd): ")
+        record.folder = input("... Folder: ")
+        record.login = input("... Login: ")
+        record.password = input("... Password: ")
+        record.link = input("... Login URL: ")
+        record.notes = input("... Notes: ")
+        custom_name = ''
+        while True: 
+            custom_dict = {}
+            custom_dict['name'] = input("... Custom Field Name : ") 
+            if not custom_dict['name']:
+                break
+
+            custom_dict['value'] = input("... Custom Field Value : ") 
+            custom_dict['type'] = 'text' 
+            record.custom_fields.append(custom_dict)
+            
+    # generate friendly datestamp
+    modified_time = int(round(time.time()))
+    modified_time_milli = modified_time * 1000 
+    datestamp = datetime.datetime.fromtimestamp(
+        modified_time).strftime('%Y-%m-%d %H:%M:%S')
+
+    # initialize data and extra
+    data = {}
+    extra = {}
+    udata = []
+
+    data['title'] = record.title
+    data['folder'] = record.folder
+    data['secret1'] = record.login
+    data['secret2'] = record.password
+    data['link'] = record.link
+    data['notes'] = record.notes
+    data['custom'] = record.custom_fields
+
+    # Convert the data and extra dictionary to string object
+    # with double quotes instead of single quotes
+    data_serialized = json.dumps(data)
+    extra_serialized = json.dumps(extra)
+
+    if params.debug: print('Dictionary: ' + str(data))
+    if params.debug: print('Serialized: : ' + str(data_serialized))
+
+    # generate a record key
+    unencrypted_key = os.urandom(32)
+    iv = os.urandom(16)
+    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+    type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
+    encoded_type1key = (base64.urlsafe_b64encode(
+                           type1key).decode()).rstrip('==')
+
+    if params.debug: print('generated key=' + str(type1key))
+    if params.debug: print('encoded=' + str(encoded_type1key))
+
+    # encrypt data with record key
+    iv = os.urandom(16)
+    cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
+    encrypted_data = iv + cipher.encrypt(pad(data_serialized))
+
+    # encrypt extra with record key
+    iv = os.urandom(16)
+    cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
+    encrypted_extra = iv + cipher.encrypt(pad(extra_serialized))
+
+    if params.debug: print('encrypted_data: ' + str(encrypted_data))
+    if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
+
+    # note: decode() converts bytestream (b') to string
+    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode()
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode()
+
+    if params.debug: print('encoded_data: ' + str(encoded_data))
+    if params.debug: print('encoded_extra: ' + str(encoded_extra))
+
+    # build a record object
+    new_record = {}
+    new_record['record_uid'] = record_uid
+    new_record['version'] = 2 
+    new_record['data'] = encoded_data
+    new_record['extra'] = encoded_extra
+    new_record['udata'] = udata
+    new_record['client_modified_time'] = modified_time_milli
+    new_record['revision'] = 0
+    new_record['record_key'] = encoded_type1key 
+    new_record['shared_folder_uid'] = shared_folder_uid 
+
+    if params.debug: print('new_record: ' + str(new_record))
+
+    """ create add_records array.  For adding multiple
+    records just add them to this array.  100 max per
+    request. """
+
+    add_records = []
+    add_records.append(new_record)
+
+    def make_json(params, add_records):
+        return {
+               'client_time':current_milli_time(),
+               'device_id':'Commander', 
+               'device_name':'Commander', 
+               'command':'record_update', 
+               'add_records':add_records,
+               'protocol_version':1, 
+               'client_version':CLIENT_VERSION,
+               '2fa_token':params.mfa_token,
+               '2fa_type':params.mfa_type, 
+               'session_token':params.session_token, 
+               'username':params.email
+        }
+        
+    if not params.session_token:
+        try:
+            login(params)
+        except:
+            raise
+            
+    payload = make_json(params, add_records)
+
+    if params.debug: print('payload: ' + str(payload))
+    
+    try:
+        r = requests.post(params.server, json=payload)
+    except:
+        raise CommunicationError(sys.exc_info()[0])
+
+    response_json = r.json()
+
+    if params.debug:
+        print('')
+        print('>>> Request server:[' + params.server + ']')
+        print('>>> Request JSON:[' + str(payload) + ']')
+        print('')
+        print('<<< Response Code:[' + str(r.status_code) + ']')
+        print('<<< Response Headers:[' + str(r.headers) + ']')
+        print('<<< Response content:[' + json.dumps(response_json, 
+            sort_keys=True, indent=4) + ']')
+
+    if response_json['result_code'] == 'auth_failed':
+        if params.debug: print('Re-authorizing.')
+
+        try:
+            login(params)
+        except:
+            raise
+
+        payload = make_json(params, add_records)
+
+        try:
+            r = requests.post(params.server, json=payload)
+        except:
+            print('Comm error during re-auth')
+            raise CommunicationError(sys.exc_info()[0])
+    
+        response_json = r.json()
+    
+        if params.debug:
+            print('')
+            print('>>> Request server:[' + params.server + ']')
+            print('>>> Request JSON:[' + str(payload) + ']')
+            print('')
+            print('<<< Response Code:[' + str(r.status_code) + ']')
+            print('<<< Response Headers:[' + str(r.headers) + ']')
+            print('<<< Response content:[' + json.dumps(response_json, 
+                sort_keys=True, indent=4) + ']')
+
+    if response_json['result'] == 'success':
+
+        new_revision = 0
+        if 'add_records' in response_json:
+            for info in response_json['add_records']:
+                if info['record_uid'] == record_uid:
+                    if info['status'] == 'success':
+                        # all records in the transaction get the 
+                        # same revision.  this just checks 100% success
+                        new_revision = response_json['revision']
+             
+        if new_revision == 0:
+            print('Error: Revision not updated')
+            return False
+
+        if new_revision == new_record['revision']:
+            print('Error: Revision did not change')
+            return False
+
+        print('New record successful for record_uid=' + \
+            str(new_record['record_uid']) + ', revision=' + \
+            str(new_record['revision']), ', new_revision=' + \
+            str(new_revision))
+
+        new_record['revision'] = new_revision
+
+        # sync down the data which updates the caches
+        sync_down(params)
+
+    else :
+        if response_json['result_code']:
+            raise CommunicationError('Unexpected problem: ' + \
+                response_json['result_code'])
+
+    return True
+
+
+def generate_random_records(params, num):
+    """ Create a randomized set of Keeper records 
+    from loremipsum import get_sentences
+
+    for i in [0:num]:
+        sentences_list = get_sentences(5)
+
+        r = Record()
+        r.title = sentences_list[0]
+        r.folder = sentences_list[1]
+        r.login = sentences_list[2]
+        r.password = sentences_list[3]
+        r.link = sentences_list[4]
+        r.notes = sentences_list[5]
+        r.custom_fields[0] = sentences_list[6]
+
+    return
+    """
+
+def generate_record_uid():
+    """ Generate url safe base 64 16 byte uid """
+    return base64.urlsafe_b64encode(
+        os.urandom(16)).decode().rstrip('==') 
