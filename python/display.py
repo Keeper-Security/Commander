@@ -60,34 +60,7 @@ def formatted_record(params,record_uid):
 
     rec = Record()
     rec.record_uid = record_uid 
-
-    if 'folder' in data:
-        rec.folder = data['folder']
-    else: rec.folder = ''
-
-    if 'title' in data:
-        rec.title = data['title']
-    else: rec.title = ''
-
-    if 'secret1' in data:
-        rec.login = data['secret1']
-    else: rec.login = ''
-
-    if 'secret2' in data:
-        rec.password = data['secret2']
-    else: rec.password = ''
-
-    if 'notes' in data:
-        rec.notes = data['notes']
-    else: rec.notes = ''
-
-    if 'link' in data:
-        rec.link = data['link']
-    else: rec.link = ''
-
-    if 'custom' in data:
-        rec.custom_fields = data['custom']
-    else: rec.custom_fields = []
+    rec.load(data)
 
     rec.revision = cached_rec['revision']
 
@@ -131,34 +104,7 @@ def formatted_search(params, searchstring):
 
         rec = Record()
         rec.record_uid = record_uid
-
-        if 'folder' in data:
-            rec.folder = data['folder']
-        else: rec.folder = ''
-    
-        if 'title' in data:
-            rec.title = data['title']
-        else: rec.title = ''
-    
-        if 'secret1' in data:
-            rec.login = data['secret1']
-        else: rec.login = ''
-    
-        if 'secret2' in data:
-            rec.password = data['secret2']
-        else: rec.password = ''
-    
-        if 'notes' in data:
-            rec.notes = data['notes']
-        else: rec.notes = ''
-    
-        if 'link' in data:
-            rec.link = data['link']
-        else: rec.link = ''
-    
-        if 'custom' in data:
-            rec.custom_fields = data['custom']
-        else: rec.custom_fields = []
+        rec.load(data)
 
         target = rec.record_uid + rec.folder + rec.title + \
                  rec.login + rec.password + rec.notes + \
