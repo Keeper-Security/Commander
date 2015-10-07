@@ -23,3 +23,24 @@ class Record:
         self.notes = notes 
         self.custom_fields = custom_fields 
 
+    def load(self,data):
+        if 'folder' in data:
+            self.folder = data['folder']
+    
+        if 'title' in data:
+            self.title = data['title']
+    
+        if 'secret1' in data:
+            self.login = data['secret1']
+    
+        if 'secret2' in data:
+            self.password = data['secret2']
+    
+        if 'notes' in data:
+            self.notes = data['notes']
+    
+        if 'link' in data:
+            self.link = data['link']
+    
+        if 'custom' in data:
+            self.custom_fields = data['custom']
