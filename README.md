@@ -31,11 +31,11 @@ When you create a Keeper account from our [web app](https://keepersecurity.com/v
 
 When you login to Keeper on any device (or on Commander), your Master Password is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt your data key.  The data key is used to decrypt individual record keys.  Finally, your record keys are then used to decrypt your stored vault information (e.g. your MySQL password).
 
-When storing information to your vault, Keeper stores and syncronizes the encrypted data.
+When storing information to your vault, Keeper stores and synchronizes the encrypted data.
 
 For added security, you can enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings screen.  When logging into Commander with Two-Factor Authentication turned on, you will be asked for a one time passcode.  After successful authentication, you will be provided with a device token that can be used for subsequent requests without having to re-authenticate.
 
-All of this cryptography is packaged and wrapped into a simple and easy-to-use interface.  Commander gives you the power to access, store and syncronize encrypted vault records with ease.
+All of this cryptography is packaged and wrapped into a simple and easy-to-use interface.  Commander gives you the power to access, store and synchronize encrypted vault records with ease.
 
 To learn about Keeper's security, certifications and implementation details, visit the [Security Disclosure](https://keepersecurity.com/security.html) page on our website.
 
