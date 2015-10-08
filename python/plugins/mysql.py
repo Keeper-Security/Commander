@@ -1,14 +1,3 @@
-#  _  __  
-# | |/ /___ ___ _ __  ___ _ _ ®
-# | ' </ -_) -_) '_ \/ -_) '_|
-# |_|\_\___\___| .__/\___|_|
-#              |_|            
-#
-# Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
-#
-
 import pymysql.cursors
 
 class MySQL:
@@ -22,14 +11,12 @@ class MySQL:
         self.password = password
         self.db = db
 
-def login():
-    connection = pymysql.connect(host, user, password, db, 
-                     'utf8mb4', cursorclass=pymysql.cursors.DictCursor)
-    return
+    def login():
+        connection = pymysql.connect(host, user, password, db, 'utf8mb4', cursorclass=pymysql.cursors.DictCursor)
 
-def logout():
-    return
+    def logout():
+        return
 
-def rotate():
-    return
+    def rotate():
+        return
 
