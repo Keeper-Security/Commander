@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #  _  __  
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
@@ -9,7 +10,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from subprocess import Popen, PIPE
+import pexpect
 
 """Commander Plugin for Unix Passwd Command"""
 def login():
@@ -18,8 +19,14 @@ def login():
 def logout():
 	return
 
-def rotate():
-	proc = Popen(['/usr/bin/sudo', '/usr/bin/passwd', 'keepertest'])
-	proc.communicate('password2')
-	proc.communicate('password3')
-	proc.communicate('password3')
+def rotate(user, oldpassword, newpassword):
+	child = pexpect.spawn("/usr/bin/passwd %s"%(user))
+	i = child.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
+	if i == 0 or i == 1:
+		child.sendline(oldpassword)
+		child.expect('[Nn]ew [Pp]assword')
+	child.sendline(newpassword)
+	child.expect("Retype New Password:")
+	child.sendline(newpassword)
+	child.expect(pexpect.EOF)
+	child.close()
