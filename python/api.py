@@ -61,13 +61,7 @@ def login(params):
             raise CommunicationError(sys.exc_info()[0])
 
         if params.debug:
-            print('')
-            print('>>> Request server:[' + params.server + ']')
-            print('>>> Request JSON:[' + str(payload) + ']')
-            print('')
-            print('<<< Response Code:[' + str(r.status_code) + ']')
-            print('<<< Response Headers:[' + str(r.headers) + ']')
-            print('<<< Response content:[' + str(r.text) + ']')
+            debug_response(params, payload, r)
 
         if not 'salt' in r.json():
             if r.json()['result_code'] == 'Failed_to_find_user':
@@ -126,15 +120,7 @@ def login(params):
         response_json = r.json()
 
         if params.debug:
-            print('')
-            print('>>> Request server:[' + params.server + ']')
-            print('>>> Request JSON:[' + str(payload) + ']')
-            print('')
-            print('<<< Response Code:[' + str(r.status_code) + ']')
-            print('<<< Response Headers:[' + str(r.headers) + ']')
-            print('<<< Response content:[' + json.dumps(response_json, 
-                sort_keys=True, indent=4) + ']')
-            print('<<< Session Token:['+str(params.session_token)+']')
+            debug_response(params, payload, r)
 
         if (
             response_json['result_code'] == 'auth_success' and 
@@ -279,14 +265,7 @@ def sync_down(params):
 
 
     if params.debug:
-        print('')
-        print('>>> Request server:[' + params.server + ']')
-        print('>>> Request JSON:[' + str(payload) + ']')
-        print('')
-        print('<<< Response Code:[' + str(r.status_code) + ']')
-        print('<<< Response Headers:[' + str(r.headers) + ']')
-        print('<<< Response content:[' + json.dumps(response_json, 
-            sort_keys=True, indent=4) + ']')
+        debug_response(params, payload, r)
 
     if response_json['result'] == 'success':
 
@@ -875,14 +854,7 @@ def rotate_password(params, record_uid):
     response_json = r.json()
 
     if params.debug:
-        print('')
-        print('>>> Request server:[' + params.server + ']')
-        print('>>> Request JSON:[' + str(payload) + ']')
-        print('')
-        print('<<< Response Code:[' + str(r.status_code) + ']')
-        print('<<< Response Headers:[' + str(r.headers) + ']')
-        print('<<< Response content:[' + json.dumps(response_json, 
-            sort_keys=True, indent=4) + ']')
+        debug_response(params, payload, r)
 
     if response_json['result_code'] == 'auth_failed':
         if params.debug: print('Re-authorizing.')
@@ -903,14 +875,7 @@ def rotate_password(params, record_uid):
         response_json = r.json()
     
         if params.debug:
-            print('')
-            print('>>> Request server:[' + params.server + ']')
-            print('>>> Request JSON:[' + str(payload) + ']')
-            print('')
-            print('<<< Response Code:[' + str(r.status_code) + ']')
-            print('<<< Response Headers:[' + str(r.headers) + ']')
-            print('<<< Response content:[' + json.dumps(response_json, 
-                sort_keys=True, indent=4) + ']')
+            debug_response(params, payload, r)
 
     if response_json['result'] == 'success':
         new_revision = 0
@@ -1090,14 +1055,7 @@ def add_record(params, record=Record(), shared_folder_uid=''):
     response_json = r.json()
 
     if params.debug:
-        print('')
-        print('>>> Request server:[' + params.server + ']')
-        print('>>> Request JSON:[' + str(payload) + ']')
-        print('')
-        print('<<< Response Code:[' + str(r.status_code) + ']')
-        print('<<< Response Headers:[' + str(r.headers) + ']')
-        print('<<< Response content:[' + json.dumps(response_json, 
-            sort_keys=True, indent=4) + ']')
+        debug_response(params, payload, r)
 
     if response_json['result_code'] == 'auth_failed':
         if params.debug: print('Re-authorizing.')
@@ -1118,14 +1076,7 @@ def add_record(params, record=Record(), shared_folder_uid=''):
         response_json = r.json()
     
         if params.debug:
-            print('')
-            print('>>> Request server:[' + params.server + ']')
-            print('>>> Request JSON:[' + str(payload) + ']')
-            print('')
-            print('<<< Response Code:[' + str(r.status_code) + ']')
-            print('<<< Response Headers:[' + str(r.headers) + ']')
-            print('<<< Response content:[' + json.dumps(response_json, 
-                sort_keys=True, indent=4) + ']')
+            debug_response(params, payload, r)
 
     if response_json['result'] == 'success':
 
@@ -1162,6 +1113,20 @@ def add_record(params, record=Record(), shared_folder_uid=''):
                 response_json['result_code'])
 
     return True
+
+def debug_response(params, payload, response):
+    print('')
+    print('>>> Request server:[' + params.server + ']')
+    print('>>> Request JSON:[' + str(payload) + ']')
+    print('')
+    print('<<< Response Code:[' + str(response.status_code) + ']')
+    print('<<< Response Headers:[' + str(response.headers) + ']')
+    if response.text:
+        print('<<< Response content:[' + str(response.text) + ']')
+    print('<<< Response content:[' + json.dumps(response.json(), 
+        sort_keys=True, indent=4) + ']')
+    if params.session_token:
+        print('<<< Session Token:['+str(params.session_token)+']')
 
 
 def generate_random_records(params, num):
