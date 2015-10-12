@@ -561,7 +561,6 @@ def num_folders_with_record(record_uid):
 
     return counter
 
-
 def decrypt_data_key(params):
     """ Decrypt the data key returned by the server 
     Format:
@@ -618,7 +617,6 @@ def decrypt_data_key(params):
     # save the encryption params 
     params.data_key = decrypted_data_key[:32] 
 
-
 def decrypt_private_key(params):
     """ Decrypt the RSA private key
     PKCS1 formatted private key, which is described by the ASN.1 type:
@@ -651,7 +649,6 @@ def decrypt_private_key(params):
    
     if params.debug: 
         print('RSA private key: ' + str(params.private_key))
-    
 
 def rotate_password(params, record_uid):
     """ Rotate the password for the specified record UID """
@@ -910,7 +907,6 @@ def rotate_password(params, record_uid):
 
     return True
 
-
 def add_record(params, record=Record(), shared_folder_uid=''):
     """ Create a new record with passed-in data or interactively.
         The shared folder UID is also optional 
@@ -1127,7 +1123,6 @@ def debug_response(params, payload, response):
         sort_keys=True, indent=4) + ']')
     if params.session_token:
         print('<<< Session Token:['+str(params.session_token)+']')
-
 
 def generate_random_records(params, num):
     """ Create a randomized set of Keeper records 
