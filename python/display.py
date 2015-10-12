@@ -64,25 +64,7 @@ def formatted_record(params,record_uid):
 
     rec.revision = cached_rec['revision']
 
-    print('') 
-    print('{0:>20s}: {1:<20s}'.format('UID',rec.record_uid))
-    print('{0:>20s}: {1}'.format('Revision',rec.revision))
-    if rec.folder: print('{0:>20s}: {1:<20s}'.format('Folder',rec.folder))
-    if rec.title: print('{0:>20s}: {1:<20s}'.format('Title',rec.title))
-    if rec.login: print('{0:>20s}: {1:<20s}'.format('Login',rec.login))
-    if rec.password: print('{0:>20s}: {1:<20s}'.format('Password',rec.password))
-    if rec.link: print('{0:>20s}: {1:<20s}'.format('URL',rec.link))
-    
-    if len(rec.custom_fields) > 0:
-        for c in rec.custom_fields:
-            if not 'value' in c: c['value'] = ''
-            if not 'name' in c: c['name'] = ''
-            print('{0:>20s}: {1:<s}'.format(c['name'], c['value']))
-
-    if rec.notes:
-        print('{0:>20s}: {1:<20s}'.format('Notes',rec.notes))
-
-    print('') 
+    rec.display()
 
 def formatted_search(params, searchstring):
     """Search and display folders/titles/uids"""
