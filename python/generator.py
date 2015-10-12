@@ -12,19 +12,6 @@
 import random
 import string
 
-ASCII = (
-    'abcdefghijklmnopqrstuvwxyz' + \
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + \
-    '01234567890' + \
-    '.{}[];!@#$%^&*()=:></?'
-)
-
-ALPHNUM = (
-    'abcdefghijklmnopqrstuvwxyz' + \
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + \
-    '0123456789'
-)
-
 def randomSample(sampleLength=0, sampleString=''):
 	sample = ''
 
