@@ -13,12 +13,6 @@
 import pexpect
 
 """Commander Plugin for Unix Passwd Command"""
-def login():
-	return
-
-def logout():
-	return
-
 def rotate(user, oldpassword, newpassword):
 	child = pexpect.spawn("/usr/bin/passwd %s"%(user))
 	i = child.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
