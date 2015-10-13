@@ -806,7 +806,7 @@ def rotate_password(params, record_uid):
     new_record['extra'] = encoded_extra
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = params.record_cache[record_uid]['revision']
-    new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
+    # new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
     new_record['shared_folder_uid'] = found_shared_folder_uid 
 
     if 'udata' in params.record_cache[record_uid]:
