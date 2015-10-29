@@ -1,4 +1,4 @@
-<img src="src/images/commander_logo_512x205.png" width="512" height="205">
+<img src="src/images/commander_logo_512x205.png" width="400">
 
 ----
 #### The Password Management SDK for IT Admins & Developers
