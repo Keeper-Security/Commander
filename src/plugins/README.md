@@ -19,19 +19,15 @@ Using Commander to rotate passwords, combined with the flexibility of Keeper's s
 
 ### Activating a Plugin  
 
-To activate a plugin for a particular Keeper record, you first need to locate the record UID.  This can be found on the command line nterface by using the *list* or *search* command.  For example:
-
-<img src="../images/plugin_screen1.png" width="625">
-
-Once you find the record UID, then you can edit the record directly in the [Web App](https://keepersecurity.com/vault) or the [Desktop App](https://keepersecurity.com/download).
-
-Add the fields according to the plugin.  For example, here is a MySQL record:
+To activate a plugin for a particular Keeper record, you first need to update the custom fields for that record with special keywords that are used by Commander.  For example, here is a MySQL database record:
 
 <img src="../images/vault_screen1.png" width="625">
 
-When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided.  In this case, it will use the mysql.py plugin.
+Now on the command line you can use the *download* command to pull down your changes then *get* to view the record info.  
 
-Now on the command line you can use the *download* command to pull down your changes then *get* to view the record info:
+<img src="../images/plugin_mysql_get.png" width="625">
+
+Each Keeper record has a unique Record UID.  In this example, the record UID is VEpovl5St-MPcnNrfJkyDg.  When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided.  In this case, it will use the mysql.py plugin.
 
 At this point, to perform a rotation just use the *rotate* command.  For example in this case:
 
