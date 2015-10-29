@@ -23,7 +23,11 @@ To activate a plugin for a particular Keeper record, you first need to update th
 
 <img src="../images/vault_screen1.png" width="625">
 
-Now on the command line you can use the *download* command to pull down your changes then *get* to view the record info.  
+Now on the command line you can use the *download* command to pull down your changes...
+
+<img src="../images/download_command.png" width="625">
+
+Then *get* to view the record info.  
 
 <img src="../images/plugin_mysql_get.png" width="625">
 
@@ -35,4 +39,4 @@ At this point, to perform a rotation just use the *rotate* command.  For example
 r VEpovl5St-MPcnNrfJkyDg
 ```
 
-Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, just let us know.
+Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, email us at ops@keepersecurity.com.
