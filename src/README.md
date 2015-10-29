@@ -24,10 +24,17 @@ The above screenshots are using the terminal version.  You can make the necessar
 
 ### Installation 
 
-1) Install Python3 from python.org
+1) Install Python3 from [python.org](https://www.python.org)
 
 2) Install the below modules
 
+```
+requests
+pycrypto
+colorama
+```
+
+For Mac/Linux users you would type:
 ```
 pip3 install requests
 pip3 install pycrypto
