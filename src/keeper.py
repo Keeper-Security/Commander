@@ -99,6 +99,23 @@ def do_command(params):
 
     return True
 
+# Parse command line options
+# email, config, debug are optional
+parser = argparse.ArgumentParser(usage='keeper [options]', 
+                                 description='Keeper Commander')
+parser.add_argument('--email', help='Email address for the account')
+parser.add_argument('--config', help='Config file to use')
+parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
+
+args = parser.parse_args()                                                     
+
+if args.debug:
+    params.debug = args.debug
+if args.email:
+    params.email = args.email
+if args.config:
+    params.config_filename = args.config
+
 try:
     with open(params.config_filename) as config_file:
 
@@ -136,16 +153,6 @@ try:
 
 except IOError:
     pass
-
-# email, command, debug are optional
-parser = argparse.ArgumentParser(usage='keeper [options]', 
-                                 description='Keeper Commander')
-parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
-
-args = parser.parse_args()                                                     
-
-if args.debug:
-    params.debug = args.debug
 
 try:
 
