@@ -156,7 +156,7 @@ Commands:
 
 ```
 
-* d (lownload): Downloads all records from the account, decrypts the data key, private key, decrypts records and shared folders. 
+* d (download): Downloads all records from the account, decrypts the data key, private key, decrypts records and shared folders. 
 
 * l (list): Displays the Record UID, Folder and Title for all records.
 
@@ -166,9 +166,8 @@ Commands:
 
 * r (rotate): rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
 
-* b (batch): search across all record data and rotate the password for matching records.
+* b (batch rotate): search across all record data and rotate the password for matching records.
 
 ### Help 
 
-If you need assistance, email our dev ops team at ops@keepersecurity.com.
-
+If you need help, found a bug, or you're interesting in contributing, email us at ops@keepersecurity.com.
