@@ -7,6 +7,8 @@ Keeper Commander is a command-line and SDK interface to *Keeper&reg; Password Ma
 
 Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the change to all users with privileged access to the record.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/src/plugins), you can then perform the password reset directly on the source (e.g. database, active directory, unix/pc login, etc...).  Using Commander to rotate passwords, combined with the flexibility of Keeper's secure record sharing features provides you with the most secure and flexible way to grant and revoke access to extremely confidential data.
 
+[Here's a Video](https://youtu.be/p50OKRiaxl8) demonstrating Commander.
+
 ### Features
 
 * Console access to your Keeper Enterprise vault
