@@ -116,7 +116,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [FastFill for Chrome](https://chrome.google.com/webstore/detail/keeper-browser-extension/bfogiafebfohielmmehodmfbbebbbpei)
 
-[FastFill for Firefox](https://s3.amazonaws.com/keepersecurity/ext/update/firefox/keeper.xpi)
+[FastFill for Firefox](https://addons.mozilla.org/en-us/firefox/addon/keeper-password-manager-digita/)
 
 [FastFill for Safari](https://s3.amazonaws.com/keepersecurity/ext/update/safari/keeper.safariextz)
 
