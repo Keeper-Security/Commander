@@ -131,6 +131,11 @@ try:
     
             if 'password' in params.config:
                 params.password = params.config['password']
+
+            if 'challenge' in params.config:
+                import yubikey.yubikey
+                challenge = params.config['challenge']
+                params.password = yubikey.yubikey.get_response(challenge)
     
             if 'mfa_token' in params.config:
                 params.mfa_token = params.config['mfa_token']
