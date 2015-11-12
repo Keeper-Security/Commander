@@ -26,7 +26,7 @@ stack = []
 display.welcome()
 
 def goodbye():
-    print('\nGoodbye.\n');
+    print('\nGoodbye.\n')
     sys.exit()
 
 def do_command(params):
@@ -119,7 +119,6 @@ if args.config:
 try:
     with open(params.config_filename) as config_file:
 
-        #print('Loading config from ' + CONFIG_FILENAME)
         try:
             params.config = json.load(config_file)
 
@@ -153,7 +152,7 @@ try:
                 params.debug = params.config['debug']
 
         except:
-            print('Error: Unable to parse JSON file ' + CONFIG_FILENAME);
+            print('Error: Unable to parse JSON file ' + params.config_filename)
             goodbye()
 
 except IOError:

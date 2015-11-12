@@ -136,7 +136,7 @@ def login(params):
             if 'device_token' in response_json:
                 params.mfa_token = response_json['device_token']
                 # save token to config file
-                params.config['mfa_type'] = 'device_token';
+                params.config['mfa_type'] = 'device_token'
                 params.config['mfa_token'] = params.mfa_token 
                 try:
                     with open(params.config_filename, 'w') as f:

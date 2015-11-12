@@ -18,7 +18,7 @@ def randomSample(sampleLength=0, sampleString=''):
     for i in range(sampleLength):
         sample += sampleString[random.randint(0,len(sampleString)-1)]
 
-    return sample;
+    return sample
 
 def rules(uppercase=0, lowercase=0, digits=0, special_characters=0):
     """ Generate a password of specified length with specified number of """
