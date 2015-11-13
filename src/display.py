@@ -14,6 +14,8 @@ import json
 import base64
 from record import Record
 from colorama import init
+from tabulate import tabulate
+
 init()
 
 class bcolors:
@@ -45,18 +47,10 @@ def formatted_records(records):
     records.sort(key=lambda x: (x.folder + x.title).lower(), reverse=False)
 
     if len(records) > 0:
-        print('')
-        print('   #  {0:<20s}   {1:<20s} {2:<20s}'.format(
-            'Record UID', 'Folder', 'Title'))
-        print('      {0:<20s}   {1:<20s} {2:<20s}'.format(
-            '-----------', '------', '-----'))
-    
-        i = 1
-        for r in records:
-            print('{0:4d}. {1:<20s} {2:<20s} {3:}'.format(
-               i, r.record_uid, r.folder[:20], r.title[:100]))
-            i = i+1
-    
+
+        table = [[i + 1, r.record_uid, r.folder, r.title] for i, r in enumerate(records)]
+        print(tabulate(table, headers=["#", 'Record UID', 'Folder', 'Title']))
+
         print('')
 
     # Under 5 recs, just display on the screen

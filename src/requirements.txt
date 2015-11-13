@@ -1,0 +1,4 @@
+colorama
+pycrypto
+requests
+tabulate
