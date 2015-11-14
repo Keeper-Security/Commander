@@ -17,13 +17,11 @@ import re
 import getpass
 import time
 import os
-import generator
+from keeper import generator
 import datetime
-import plugin_manager
-from record import Record
-from error import AuthenticationError
-from error import CommunicationError
-from error import CryptoError
+from keeper import plugin_manager, params
+from keeper.record import Record
+from keeper.error import AuthenticationError, CommunicationError, CryptoError
 from Crypto import Random
 from Crypto.Hash import SHA256, HMAC, SHA
 from Crypto.Protocol.KDF import PBKDF2

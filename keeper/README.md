@@ -26,19 +26,10 @@ The above screenshots are using the terminal version.  You can make the necessar
 
 1) Install Python3 from [python.org](https://www.python.org)
 
-2) Install the below modules
+2) Install the required modules
 
 ```
-requests
-pycrypto
-colorama
-```
-
-For Mac/Linux users you would type:
-```
-pip3 install requests
-pip3 install pycrypto
-pip3 install colorama
+pip install -r requirements.txt
 ```
 
 NOTE: Keeper Commander is only compatible with Python 3.4+
