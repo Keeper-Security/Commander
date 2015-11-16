@@ -23,13 +23,13 @@ virtualenv -p python3 venv
 source venv/bin/activate
 ```
 
-2) Install the required modules
+4) Install the required modules
 
 ```
 pip install -r requirements.txt
 ```
 
-3) Install the keeper package in development mode
+5) Install the keeper package in development mode
 
 ```
 pip install -e .
@@ -43,9 +43,9 @@ Keeper supports plugins for various 3rd party systems for password reset integra
 pip3 install PyMySQL
 ```
 
-3) Set up a Keeper account from https://keepersecurity.com if you don't already have one.
+6) Set up a Keeper account from https://keepersecurity.com if you don't already have one.
 
-4) Execute command line program as described below or use a config.json file to streamline usage.  Command line arguments will override the configuration file.
+7) Execute command line program as described below or use a config.json file to streamline usage.  Command line arguments will override the configuration file.
 
 ### Help
 
