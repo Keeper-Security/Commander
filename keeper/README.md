@@ -22,14 +22,36 @@ Here's a preview of what Keeper Commander can do:
 
 The above screenshots are using the terminal version.  You can make the necessary hooks in the Commander source code to meet your integration needs.
 
-### Installation 
+### Installation
+
+This type of installation assumes you want to view/modify the source code. Using the instructions below,
+you will be able to have more than one copy of keeper commander installed without conflicting with each other.
 
 1) Install Python3 from [python.org](https://www.python.org)
+
+2) Install virtualenv:
+
+```
+sudo pip3 install virtualenv
+```
+
+3) Create and activate the virtual environment for your keeper project (you need to be in the keeper root folder):
+
+```
+virtualenv -p python3 venv
+source venv/bin/activate
+```
 
 2) Install the required modules
 
 ```
 pip install -r requirements.txt
+```
+
+3) Install the keeper package in development mode
+
+```
+pip install -e .
 ```
 
 NOTE: Keeper Commander is only compatible with Python 3.4+

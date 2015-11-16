@@ -1,11 +1,11 @@
-<img src="src/images/commander_logo_512x205.png" width="400">
+<img src="keeper/images/commander_logo_512x205.png" width="400">
 
 ----
 #### The Password Management SDK for IT Admins & Developers
 
 Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander can be used to interactively access your Keeper Vault via a standard terminal or SSH console, or it can be used as an SDK for integrating your back-end into Keeper's zero-knowledge Cloud Security Vault&trade;.
 
-Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the change to all users with privileged access to the record.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/src/plugins), you can then perform the password reset directly on the source (e.g. database, active directory, unix/pc login, etc...).  Using Commander to rotate passwords, combined with the flexibility of Keeper's secure record sharing features provides you with the most secure and flexible way to grant and revoke access to extremely confidential data.
+Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the change to all users with privileged access to the record.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/keeper/plugins), you can then perform the password reset directly on the source (e.g. database, active directory, unix/pc login, etc...).  Using Commander to rotate passwords, combined with the flexibility of Keeper's secure record sharing features provides you with the most secure and flexible way to grant and revoke access to extremely confidential data.
 
 [Here's a Video](https://youtu.be/p50OKRiaxl8) demonstrating Commander.
 
@@ -20,7 +20,7 @@ Commander can securely rotate passwords in your Keeper vault and then automatica
 * Control record and user permissions
 * Automate everything
 
-<img src="src/images/mac.png" width="709" height="727">
+<img src="keeper/images/mac.png" width="709" height="727">
 
 Keeper Commander provides deep integration of privileged password management into back-end systems to securely access credentials, elevate permissions and rotate passwords. With Keeper Commander you can automate key security features on any platform.
 
@@ -28,8 +28,15 @@ Changes made through Keeper Commander instantly propagate to the users who have 
 
 When you grant and revoke access or rotate a password, it instantly updates to users on their mobile and desktop devices. Control access to highly secure systems by rotating passwords and pushing those credentials to users - all within the Keeper ecosystem.
 
-### Installation  
-Follow the instructions in the README within the src/ and src/plugins/ folder.
+### Installation
+
+You can install Keeper Commander with pip (the only requirement for this type of install is python 3.
+You can install python3 by going to [python.org](https://www.python.org) and following the instructions):
+
+```
+pip3 install keeper
+```
+Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keeper/ and keeper/plugins/ folder.
 
 ### Support 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
