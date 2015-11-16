@@ -39,19 +39,19 @@ pip3 install keeper
 Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keeper/ and keeper/plugins/ folder.
 
 #### Logging in
-<img src="images/screenshot1.png" width="625">
+<img src="keeper/images/screenshot1.png" width="625">
 
 #### Listing available commands
-<img src="images/screenshot2.png" width="625">
+<img src="keeper/images/screenshot2.png" width="625">
 
 #### Searching for records
-<img src="images/screenshot3.png" width="625">
+<img src="keeper/images/screenshot3.png" width="625">
 
 #### Getting record details
-<img src="images/screenshot4.png" width="625">
+<img src="keeper/images/screenshot4.png" width="625">
 
 #### Rotating a password
-<img src="images/screenshot5.png" width="625">
+<img src="keeper/images/screenshot5.png" width="625">
 
 The above screenshots are using the terminal version.  You can make the necessary hooks in the Commander source code to meet your integration needs.
 
