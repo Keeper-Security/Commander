@@ -34,7 +34,7 @@ You can install Keeper Commander with pip (the only requirement for this type of
 You can install python3 by going to [python.org](https://www.python.org) and following the instructions):
 
 ```
-pip3 install keeper
+pip3 install keepercommander
 ```
 Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keepercommander/ and keepercommander/plugins/ folder.
 
