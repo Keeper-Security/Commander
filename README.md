@@ -20,7 +20,7 @@ Commander can securely rotate passwords in your Keeper vault and then automatica
 * Control record and user permissions
 * Automate everything
 
-<img src="keeper/images/mac.png" width="709" height="727">
+<img src="keepercommander/images/mac.png" width="709" height="727">
 
 Keeper Commander provides deep integration of privileged password management into back-end systems to securely access credentials, elevate permissions and rotate passwords. With Keeper Commander you can automate key security features on any platform.
 
@@ -36,22 +36,22 @@ You can install python3 by going to [python.org](https://www.python.org) and fol
 ```
 pip3 install keeper
 ```
-Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keeper/ and keeper/plugins/ folder.
+Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keepercommander/ and keepercommander/plugins/ folder.
 
 #### Logging in
-<img src="keeper/images/screenshot1.png" width="625">
+<img src="keepercommander/images/screenshot1.png" width="625">
 
 #### Listing available commands
-<img src="keeper/images/screenshot2.png" width="625">
+<img src="keepercommander/images/screenshot2.png" width="625">
 
 #### Searching for records
-<img src="keeper/images/screenshot3.png" width="625">
+<img src="keepercommander/images/screenshot3.png" width="625">
 
 #### Getting record details
-<img src="keeper/images/screenshot4.png" width="625">
+<img src="keepercommander/images/screenshot4.png" width="625">
 
 #### Rotating a password
-<img src="keeper/images/screenshot5.png" width="625">
+<img src="keepercommander/images/screenshot5.png" width="625">
 
 The above screenshots are using the terminal version.  You can make the necessary hooks in the Commander source code to meet your integration needs.
 

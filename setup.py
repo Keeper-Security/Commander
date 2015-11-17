@@ -10,7 +10,7 @@ LICENSE = open("LICENSE").read()
 here = path.abspath(path.dirname(__file__))
 
 # Get the long description from the README file
-with open(path.join(here, 'keeper', 'README.md'), encoding='utf-8') as f:
+with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 install_requires = [
@@ -20,7 +20,7 @@ install_requires = [
     'tabulate'
 ]
 
-setup(name='keeper',
+setup(name='keepercommander',
       version='0.2.5',
       description='Keeper Commander for Python 3',
       long_description=long_description,
@@ -35,11 +35,11 @@ setup(name='keeper',
                    "Topic :: Security"],
       keywords='security password',
 
-      packages=['keeper'],
+      packages=['keepercommander'],
 
       entry_points={
           "console_scripts": [
-              "keeper=keeper:main",
+              "keeper=keepercommander:main",
           ],
       },
       install_requires=install_requires

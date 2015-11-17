@@ -1,6 +1,7 @@
 .idea/
 venv/
 config.json*
+*.pyc
 dist
 build
-keeper.egg-info
+keepercommander.egg-info

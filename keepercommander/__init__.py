@@ -1,6 +1,6 @@
 import sys
 
-from keeper.cli import loop
+from keepercommander.cli import loop
 
 
 def main():

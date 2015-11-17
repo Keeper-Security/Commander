@@ -13,9 +13,9 @@ import sys
 import argparse
 import json
 import getpass
-from keeper import display, api
-from keeper.error import AuthenticationError, CommunicationError
-from keeper.params import KeeperParams
+from keepercommander import display, api
+from keepercommander.error import AuthenticationError, CommunicationError
+from keepercommander.params import KeeperParams
 
 stack = []
 
