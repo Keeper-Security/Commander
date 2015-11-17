@@ -9,10 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import sys
-import json
-import base64
-from record import Record
 from colorama import init
 from tabulate import tabulate
 

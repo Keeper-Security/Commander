@@ -1,3 +1,6 @@
 .idea/
 venv/
 config.json*
+dist
+build
+keeper.egg-info
