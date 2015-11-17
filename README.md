@@ -1,4 +1,4 @@
-<img src="keeper/images/commander_logo_512x205.png" width="400">
+<img src="keepercommander/images/commander_logo_512x205.png" width="400">
 
 ----
 #### The Password Management SDK for IT Admins & Developers
