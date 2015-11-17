@@ -57,11 +57,11 @@ The above screenshots are using the terminal version.  You can make the necessar
 
 ### Command line usage
 
-./keeper
+keeper
 
 ### Optional parameters
 
-./keeper --email=email@company.com
+keeper --email=email@company.com
 
 ### Auto-configuration file
 
@@ -81,7 +81,7 @@ Here's an example config.json file:
 
 You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
 
-./keeper --config=foo.json
+keeper --config=foo.json
 
 In this case, Commander will start up using foo.json as the configuration.
 
