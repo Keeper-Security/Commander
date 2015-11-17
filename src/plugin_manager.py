@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import sys
 import importlib
 
 imported_plugins = {}
