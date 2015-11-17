@@ -1,0 +1,10 @@
+{
+    "server":"https://keeperapp.com/v2/",
+    "email":"",
+    "password":"",
+    "mfa_token":"",
+    "mfa_type":"",
+    "debug":false,
+    "plugins":[],
+    "commands":[]
+}
