@@ -21,7 +21,7 @@ install_requires = [
 ]
 
 setup(name='keepercommander',
-      version='0.2.5',
+      version='0.2.6',
       description='Keeper Commander for Python 3',
       long_description=long_description,
       author='Craig Lurey',
