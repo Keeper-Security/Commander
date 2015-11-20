@@ -1,17 +1,5 @@
-#!/usr/bin/env python
-
 from setuptools import setup
-
-from os import path
-
-LICENSE = open("LICENSE").read()
-
-# strip links from the descripton on the PyPI
-here = path.abspath(path.dirname(__file__))
-
-# Get the long description from the README file
-with open(path.join(here, 'README.md'), encoding='utf-8') as f:
-    long_description = f.read()
+from pypandoc import convert
 
 install_requires = [
     'colorama',
@@ -21,13 +9,13 @@ install_requires = [
 ]
 
 setup(name='keepercommander',
-      version='0.2.6',
+      version='0.2.10',
       description='Keeper Commander for Python 3',
-      long_description=long_description,
+      long_description=convert('README.md', 'rst'),
       author='Craig Lurey',
       author_email='craig@keepersecurity.com',
       url='https://github.com/Keeper-Security/Commander',
-      license=LICENSE,
+      license='MIT',
       classifiers=["Development Status :: 4 - Beta",
                    "License :: OSI Approved :: MIT License",
                    "Operating System :: OS Independent",
