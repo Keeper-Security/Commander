@@ -9,7 +9,7 @@ install_requires = [
 ]
 
 setup(name='keepercommander',
-      version='0.2.10',
+      version='0.3.0',
       description='Keeper Commander for Python 3',
       long_description=convert('README.md', 'rst'),
       author='Craig Lurey',
