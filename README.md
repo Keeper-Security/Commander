@@ -1,4 +1,4 @@
-<img src="keepercommander/images/commander_logo_512x205.png" width="400">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_512x205.png)
 
 ----
 #### The Password Management SDK for IT Admins & Developers
@@ -20,7 +20,7 @@ Commander can securely rotate passwords in your Keeper vault and then automatica
 * Control record and user permissions
 * Automate everything
 
-<img src="keepercommander/images/mac.png" width="709" height="727">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/mac.png)
 
 Keeper Commander provides deep integration of privileged password management into back-end systems to securely access credentials, elevate permissions and rotate passwords. With Keeper Commander you can automate key security features on any platform.
 
@@ -39,19 +39,19 @@ pip3 install keepercommander
 Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keepercommander/ and keepercommander/plugins/ folder.
 
 #### Logging in
-<img src="keepercommander/images/screenshot1.png" width="625">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot1.png)
 
 #### Listing available commands
-<img src="keepercommander/images/screenshot2.png" width="625">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot2.png)
 
 #### Searching for records
-<img src="keepercommander/images/screenshot3.png" width="625">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot3.png)
 
 #### Getting record details
-<img src="keepercommander/images/screenshot4.png" width="625">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot4.png)
 
 #### Rotating a password
-<img src="keepercommander/images/screenshot5.png" width="625">
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot5.png)
 
 The above screenshots are using the terminal version.  You can make the necessary hooks in the Commander source code to meet your integration needs.
 
