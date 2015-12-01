@@ -4,6 +4,8 @@ from setuptools import setup
 
 from os import path
 
+import keepercommander
+
 LICENSE = open("LICENSE").read()
 
 # strip links from the descripton on the PyPI
@@ -21,7 +23,7 @@ install_requires = [
 ]
 
 setup(name='keepercommander',
-      version='0.2.6',
+      version=keepercommander.__version__,
       description='Keeper Commander for Python 3',
       long_description=long_description,
       author='Craig Lurey',

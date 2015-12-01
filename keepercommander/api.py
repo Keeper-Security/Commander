@@ -209,6 +209,8 @@ def sync_down(params):
     if not params.email:
         raise CommunicationError('No username provided')
 
+    print('Downloading records...')
+
     def make_json(params):
         return {
                'include':[

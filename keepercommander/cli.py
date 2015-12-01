@@ -10,18 +10,105 @@
 #
 
 import sys
-import argparse
-import json
 import getpass
+import json
+import click
+
 from keepercommander import display, api
-from keepercommander.error import AuthenticationError, CommunicationError
 from keepercommander.params import KeeperParams
+from keepercommander.error import AuthenticationError, CommunicationError
+
+@click.command(help = 'Use Keeper interactive shell')
+@click.pass_obj
+def shell(params):
+    loop(params)
+
+@click.command(help = 'List Keeper records')
+@click.pass_obj
+def list(params):
+    try:
+        api.sync_down(params)
+        results = api.search_records(params, '')
+        display.formatted_records(results)
+    except Exception as e:
+        print(e)
+        sys.exit(1)
+
+# @click.command('import', help='Import data from local file to Keeper')
+# def _import():
+#     pass
+
+# @click.command(help='Export data from Keeper to local file')
+# def export():
+#     pass
+
+# @click.command(help='Add a record to Keeper')
+# @click.argument('user')
+# def add(user):
+#     print(user)
+#     pass
 
 stack = []
 
 def goodbye():
     print('\nGoodbye.\n')
     sys.exit()
+
+def get_params(config_filename):
+    params = KeeperParams()
+    params.config_filename = 'config.json'
+    if config_filename:
+        params.config_filename = config_filename
+
+    try:
+        with open(params.config_filename) as config_file:
+
+            try:
+                params.config = json.load(config_file)
+
+                if 'email' in params.config:
+                    params.email = params.config['email']
+
+                if 'server' in params.config:
+                    params.server = params.config['server']
+
+                if 'password' in params.config:
+                    params.password = params.config['password']
+
+                if 'challenge' in params.config:
+                    import yubikey.yubikey
+                    challenge = params.config['challenge']
+                    params.password = yubikey.yubikey.get_response(challenge)
+
+                if 'mfa_token' in params.config:
+                    params.mfa_token = params.config['mfa_token']
+
+                if 'mfa_type' in params.config:
+                    params.mfa_type = params.config['mfa_type']
+
+                if 'commands' in params.config:
+                    params.commands = params.config['commands']
+
+                if 'plugins' in params.config:
+                    params.plugins = params.config['plugins']
+
+                if 'debug' in params.config:
+                    params.debug = params.config['debug']
+
+            except:
+                print('Error: Unable to parse JSON file ' + params.config_filename)
+                raise
+
+    except IOError:
+        if config_filename:
+            print('Error: Unable to open config file ' + config_filename)
+        pass
+
+    if not params.server:
+        params.server = 'https://keeperapp.com/v2/'
+
+    return params
+
 
 def do_command(params):
     if (params.command == 'q'):
@@ -92,78 +179,11 @@ def do_command(params):
 
     return True
 
-
-def loop():
-    params = KeeperParams()
-    params.config_filename = 'config.json'
+def loop(params):
 
     display.welcome()
 
-    # Parse command line options
-    # email, config, debug are optional
-    parser = argparse.ArgumentParser(usage='keeper [options]',
-                                     description='Keeper Commander')
-    parser.add_argument('--email', help='Email address for the account')
-    parser.add_argument('--config', help='Config file to use')
-    parser.add_argument('--debug', help='Turn on debug mode', action='store_true')
-
-    args = parser.parse_args()
-
-    if args.debug:
-        params.debug = args.debug
-    if args.email:
-        params.email = args.email
-    if args.config:
-        params.config_filename = args.config
-
     try:
-        with open(params.config_filename) as config_file:
-
-            try:
-                params.config = json.load(config_file)
-
-                if 'email' in params.config:
-                    params.email = params.config['email']
-
-                if 'server' in params.config:
-                    params.server = params.config['server']
-
-                if 'password' in params.config:
-                    params.password = params.config['password']
-
-                if 'challenge' in params.config:
-                    import yubikey.yubikey
-                    challenge = params.config['challenge']
-                    params.password = yubikey.yubikey.get_response(challenge)
-
-                if 'mfa_token' in params.config:
-                    params.mfa_token = params.config['mfa_token']
-
-                if 'mfa_type' in params.config:
-                    params.mfa_type = params.config['mfa_type']
-
-                if 'commands' in params.config:
-                    params.commands = params.config['commands']
-
-                if 'plugins' in params.config:
-                    params.plugins = params.config['plugins']
-
-                if 'debug' in params.config:
-                    params.debug = params.config['debug']
-
-            except:
-                print('Error: Unable to parse JSON file ' + params.config_filename)
-                goodbye()
-
-    except IOError:
-        if args.config:
-            print('Error: Unable to open config file ' + args.config)
-        pass
-
-    try:
-
-        if not params.server:
-            params.server = 'https://keeperapp.com/v2/'
 
         while not params.email:
             params.email = getpass.getpass(prompt='Email: ', stream=None)
