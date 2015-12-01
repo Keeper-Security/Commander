@@ -1,7 +1,5 @@
-#!/usr/bin/env python
-
 from setuptools import setup
-
+from pypandoc import convert
 from os import path
 
 import keepercommander
@@ -19,17 +17,18 @@ install_requires = [
     'colorama',
     'pycrypto',
     'requests',
-    'tabulate'
+    'tabulate',
+    'click',
 ]
 
 setup(name='keepercommander',
       version=keepercommander.__version__,
       description='Keeper Commander for Python 3',
-      long_description=long_description,
+      long_description=convert('README.md', 'rst'),
       author='Craig Lurey',
       author_email='craig@keepersecurity.com',
       url='https://github.com/Keeper-Security/Commander',
-      license=LICENSE,
+      license='MIT',
       classifiers=["Development Status :: 4 - Beta",
                    "License :: OSI Approved :: MIT License",
                    "Operating System :: OS Independent",
