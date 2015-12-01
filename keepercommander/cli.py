@@ -66,8 +66,8 @@ def get_params(config_filename):
             try:
                 params.config = json.load(config_file)
 
-                if 'email' in params.config:
-                    params.email = params.config['email']
+                if 'user' in params.config:
+                    params.user = params.config['user']
 
                 if 'server' in params.config:
                     params.server = params.config['server']
@@ -185,8 +185,8 @@ def loop(params):
 
     try:
 
-        while not params.email:
-            params.email = getpass.getpass(prompt='Email: ', stream=None)
+        while not params.user:
+            params.user = getpass.getpass(prompt='User(Email): ', stream=None)
 
             # only prompt for password when no device token
         while not params.password:

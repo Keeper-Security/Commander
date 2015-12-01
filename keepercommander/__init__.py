@@ -24,7 +24,7 @@ def main(ctx, debug, user, password, config):
     if debug:
         params.debug = debug
     if user:
-        params.email = user
+        params.user = user
     if password:
         params.password = password
 

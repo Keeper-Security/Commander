@@ -51,7 +51,7 @@ def login(params):
                'include':['keys'],
                'version':2, 
                'client_version':CLIENT_VERSION,
-               'username':params.email
+               'username':params.user
               }
 
         try:
@@ -66,7 +66,7 @@ def login(params):
         if not 'salt' in r.json():
             if r.json()['result_code'] == 'Failed_to_find_user':
                 raise AuthenticationError('User account [' + \
-                    str(params.email) + '] not found.')
+                    str(params.user) + '] not found.')
 
             if r.json()['result_code'] == 'auth_failed':
                 raise AuthenticationError('Pre-auth failed.')
@@ -99,7 +99,7 @@ def login(params):
                    'client_version':CLIENT_VERSION,
                    '2fa_token':params.mfa_token,
                    '2fa_type':params.mfa_type, 
-                   'username':params.email
+                   'username':params.user
                   }
 
         else:
@@ -109,7 +109,7 @@ def login(params):
                    'version':2, 
                    'auth_response':params.auth_verifier,
                    'client_version':CLIENT_VERSION,
-                   'username':params.email
+                   'username':params.user
                   }
 
         try:
@@ -206,7 +206,7 @@ def sync_down(params):
     if not params.server:
         raise CommunicationError('No server provided')
 
-    if not params.email:
+    if not params.user:
         raise CommunicationError('No username provided')
 
     print('Downloading records...')
@@ -229,7 +229,7 @@ def sync_down(params):
                '2fa_token':params.mfa_token,
                '2fa_type':params.mfa_type, 
                'session_token':params.session_token, 
-               'username':params.email
+               'username':params.user
         }
         
     if not params.session_token:
@@ -712,7 +712,7 @@ def rotate_password(params, record_uid):
     if not params.server:
         raise CommunicationError('No server provided')
 
-    if not params.email:
+    if not params.user:
         raise CommunicationError('No username provided')
 
     # save previous password
@@ -863,7 +863,7 @@ def rotate_password(params, record_uid):
                '2fa_token':params.mfa_token,
                '2fa_type':params.mfa_type, 
                'session_token':params.session_token, 
-               'username':params.email
+               'username':params.user
         }
         
     if not params.session_token:
@@ -1126,7 +1126,7 @@ def add_record(params, record=Record(), shared_folder_uid=''):
                '2fa_token':params.mfa_token,
                '2fa_type':params.mfa_type, 
                'session_token':params.session_token, 
-               'username':params.email
+               'username':params.user
         }
         
     if not params.session_token:

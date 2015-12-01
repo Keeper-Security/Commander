@@ -13,7 +13,7 @@ class KeeperParams:
     """ Global storage of data during the session """
 
     def __init__(self,config_filename='',config={}, server='',
-                 email='',password='',mfa_token='',
+                 user='',password='',mfa_token='',
                  mfa_type='',command='',commands=[],plugins=[],
                  session_token='',salt='',iterations='',
                  encrypted_private_key='', encryption_params='',
@@ -25,7 +25,7 @@ class KeeperParams:
         self.config = config
         self.auth_verifier = auth_verifier 
         self.server = server 
-        self.email = email 
+        self.user = user
         self.password = password 
         self.mfa_token = mfa_token 
         self.mfa_type = mfa_type 

@@ -53,90 +53,39 @@ Or, if you would like to make modifications, clone the repository and follow the
 #### Rotating a password
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot5.png)
 
-The above screenshots are using the terminal version.  You can make the necessary hooks in the Commander source code to meet your integration needs.
+The above screenshots are using the Keeper shell mode. You can use Keeper Commander in three ways:
+
+1. From the command line or script
+2. As an interactive shell (keeper shell command)
+3. In your own python program by importing keepercommander package
 
 ### Command line usage
+```
+Usage: keeper [OPTIONS] COMMAND [ARGS]...
 
-keeper
+Options:
+  -u, --user TEXT      Email address for the account
+  -p, --password TEXT  Master password for the account
+  --config TEXT        Config file to use
+  --debug BOOLEAN      Turn on debug mode
+  --version            Show the version and exit.
+  --help               Show this message and exit.
 
-### Optional parameters
+Commands:
+  list   List Keeper records
+  shell  Use Keeper interactive shell
+  ...
+```  
+**Environment variables**
 
-keeper --email=email@company.com
+for --user and --password options, you can set environment variables KEEPER_USER and KEEPER_PASWORD. User and password specified as options have priority over user and password settings specified in the configuration file.  
 
-### Auto-configuration file
-
-To automate the use of Commander, create a file called config.json and place the file in your install folder.  If you don't provide a config file, Commander will just prompt you for the information.
-
-Here's an example config.json file:
+### Interactive shell
+If you would like to use keeper interactively within a shell session, invoke shell by typing
 
 ```
-{
-    "server":"https://keeperapp.com/v2/",
-    "email":"your_email_here",
-    "password":"your_password_here",
-    "debug":false,
-    "commands":[]
-}
+keeper shell
 ```
-
-You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
-
-keeper --config=foo.json
-
-In this case, Commander will start up using foo.json as the configuration.
-
-### Auto-command execution
-
-You can provide Commander a set of commands to run without having to type them manually.  This is the easiest way to automate password resets.
-
-Example:
-
-```
-{
-    "debug":false,
-    "server":"https://keeperapp.com/v2/",
-    "email":"admin@company.com",
-    "password":"somereallystrongpassword",
-    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
-}
-```
-
-In this example, we are telling Commander to first download and decrypt records, then reset 2 passwords.  As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
-
-### Two-Factor Authentication and Device Token
-
-If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token needs to be saved for subsequent calls. Copy-paste this device token into your config.json file.  For example:
-
-```
-{
-    "debug":false,
-    "server":"https://keeperapp.com/v2/",
-    "email":"email@company.com",
-    "password":"123456",
-    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
-    "mfa_type":"device_token",
-    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
-}
-```
-
-### Plugins
-
-Keeper Commander can talk to external systems for the purpose of resetting a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
-
-```
-Name: cmdr:plugin
-Value: mysql
-```
-```
-Name: cmdr:plugin
-Value: adpasswd
-```
-
-When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided (e.g. mysql.py and active_directory.py).
-
-Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, just let us know.
-
-### Commands
 
 To see a list of supported commands, simply type '?':
 
@@ -169,6 +118,80 @@ Commands:
 * r (rotate): rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
 
 * b (batch rotate): search across all record data and rotate the password for matching records.
+
+
+### Auto-configuration file
+
+To automate the use of Commander, create a file called config.json and place the file in your install folder.  If you don't provide a config file, Commander will just prompt you for the information.
+
+Here's an example config.json file:
+
+```
+{
+    "server":"https://keeperapp.com/v2/",
+    "user":"your_email_here",
+    "password":"your_password_here",
+    "debug":false,
+    "commands":[]
+}
+```
+
+You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
+
+keeper --config=foo.json
+
+In this case, Commander will start up using foo.json as the configuration.
+
+### Auto-command execution
+
+You can provide Commander a set of commands to run without having to type them manually.  This is the easiest way to automate password resets.
+
+Example:
+
+```
+{
+    "debug":false,
+    "server":"https://keeperapp.com/v2/",
+    "user":"admin@company.com",
+    "password":"somereallystrongpassword",
+    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
+}
+```
+
+In this example, we are telling Commander to first download and decrypt records, then reset 2 passwords.  As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+
+### Two-Factor Authentication and Device Token
+
+If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token needs to be saved for subsequent calls. Copy-paste this device token into your config.json file.  For example:
+
+```
+{
+    "debug":false,
+    "server":"https://keeperapp.com/v2/",
+    "user":"email@company.com",
+    "password":"123456",
+    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
+    "mfa_type":"device_token",
+    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
+}
+```
+
+### Plugins
+
+Keeper Commander can talk to external systems for the purpose of resetting a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
+
+```
+Name: cmdr:plugin
+Value: mysql
+```
+```
+Name: cmdr:plugin
+Value: adpasswd
+```
+
+When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided (e.g. mysql.py and active_directory.py).
+
+Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, just let us know.
 
 ### Support 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
