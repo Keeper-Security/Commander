@@ -1,6 +1,6 @@
 {
     "server":"https://keeperapp.com/v2/",
-    "email":"",
+    "user":"",
     "password":"",
     "mfa_token":"",
     "mfa_type":"",
