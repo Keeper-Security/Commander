@@ -14,7 +14,7 @@ import getpass
 import json
 import click
 
-from keepercommander import display, api
+from keepercommander import display, api, imp_exp
 from keepercommander.params import KeeperParams
 from keepercommander.error import AuthenticationError, CommunicationError
 
@@ -38,9 +38,12 @@ def list(params):
 # def _import():
 #     pass
 
-# @click.command(help='Export data from Keeper to local file')
-# def export():
-#     pass
+@click.command(help='Export data from Keeper to local file')
+@click.pass_obj
+@click.argument('filename')
+def export(params, filename):
+    api.sync_down(params)
+    imp_exp.export(params, filename)
 
 # @click.command(help='Add a record to Keeper')
 # @click.argument('user')
