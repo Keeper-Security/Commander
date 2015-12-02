@@ -34,22 +34,23 @@ def list(params):
         print(e)
         sys.exit(1)
 
-# @click.command('import', help='Import data from local file to Keeper')
-# def _import():
-#     pass
+@click.command('import', help='Import data from local file to Keeper')
+@click.pass_obj
+@click.argument('filename')
+def _import(params, filename):
+    imp_exp._import(params, filename)
 
 @click.command(help='Export data from Keeper to local file')
 @click.pass_obj
 @click.argument('filename')
 def export(params, filename):
-    api.sync_down(params)
     imp_exp.export(params, filename)
 
-# @click.command(help='Add a record to Keeper')
-# @click.argument('user')
-# def add(user):
-#     print(user)
-#     pass
+@click.command('delete-all', help='Delete all Keeper records on server')
+@click.confirmation_option(prompt='Are you sure you want to delete all Keeper records on the server?')
+@click.pass_obj
+def delete_all(params):
+    imp_exp.delete_all(params)
 
 stack = []
 

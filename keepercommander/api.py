@@ -1003,41 +1003,21 @@ def search_records(params, searchstring):
             
     return search_results
 
-def add_record(params, record=Record(), shared_folder_uid=''):
-    """ Create a new record with passed-in data or interactively.
-        The shared folder UID is also optional 
-    """
+def prepare_record(params, record, shared_folder_uid=''):
+    ''' Prepares the record to be sent to the Keeper server
+    :return: record encrypted and ready to be included into record_update json
+    '''
+    if not record.record_uid:
+        record.record_uid = generate_record_uid()
 
-    record_uid = generate_record_uid()
-    
-    if params.debug: print('record UID: ' + record_uid)
+    if params.debug: print('record UID: ' + record.record_uid)
 
-    if record_uid in params.record_cache:
-        print('Record UID already exists.')
-        return False
+    if record.record_uid in params.record_cache:
+        raise Exception('Record UID already exists.')
 
-    if not record.title:
-        while not record.title:
-            record.title = input("... Title (req'd): ")
-        record.folder = input("... Folder: ")
-        record.login = input("... Login: ")
-        record.password = input("... Password: ")
-        record.link = input("... Login URL: ")
-        record.notes = input("... Notes: ")
-        custom_name = ''
-        while True: 
-            custom_dict = {}
-            custom_dict['name'] = input("... Custom Field Name : ") 
-            if not custom_dict['name']:
-                break
-
-            custom_dict['value'] = input("... Custom Field Value : ") 
-            custom_dict['type'] = 'text' 
-            record.custom_fields.append(custom_dict)
-            
     # generate friendly datestamp
     modified_time = int(round(time.time()))
-    modified_time_milli = modified_time * 1000 
+    modified_time_milli = modified_time * 1000
     datestamp = datetime.datetime.fromtimestamp(
         modified_time).strftime('%Y-%m-%d %H:%M:%S')
 
@@ -1095,59 +1075,59 @@ def add_record(params, record=Record(), shared_folder_uid=''):
 
     # build a record object
     new_record = {}
-    new_record['record_uid'] = record_uid
-    new_record['version'] = 2 
+    new_record['record_uid'] = record.record_uid
+    new_record['version'] = 2
     new_record['data'] = encoded_data
     new_record['extra'] = encoded_extra
     new_record['udata'] = udata
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = 0
-    new_record['record_key'] = encoded_type1key 
-    new_record['shared_folder_uid'] = shared_folder_uid 
+    new_record['record_key'] = encoded_type1key
+    new_record['shared_folder_uid'] = shared_folder_uid
 
     if params.debug: print('new_record: ' + str(new_record))
 
-    """ create add_records array.  For adding multiple
-    records just add them to this array.  100 max per
-    request. """
+    return new_record
 
-    add_records = []
-    add_records.append(new_record)
-
-    def make_json(params, add_records):
+def make_request(params, command):
         return {
-               'client_time':current_milli_time(),
-               'device_id':'Commander', 
-               'device_name':'Commander', 
-               'command':'record_update', 
-               'add_records':add_records,
-               'protocol_version':1, 
+               'device_id':'Commander',
+               'device_name':'Commander',
+               'command':command,
+               'protocol_version':1,
                'client_version':CLIENT_VERSION,
-               '2fa_token':params.mfa_token,
-               '2fa_type':params.mfa_type, 
-               'session_token':params.session_token, 
-               'username':params.user
         }
-        
+
+
+
+def communicate(params, request):
+
+    def authorize_request():
+        request['client_time'] = current_milli_time()
+        request['2fa_token'] = params.mfa_token,
+        request['2fa_type'] = params.mfa_type
+        request['session_token'] = params.session_token
+        request['username'] = params.user
+
     if not params.session_token:
         try:
             login(params)
         except:
             raise
-            
-    payload = make_json(params, add_records)
 
-    if params.debug: print('payload: ' + str(payload))
-    
+    authorize_request()
+
+    if params.debug: print('payload: ' + str(request))
+
     try:
-        r = requests.post(params.server, json=payload)
+        r = requests.post(params.server, json=request)
     except:
         raise CommunicationError(sys.exc_info()[0])
 
     response_json = r.json()
 
     if params.debug:
-        debug_response(params, payload, r)
+        debug_response(params, request, r)
 
     if response_json['result_code'] == 'auth_failed':
         if params.debug: print('Re-authorizing.')
@@ -1157,30 +1137,67 @@ def add_record(params, record=Record(), shared_folder_uid=''):
         except:
             raise
 
-        payload = make_json(params, add_records)
+        authorize_request()
 
         try:
-            r = requests.post(params.server, json=payload)
+            r = requests.post(params.server, json=request)
         except:
             print('Comm error during re-auth')
             raise CommunicationError(sys.exc_info()[0])
-    
+
         response_json = r.json()
-    
+
         if params.debug:
-            debug_response(params, payload, r)
+            debug_response(params, request, r)
+
+    if response_json['result'] != 'success':
+        if response_json['result_code']:
+            raise CommunicationError('Unexpected problem: ' + \
+                response_json['result_code'])
+
+    return response_json
+
+
+def add_record(params):
+    """ Create a new record with passed-in data or interactively.
+        The shared folder UID is also optional 
+    """
+    record = Record()
+    if not record.title:
+        while not record.title:
+            record.title = input("... Title (req'd): ")
+        record.folder = input("... Folder: ")
+        record.login = input("... Login: ")
+        record.password = input("... Password: ")
+        record.link = input("... Login URL: ")
+        record.notes = input("... Notes: ")
+        custom_name = ''
+        while True: 
+            custom_dict = {}
+            custom_dict['name'] = input("... Custom Field Name : ") 
+            if not custom_dict['name']:
+                break
+
+            custom_dict['value'] = input("... Custom Field Value : ") 
+            custom_dict['type'] = 'text' 
+            record.custom_fields.append(custom_dict)
+
+    new_record = prepare_record(params, record)
+    request = make_request(params, 'record_update')
+    request['add_records'] = [new_record]
+
+    response_json = communicate(params, request)
 
     if response_json['result'] == 'success':
-
         new_revision = 0
         if 'add_records' in response_json:
             for info in response_json['add_records']:
-                if info['record_uid'] == record_uid:
+                if info['record_uid'] == record.record_uid:
                     if info['status'] == 'success':
-                        # all records in the transaction get the 
+                        # all records in the transaction get the
                         # same revision.  this just checks 100% success
                         new_revision = response_json['revision']
-             
+
         if new_revision == 0:
             print('Error: Revision not updated')
             return False
@@ -1199,12 +1216,7 @@ def add_record(params, record=Record(), shared_folder_uid=''):
         # sync down the data which updates the caches
         sync_down(params)
 
-    else :
-        if response_json['result_code']:
-            raise CommunicationError('Unexpected problem: ' + \
-                response_json['result_code'])
-
-    return True
+        return True
 
 def debug_response(params, payload, response):
     print('')

@@ -1,0 +1,12 @@
+	bam!!!!	user	pass	http://192.0.32.8		
+	bam!!!!!			http://about:blank		
+	bam!itunes			http://itunes.apple.com/appstore		
+	microsoft	sergey	hahaTriRaza	http://microsoft.com		
+	Pics					
+bugs	anchorbank	serge	pass	http://www.anchorbank.com/		
+bugs	grubhub	user	pass	https://www.grubhub.com/		
+bugs	shinseibank	serge	pass	http://sp.shinseibank.com/info/sp_guide.html		
+general	citicard	serge	pass	https://www.citi.com/credit-cards/citi.action		
+general	cnn	cnn.com	qLB9%vXzw7@P	http://www.cnn.com		
+general	gmail	saldoukhov@gmail.com	123	http://netflix.com		
+general	ibm	saldoukhov	Gj(9.aj9x&^0wD1O|g66'0\13?%@&zy&tZ`R1IHIDC9Nk7uhO&K15phH*h4S6<Wz	www.ibm.com	line1\\nline2\\nline3	accNo	12345	phone	34567	cmdr:Rotation @ 2015-12-01 15:48:58	tratata

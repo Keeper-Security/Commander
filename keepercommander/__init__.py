@@ -31,8 +31,8 @@ def main(ctx, debug, user, password, config):
 main.add_command(cli.shell)
 main.add_command(cli.list)
 main.add_command(cli.export)
-# main.add_command(cli._import)
-# main.add_command(cli.add)
+main.add_command(cli._import)
+main.add_command(cli.delete_all)
 
 if __name__ == "__main__":
     sys.exit(main())
