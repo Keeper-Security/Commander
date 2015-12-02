@@ -59,6 +59,7 @@ class Record:
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
         if self.password: print('{0:>20s}: {1:<20s}'.format('Password',self.password))
         if self.link: print('{0:>20s}: {1:<20s}'.format('URL',self.link))
+        print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
         
         if len(self.custom_fields) > 0:
             for c in self.custom_fields:
