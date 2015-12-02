@@ -80,3 +80,11 @@ class Record:
 
     def to_lowerstring(self):
         return self.to_string().lower()
+
+    def to_tab_delimited(self):
+
+        def tabulate(*args):
+            return '\t'.join(args)
+
+        custom_fields = '\t'.join([field['name'] + '\t' + field['value'] for field in self.custom_fields])
+        return tabulate(self.folder, self.title, self.login, self.password, self.link, self.notes.replace('\n', '\\\\n'), custom_fields)
