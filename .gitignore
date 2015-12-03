@@ -1,7 +1,9 @@
 .idea/
+.cache/
 venv/
 *.json
 *.pyc
 dist
 build
 keepercommander.egg-info
+keeper.txt

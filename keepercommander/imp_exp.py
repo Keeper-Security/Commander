@@ -16,19 +16,20 @@ def export(params, filename):
         print('{0} records exported to {1}'.format(len(records), filename))
 
 
-def _import(params, filename):
+def parse_line(line):
+    fields = line.split('\t')
+    record = Record()
+    record.folder = fields[0]
+    record.title = fields[1]
+    record.login = fields[2]
+    record.password = fields[3]
+    record.link = fields[4]
+    record.notes = fields[5].replace('\\\\n', '\n')
+    record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in range(6, len(fields) - 1, 2)]
+    return record
 
-    def parse_line(line):
-        fields = line.split('\t')
-        record = Record()
-        record.folder = fields[0]
-        record.title = fields[1]
-        record.login = fields[2]
-        record.password = fields[3]
-        record.link = fields[4]
-        record.notes = fields[5]
-        record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in range(6, len(fields) - 1, 2)]
-        return record
+
+def _import(params, filename):
 
     def parse_lines(lines):
         return [api.prepare_record(params, parse_line(line)) for line in lines]
