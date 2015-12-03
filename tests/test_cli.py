@@ -25,9 +25,15 @@ def test_list_wrong_password():
     assert result.exception != None
     assert result.exit_code != 0
 
-def test_export():
+def test_export_tab_separated():
     runner = CliRunner()
     result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'export', 'keeper.txt'])
+    assert result.exception == None
+    assert result.exit_code == 0
+
+def test_export_json():
+    runner = CliRunner()
+    result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'export', '--format', 'json', 'keeper.json'])
     assert result.exception == None
     assert result.exit_code == 0
 

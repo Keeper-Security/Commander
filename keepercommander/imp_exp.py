@@ -1,8 +1,9 @@
+import json
 from keepercommander import api
 from keepercommander.record import Record
 
 
-def export(params, filename):
+def export(params, format, filename):
     api.sync_down(params)
 
     records = [api.get_record(params, record_uid) for record_uid in params.record_cache if
@@ -10,10 +11,22 @@ def export(params, filename):
 
     records.sort(key=lambda x: ((x.folder if x.folder else ' ') + x.title).lower(), reverse=False)
 
-    with open(filename, 'wt') as f:
-        for record in records:
-            f.write(record.to_tab_delimited() + '\n')
-        print('{0} records exported to {1}'.format(len(records), filename))
+    if format == 'json':
+        with open(filename, 'w') as f:
+            json.dump([{
+                           'folder': record.folder,
+                           'title': record.title,
+                           'login': record.login,
+                           'password': record.password,
+                           'link': record.link,
+                           'notes': record.notes,
+                           'custom_fields': record.custom_fields,
+                       } for record in records], f, indent=2)
+    else:
+        with open(filename, 'wt') as f:
+            for record in records:
+                f.write(record.to_tab_delimited() + '\n')
+            print('{0} records exported to {1}'.format(len(records), filename))
 
 
 def parse_line(line):
@@ -25,12 +38,12 @@ def parse_line(line):
     record.password = fields[3]
     record.link = fields[4]
     record.notes = fields[5].replace('\\\\n', '\n')
-    record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in range(6, len(fields) - 1, 2)]
+    record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in
+                            range(6, len(fields) - 1, 2)]
     return record
 
 
 def _import(params, filename):
-
     def parse_lines(lines):
         return [api.prepare_record(params, parse_line(line)) for line in lines]
 
