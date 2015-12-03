@@ -45,8 +45,13 @@ pip3 install PyMySQL
 
 6) Set up a Keeper account from https://keepersecurity.com if you don't already have one.
 
-7) Execute command line program as described below or use a config.json file to streamline usage.  Command line arguments will override the configuration file.
+7) Run Keeper by typing 
 
+```
+keeper 
+```
+
+It will print the help screen with available commands and options 
 ### Help
 
 If you need help, found a bug, or you're interesting in contributing, email us at ops@keepersecurity.com.
