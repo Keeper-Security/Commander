@@ -3,7 +3,7 @@ import click
 
 from keepercommander import cli, display, api
 
-__version__ = '0.3.1'
+__version__ = '0.3.2'
 
 @click.group()
 @click.option('--user', '-u', envvar='KEEPER_USER', help='Email address for the account')
