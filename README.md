@@ -1,5 +1,7 @@
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_512x205.png)
 
+[![Build Status](https://travis-ci.org/Keeper-Security/Commander.svg)](https://travis-ci.org/Andr3wHur5t/Breadcrumb)
+
 ----
 #### The Password Management SDK for IT Admins & Developers
 
@@ -62,7 +64,7 @@ Commands:
 ```  
 **Environment variables**
 
-for --user and --password options, you can set environment variables KEEPER_USER and KEEPER_PASWORD. User and password specified as options have priority over user and password settings specified in the configuration file.  
+for --user and --password options, you can set environment variables KEEPER_SERVER, KEEPER_USER and KEEPER_PASWORD. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
 
 ### Interactive shell
 If you would like to use keeper interactively within a shell session, invoke shell by typing
@@ -162,7 +164,7 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 }
 ```
 
-### Plugins
+### [Plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins)
 
 Keeper Commander can talk to external systems for the purpose of resetting a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
 
