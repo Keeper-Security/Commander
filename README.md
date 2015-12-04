@@ -20,7 +20,7 @@ Commander can securely rotate passwords in your Keeper vault and then automatica
 * Control record and user permissions
 * Automate everything
 
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/mac.png)
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/keeper_intro.gif)
 
 Keeper Commander provides deep integration of privileged password management into back-end systems to securely access credentials, elevate permissions and rotate passwords. With Keeper Commander you can automate key security features on any platform.
 
