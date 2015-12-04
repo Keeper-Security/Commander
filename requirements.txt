@@ -3,3 +3,4 @@ pycrypto
 requests
 tabulate
 click
+pytest
