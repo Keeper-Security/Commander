@@ -56,7 +56,7 @@ Example:
 {                                                                               
     "debug":false,
     "server":"https://keeperapp.com/v2/",
-    "email":"admin@company.com",
+    "user":"admin@company.com",
     "password":"somereallystrongpassword",
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
 }

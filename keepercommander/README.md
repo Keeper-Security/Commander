@@ -12,26 +12,27 @@ you will be able to have more than one copy of keeper commander installed withou
 
 2) Install virtualenv:
 
-```
+```bash
 sudo pip3 install virtualenv
 ```
 
-3) Create and activate the virtual environment for your keeper project (you need to be in the keeper root folder):
+3) Create and activate the virtual environment for your keeper project:
 
-```
+```bash
+cd /path/to/Commander
 virtualenv -p python3 venv
 source venv/bin/activate
 ```
 
 4) Install the required modules
 
-```
+```bash
 pip install -r requirements.txt
 ```
 
 5) Install the keeper package in development mode
 
-```
+```bash
 pip install -e .
 ```
 
@@ -39,7 +40,7 @@ NOTE: Keeper Commander is only compatible with Python 3.4+
 
 Keeper supports plugins for various 3rd party systems for password reset integration.  Depending on the plugin, you will need to install the modules required.  For example, to support our MySQL plugin:
 
-```
+```bash
 pip3 install PyMySQL
 ```
 
@@ -47,7 +48,7 @@ pip3 install PyMySQL
 
 7) Run Keeper by typing 
 
-```
+```bash
 keeper 
 ```
 

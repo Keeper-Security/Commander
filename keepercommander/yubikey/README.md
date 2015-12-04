@@ -21,7 +21,7 @@ Here's an example config.json file:
 ```
 {                                                                               
     "server":"https://keeperapp.com/v2/",
-    "email":"your_email_here",
+    "user":"your_email_here",
     "challenge":"your_challenge_here",
     "debug":false,
     "commands":[]
