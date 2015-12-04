@@ -1030,7 +1030,7 @@ def prepare_record(params, record, shared_folder_uid=''):
     data['folder'] = record.folder
     data['secret1'] = record.login
     data['secret2'] = record.password
-    data['link'] = record.link
+    data['link'] = record.login_url
     data['notes'] = record.notes
     data['custom'] = record.custom_fields
 
@@ -1169,10 +1169,9 @@ def add_record(params):
         record.folder = input("... Folder: ")
         record.login = input("... Login: ")
         record.password = input("... Password: ")
-        record.link = input("... Login URL: ")
+        record.login_url = input("... Login URL: ")
         record.notes = input("... Notes: ")
-        custom_name = ''
-        while True: 
+        while True:
             custom_dict = {}
             custom_dict['name'] = input("... Custom Field Name : ") 
             if not custom_dict['name']:
@@ -1244,7 +1243,7 @@ def generate_random_records(params, num):
         r.folder = sentences_list[1]
         r.login = sentences_list[2]
         r.password = sentences_list[3]
-        r.link = sentences_list[4]
+        r.login_url = sentences_list[4]
         r.notes = sentences_list[5]
         r.custom_fields[0] = sentences_list[6]
 

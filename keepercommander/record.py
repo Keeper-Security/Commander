@@ -13,13 +13,13 @@ class Record:
     """Defines a Keeper Record"""
 
     def __init__(self,record_uid='',folder='',title='',login='',password='',
-                 link='',notes='',custom_fields=[],revision=''):
+                 login_url='',notes='',custom_fields=[],revision=''):
         self.record_uid = record_uid 
         self.folder = folder 
         self.title = title 
         self.login = login 
         self.password = password 
-        self.link = link 
+        self.login_url = login_url
         self.notes = notes 
         self.custom_fields = custom_fields
         self.revision = revision 
@@ -36,7 +36,7 @@ class Record:
         if 'notes' in data:
             self.notes = data['notes']
         if 'link' in data:
-            self.link = data['link']
+            self.login_url = data['link']
         if 'custom' in data:
             self.custom_fields = data['custom']
         if revision:
@@ -58,7 +58,7 @@ class Record:
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title',self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
         if self.password: print('{0:>20s}: {1:<20s}'.format('Password',self.password))
-        if self.link: print('{0:>20s}: {1:<20s}'.format('URL',self.link))
+        if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL',self.login_url))
         print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
         
         if len(self.custom_fields) > 0:
@@ -75,7 +75,7 @@ class Record:
     def to_string(self):
         target = self.record_uid + self.folder + self.title + \
                  self.login + self.password + self.notes + \
-                 self.link + str(self.custom_fields)
+                 self.login_url + str(self.custom_fields)
         return target
 
     def to_lowerstring(self):
@@ -87,4 +87,4 @@ class Record:
             return '\t'.join(args)
 
         custom_fields = '\t'.join([field['name'] + '\t' + field['value'] for field in self.custom_fields])
-        return tabulate(self.folder, self.title, self.login, self.password, self.link, self.notes.replace('\n', '\\\\n'), custom_fields)
+        return tabulate(self.folder, self.title, self.login, self.password, self.login_url, self.notes.replace('\n', '\\\\n'), custom_fields)

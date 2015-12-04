@@ -17,6 +17,13 @@ from keepercommander import display, api, imp_exp
 from keepercommander.params import KeeperParams
 from keepercommander.error import AuthenticationError, CommunicationError
 
+@click.command(help = 'Print out current configuration')
+@click.pass_obj
+def info(params):
+    print('Server: {0}'.format(params.server))
+    print('User: {0}'.format(params.user))
+    print('Password: {0}'.format(params.password))
+
 @click.command(help = 'Use Keeper interactive shell')
 @click.pass_obj
 def shell(params):
