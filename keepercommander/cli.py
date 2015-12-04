@@ -8,7 +8,6 @@
 # Copyright 2015 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
 import sys
 import getpass
 import json
@@ -30,29 +29,40 @@ def shell(params):
 def list(params):
     try:
         api.sync_down(params)
+        if (len(params.record_cache) == 0):
+            print('No records')
+            return
         results = api.search_records(params, '')
         display.formatted_records(results)
     except Exception as e:
-        print(e)
-        sys.exit(1)
+        raise click.ClickException(e)
 
 @click.command('import', help='Import data from local file to Keeper')
 @click.pass_obj
 @click.argument('filename')
 def _import(params, filename):
-    imp_exp._import(params, filename)
+    try:
+        imp_exp._import(params, filename)
+    except Exception as e:
+        raise click.ClickException(e)
 
 @click.command(help='Export data from Keeper to local file')
 @click.pass_obj
 @click.argument('filename')
 def export(params, filename):
-    imp_exp.export(params, filename)
+    try:
+        imp_exp.export(params, filename)
+    except Exception as e:
+        raise click.ClickException(e)
 
 @click.command('delete-all', help='Delete all Keeper records on server')
 @click.confirmation_option(prompt='Are you sure you want to delete all Keeper records on the server?')
 @click.pass_obj
 def delete_all(params):
-    imp_exp.delete_all(params)
+    try:
+        imp_exp.delete_all(params)
+    except Exception as e:
+        raise click.ClickException(e)
 
 stack = []
 
