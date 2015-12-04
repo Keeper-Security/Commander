@@ -40,7 +40,17 @@ setup(name='keepercommander',
                    "Topic :: Security"],
       keywords='security password',
 
-      packages=['keepercommander'],
+      packages=['keepercommander',
+                'keepercommander.plugins.adpasswd',
+                'keepercommander.plugins.mssql',
+                'keepercommander.plugins.mysql',
+                'keepercommander.plugins.oracle',
+                'keepercommander.plugins.postgresql',
+                'keepercommander.plugins.ssh',
+                'keepercommander.plugins.unixpasswd',
+                'keepercommander.plugins.windows',
+                'keepercommander.yubikey',
+                ],
 
       entry_points={
           "console_scripts": [
