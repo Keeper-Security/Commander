@@ -37,10 +37,11 @@ def list(params):
 
 @click.command('import', help='Import data from local file to Keeper')
 @click.pass_obj
+@click.option('--format', type=click.Choice(['tab-separated', 'json']))
 @click.argument('filename')
-def _import(params, filename):
+def _import(params, format, filename):
     try:
-        imp_exp._import(params, filename)
+        imp_exp._import(params, format, filename)
     except Exception as e:
         raise click.ClickException(e)
 

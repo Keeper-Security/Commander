@@ -13,15 +13,7 @@ def export(params, format, filename):
 
     if format == 'json':
         with open(filename, 'w') as f:
-            json.dump([{
-                           'folder': record.folder,
-                           'title': record.title,
-                           'login': record.login,
-                           'password': record.password,
-                           'link': record.link,
-                           'notes': record.notes,
-                           'custom_fields': record.custom_fields,
-                       } for record in records], f, indent=2)
+            json.dump([record.to_dictionary() for record in records], f, indent=2)
     else:
         with open(filename, 'wt') as f:
             for record in records:
@@ -42,21 +34,39 @@ def parse_line(line):
                             range(6, len(fields) - 1, 2)]
     return record
 
+def parse_json(json):
+    record = Record()
+    record.folder = json['folder']
+    record.title = json['title']
+    record.login = json['login']
+    record.password = json['password']
+    record.link = json['link']
+    record.notes = json['notes']
+    record.custom_fields = json['custom_fields']
+    return record
 
-def _import(params, filename):
-    def parse_lines(lines):
-        return [api.prepare_record(params, parse_line(line)) for line in lines]
 
-    def read_lines():
-        with open(filename, 'rt') as f:
-            return f.readlines()
-
+def _import(params, format, filename):
     api.login(params)
-    request = api.make_request(params, 'record_update')
-    records_to_add = parse_lines(read_lines())
+
+    if format == 'json':
+        def read_json():
+            with open(filename, 'rt') as f:
+                return json.load(f)
+
+        records_to_add = [api.prepare_record(params, parse_json(json)) for json in read_json()]
+    else:
+        def read_lines():
+            with open(filename, 'rt') as f:
+                return f.readlines()
+
+        records_to_add = [api.prepare_record(params, parse_line(line)) for line in read_lines()]
+
     if (len(records_to_add) == 0):
         print('No records to import')
         return
+
+    request = api.make_request(params, 'record_update')
     print('importing {0} records to Keeper'.format(len(records_to_add)))
     request['add_records'] = records_to_add
     response_json = api.communicate(params, request)

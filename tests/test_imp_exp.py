@@ -1,10 +1,8 @@
-from keepercommander.imp_exp import parse_line
-
+from keepercommander.imp_exp import parse_line, parse_json
 
 class TestImpExp:
 
-    def test_parse_line(self):
-        record = parse_line('folder\ttitle\tlogin\tpassword\tlink\tline1\\\\nline2\\\\nline3\tcf1\tcf1val\tcf2\tcf2val')
+    def assert_sample_record(self, record):
         assert record.folder == 'folder'
         assert record.title == 'title'
         assert record.login == 'login'
@@ -14,3 +12,21 @@ class TestImpExp:
         assert record.custom_fields == [
              {'name':'cf1', 'value': 'cf1val', 'type': 'text'},
              {'name':'cf2', 'value': 'cf2val', 'type': 'text'}]
+
+    def test_parse_line(self):
+        record = parse_line('folder\ttitle\tlogin\tpassword\tlink\tline1\\\\nline2\\\\nline3\tcf1\tcf1val\tcf2\tcf2val')
+        self.assert_sample_record(record)
+
+    def test_parse_json(self):
+        record = parse_json({
+            'folder': 'folder',
+            'title': 'title',
+            'login': 'login',
+            'password': 'password',
+            'link': 'link',
+            'notes': 'line1\nline2\nline3',
+            'custom_fields': [
+                {'name': 'cf1', 'value': 'cf1val', 'type': 'text'},
+                {'name': 'cf2', 'value': 'cf2val', 'type': 'text'}],
+        })
+        self.assert_sample_record(record)

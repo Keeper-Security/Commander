@@ -44,6 +44,13 @@ def test_import():
     assert result.exception == None
     assert result.exit_code == 0
 
+def test_import_json():
+    runner = CliRunner()
+    result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'import', '--format', 'json', 'keeper.json'])
+
+    assert result.exception == None
+    assert result.exit_code == 0
+
 def test_delete_all():
     runner = CliRunner()
     result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'delete-all'], input='y')
