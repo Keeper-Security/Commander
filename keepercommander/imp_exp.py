@@ -28,7 +28,7 @@ def parse_line(line):
     record.title = fields[1]
     record.login = fields[2]
     record.password = fields[3]
-    record.link = fields[4]
+    record.login_url = fields[4]
     record.notes = fields[5].replace('\\\\n', '\n')
     record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in
                             range(6, len(fields) - 1, 2)]
@@ -40,7 +40,7 @@ def parse_json(json):
     record.title = json['title']
     record.login = json['login']
     record.password = json['password']
-    record.link = json['link']
+    record.login_url = json['login_url']
     record.notes = json['notes']
     record.custom_fields = json['custom_fields']
     return record

@@ -1,5 +1,7 @@
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_512x205.png)
 
+[![Build Status](https://travis-ci.org/Keeper-Security/Commander.svg)](https://travis-ci.org/Andr3wHur5t/Breadcrumb)
+
 ----
 #### The Password Management SDK for IT Admins & Developers
 
@@ -20,7 +22,7 @@ Commander can securely rotate passwords in your Keeper vault and then automatica
 * Control record and user permissions
 * Automate everything
 
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/mac.png)
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/keeper_intro.gif)
 
 Keeper Commander provides deep integration of privileged password management into back-end systems to securely access credentials, elevate permissions and rotate passwords. With Keeper Commander you can automate key security features on any platform.
 
@@ -33,27 +35,11 @@ When you grant and revoke access or rotate a password, it instantly updates to u
 You can install Keeper Commander with pip (the only requirement for this type of install is python 3.
 You can install python3 by going to [python.org](https://www.python.org) and following the instructions):
 
-```
+```bash
 pip3 install keepercommander
 ```
-Or, if you would like to make modifications, clone the repository and follow the instructions in the README within the keepercommander/ and keepercommander/plugins/ folder.
 
-#### Logging in
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot1.png)
-
-#### Listing available commands
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot2.png)
-
-#### Searching for records
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot3.png)
-
-#### Getting record details
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot4.png)
-
-#### Rotating a password
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/screenshot5.png)
-
-The above screenshots are using the Keeper shell mode. You can use Keeper Commander in three ways:
+### Three ways to use Keeper Commander
 
 1. From the command line or script
 2. As an interactive shell (keeper shell command)
@@ -78,12 +64,12 @@ Commands:
 ```  
 **Environment variables**
 
-for --user and --password options, you can set environment variables KEEPER_USER and KEEPER_PASWORD. User and password specified as options have priority over user and password settings specified in the configuration file.  
+for --user and --password options, you can set environment variables KEEPER_SERVER, KEEPER_USER and KEEPER_PASWORD. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
 
 ### Interactive shell
 If you would like to use keeper interactively within a shell session, invoke shell by typing
 
-```
+```bash
 keeper shell
 ```
 
@@ -138,7 +124,9 @@ Here's an example config.json file:
 
 You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
 
-keeper --config=foo.json
+```bash
+keeper --config=foo.json shell
+```
 
 In this case, Commander will start up using foo.json as the configuration.
 
@@ -176,7 +164,7 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 }
 ```
 
-### Plugins
+### [Plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins)
 
 Keeper Commander can talk to external systems for the purpose of resetting a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
 

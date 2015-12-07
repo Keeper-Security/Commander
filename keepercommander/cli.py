@@ -12,10 +12,19 @@ import sys
 import getpass
 import json
 import click
+import datetime
+import time
 
 from keepercommander import display, api, imp_exp
 from keepercommander.params import KeeperParams
 from keepercommander.error import AuthenticationError, CommunicationError
+
+@click.command(help = 'Print out current configuration')
+@click.pass_obj
+def info(params):
+    print('Server: {0}'.format(params.server))
+    print('User: {0}'.format(params.user))
+    print('Password: {0}'.format(params.password))
 
 @click.command(help = 'Use Keeper interactive shell')
 @click.pass_obj
@@ -92,9 +101,16 @@ def get_params(config_filename):
                     params.password = params.config['password']
 
                 if 'challenge' in params.config:
-                    import yubikey.yubikey
-                    challenge = params.config['challenge']
-                    params.password = yubikey.yubikey.get_response(challenge)
+                    try:
+                        import keepercommander.yubikey.yubikey
+                        challenge = params.config['challenge']
+                        params.password = keepercommander.yubikey.yubikey.get_response(challenge)
+                    except Exception as e:
+                        print(e)
+                        sys.exit(1)
+
+                if 'timedelay' in params.config:
+                    params.timedelay = params.config['timedelay']
 
                 if 'mfa_token' in params.config:
                     params.mfa_token = params.config['mfa_token']
@@ -195,6 +211,33 @@ def do_command(params):
 
     return True
 
+def runcommands(params):
+    keep_running = True
+    timedelay = params.timedelay
+
+    while keep_running:
+        for c in params.commands:
+            params.command = c
+            print('Executing [' + params.command + ']...')
+            try:
+                if not do_command(params):
+                    print('Command ' + params.command + ' failed.')
+            except CommunicationError as e:
+                print("Communication Error:" + str(e.message))
+            except AuthenticationError as e:
+                print("AuthenticationError Error: " + str(e.message))
+            except:
+                print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
+
+            params.command = ''
+
+        if (timedelay == 0):
+            keep_running = False
+        else:
+            print(datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S') + \
+                ' Waiting for ' + str(timedelay) + ' seconds')
+            time.sleep(timedelay)
+
 def loop(params):
 
     display.welcome()
@@ -210,21 +253,7 @@ def loop(params):
 
             # if commands are provided, execute those then exit
         if params.commands:
-            for c in params.commands:
-                params.command = c
-                print('Executing [' + params.command + ']...')
-                try:
-                    if not do_command(params):
-                        print('Command ' + params.command + ' failed.')
-                except CommunicationError as e:
-                    print("Communication Error:" + str(e.message))
-                except AuthenticationError as e:
-                    print("AuthenticationError Error: " + str(e.message))
-                except:
-                    print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
-
-                params.command = ''
-
+            runcommands(params)
             goodbye()
 
         if params.debug: print('Params: ' + str(params))

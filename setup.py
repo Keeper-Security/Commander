@@ -1,5 +1,9 @@
 from setuptools import setup
-from pypandoc import convert
+try:
+    from pypandoc import convert
+    read_md = lambda f: convert(f, 'rst')
+except ImportError:
+    read_md = lambda f: open(f, 'r').read()
 from os import path
 
 import keepercommander
@@ -24,7 +28,7 @@ install_requires = [
 setup(name='keepercommander',
       version=keepercommander.__version__,
       description='Keeper Commander for Python 3',
-      long_description=convert('README.md', 'rst'),
+      long_description=read_md('README.md'),
       author='Craig Lurey',
       author_email='craig@keepersecurity.com',
       url='https://github.com/Keeper-Security/Commander',
@@ -36,7 +40,17 @@ setup(name='keepercommander',
                    "Topic :: Security"],
       keywords='security password',
 
-      packages=['keepercommander'],
+      packages=['keepercommander',
+                'keepercommander.plugins.adpasswd',
+                'keepercommander.plugins.mssql',
+                'keepercommander.plugins.mysql',
+                'keepercommander.plugins.oracle',
+                'keepercommander.plugins.postgresql',
+                'keepercommander.plugins.ssh',
+                'keepercommander.plugins.unixpasswd',
+                'keepercommander.plugins.windows',
+                'keepercommander.yubikey',
+                ],
 
       entry_points={
           "console_scripts": [
