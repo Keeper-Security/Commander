@@ -148,6 +148,25 @@ Example:
 
 In this example, we are telling Commander to first download and decrypt records, then reset 2 passwords.  As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
 
+### Scheduled command execution
+
+You can provide Commander a time delay in seconds to wait and then reissue all commands.  This is the easiest way to schedule automated password resets.
+
+Example:
+
+```
+{
+    "debug":false,
+    "server":"https://keeperapp.com/v2/",
+    "user":"admin@company.com",
+    "password":"somereallystrongpassword",
+    "timedelay":600,
+    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
+}
+```
+
+Commander would now download and decrypt records, rotate 2 passwords, and then wait for 10 minutes (60 seconds * 10) before issuing the commands again. FYI, there are 86400 seconds in 24 hours in case you want to have daily rotations!
+
 ### Two-Factor Authentication and Device Token
 
 If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token needs to be saved for subsequent calls. Copy-paste this device token into your config.json file.  For example:
