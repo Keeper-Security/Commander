@@ -1,13 +1,28 @@
 Yubikey Challenge-Response Module
 ----
 
-This module uses the Yubikey Challenge-Response functionality to retrieve the Keeper Master Password
+Keeper Commander can be used along with YubiKey to provide better security for your Master Password. In this scenario, Yubikey is used in Challenge-Response mode to generate secure Master Password from non secure Challenge Phrase. You configure your Yubikey using the [Yubikey Personalization Tool](https://www.yubico.com/support/downloads/) as described below, and use the Yubikey output as your Master Password.
 
-### Dependencies 
+You can use Yubikey to initialize KEEPER_PASSWORD environment variable or include Challenge Phrase in your config.json file
+
+### Initialize KEEPER_PASSWORD environment variable
+
+In your terminal session, type
+
+```bash
+export KEEPER_PASSWORD=`ykchalresp -2 my challenge phrase`
+```
+
+(Yubikey personalization tool needs to be installed for this to work)
+
+Now, you can use Keeper Commander without entering the password in the same terminal session. 
+
+
+### Challenge Phrase in config.json
 
 1) Install the below modules
 
-```
+```bash
 pip3 install python-yubico
 ```
 
@@ -28,8 +43,6 @@ Here's an example config.json file:
 }
 ```
 
-NOTE: The module assumes the Yubikey has been configured with HMAC-SHA1 Challenge-Response in Slot 2 and
-your Keeper Master Password has been set as the response to your challenge
 
 Yubikey Configuration
 ---
@@ -37,22 +50,19 @@ Yubikey Configuration
 ### Launch the YubiKey Personalization Tool
 <img src="images/screen1.png">
 
-### Click the Challenge-Response Mode link
+### Click the Challenge-Response Mode link and select HMAC-SHA1 
 <img src="images/screen2.png">
 
-### Select HMAC-SHA1
+### Choose Configuration Slot 2, click the Generate button and then the Write Configuration button 
 <img src="images/screen3.png">
+NOTE: Consider checking "Require user input" checkbox, this will make harder to malware to steal your master password. Also, consider programming a backup Yubikey using the same Secret Key, so you can recover if your Yubikey is lost or damaged.
 
-### Choose Configuration Slot 2, click the Generate button and then the Write Configuration button
+###Click the Tools menu option, choose Challenge-Response 
 <img src="images/screen4.png">
 
-### Click the Tools menu option, choose Configuration Slot 2, select HMAC-SHA1 and choose a unique challenge string
-
-NOTE: Remember your unique challenge string as it will be needed for your config.json file
-<img src="images/screen5.png">
-
-### Push the Perform button
+### Select Configuration Slot 2, select HMAC-SHA1, choose a unique challenge string and push the Perform button
 <img src="images/screen6.png">
+NOTE: Remember your unique challenge string as it will be needed for your config.json file
 
 ### Copy the Response value and set your Vault's Master Password to that value
 <img src="images/screen7.png">
