@@ -39,6 +39,14 @@ You can install python3 by going to [python.org](https://www.python.org) and fol
 pip3 install keepercommander
 ```
 
+### Upgrade
+
+To upgrade Keeper Commander to the newest version, call pip install with --upgrade parameter:
+
+```bash
+pip3 install --upgrade keepercommander
+```
+
 ### Three ways to use Keeper Commander
 
 1. From the command line or script
