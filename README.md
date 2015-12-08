@@ -50,16 +50,17 @@ pip3 install keepercommander
 Usage: keeper [OPTIONS] COMMAND [ARGS]...
 
 Options:
+  -s, --server TEXT    Host address
   -u, --user TEXT      Email address for the account
   -p, --password TEXT  Master password for the account
   --config TEXT        Config file to use
-  --debug BOOLEAN      Turn on debug mode
+  --debug              Turn on debug mode
   --version            Show the version and exit.
   --help               Show this message and exit.
 
 Commands:
-  list   List Keeper records
-  shell  Use Keeper interactive shell
+  list        List Keeper records
+  shell       Use Keeper interactive shell
   ...
 ```  
 **Environment variables**
