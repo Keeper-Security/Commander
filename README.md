@@ -32,8 +32,11 @@ When you grant and revoke access or rotate a password, it instantly updates to u
 
 ### Installation
 
-You can install Keeper Commander with pip (the only requirement for this type of install is python 3.
-You can install python3 by going to [python.org](https://www.python.org) and following the instructions):
+If you do not have python3 installed already (check by trying to run pip3 in the Terminal), you can install it by going to [python.org](https://www.python.org) and following the instructions).
+
+Note: **restart your terminal session after you installed python3** 
+
+Install Keeper Commander with pip3:
 
 ```bash
 pip3 install keepercommander
