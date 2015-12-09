@@ -88,3 +88,14 @@ class Record:
 
         custom_fields = '\t'.join([field['name'] + '\t' + field['value'] for field in self.custom_fields])
         return tabulate(self.folder, self.title, self.login, self.password, self.login_url, self.notes.replace('\n', '\\\\n'), custom_fields)
+
+    def to_dictionary(self):
+        return {
+            'folder': self.folder,
+            'title': self.title,
+            'login': self.login,
+            'password': self.password,
+            'login_url': self.login_url,
+            'notes': self.notes,
+            'custom_fields': self.custom_fields,
+        }

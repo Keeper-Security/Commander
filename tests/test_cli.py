@@ -38,9 +38,20 @@ def test_export():
     assert result.exception == None
     assert result.exit_code == 0
 
+def test_export_json():
+    runner = CliRunner()
+    result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'export', '--format', 'json', 'keeper.json'])
+    assert result.exception == None
+    assert result.exit_code == 0
+
+def test_import_json():
+    runner = CliRunner()
+    result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'import', '--format', 'json', 'keeper.json'])
+    assert result.exception == None
+    assert result.exit_code == 0
+
 def test_list_wrong_password():
     runner = CliRunner()
     result = runner.invoke(main, ['-p', 'fail', '--config', TEST_CONFIG_FILE, 'list'])
     assert result.exception != None
     assert result.exit_code != 0
-
