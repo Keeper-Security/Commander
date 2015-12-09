@@ -32,11 +32,22 @@ When you grant and revoke access or rotate a password, it instantly updates to u
 
 ### Installation
 
-You can install Keeper Commander with pip (the only requirement for this type of install is python 3.
-You can install python3 by going to [python.org](https://www.python.org) and following the instructions):
+If you do not have python3 installed already (check by trying to run pip3 in the Terminal), you can install it by going to [python.org](https://www.python.org) and following the instructions).
+
+Note: **restart your terminal session after you installed python3** 
+
+Install Keeper Commander with pip3:
 
 ```bash
 pip3 install keepercommander
+```
+
+### Upgrade
+
+To upgrade Keeper Commander to the newest version, call pip install with --upgrade parameter:
+
+```bash
+pip3 install --upgrade keepercommander
 ```
 
 ### Three ways to use Keeper Commander
@@ -50,16 +61,17 @@ pip3 install keepercommander
 Usage: keeper [OPTIONS] COMMAND [ARGS]...
 
 Options:
+  -s, --server TEXT    Host address
   -u, --user TEXT      Email address for the account
   -p, --password TEXT  Master password for the account
   --config TEXT        Config file to use
-  --debug BOOLEAN      Turn on debug mode
+  --debug              Turn on debug mode
   --version            Show the version and exit.
   --help               Show this message and exit.
 
 Commands:
-  list   List Keeper records
-  shell  Use Keeper interactive shell
+  list        List Keeper records
+  shell       Use Keeper interactive shell
   ...
 ```  
 **Environment variables**
@@ -147,6 +159,25 @@ Example:
 ```
 
 In this example, we are telling Commander to first download and decrypt records, then reset 2 passwords.  As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+
+### Scheduled command execution
+
+You can provide Commander a time delay in seconds to wait and then reissue all commands.  This is the easiest way to schedule automated password resets.
+
+Example:
+
+```
+{
+    "debug":false,
+    "server":"https://keeperapp.com/v2/",
+    "user":"admin@company.com",
+    "password":"somereallystrongpassword",
+    "timedelay":600,
+    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
+}
+```
+
+Commander would now download and decrypt records, rotate 2 passwords, and then wait for 10 minutes (60 seconds * 10) before issuing the commands again. FYI, there are 86400 seconds in 24 hours in case you want to have daily rotations!
 
 ### Two-Factor Authentication and Device Token
 

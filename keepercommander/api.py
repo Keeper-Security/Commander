@@ -840,7 +840,8 @@ def rotate_password(params, record_uid):
     new_record['extra'] = encoded_extra
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = params.record_cache[record_uid]['revision']
-    new_record['shared_folder_uid'] = found_shared_folder_uid 
+    if found_shared_folder_uid:
+        new_record['shared_folder_uid'] = found_shared_folder_uid
 
     if 'udata' in params.record_cache[record_uid]:
         new_record['udata'] = params.record_cache[record_uid]['udata']
@@ -1083,7 +1084,8 @@ def prepare_record(params, record, shared_folder_uid=''):
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = 0
     new_record['record_key'] = encoded_type1key
-    new_record['shared_folder_uid'] = shared_folder_uid
+    if shared_folder_uid:
+        new_record['shared_folder_uid'] = shared_folder_uid
 
     if params.debug: print('new_record: ' + str(new_record))
 

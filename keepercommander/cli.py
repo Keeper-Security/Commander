@@ -147,8 +147,11 @@ def do_command(params):
         return False
 
     elif (params.command == 'l'):
-        results = api.search_records(params, '')
-        display.formatted_records(results)
+        if (len(params.record_cache) == 0):
+            print('No records')
+        else:
+            results = api.search_records(params, '')
+            display.formatted_records(results)
 
     elif (params.command[:2] == 'g '):
         r = api.get_record(params, params.command[2:])
