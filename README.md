@@ -117,6 +117,9 @@ Commands:
 
 * b (batch rotate): search across all record data and rotate the password for matching records.
 
+### Deep linking to records
+
+The Record UID that is displayed on password record output can be used for deep linking directly into the Web Vault. The link format is like this: https://keepersecurity.com/vault#detail/XXXXXX where you simply replace XXXXXX with the Record UID.
 
 ### Auto-configuration file
 
