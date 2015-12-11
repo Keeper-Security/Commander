@@ -134,7 +134,7 @@ Here's an example config.json file:
 }
 ```
 
-You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
+All fields are optional.  You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
 
 ```bash
 keeper --config=foo.json shell
@@ -195,9 +195,14 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 }
 ```
 
-### [Plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins)
+### Yubikey Support 
 
-Keeper Commander can talk to external systems for the purpose of resetting a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
+Commander supports the ability to authenticate a session with a connected Yubikey device instead of using a Master Password.  To configure Yubikey authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).
+
+
+### Plugins and Password Rotation
+
+Keeper Commander can communicate to internal and external systems for the purpose of rotating a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
 
 ```
 Name: cmdr:plugin
@@ -210,7 +215,7 @@ Value: adpasswd
 
 When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided (e.g. mysql.py and active_directory.py).
 
-Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, just let us know.
+Check out the [plugins folder](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) for all of the available plugins.  Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, just let us know.
 
 ### Support 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
