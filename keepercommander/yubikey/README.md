@@ -3,7 +3,8 @@ Yubikey Challenge-Response Module
 
 Keeper Commander can be used along with YubiKey to provide better security for your Master Password. In this scenario, Yubikey is used in Challenge-Response mode to generate secure Master Password from non secure Challenge Phrase. You configure your Yubikey using the [Yubikey Personalization Tool](https://www.yubico.com/support/downloads/) as described below, and use the Yubikey output as your Master Password.
 
-You can use Yubikey to initialize KEEPER_PASSWORD environment variable or include Challenge Phrase in your config.json file
+To use Keeper Commander in Scheduled Mode you can use Yubikey to initialize KEEPER_PASSWORD environment variable or include Challenge Phrase in your config.json file.
+Note: **If using Commander in Scheduled Mode your master password resides in the memory of your current terminal session. It is not accessible by other programs, but whoever can interact with this specific terminal session, can also inspect your master password. Do not allow untrusted access to the computer running Commander in Scheduled Mode**
 
 ### Initialize KEEPER_PASSWORD environment variable
 
