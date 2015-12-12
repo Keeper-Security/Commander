@@ -7,20 +7,18 @@
 
 Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander can be used to interactively access your Keeper Vault via a standard terminal or SSH console, or it can be used as an SDK for integrating your back-end into Keeper's zero-knowledge Cloud Security Vault&trade;.
 
-Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the change to all users with privileged access to the record.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/keeper/plugins), you can then perform the password reset directly on the source (e.g. database, active directory, unix/pc login, etc...).  Using Commander to rotate passwords, combined with the flexibility of Keeper's secure record sharing features provides you with the most secure and flexible way to grant and revoke access to extremely confidential data.
+Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the changes to all users with privileged access.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/keeper/plugins), Commander can perform the password rotation directly on the target system (e.g. database, active directory, unix/pc login, etc...).
 
 [Here's a Video](https://youtu.be/p50OKRiaxl8) demonstrating Commander.
 
-### Features
+### Use Cases
 
-* Console access to your Keeper vault
-* Login, download and decrypt your vault records
-* Search for content with regular expressions
-* Display vault record details
-* Change logins, passwords and other record data
-* Rotate passwords and push changes to connected platforms
-* Control record and user permissions
-* Automate everything
+* Access passwords through a terminal or SSH session
+* Eliminate hard-coded or plaintext passwords in back-end systems
+* Rotate passwords on shared accounts 
+* Perform password rotations on target systems
+* Authenticate with Yubikey and other 2FA methods
+* Schedule and automate rotations 
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/keeper_intro.gif)
 
