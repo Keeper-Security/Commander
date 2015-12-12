@@ -303,13 +303,13 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Online Vault](https://keepersecurity.com/vault)
 
-[FastFill for Chrome](https://chrome.google.com/webstore/detail/keeper-browser-extension/bfogiafebfohielmmehodmfbbebbbpei)
+[KeeperFill for Chrome](https://chrome.google.com/webstore/detail/keeper-browser-extension/bfogiafebfohielmmehodmfbbebbbpei)
 
-[FastFill for Firefox](https://addons.mozilla.org/en-us/firefox/addon/keeper-password-manager-digita/)
+[KeeperFill for Firefox](https://addons.mozilla.org/en-us/firefox/addon/keeper-password-manager-digita/)
 
-[FastFill for Safari](https://s3.amazonaws.com/keepersecurity/ext/update/safari/keeper.safariextz)
+[KeeperFill for Safari](https://s3.amazonaws.com/keepersecurity/ext/update/safari/keeper.safariextz)
 
-[FastFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
+[KeeperFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
 
 [Enterprise Admin Console](https://keepersecurity.com/console)
 
