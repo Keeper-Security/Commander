@@ -767,8 +767,6 @@ def rotate_password(params, record_uid):
                 # f.e. windows plugin gets rid of certain characters. If password is changed,
                 # plugin puts it into the record object
                 if record_object.password != old_password:
-                    print(new_password)
-                    print(record_object.password)
                     new_password = record_object.password
                 if params.debug: 
                     print('Password rotation on target system is successful.')
