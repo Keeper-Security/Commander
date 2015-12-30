@@ -5,20 +5,14 @@ This plugin allows rotating a windows user's password using the net user command
 
 ### Dependencies 
 
-1) Install the below modules
-
-```
-pip3 install pexpect
-```
-
-2) Add the following Custom Fields to the record that you want to rotate within Keeper
+1) Add the following Custom Fields to the record that you want to rotate within Keeper
 
 ```
 Name: cmdr:plugin
 Value: windows
 ```
 
-3) The plugin will use the Login field as the username of the passwd command when rotating a password.
+2) The plugin will use the Login field as the username of the passwd command when rotating a password.
 
 ### Optional custom fields
 
