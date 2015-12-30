@@ -10,12 +10,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-import pexpect
-
-"""Commander Plugin for Windows net Command
-   Dependencies: 
-       pip3 install pexpect
-"""
+import subprocess, re
 
 def rotate(record, newpassword):
     """ Grab any required fields from the record """
@@ -23,14 +18,16 @@ def rotate(record, newpassword):
 
     result = False
 
-    child = pexpect.spawn('net user ', [user, newpassword])
-
-    i = child.expect(['The command completed succesfully.', pexpect.EOF])
+    # the characters below mess with windows command line
+    np = re.sub('[<>&|]', '', newpassword)
+    i = subprocess.call("net user {0} {1}".format(user, np), shell = True)
 
     if i == 0:
         print('Password changed succesfully')
+        if np != newpassword:
+            record.password = np
         result = True
-    elif i == 1:
+    else:
         print('Password change failed')
 
     return result

@@ -760,9 +760,16 @@ def rotate_password(params, record_uid):
         print("Rotating with plugin " + str(plugin_name))
         plugin = plugin_manager.get_plugin(plugin_name)
         if plugin:
-            success =  plugin.rotate(record_object, new_password)
-
+            old_password = record_object.password
+            success = plugin.rotate(record_object, new_password)
             if success:
+                # Some plugins might need to change the password in the process of rotation
+                # f.e. windows plugin gets rid of certain characters. If password is changed,
+                # plugin puts it into the record object
+                if record_object.password != old_password:
+                    print(new_password)
+                    print(record_object.password)
+                    new_password = record_object.password
                 if params.debug: 
                     print('Password rotation on target system is successful.')
             else:
