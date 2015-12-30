@@ -23,7 +23,7 @@ def rotate(record, newpassword):
     i = subprocess.call("net user {0} {1}".format(user, np), shell = True)
 
     if i == 0:
-        print('Password changed succesfully')
+        print('Password changed successfully')
         if np != newpassword:
             record.password = np
         result = True

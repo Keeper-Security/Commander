@@ -45,7 +45,7 @@ def rotate(record, newpassword):
         print('General failure in password update')
         result = True
     elif i == 3:
-        print('Password changed succesfully')
+        print('Password changed successfully')
         result = True
 
     return result
