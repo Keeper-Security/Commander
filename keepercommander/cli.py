@@ -44,6 +44,25 @@ def list(params):
     except Exception as e:
         raise click.ClickException(e)
 
+@click.command(help = 'Rotate Keeper record')
+@click.pass_obj
+@click.option('--uid', help='uid of the record to rotate the password on')
+@click.option('--match', help='regular expression to select records for password rotation')
+def rotate(params, uid, match):
+    if not (uid or match):
+        raise click.ClickException("Need to specify either uid or match option")
+    try:
+        api.sync_down(params)
+        if uid:
+            api.rotate_password(params, uid)
+        else:
+            if filter:
+                results = api.search_records(params, match)
+                for r in results:
+                    api.rotate_password(params, r.record_uid)
+    except Exception as e:
+        raise click.ClickException(e)
+
 @click.command('import', help='Import data from local file to Keeper')
 @click.pass_obj
 @click.option('--format', type=click.Choice(['tab-separated', 'json']))

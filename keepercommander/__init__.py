@@ -14,7 +14,12 @@ __version__ = '0.3.7'
 @click.version_option(version=__version__)
 @click.pass_context
 def main(ctx, debug, server, user, password, config):
-
+    '''
+    \b
+    Some commands have their own options. To see the help message for a specific command, type
+    keeper COMMAND --help
+    for example: keeper import --help
+    '''
     try:
         params = cli.get_params(config)
         ctx.obj = params
@@ -34,6 +39,7 @@ def main(ctx, debug, server, user, password, config):
 main.add_command(cli.info)
 main.add_command(cli.shell)
 main.add_command(cli.list)
+main.add_command(cli.rotate)
 main.add_command(cli.export)
 main.add_command(cli._import)
 main.add_command(cli.delete_all)
