@@ -32,6 +32,12 @@ def test_list():
     assert result.exception == None
     assert result.exit_code == 0
 
+def test_rotate():
+    runner = CliRunner()
+    result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'rotate', '--match', '"MySQL Dev"'])
+    assert result.exception == None
+    assert result.exit_code == 0
+
 def test_export():
     runner = CliRunner()
     result = runner.invoke(main, ['--config', TEST_CONFIG_FILE, 'export', 'keeper.txt'])
