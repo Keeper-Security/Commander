@@ -6,9 +6,9 @@ from keepercommander import cli, display, api
 __version__ = '0.3.7'
 
 @click.group()
-@click.option('--server', '-s', envvar='KEEPER_SERVER', help='Host address')
-@click.option('--user', '-u', envvar='KEEPER_USER', help='Email address for the account')
-@click.option('--password', '-p', envvar='KEEPER_PASSWORD', help='Master password for the account')
+@click.option('--server', '-s', envvar='KEEPER_SERVER', help='Host address. You can set KEEPER_SERVER environment variable instead.')
+@click.option('--user', '-u', envvar='KEEPER_USER', help='Email address for the account. You can set KEEPER_USER environment variable instead.')
+@click.option('--password', '-p', envvar='KEEPER_PASSWORD', help='Master password for the account. You can set KEEPER_PASSWORD environment variable instead.')
 @click.option('--config', help='Config file to use')
 @click.option('--debug', 'debug', flag_value=True, help='Turn on debug mode')
 @click.version_option(version=__version__)
