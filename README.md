@@ -158,15 +158,15 @@ In this case, Commander will start up using foo.json as the configuration.
 ### JSON file parameters
 
 ```
-**server**: do not change.  Default is https://keeperapp.com/v2/.
-**user**: the Keeper email address
-**password**: the Keeper master password
-**debug**: turn on verbose debugging output
-**commands**: comma-separated list of commands to run
-**timedelay**: number of seconds to wait before running all commands again, indefinitely.  See automation instructions.
-**mfa_type**: if multi-factor auth is used, this will be set to "device_token".
-**mfa_token**: this contains the two-factor token used to authenticate this Commander instance.
-**challenge**: challenge phrase if you are using a Yubikey device for authentication.  See Yubikey setup instructions.
+server: do not change.  Default is https://keeperapp.com/v2/.
+user: the Keeper email address
+password: the Keeper master password
+debug: turn on verbose debugging output
+commands: comma-separated list of commands to run
+timedelay: number of seconds to wait before running all commands again
+mfa_type: if multi-factor auth is used, this will be set to "device_token"
+mfa_token: two-factor token used to authenticate this Commander instance
+challenge: challenge phrase if you are using a Yubikey device 
 ```
 
 If you have turned on two-factor authentication on your Keeper account, you will be prompted the first time you run Commander to enter the two-factor code.  Once authenticated, Commander will update the mfa_type and mfa_token parameters in the config file.  This way, subsequent calls are authenticated without needing additional two-factor tokens.
