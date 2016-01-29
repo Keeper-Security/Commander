@@ -5,18 +5,18 @@
 ----
 #### The Password Management SDK for IT Admins & Developers
 
-Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander can be used to interactively access your Keeper Vault via a standard terminal or SSH console, or it can be used as an SDK for integrating your back-end into Keeper's zero-knowledge Cloud Security Vault&trade;.
+Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander is designed to perform targeted password rotations and eliminate the use of hardcoded passwords in your systems and software.  Commander will securely rotate passwords in your Keeper vault and then instantly push the changes to all users with privileged access to the password.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/keeper/plugins), Commander executes a strong password rotation directly to the target system (Unix Logins, Databases, Active Directory, network devices, etc...).
 
-Commander can securely rotate passwords in your Keeper vault and then automatically synchronize the changes to all users with privileged access.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/keeper/plugins), Commander can perform the password rotation directly on the target system (e.g. database, active directory, unix/pc login, etc...).
+Commander also has a command-line shell interface which provides instant terminal access to your vault on any Unix, Mac or Windows system.  Since Keeper Commander is an open source SDK and written in Python, it can be customized to meet your needs and integrated into your back-end systems.
 
 [Here's a Video](https://youtu.be/p50OKRiaxl8) demonstrating Commander.
 
 ### Use Cases
 
-* Access passwords through a terminal or SSH session
 * Eliminate hard-coded or plaintext passwords in back-end systems
 * Rotate passwords on shared accounts 
 * Perform password rotations on target systems
+* Access passwords through a terminal or SSH session
 * Authenticate with Yubikey and other 2FA methods
 * Schedule and automate rotations 
 
@@ -32,13 +32,15 @@ When you grant and revoke access or rotate a password, it instantly updates to u
 
 If you do not have python3 installed already (check by trying to run pip3 in the Terminal), you can install it by going to [python.org](https://www.python.org) and following the instructions).
 
-Note: **restart your terminal session after you installed python3** 
+Note: Restart your terminal session after installation
 
 Install Keeper Commander with pip3:
 
 ```bash
 pip3 install keepercommander
 ```
+
+Note: Restart your terminal session after installation
 
 ### Upgrade
 
@@ -51,8 +53,8 @@ pip3 install --upgrade keepercommander
 ### Three ways to use Keeper Commander
 
 1. From the command line or script
-2. As an interactive shell (keeper shell command)
-3. In your own python program by importing keepercommander package
+2. As an interactive shell
+3. In your own python program by importing the keepercommander package
 
 ### Command line usage
 ```
@@ -115,13 +117,15 @@ Commands:
 
 * b (batch rotate): search across all record data and rotate the password for matching records.
 
+The Record UID is a unique identifier for every record in your Keeper vault.  This is used for deep linking and also for password rotation as described below. The search/list/get commands can be used to look up the Record UID when setting up a password rotation scheduler.
+
 ### Deep linking to records
 
-The Record UID that is displayed on password record output can be used for deep linking directly into the Web Vault. The link format is like this: https://keepersecurity.com/vault#detail/XXXXXX where you simply replace XXXXXX with the Record UID.
+The Record UID that is displayed on password record output can be used for deep linking directly into the Web Vault and mobile platforms. The link format is like this: https://keepersecurity.com/vault#detail/XXXXXX where you simply replace XXXXXX with the Record UID.
 
-### Auto-configuration file
+### Automating Commander 
 
-To automate the use of Commander, create a file called config.json and place the file in your install folder.  If you don't provide a config file, Commander will just prompt you for the information.
+To automate the use of Commander, create a JSON file (let's call it config.json) and place the file in the working directory where you are invoking the shell commands.  If you don't provide a config file, Commander will just prompt you for the information interactively.
 
 Here's an example config.json file:
 
@@ -135,7 +139,15 @@ Here's an example config.json file:
 }
 ```
 
-All fields are optional.  You can also tell Commander which config file to use.  By default, we look at the config.json file.  Example:
+All fields are optional.  You can also tell Commander which config file to use.  By default, we look at the config.json file.  
+
+Example 1: Simply access your vault interactively (if config.json is in the current folder, it will take precedence)
+
+```bash
+keeper shell
+```
+
+Example 2: Load up parameters from the specified JSON file
 
 ```bash
 keeper --config=foo.json shell
@@ -143,31 +155,33 @@ keeper --config=foo.json shell
 
 In this case, Commander will start up using foo.json as the configuration.
 
-### Auto-command execution
+### JSON file parameters
 
-You can provide Commander a set of commands to run without having to type them manually.  This is the easiest way to automate password resets.
+**server**: do not change.  Default is https://keeperapp.com/v2/.
+**user**: the Keeper email address
+**password**: the Keeper master password
+**debug**: turn on verbose debugging output
+**commands**: comma-separated list of commands to run
+**timedelay**: number of seconds to wait before running all commands again, indefinitely.  See automation instructions.
+**mfa_type**: if multi-factor auth is used, this will be set to "device_token".
+**mfa_token**: this contains the two-factor token used to authenticate this Commander instance.
+**challenge**: challenge phrase if you are using a Yubikey device for authentication.  See Yubikey setup instructions.
+
+If you have turned on two-factor authentication on your Keeper account, you will be prompted the first time you run Commander to enter the two-factor code.  Once authenticated, Commander will update the mfa_type and mfa_token parameters in the config file.  This way, subsequent calls are authenticated without needing additional two-factor tokens.
+
+You may ask, why is the master password stored in the JSON configuration file?  It doesn't need to be. You can omit the password field from the JSON file, and you'll be prompted with the password interactively.  
+
+### Scheduling & Automation
+
+If you want to fully automate commander operations, such as rotating a password on a regular schedule, there are a few different ways to accomplish this.
+
+Using config.json file and **timedelay** setting, you tell Commander the time delay in seconds to wait and then reissue all commands.  This is the easiest way to schedule automated password resets.
 
 Example:
 
 ```
-{
-    "debug":false,
-    "server":"https://keeperapp.com/v2/",
-    "user":"admin@company.com",
-    "password":"somereallystrongpassword",
-    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
-}
-```
+config.json:
 
-In this example, we are telling Commander to first download and decrypt records, then reset 2 passwords.  As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
-
-### Scheduled command execution
-
-You can provide Commander a time delay in seconds to wait and then reissue all commands.  This is the easiest way to schedule automated password resets.
-
-Example:
-
-```
 {
     "debug":false,
     "server":"https://keeperapp.com/v2/",
@@ -176,10 +190,84 @@ Example:
     "timedelay":600,
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
 }
+
+Terminal command:
+
+keeper --config config.json shell
 ```
 
-Commander would now download and decrypt records, rotate 2 passwords, and then wait for 10 minutes (60 seconds * 10) before issuing the commands again. FYI, there are 86400 seconds in 24 hours in case you want to have daily rotations!
+Commander would now download and decrypt records, rotate 2 passwords (with Record UIDs specified), and then wait for 600 seconds (10 minutes) before issuing the commands again.  In the above example, the master password is stored in the JSON file.  If you don't want to store a credential or Yubikey challenge phrase in the JSON config file, you can leave that out and you'll be prompted for the password on the interactive shell.  But in this scenario, you'll need to leave Commander running in a persistent terminal session.
 
+If you prefer not to keep a persistent terminal session active, you can also add Commander to a cron script (for Unix/Linux systems) or the launchctl daemon on Mac systems.  Below is an example of executing Commander from a Mac launchctl scheduler:
+
+### Setting up Keeper Commander to run via scheduler on a Mac
+
+1. Create LaunchAgents folder if not there already:
+```
+mkdir -p ~/Library/LaunchAgents
+```
+
+2. Create a new file representing this process
+
+```
+vi ~/Library/LaunchAgents/com.keeper.commander.plist
+```
+
+In the file, add something like this:
+```
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.keeper.commander.rotation_test</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Path/to/folder/my_script.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>10</integer>
+    <key>WorkingDirectory</key>
+    <string>/Path/to/folder</string>
+    <key>StandardOutPath</key>
+    <string>/Path/to/folder/output.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Path/to/folder/output.err</string>
+</dict>
+</plist>
+```
+
+Note: replace /Path/to/folder with the path to your working directory
+and replace 10 with the number of seconds between tasks.
+ 
+3.  In /Path/to/folder/my_script.sh create a file like this:
+
+```
+vi my_script.sh
+```
+
+Add the following lines to the file:
+
+```
+export LANG=en_US.UTF-8
+say starting Keeper
+MYLOGLINE="`date +"%b %d %Y %H:%M"` $0:"
+echo "$MYLOGLINE Executing Keeper"
+/Library/Frameworks/Python.framework/Versions/3.5/bin/keeper --config config.json shell
+say rotation complete
+```
+
+Change the permissions to executable
+```
+chmod +x my_script.sh
+```
+
+4. Activate the process 
+
+```
+launchctl unload ~/Library/LaunchAgents/com.keeper.commander.plist
+launchctl load -w ~/Library/LaunchAgents/com.keeper.commander.plist
+```
+ 
 ### Two-Factor Authentication and Device Token
 
 If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token needs to be saved for subsequent calls. Copy-paste this device token into your config.json file.  For example:
@@ -198,8 +286,7 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 
 ### Yubikey Support 
 
-Commander supports the ability to authenticate a session with a connected Yubikey device instead of using a Master Password.  To configure Yubikey authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).
-
+Commander supports the ability to authenticate a session with a connected Yubikey device instead of using a Master Password.  To configure Yubikey authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  You will end up using a challenge phrase to authenticate instead of the master password.
 
 ### Plugins and Password Rotation
 
