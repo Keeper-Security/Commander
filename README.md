@@ -179,11 +179,11 @@ If you want to fully automate commander operations, such as rotating a password 
 
 Using config.json file and **timedelay** setting, you tell Commander the time delay in seconds to wait and then reissue all commands.  This is the easiest way to schedule automated password resets.
 
-Example:
+Below is an example:
 
-```
 config.json:
 
+```
 {
     "debug":false,
     "server":"https://keeperapp.com/v2/",
@@ -192,13 +192,15 @@ config.json:
     "timedelay":600,
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
 }
+```
 
 Terminal command:
 
+```
 keeper --config config.json shell
 ```
 
-Commander would now download and decrypt records, rotate 2 passwords (with Record UIDs specified), and then wait for 600 seconds (10 minutes) before issuing the commands again.  In the above example, the master password is stored in the JSON file.  If you don't want to store a credential or Yubikey challenge phrase in the JSON config file, you can leave that out and you'll be prompted for the password on the interactive shell.  But in this scenario, you'll need to leave Commander running in a persistent terminal session.
+In this example, Commander would download and decrypt records, rotate 2 passwords (with Record UIDs specified), and then wait for 600 seconds (10 minutes) before issuing the commands again.  Also in this example, the master password is stored in the JSON file.  If you don't want to store a credential or Yubikey challenge phrase in the JSON config file, you can leave that out and you'll be prompted for the password on the interactive shell.  But in this scenario, you'll need to leave Commander running in a persistent terminal session.
 
 If you prefer not to keep a persistent terminal session active, you can also add Commander to a cron script (for Unix/Linux systems) or the launchctl daemon on Mac systems.  Below is an example of executing Commander from a Mac launchctl scheduler:
 
@@ -227,7 +229,7 @@ In the file, add something like this:
         <string>/Path/to/folder/my_script.sh</string>
     </array>
     <key>StartInterval</key>
-    <integer>10</integer>
+    <integer>600</integer>
     <key>WorkingDirectory</key>
     <string>/Path/to/folder</string>
     <key>StandardOutPath</key>
@@ -239,9 +241,9 @@ In the file, add something like this:
 ```
 
 Note: replace /Path/to/folder with the path to your working directory
-and replace 10 with the number of seconds between tasks.
+and replace 600 with the number of seconds between runs.
  
-3.  In /Path/to/folder/my_script.sh create a file like this:
+3.  In /Path/to/folder/ create a script my_script.sh like this:
 
 ```
 vi my_script.sh
@@ -270,9 +272,11 @@ launchctl unload ~/Library/LaunchAgents/com.keeper.commander.plist
 launchctl load -w ~/Library/LaunchAgents/com.keeper.commander.plist
 ```
  
+Based on this example, Keeper Commander will execute the commands specified in config.json every 600 seconds.
+
 ### Two-Factor Authentication and Device Token
 
-If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token needs to be saved for subsequent calls. Copy-paste this device token into your config.json file.  For example:
+If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token is automatically saved to the config file when you login interactively. If you have multiple config files, you can just copy-paste this device token into your config.json file.  For example:
 
 ```
 {
@@ -290,9 +294,11 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 
 Commander supports the ability to authenticate a session with a connected Yubikey device instead of using a Master Password.  To configure Yubikey authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  You will end up using a challenge phrase to authenticate instead of the master password.
 
-### Plugins and Password Rotation
+### Targeted password rotation plugins 
 
-Keeper Commander can communicate to internal and external systems for the purpose of rotating a password and synchronizing the change inside the Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a custom field to the record to specify which plugin Keeper Commander should use when changing passwords.  Example:
+Keeper Commander can communicate to internal and external systems for the purpose of rotating a password and synchronizing the change to your Keeper Vault.  For example, you might want to rotate your MySQL password and Active Directory password automatically.  To support a plugin, simply add a set of **custom field** values to the Keeper record that you will be rotating.  To do this, simply login to Keeper on the [Web Vault](https://keepersecurity.com/vault) and edit the record you will be rotating.  Add custom fields to the record and save it. The custom field value tells Commander which plugin to use when rotating the password.
+
+For example:
 
 ```
 Name: cmdr:plugin
