@@ -157,6 +157,7 @@ In this case, Commander will start up using foo.json as the configuration.
 
 ### JSON file parameters
 
+```
 **server**: do not change.  Default is https://keeperapp.com/v2/.
 **user**: the Keeper email address
 **password**: the Keeper master password
@@ -166,10 +167,11 @@ In this case, Commander will start up using foo.json as the configuration.
 **mfa_type**: if multi-factor auth is used, this will be set to "device_token".
 **mfa_token**: this contains the two-factor token used to authenticate this Commander instance.
 **challenge**: challenge phrase if you are using a Yubikey device for authentication.  See Yubikey setup instructions.
+```
 
 If you have turned on two-factor authentication on your Keeper account, you will be prompted the first time you run Commander to enter the two-factor code.  Once authenticated, Commander will update the mfa_type and mfa_token parameters in the config file.  This way, subsequent calls are authenticated without needing additional two-factor tokens.
 
-You may ask, why is the master password stored in the JSON configuration file?  It doesn't need to be. You can omit the password field from the JSON file, and you'll be prompted with the password interactively.  
+You may ask, why is the master password stored in the JSON configuration file?  It doesn't need to be. You can omit the password field from the JSON file, and you'll be prompted with the password interactively.  It is our recommendation to set up a Keeper account that is solely used for Commander interaction. Using Keeper's sharing features, share the records with the Commander account that will be rotated.  Set a strong master password (such as a long hash key) and turn on Two-Factor authentication on this Commander account.  Then store the account master password in the JSON file and do not use this account for any other operations. 
 
 ### Scheduling & Automation
 
