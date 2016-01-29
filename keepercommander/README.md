@@ -1,7 +1,7 @@
 Keeper Commander for Python 3
 ----
 
-This is the codebase for a Python 3 interface to Keeper.
+This is the codebase for a Python 3 interface to Keeper.  This README is specific to running Keeper from the Python code.  Most users should install Commander as instructed in the main README page.
 
 ### Installation
 
@@ -46,13 +46,21 @@ pip3 install PyMySQL
 
 6) Set up a Keeper account from https://keepersecurity.com if you don't already have one.
 
-7) Run Keeper by typing 
+7) Restart your terminal session 
+
+8) Run Keeper by typing 
 
 ```bash
 keeper 
 ```
 
 It will print the help screen with available commands and options 
+
+To run the interactive shell, type:
+```bash
+keeper shell
+```
+
 ### Help
 
-If you need help, found a bug, or you're interesting in contributing, email us at ops@keepersecurity.com.
+If you need help, found a bug, or you're interested in contributing, email us at ops@keepersecurity.com.
