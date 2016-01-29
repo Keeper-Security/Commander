@@ -290,6 +290,8 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 }
 ```
 
+To activate Two-Factor Authentication on your Keeper account, login to the [Web App](https://keepersecurity.com/vault) and visit the Settings screen.  Keeper supports Text Message, Google Authenticator, RSA SecurID and Duo Security methods.
+
 ### Yubikey Support 
 
 Commander supports the ability to authenticate a session with a connected Yubikey device instead of using a Master Password.  To configure Yubikey authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  You will end up using a challenge phrase to authenticate instead of the master password.
