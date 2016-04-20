@@ -46,9 +46,7 @@ pip3 install PyMySQL
 
 6) Set up a Keeper account from https://keepersecurity.com if you don't already have one.
 
-7) Restart your terminal session 
-
-8) Run Keeper by typing 
+7) Run Keeper by typing 
 
 ```bash
 keeper 
