@@ -777,7 +777,8 @@ def rotate_password(params, record_uid):
             return False
 
     # Proceed with Keeper password rotation
-    data['secret2'] = new_password 
+    if len(new_password) > 0:
+        data['secret2'] = new_password
 
     if params.debug: 
         print('New password: ' + str(data['secret2']))

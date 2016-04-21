@@ -50,6 +50,16 @@ class Record:
                 break
         return result
 
+    def set_field(self, name, value):
+        found = False
+        for field in self.custom_fields:
+            if field['name'] == name:
+                field['value'] = value
+                found = True
+                break
+        if not found:
+            self.custom_fields.append({'name': name, 'value': value})
+
     def display(self):
         print('') 
         print('{0:>20s}: {1:<20s}'.format('UID',self.record_uid))
