@@ -22,18 +22,16 @@ Name: cmdr:plugin
 Value: awskey
 ```
 
-3) The plugin will use the 'Login' field as the AWS account username that will be updated. The 'Password' field is ignored.
-
-### Optional custom fields
-
-Optional setting to prevent password rotation. AWS plugin does not use passwords.
+3) Add a custom rule to tell the plugin NOT to rotate a password. This plugin does not use the password field.
 
 ```
 Name: cmdr:rules
 Value: 0,0,0,0
 ```
 
-After rotation is completed, the Access Key ID and Secret Key are stored in Keeper custom fields 'cmdr:aws_key_id'  and 'cmdr:aws_key_secret'.
+4) The plugin will use the 'Login' field as the AWS account username that will be updated. The 'Password' field is ignored.
+
+After rotation is completed, the Access Key ID and Secret Key are stored in Keeper custom fields 'cmdr:aws_key_id'  and 'cmdr:aws_key_secret'.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
 
 ### Auto-command execution
 
