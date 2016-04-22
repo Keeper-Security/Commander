@@ -17,6 +17,7 @@ import pexpect
        pip3 install pexpect
 """
 
+
 def rotate(record, newpassword):
     """ Grab any required fields from the record """
     user = record.login
@@ -46,6 +47,7 @@ def rotate(record, newpassword):
         result = True
     elif i == 3:
         print('Password changed successfully')
+        record.password = newpassword
         result = True
 
     return result
