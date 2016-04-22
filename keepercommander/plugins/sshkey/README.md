@@ -1,4 +1,4 @@
-Commander Plugin for Generating SSH keys
+Commander Plugin for Generating/Rotating SSH keys
 ----
 
 This plugin rotates and distributes SSH keys for the provided user on the local system.  The 'Login' field of the Keeper record defines the user account which is being rotated. The 'password' field is used as the optional passphrase to encrypt the private key.  The resulting SSH key information is stored in custom fields and sync'd to your Keeper vault.  Any user or shared folder associated with the record is then accessible to any user with permission.
