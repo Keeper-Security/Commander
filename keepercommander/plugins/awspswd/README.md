@@ -1,8 +1,8 @@
-Commander Plugin for Generating/Rotating AWS Access Keys
+Commander Plugin for Generating/Rotating AWS Passwords
 ----
 
-This plugin generates/rotates AWS Access Keys for any user within your Amazon Web Services account.
-Note: this plugin can be used along with the 'awspswd' AWS Password rotation plugin.
+This plugin generates/rotates AWS Passwords for any user within your Amazon Web Services account.
+Note: this plugin can be used along with the 'awskey' AWS Access Key rotation plugin.
 
 ### Dependencies
 
@@ -14,23 +14,34 @@ pip3 install awscli
 aws configure
 ```
 
-Note: You must configure your AWS environment on the environment with an account that has administrative privileges in order to modify the Access Keys for the specified user.
+Note: You must configure your AWS environment on the environment with an account that has administrative privileges in order to modify the Password for the specified user.
 
 2) Add the following Custom Fields to the Keeper record that you want to update
 
 ```
 Name: cmdr:plugin
-Value: awskey
+Value: awspswd
 ```
 
-3) When this plugin is used alone, you can add a custom rule to tell the plugin NOT to rotate a password. This plugin does not use the password field.
+3) The plugin will use the Login field as the username of the passwd command when rotating a password.
+
+### Optional custom fields
+To specify the rules for password complexity to use add a custom field
 
 ```
 Name: cmdr:rules
-Value: 0,0,0,0
+Value: 4,6,3,0
 ```
 
-4) The plugin will use the 'Login' field as the AWS account username that will be updated. The 'Password' field is ignored.
+This would generate a new password with :
+```
+  4 uppercase characters
+  6 lowercase characters
+  3 numerical characters
+  0 punctuation characters
+```
+
+4) The plugin will use the 'Login' field as the AWS account username and 'Password' field as AWS account password.
 
 After rotation is completed, the Access Key ID and Secret Key are stored in Keeper custom fields 'cmdr:aws_key_id'  and 'cmdr:aws_key_secret'.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
 
@@ -41,7 +52,7 @@ You can also automate password resets using this plugin
 Example:
 
 ```
-{                                                                               
+{
     "debug":false,
     "server":"https://keeperapp.com/v2/",
     "user":"admin@company.com",

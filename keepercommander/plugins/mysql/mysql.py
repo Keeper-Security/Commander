@@ -48,6 +48,7 @@ def rotate(record, newpassword):
         # your changes.
         connection.commit()
 
+        record.password = newpassword
         result = True
     except:
         print("Error during connection to MySQL server")

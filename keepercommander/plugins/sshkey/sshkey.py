@@ -58,6 +58,7 @@ def rotate(record, newpassword):
             print('Warning: {0}'.format(e))
             pass
 
+        record.password = newpassword
         return True
     except Exception as e:
         print(e)

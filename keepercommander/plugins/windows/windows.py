@@ -12,6 +12,7 @@
 
 import subprocess, re
 
+
 def rotate(record, newpassword):
     """ Grab any required fields from the record """
     user = record.login
@@ -19,15 +20,17 @@ def rotate(record, newpassword):
     result = False
 
     # the characters below mess with windows command line
-    np = re.sub('[<>&|]', '', newpassword)
-    i = subprocess.call("net user {0} {1}".format(user, np), shell = True)
+    i = subprocess.call("net user {0} {1}".format(user, newpassword), shell = True)
 
     if i == 0:
         print('Password changed successfully')
-        if np != newpassword:
-            record.password = np
+        record.password = newpassword
         result = True
     else:
         print('Password change failed')
 
     return result
+
+
+def adjust(newpassword):
+    return re.sub('[<>&|]', '', newpassword)
