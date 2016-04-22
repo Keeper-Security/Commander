@@ -1,8 +1,8 @@
 Commander Plugin for Generating/Rotating AWS Passwords
 ----
 
-This plugin generates/rotates AWS Passwords for any user within your Amazon Web Services account.
-Note: this plugin can be used along with the 'awskey' AWS Access Key rotation plugin.
+This plugin generates/rotates AWS passwords for any user within your Amazon Web Services account.
+Note: To rotate AWS Access Keys, use the 'awskey' AWS Access Key rotation plugin.  Both 'awskey' and 'awspswd' plugins can be used together on the same Keeper record.
 
 ### Dependencies
 
@@ -43,8 +43,6 @@ This would generate a new password with :
 
 4) The plugin will use the 'Login' field as the AWS account username and 'Password' field as AWS account password.
 
-After rotation is completed, the Access Key ID and Secret Key are stored in Keeper custom fields 'cmdr:aws_key_id'  and 'cmdr:aws_key_secret'.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
-
 ### Auto-command execution
 
 You can also automate password resets using this plugin
@@ -63,5 +61,5 @@ Example:
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then rotate AWS access key keys for record ID 3PMqasi9hohmyLWJkgxCWg. The custom fields in the record give the plugin the information it needs to rotate the access key appropriately. Each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+In this example, we are telling Commander to first download and decrypt records, then rotate the AWS password for record ID 3PMqasi9hohmyLWJkgxCWg. The custom fields in the record give the plugin the information it needs to rotate the password appropriately. Each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
 
