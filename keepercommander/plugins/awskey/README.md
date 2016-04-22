@@ -26,16 +26,18 @@ Value: awskey
 
 ### Optional custom fields
 
-Optional setting to prevent password rotation. AWS plugin does not use passwords
+Optional setting to prevent password rotation. AWS plugin does not use passwords.
 
 ```
 Name: cmdr:rules
 Value: 0,0,0,0
 ```
 
+After rotation is completed, the Access Key ID and Secret Key are stored in Keeper custom fields 'cmdr:aws_key_id'  and 'cmdr:aws_key_secret'.
+
 ### Auto-command execution
 
-You can now automate password resets using this plugin
+You can also automate password resets using this plugin
 
 Example:
 
