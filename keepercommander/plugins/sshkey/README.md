@@ -1,19 +1,18 @@
 Commander Plugin for Generating SSH keys
 ----
 
-This plugin allows rotating a ssh keys used to access to remote systems.
-The password is used to encrypt a private key
+This plugin rotates and distributes SSH keys for the provided user on the local system.  The 'Login' field of the Keeper record defines the user account which is being rotated. The 'password' field is used as the optional passphrase to encrypt the private key.  The resulting SSH key information is stored in custom fields and sync'd to your Keeper vault.  Any user or shared folder associated with the record is then accessible to any user with permission.
 
 ### Dependencies 
 
-1) Add the following Custom Fields to the record that you want to rotate within Keeper
+1) Add the following Custom Fields to the Keeper record
 
 ```
 Name: cmdr:plugin
 Value: sshkey
 ```
 
-2) The plugin will use the Login field as the username of the passwd command when rotating a password.
+2) The plugin will use the 'Login' field as the username of the 'passwd' command
 
 ### Optional custom fields
 
@@ -34,7 +33,7 @@ This would generate a new password with :
 
 ### Auto-command execution
 
-You can now automate password resets using this plugin
+You can automate SSH key rotations using this plugin
 
 Example:
 
@@ -48,5 +47,5 @@ Example:
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then generate a ssh keys. The custom fields in the record give the plugin the information it needs to rotate the ssh key appropriately. As you can see, each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+In this example, we are telling Commander to first download and decrypt records, then generate SSH keys. The custom fields in the record give the plugin the information it needs to rotate the SSH key appropriately. Each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode ('keeper shell') to display the record UIDs in your account.
 
