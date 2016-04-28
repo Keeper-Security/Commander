@@ -22,9 +22,15 @@ cmdr:host     |           | (Optional, Multiple) Host name or IP address of targ
 cmdr:rules    |           | (Optional) [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
 
 
-
-
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey1.png)
+
+5. **Important**<br/>
+  Automatic public key update on the target server expects that .ssh/autorised_key already contains the valid public key.
+  When setting up this pluging for the first time please use the following steps:
+   1. Do **not** add `cmdr:host` to the record.
+   2. Generate SSH key
+   3. Use `ssh-copy-id` or any other method to copy public key to the target system.
+   4. Add `cmdr:host` to the record. `.ssh/autorised_key` file will be automatically updated the next time the key rotated.
 
 <sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service , i.e. `authorized_key` file is located
  in the `.ssh` directory of the user **HOME** directory.</sub>
