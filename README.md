@@ -370,17 +370,13 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 ### Mobile Apps
 
-iPhone, iPad, iPod (iTunes)
-https://itunes.apple.com/us/app/keeper-password-manager-digital/id287170072?mt=8
+[iOS - iPhone, iPad, iPod](https://itunes.apple.com/us/app/keeper-password-manager-digital/id287170072?mt=8)
 
-Android (Google Play)
-https://play.google.com/store/apps/details?id=com.callpod.android_apps.keeper&hl=en
+[Android - Google Play](https://play.google.com/store/apps/details?id=com.callpod.android_apps.keeper&hl=en)
 
-Kindle (Amazon App Store)
-http://amzn.com/B00NUK3F6S
+[Kindle and Amazon App Store](http://amzn.com/B00NUK3F6S)
 
-Windows Phone (8+)
-http://www.windowsphone.com/en-us/store/app/keeper/8d9e0020-9785-e011-986b-78e7d1fa76f8
+[Windows Phone](http://www.windowsphone.com/en-us/store/app/keeper/8d9e0020-9785-e011-986b-78e7d1fa76f8)
 
 
 ### Cross-Platform Desktop App (Mac, PC, Linux)
@@ -392,6 +388,7 @@ http://www.windowsphone.com/en-us/store/app/keeper/8d9e0020-9785-e011-986b-78e7d
 [Linux](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktopLinux.zip)
 
 ### Mac App Store (Thin Client)
+
 [Mac App Store](https://itunes.apple.com/us/app/keeper-password-manager-digital/id414781829?mt=12)
 
 ### Microsoft Store Platform
