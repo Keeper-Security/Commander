@@ -18,7 +18,7 @@ Name          | Value     | Comment
 cmdr:plugin   | adpasswd  | 
 cmdr:host     |           | Host name or IP address of your active directory server
 cmdr:userdn   |           | [Distinguished name](https://msdn.microsoft.com/en-us/library/windows/desktop/aa366101.aspx) of the AD user you want to rotate the password on.    
-cmdr:rules   |           | Optional [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules)   
+cmdr:rules   |           | Optional [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)   
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_adpasswd.png)
 
