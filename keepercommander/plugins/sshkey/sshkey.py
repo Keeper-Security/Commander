@@ -71,7 +71,7 @@ def rotate(record, newpassword):
             oldPublicKey = record.get('cmdr:ssh_public_key')
             for host in hosts:
                 try:
-                    child = subprocess.Popen(['ssh', '-i', keyFileName, '{0}@{1}'.format(record.login, host), 'cat .ssh/authorized_keys'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    child = subprocess.Popen(['ssh', '-i', keyFileName, '-o', 'StrictHostKeyChecking=no', '{0}@{1}'.format(record.login, host), 'cat .ssh/authorized_keys'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     (out_child, error_child) = child.communicate(timeout=10)
                     if child.poll() == 0:
                         keys = out_child.decode().splitlines()
@@ -79,7 +79,7 @@ def rotate(record, newpassword):
                         keys = [l for l in keys if l != oldPublicKey]
                         keys.append(newPublicKeySSH)
 
-                        child = subprocess.Popen(['ssh', '-i', keyFileName, '{0}@{1}'.format(record.login, host), 'echo {0} > .ssh/authorized_keys'.format('\n'.join(keys))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        child = subprocess.Popen(['ssh', '-i', keyFileName, '-o', 'StrictHostKeyChecking=no', '{0}@{1}'.format(record.login, host), 'echo \'{0}\' > .ssh/authorized_keys'.format('\n'.join(keys))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         (out_child, error_child) = child.communicate(timeout=10)
 
                     if error_child:
