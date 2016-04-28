@@ -10,38 +10,41 @@
 # Contact: ops@keepersecurity.com
 #
 
-from ldap3 import Server, Connection, ALL, MODIFY_REPLACE
+from ldap3 import Server, Connection, ALL
 
 """Commander Plugin for Active Directory
    Dependencies: 
        pip3 install ldap3
 """
 
-def rotate(record, newpassword):
-    """ Grab any required fields from the record """
-    user = record.login
-    oldpassword = record.password
 
+def rotate(record, newpassword):
     result = False
 
     host = record.get('cmdr:host')
-    searchdn = record.get('cmdr:searchdn')
+    user_dn = record.get('cmdr:userdn')
 
     try:
+        server = Server(
+            host=host,
+            use_ssl=True,
+            get_info=ALL)
 
-        server = Server(host, use_ssl=True, get_info=ALL)
-        dn = 'uid=%s, cn=users, cn=accounts, %s'%(user, searchdn)
-        conn = Connection(server, dn, oldpassword, auto_bind=True)
+        conn = Connection(
+            server=server,
+            user=user_dn,
+            password=record.password,
+            auto_bind=True)
 
-        conn.modify(dn, {'password': [(MODIFY_REPLACE, newpassword)]})
+        changePwdResult = conn.extend.microsoft.modify_password(user_dn, newpassword)
 
-        if (conn.result['result'] == 0):
+        if (changePwdResult == True):
             return True
         else:
-            print("Server returned this message: %s"%(conn.result['message']))
+            print("Server returned this message: %s" % (changePwdResult))
 
         conn.unbind()
     except:
         print("Error during connection to AD server")
 
-    return result 
+    return result

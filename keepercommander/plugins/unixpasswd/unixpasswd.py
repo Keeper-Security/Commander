@@ -18,34 +18,39 @@ import pexpect
 """
 
 def rotate(record, newpassword):
-    """ Grab any required fields from the record """
     user = record.login
     oldpassword = record.password
+    prompt = '.*\$ '
 
-    result = False
-
-    child = pexpect.spawn("/usr/bin/passwd %s"%(user))
-
-    i = child.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
-
+    p = pexpect.spawn('bash')
+    i = p.expect(prompt)
+    p.sendline('su - %s' % (user))
+    i = p.expect('[Pp]assword')
+    p.sendline(oldpassword)
+    i = p.expect(prompt)
+    p.sendline('passwd')
+    i = p.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
+    l = p.before
     if i == 0 or i == 1:
-        child.sendline(oldpassword)
-        child.expect('[Nn]ew [Pp]assword')
-    child.sendline(newpassword)
-    child.expect("Retype New Password:")
-    child.sendline(newpassword)
+        p.sendline(oldpassword)
+        i = p.expect('[Nn]ew [Pp]assword')
+    p.sendline(newpassword)
+    i = p.expect("Retype New Password:")
+    p.sendline(newpassword)
 
-    i = child.expect(['.try again', '.authentication', '.failure', pexpect.EOF])
+    i = p.expect(['.try again', '.authentication', '.failure', prompt])
 
     if i == 0:
         print('Password change failed')
+        return False
     elif i == 1:
         print('Current password is incorrect')
+        return False
     elif i == 2:
         print('General failure in password update')
-        result = True
+        return False
     elif i == 3:
         print('Password changed successfully')
-        result = True
+        return True
 
-    return result
+    return False
