@@ -31,6 +31,13 @@ This would generate a new password with :
   8 punctuation characters
 ```
 
+To upgrade .ssh/authorized_keys file with the new public key add the following custom field.
+```
+Name: cmdr:host
+Value: host.domain.net
+```
+There might be multiple custom fields with host names.
+
 ### Auto-command execution
 
 You can automate SSH key rotations using this plugin
