@@ -13,8 +13,6 @@ pip3 install pexpect
 
 2) Add the following Custom Fields to the record that you want to rotate within Keeper
 
-2) Add the following Custom Fields to the record that you want to rotate within Keeper
-
 Name         | Value      | Comment
 ---------    | -------    | ------------
 cmdr:plugin  | unixpasswd | 
