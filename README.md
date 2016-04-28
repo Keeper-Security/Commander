@@ -1,6 +1,6 @@
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_512x205.png)
 
-[![Build Status](https://travis-ci.org/Keeper-Security/Commander.svg)](https://travis-ci.org/Andr3wHur5t/Breadcrumb)
+[![Build Status](https://travis-ci.org/Keeper-Security/Commander.svg)](https://travis-ci.org/Keeper-Security/Commander)
 
 ----
 #### The Password Management SDK for IT Admins & Developers

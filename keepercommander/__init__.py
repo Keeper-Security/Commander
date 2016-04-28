@@ -3,7 +3,7 @@ import click
 
 from keepercommander import cli, display, api
 
-__version__ = '0.3.7'
+__version__ = '0.4.0'
 
 @click.group()
 @click.option('--server', '-s', envvar='KEEPER_SERVER', help='Host address. You can set KEEPER_SERVER environment variable instead.')

@@ -35,7 +35,7 @@ def rotate(record, newpassword):
         p.sendline(oldpassword)
         i = p.expect('[Nn]ew [Pp]assword')
     p.sendline(newpassword)
-    i = p.expect("Retype New Password:")
+    i = p.expect("[Rr]etype [Nn]ew [Pp]assword:")
     p.sendline(newpassword)
 
     i = p.expect(['.try again', '.authentication', '.failure', prompt])
