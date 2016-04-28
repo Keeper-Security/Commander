@@ -1,19 +1,18 @@
-Commander Plugin for Generating SSH keys
+Commander Plugin for Generating/Rotating SSH keys
 ----
 
-This plugin allows rotating a ssh keys used to access to remote systems.
-The password is used to encrypt a private key
+This plugin generates/rotates SSH keys for the provided user on the local system.  The 'Login' field of the Keeper record defines the user account which is being rotated. The 'password' field is used as the optional passphrase to encrypt the private key.  The resulting SSH key information is stored in custom fields and sync'd to your Keeper vault.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
 
 ### Dependencies 
 
-1) Add the following Custom Fields to the record that you want to rotate within Keeper
+1) Add the following Custom Fields to the Keeper record
 
 ```
 Name: cmdr:plugin
 Value: sshkey
 ```
 
-2) The plugin will use the Login field as the username of the passwd command when rotating a password.
+2) The plugin will use the 'Login' field as the username of the 'passwd' command
 
 ### Optional custom fields
 
@@ -34,7 +33,7 @@ This would generate a new password with :
 
 ### Auto-command execution
 
-You can now automate password resets using this plugin
+You can automate SSH key rotations using this plugin
 
 Example:
 
@@ -44,9 +43,11 @@ Example:
     "server":"https://keeperapp.com/v2/",
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
+    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
+    "mfa_type":"device_token",
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then generate a ssh keys. The custom fields in the record give the plugin the information it needs to rotate the ssh key appropriately. As you can see, each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+In this example above, we are telling Commander to first download and decrypt records, then generate SSH keys for the record ID 3PMqasi9hohmyLWJkgxCWg. The custom fields in the record give the plugin the information it needs to rotate the SSH key. Each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode ('keeper shell') to display the record UIDs in your account.
 

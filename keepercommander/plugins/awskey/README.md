@@ -1,12 +1,12 @@
-Commander Plugin for Generating AWS Access keys
+Commander Plugin for Generating/Rotating AWS Access Keys
 ----
 
-This plugin allows rotating a AWS Access key used to access to Amazon Web Services.
-The password is ignored by this plugin
+This plugin generates/rotates AWS Access Keys for any user within your Amazon Web Services account.
+Note: this plugin can be used along with the 'awspswd' AWS Password rotation plugin.
 
-### Dependencies 
+### Dependencies
 
-1) Install and configure AWS CLI package with the AWS account that has administrative privileges
+1) Install and configure AWS CLI package with an AWS account that has administrative privileges
 
 ```
 pip3 install awscli
@@ -14,27 +14,29 @@ pip3 install awscli
 aws configure
 ```
 
-2) Add the following Custom Fields to the record that you want to rotate within Keeper
+Note: You must configure your AWS environment on the environment with an account that has administrative privileges in order to modify the Access Keys for the specified user.
+
+2) Add the following Custom Fields to the Keeper record that you want to update
 
 ```
 Name: cmdr:plugin
 Value: awskey
 ```
 
-3) The plugin will use the Login field as the ASW account username. Password field is ignored
-
-### Optional custom fields
-
-Optional setting to prevent password rotation. AWS plugin does not use passwords
+3) When this plugin is used alone, you can add a custom rule to tell the plugin NOT to rotate a password. This plugin does not use the password field.
 
 ```
 Name: cmdr:rules
 Value: 0,0,0,0
 ```
 
+4) The plugin will use the 'Login' field as the AWS account username that will be updated. The 'Password' field is ignored.
+
+After rotation is completed, the Access Key ID and Secret Key are stored in Keeper custom fields 'cmdr:aws_key_id'  and 'cmdr:aws_key_secret'.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
+
 ### Auto-command execution
 
-You can now automate password resets using this plugin
+You can also automate password resets using this plugin
 
 Example:
 
@@ -44,9 +46,11 @@ Example:
     "server":"https://keeperapp.com/v2/",
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
+    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
+    "mfa_type":"device_token",
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then rotate AWS access key keys. The custom fields in the record give the plugin the information it needs to rotate the access key appropriately. As you can see, each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+In this example, we are telling Commander to first download and decrypt records, then rotate AWS access key keys for record ID 3PMqasi9hohmyLWJkgxCWg. The custom fields in the record give the plugin the information it needs to rotate the access key appropriately. Each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
 

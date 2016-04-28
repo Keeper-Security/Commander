@@ -6,7 +6,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2016 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -58,6 +58,7 @@ def rotate(record, newpassword):
             print('Warning: {0}'.format(e))
             pass
 
+        record.password = newpassword
         return True
     except Exception as e:
         print(e)

@@ -5,7 +5,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2016 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -747,38 +747,36 @@ def rotate_password(params, record_uid):
     record_object = Record()
     record_object.load(data)
 
-    new_password = generator.generate()
-
     # generate a new password with any specified rules
     rules = record_object.get("cmdr:rules")
     if rules:
         new_password = generator.generateFromRules(rules)
+    else:
+        new_password = generator.generate()
 
     # execute rotation plugin associated with this record
-    plugin_name = record_object.get("cmdr:plugin")
-    if plugin_name:
+    plugin_names = [f["value"] for f in record_object.custom_fields if f["name"] == "cmdr:plugin"]
+
+    # Some plugins might need to change the password in the process of rotation
+    # f.e. windows plugin gets rid of certain characters.
+    for plugin_name in plugin_names:
+        plugin = plugin_manager.get_plugin(plugin_name)
+        if plugin:
+            if hasattr(plugin, "adjust"):
+                new_password = plugin.adjust(new_password)
+
+    for plugin_name in plugin_names:
         print("Rotating with plugin " + str(plugin_name))
         plugin = plugin_manager.get_plugin(plugin_name)
         if plugin:
-            old_password = record_object.password
             success = plugin.rotate(record_object, new_password)
             if success:
-                # Some plugins might need to change the password in the process of rotation
-                # f.e. windows plugin gets rid of certain characters. If password is changed,
-                # plugin puts it into the record object
-                if record_object.password != old_password:
-                    new_password = record_object.password
-                if params.debug: 
-                    print('Password rotation on target system is successful.')
+                if params.debug:
+                    print("Password rotation is successful for \"{0}\".".format(plugin_name))
             else:
-                print('Password rotation failed')
-                return False
-        else:
-            return False
+                print("Password rotation failed for \"{0}\".".format(plugin_name))
 
-    # Proceed with Keeper password rotation
-    if len(new_password) > 0:
-        data['secret2'] = new_password
+    data['secret2'] = record_object.password
 
     if params.debug: 
         print('New password: ' + str(data['secret2']))

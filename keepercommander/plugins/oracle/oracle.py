@@ -41,6 +41,7 @@ def rotate(record, newpassword):
             sql = 'ALTER USER %s IDENTIFIED BY "%s" ACCOUNT UNLOCK'%(user, newpassword)
             cursor.execute(sql)
 
+        record.password = newpassword
         result = True
     except:
         print("Error during connection to Oracle server")

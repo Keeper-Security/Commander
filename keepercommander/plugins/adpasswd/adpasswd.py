@@ -39,7 +39,9 @@ def rotate(record, newpassword):
         changePwdResult = conn.extend.microsoft.modify_password(user_dn, newpassword)
 
         if (changePwdResult == True):
-            return True
+            print('Password changed successfully')
+            record.password = newpassword
+            result = True
         else:
             print("Server returned this message: %s" % (changePwdResult))
 

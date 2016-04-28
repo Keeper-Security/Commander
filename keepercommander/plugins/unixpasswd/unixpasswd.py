@@ -51,6 +51,7 @@ def rotate(record, newpassword):
         return False
     elif i == 3:
         print('Password changed successfully')
+        record.password = newpassword
         return True
 
     return False

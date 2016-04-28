@@ -44,6 +44,8 @@ def rotate(record, newpassword):
 
         if pass_result == b'\r\n':
             print('Password changed successfully')
+
+            record.password = newpassword
             result = True
         else:
             print('Password change failed:')
