@@ -370,39 +370,46 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 ### Mobile Apps
 
-[iPhone, iPad, iPod] (https://itunes.apple.com/us/app/keeper-password-manager-digital/id287170072?mt=8)
+[iOS - iPhone, iPad, iPod](https://itunes.apple.com/us/app/keeper-password-manager-digital/id287170072?mt=8)
 
-[Android (Google Play)](https://play.google.com/store/apps/details?id=com.callpod.android_apps.keeper&hl=en)
+[Android - Google Play](https://play.google.com/store/apps/details?id=com.callpod.android_apps.keeper&hl=en)
 
-[Kindle (Amazon App Store)](http://amzn.com/B00NUK3F6S)
+[Kindle and Amazon App Store](http://amzn.com/B00NUK3F6S)
 
-[BlackBerry (OS10+)](http://appworld.blackberry.com/webstore/content/33358889/?countrycode=US&lang=en)
+[Windows Phone](http://www.windowsphone.com/en-us/store/app/keeper/8d9e0020-9785-e011-986b-78e7d1fa76f8)
 
-[Windows Phone (8+)](http://www.windowsphone.com/en-us/store/app/keeper/8d9e0020-9785-e011-986b-78e7d1fa76f8)
 
-[Surface](http://apps.microsoft.com/windows/en-us/app/keeper/07fe8361-f512-4873-91a1-acd0cb4c851d)
+### Cross-Platform Desktop App (Mac, PC, Linux)
 
-### Desktop Apps (Mac, PC, Linux)
-
-[Windows PC](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/Keeper.exe)
+[Windows PC](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktop.exe)
 
 [Mac](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktop.dmg)
 
 [Linux](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktopLinux.zip)
 
-[Mac App Store](https://keepersecurity.com/macreview)
+### Mac App Store (Thin Client)
 
-[Windows Store](http://apps.microsoft.com/windows/en-us/app/keeper/07fe8361-f512-4873-91a1-acd0cb4c851d)
+[Mac App Store](https://itunes.apple.com/us/app/keeper-password-manager-digital/id414781829?mt=12)
+
+### Microsoft Store Platform
+
+[Microsoft Store Version - Windows 10](https://www.microsoft.com/store/apps/9wzdncrdmpt6)
+
+[Microsoft Store Version - Windows 8.1 and earlier](http://apps.microsoft.com/windows/app/07fe8361-f512-4873-91a1-acd0cb4c851d)
+
+[Microsoft Store Version - Windows Phone 8.1 and earlier](http://windowsphone.com/s?appid=8d9e0020-9785-e011-986b-78e7d1fa76f8)
+
+[Surface](http://apps.microsoft.com/windows/en-us/app/keeper/07fe8361-f512-4873-91a1-acd0cb4c851d)
 
 ### Web-Based Apps and Browser Extensions
 
-[Online Vault](https://keepersecurity.com/vault)
+[Web App - Online Vault](https://keepersecurity.com/vault)
 
 [KeeperFill for Chrome](https://chrome.google.com/webstore/detail/keeper-browser-extension/bfogiafebfohielmmehodmfbbebbbpei)
 
-[KeeperFill for Firefox](https://addons.mozilla.org/en-us/firefox/addon/keeper-password-manager-digita/)
+[KeeperFill for Firefox](https://addons.mozilla.org/en-US/firefox/addon/keeper-password-manager-digita/)
 
-[KeeperFill for Safari](https://s3.amazonaws.com/keepersecurity/ext/update/safari/keeper.safariextz)
+[KeeperFill for Safari](https://safari-extensions.apple.com/details/?id=com.keepersecurity.safari.KeeperExtension-234QNB7GCA)
 
 [KeeperFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
 
