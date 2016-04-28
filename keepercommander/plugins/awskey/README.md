@@ -2,7 +2,6 @@ Commander Plugin for Generating/Rotating AWS API Access Keys
 ----
 
 This plugin generates/rotates AWS API Access Key for any user within your Amazon Web Services account.
-Note: this plugin can be used along with the `awspswd` AWS Password rotation plugin.
 
 ### Dependencies
 

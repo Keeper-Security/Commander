@@ -20,6 +20,7 @@ import json
 
 
 def rotate(record, newpassword):
+    return False
     """
     @type record: Record
     """

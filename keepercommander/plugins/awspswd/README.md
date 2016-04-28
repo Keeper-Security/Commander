@@ -2,7 +2,7 @@ Commander Plugin for Generating/Rotating AWS Passwords
 ----
 
 This plugin generates/rotates AWS passwords for any user within your Amazon Web Services account.
-Note: To rotate AWS Access Keys, use the 'awskey' AWS Access Key rotation plugin.  Both 'awskey' and 'awspswd' plugins can be used together on the same Keeper record.
+Note: To rotate AWS Access Keys, use the 'awskey' AWS Access Key rotation plugin.
 
 ### Dependencies
 

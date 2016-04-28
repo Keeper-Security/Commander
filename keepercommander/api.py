@@ -755,26 +755,27 @@ def rotate_password(params, record_uid):
         new_password = generator.generate()
 
     # execute rotation plugin associated with this record
-    plugin_names = [f["value"] for f in record_object.custom_fields if f["name"] == "cmdr:plugin"]
-
-    # Some plugins might need to change the password in the process of rotation
-    # f.e. windows plugin gets rid of certain characters.
-    for plugin_name in plugin_names:
+    plugin_name = record_object.get("cmdr:plugin")
+    if plugin_name:
+        # Some plugins might need to change the password in the process of rotation
+        # f.e. windows plugin gets rid of certain characters.
         plugin = plugin_manager.get_plugin(plugin_name)
         if plugin:
             if hasattr(plugin, "adjust"):
                 new_password = plugin.adjust(new_password)
 
-    for plugin_name in plugin_names:
-        print("Rotating with plugin " + str(plugin_name))
-        plugin = plugin_manager.get_plugin(plugin_name)
-        if plugin:
+            print("Rotating with plugin " + str(plugin_name))
             success = plugin.rotate(record_object, new_password)
             if success:
                 if params.debug:
                     print("Password rotation is successful for \"{0}\".".format(plugin_name))
             else:
                 print("Password rotation failed for \"{0}\".".format(plugin_name))
+                return False
+        else:
+            return False
+    else:
+        return False
 
     data['secret2'] = record_object.password
 
