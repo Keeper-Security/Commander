@@ -3,60 +3,44 @@ Commander Plugin for Generating/Rotating SSH keys
 
 This plugin generates/rotates SSH keys for the provided user on the local system.  The 'Login' field of the Keeper record defines the user account which is being rotated. The 'password' field is used as the optional passphrase to encrypt the private key.  The resulting SSH key information is stored in custom fields and sync'd to your Keeper vault.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
 
-OpenSSL and OpenSSH packages need to be installed on the computer running Keeper Commander.
+### Dependencies
 
-### Dependencies 
+1. This plugin requires **OpenSSL** and **OpenSSH** packages to be installed on the computer running Keeper Commander.
 
-1) Add the following Custom Fields to the Keeper record
+Open Terminal application and make sure `'openssl'` and `'ssh'` commands are installed and accessible with the system **PATH** environment variable.
 
-```
-Name: cmdr:plugin
-Value: sshkey
-```
+2. Specify the login name to the target system(s) in the **'Login'** field of the Keeper record
 
-2) The plugin will use the 'Login' field as the username of the 'passwd' command
+3. The plugin will use **'Password'** field to store the passkey used to encrypt private key.
 
-### Optional custom fields
+4. Add the following 'Custom Fields' to the Keeper record
 
-To specify the rules for password complexity to use add a custom field
+Name          | Value     | Comment
+---------     | -------   | ------------
+cmdr:plugin   | sshkey    |
+cmdr:host     |           | (Optional, Multiple) Host name or IP address of target server
+cmdr:rules    |           | (Optional) [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
 
-```
-Name: cmdr:rules
-Value: 4,6,3,8
-```
 
-This would generate a new password with :
-```
-  4 uppercase characters
-  6 lowercase characters
-  3 numerical characters
-  8 punctuation characters
-```
 
-To upgrade .ssh/authorized_keys file with the new public key add the following custom field.
-```
-Name: cmdr:host
-Value: host.domain.net
-```
-There might be multiple custom fields with host names.
 
-### Auto-command execution
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey1.png)
 
-You can automate SSH key rotations using this plugin
+<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service , i.e. `authorized_key` file is located
+ in the `.ssh` directory of the user **HOME** directory.</sub>
 
-Example:
+### Output
 
-```
-{                                                                               
-    "debug":false,
-    "server":"https://keeperapp.com/v2/",
-    "user":"admin@company.com",
-    "password":"somereallystrongpassword",
-    "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
-    "mfa_type":"device_token",
-    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
-}
-```
+When succeeded, plugin add/modifies the following record fields
 
-In this example above, we are telling Commander to first download and decrypt records, then generate SSH keys for the record ID 3PMqasi9hohmyLWJkgxCWg. The custom fields in the record give the plugin the information it needs to rotate the SSH key. Each unique record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode ('keeper shell') to display the record UIDs in your account.
+1. **'Password'** field contains the passkey used to encrypt private key.
 
+2. **'Custom Fields'**
+
+Name                | Value   | Comment
+-----------------   | ------- | --------
+cmdr:ssh_public_key |         | Public key in SSH format. This key is uploaded to the target system(s)
+cmdr:rsa_public_key |         | Public key in RSA format.
+cmdr:private_key    |         | Private key encrypted with the passkwy stored in **'Password'** field
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey2.png)
