@@ -40,3 +40,27 @@ r VEpovl5St-MPcnNrfJkyDg
 ```
 
 Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, email us at ops@keepersecurity.com.
+
+### Auto-command execution
+
+You can automate password resets using a plugin
+
+Example:
+
+```
+{                                                                               
+    "debug":false,
+    "server":"https://keeperapp.com/v2/",
+    "user":"admin@company.com",
+    "password":"somereallystrongpassword",
+    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
+}
+```
+
+In this example, we are telling Commander to first download and decrypt records, then reset a password. The custom fields in the record give the plugin the information it needs to rotate the password appropriately. As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+
+Another way to do a rotation would be to call rotate command from the command line:
+
+```bash
+keeper rotate --uid 3PMqasi9hohmyLWJkgxCWg
+```
