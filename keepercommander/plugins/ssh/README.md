@@ -1,7 +1,7 @@
 Commander Plugin for SSH Command
 ----
 
-This plugin allows rotating a local user's password using the SSH command.
+The SSH plugin for Keeper Commander gives you the ability to rotate any local or remote user's Unix/Linux password.  The 'username' and 'password' in the Keeper record must be set one time based on the current password.  The 'cmdr:host' field controls the server that you are connectig to.  Note: For rotating the password on the local machine, make sure to set the 'cmdr:host' field to 'localhost'.
 
 ### Dependencies 
 
@@ -18,7 +18,7 @@ Name: cmdr:plugin
 Value: ssh
 
 Name: cmdr:host
-Value: <hostname of the server to ssh into>
+Value: <hostname of the server to ssh into, or "localhost">
 ```
 
 3) The plugin will use the Login field as the username of the passwd command when rotating a password.
@@ -56,5 +56,5 @@ Example:
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then reset a password. The custom fields in the record give the plugin the information it needs to rotate the password appropriately. As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+In this example, we are telling Commander to first download and decrypt records, then rotate a password for record UID 3PMqasi9hohmyLWJkgxCWg. The custom fields in the record give the plugin the information it needs to rotate the password appropriately. As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
 
