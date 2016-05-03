@@ -6,7 +6,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2016 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
