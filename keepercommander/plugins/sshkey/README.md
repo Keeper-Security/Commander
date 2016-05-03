@@ -30,9 +30,9 @@ cmdr:rules    |           | (Optional) [password complexity rules](https://githu
    1. Do **not** add `cmdr:host` to the record.
    2. Generate SSH key
    3. Use `ssh-copy-id` or any other method to copy public key to the target system.
-   4. Add `cmdr:host` to the record. `.ssh/autorised_key` file will be automatically updated the next time the key rotated.
+   4. Add `cmdr:host` to the record. `.ssh/authorized_keys` file will be automatically updated the next time the key rotated.
 
-<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service , i.e. `authorized_key` file is located
+<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service , i.e. `authorized_keys` file is located
  in the `.ssh` directory of the user **HOME** directory.</sub>
 
 ### Output
