@@ -24,28 +24,28 @@ cmdr:rules    |           | (Optional) [password complexity rules](https://githu
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey1.png)
 
-  Automatic public key update on the target server expects that .ssh/authorized_keys already contains the valid public key.
-  When setting up this pluging for the first time please use the following steps:
+  Automatically updating the public key on the target server expects that .ssh/authorized_keys already contains the valid public key.
+  When setting up this plugin for the first time please use the following steps:
    1. Do **not** add `cmdr:host` to the record.
    2. Generate SSH key
    3. Use `ssh-copy-id` or any other method to copy public key to the target system.
-   4. Add `cmdr:host` to the record. `.ssh/authorized_keys` file will be automatically updated the next time the key rotated.
+   4. Add `cmdr:host` to the record. `.ssh/authorized_keys` file will be automatically updated the next time the key is rotated by Commander.
 
-<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service , i.e. `authorized_keys` file is located
+<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service, i.e. `authorized_keys` file is located
  in the `.ssh` directory of the user **HOME** directory.</sub>
 
 ### Output
 
-When succeeded, plugin add/modifies the following record fields
+When successful, this plugin adds/modifies the following record fields:
 
-1. **'Password'** field contains the passkey used to encrypt private key.
+1. **'Password'** field contains the passkey used to encrypt the private key.
 
 2. **'Custom Fields'**
 
 Name                | Value   | Comment
 -----------------   | ------- | --------
-cmdr:ssh_public_key |         | Public key in SSH format. This key is uploaded to the target system(s)
+cmdr:ssh_public_key |         | Public key in SSH format. This key is uploaded to the target system.
 cmdr:rsa_public_key |         | Public key in RSA format.
-cmdr:private_key    |         | Private key encrypted with the passkey stored in **'Password'** field
+cmdr:private_key    |         | Private key encrypted with the passkey stored in the **'Password'** field
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey2.png)
