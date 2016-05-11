@@ -25,16 +25,16 @@ cmdr:rules    |           | (Optional) [password complexity rules](https://githu
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey1.png)
 
-  NOTE: In order to automate the rotation of the public key on the target server, the public key must be manually updated one time in .ssh/authorized_keys on the target server.  After it has been set this first time, subsequent rotations can be automated by Commander.
+NOTE: In order to automate the rotation of the public key on the target server, the public key must be manually updated one time in .ssh/authorized_keys on the target server.  After it has been set this first time, subsequent rotations can be automated by Commander.
   
-  When setting up this plugin for the first time please use the following steps:
+When setting up this plugin for the first time please use the following steps:
   
-   1. Do **not** add `cmdr:host` to the record.
-   2. Generate SSH key and passphrase by telling Commander to rotate the password ('r' command')
-   3. Use `ssh-copy-id` or any other method to copy the generated public key to the target system manually.
-   4. Add `cmdr:host` to the record. `.ssh/authorized_keys` in the target system will then be automatically updated the next time the key is rotated by Commander.
-   
-   <sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service, i.e. `authorized_keys` file is located in the `.ssh` directory of the user **HOME** directory.</sub>
+1. Do **not** add `cmdr:host` to the record.
+2. Generate SSH key and passphrase by telling Commander to rotate the password manually on the Keeper shell
+3. Use `ssh-copy-id` or any other method to copy the generated public key to the target system manually.
+4. Add `cmdr:host` to the record. `.ssh/authorized_keys` in the target system will then be automatically updated the next time the key is rotated by Commander.
+
+<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service, i.e. `authorized_keys` file is located in the `.ssh` directory of the user **HOME** directory.</sub>
 
 ### Output
 
