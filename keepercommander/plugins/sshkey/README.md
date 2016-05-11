@@ -1,7 +1,9 @@
 Commander Plugin for Generating/Rotating SSH keys
 ----
 
-This plugin generates/rotates SSH keys for the provided user on the local system.  The 'Login' field of the Keeper record defines the user account which is being rotated. The 'password' field is used as the optional passphrase to encrypt the private key.  The resulting SSH key information is stored in custom fields and sync'd to your Keeper vault.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
+This plugin generates and rotates SSH key pairs and optional passphrase for the provided user on the target system.  The 'Login' field of the Keeper record defines the user account which is being rotated. The 'password' field is used as the optional passphrase to encrypt the private key.  The resulting SSH key information is stored in custom fields and sync'd to your Keeper vault.  Any Keeper user or Keeper Shared Folder associated with the record is updated instantly.
+
+If a cmdr:host parameter is provided, Commander will connect to the target host and upload the newly generated SSH public key.  If multiple cmdr:host custom fields are provided, multiple hosts will get the update.
 
 ### Dependencies
 
