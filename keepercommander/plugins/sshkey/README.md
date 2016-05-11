@@ -33,8 +33,8 @@ cmdr:rules    |           | (Optional) [password complexity rules](https://githu
    2. Generate SSH key and passphrase by telling Commander to rotate the password ('r' command')
    3. Use `ssh-copy-id` or any other method to copy the generated public key to the target system manually.
    4. Add `cmdr:host` to the record. `.ssh/authorized_keys` in the target system will then be automatically updated the next time the key is rotated by Commander.
-
-<sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service, i.e. `authorized_keys` file is located in the `.ssh` directory of the user **HOME** directory.</sub>
+   
+   <sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service, i.e. `authorized_keys` file is located in the `.ssh` directory of the user **HOME** directory.</sub>
 
 ### Output
 
