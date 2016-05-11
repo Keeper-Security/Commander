@@ -5,7 +5,7 @@
 ----
 #### The Password Management SDK for IT Admins & Developers
 
-Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander is designed to perform targeted password rotations and eliminate the use of hardcoded passwords in your systems and software.  Commander will securely rotate passwords in your Keeper vault and then instantly push the changes to all users with privileged access to the password.  Using our connector [plugins](https://github.com/Keeper-Security/commander/tree/master/keeper/plugins), Commander executes a strong password rotation directly to the target system (Unix Logins, Databases, Active Directory, network devices, etc...).
+Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander is designed to perform targeted password rotations and eliminate the use of hardcoded passwords in your systems and software.  Commander will securely rotate passwords in your Keeper vault and then instantly push the changes to all users with privileged access to the password.  Using our connector [plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins), Commander executes a strong password rotation directly to the target system (Unix Logins, Databases, Active Directory, network devices, etc...).
 
 Commander also has a command-line shell interface which provides instant terminal access to your vault on any Unix, Mac or Windows system.  Since Keeper Commander is an open source SDK and written in Python, it can be customized to meet your needs and integrated into your back-end systems.
 
