@@ -28,11 +28,7 @@ NOTE: In order to automate the rotation of the public key on the target server, 
 When setting up this plugin for the first time please use the following steps:
   
 1. Populate the Title, Login, Custom Fields (cmdr:plugin, cmdr:host, cmdr:rules) of the Keeper record.
-2. Execute the `rotate` command on the Keeper shell for this record. Commander will generate the public and private keys and store them in custom fields of the record. Copy or save the key in `cmdr:ssh_public_key` and save this public key to the file `.ssh/authorized_keys` in the target hosts - this step must be done manually the first time or you can use the `ssh-copy-id` unix command.  Make sure to set the permissions of the authorized_keys file on the target system.  For example:
-
-chmod 700 ~/.ssh
-chmod 600 ~/.ssh/authorized_keys
-
+2. Execute the `rotate` command on the Keeper shell for this record. Commander will generate the public and private keys and store them in custom fields of the record. Copy or save the key in `cmdr:ssh_public_key` and save this public key to the file `.ssh/authorized_keys` in the target hosts - this step must be done manually the first time or you can use the `ssh-copy-id` unix command.  Make sure to set the permissions of the authorized_keys file on the target system. `chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys`
 3. Execute `rotate` command on Keeper shell to perform a full rotation.  If successful, the target hosts will be updated with the newly generated public key and the Keeper record will be updated with the private/public key pair.
 
 <sub>**Note:** This plugin makes an assumption that the target system uses the default settings for SSH service, i.e. `authorized_keys` file is located in the `.ssh` directory of the user **HOME** directory.</sub>
