@@ -24,8 +24,7 @@ cmdr:rules    |           | (Optional) [password complexity rules](https://githu
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey1.png)
 
-**Please take a note**<br/>
-  Automatic public key update on the target server expects that .ssh/autorised_key already contains the valid public key.
+  Automatic public key update on the target server expects that .ssh/authorized_keys already contains the valid public key.
   When setting up this pluging for the first time please use the following steps:
    1. Do **not** add `cmdr:host` to the record.
    2. Generate SSH key
