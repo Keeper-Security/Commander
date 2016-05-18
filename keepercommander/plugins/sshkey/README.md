@@ -48,3 +48,16 @@ cmdr:rsa_public_key |         | Public key in RSA format.
 cmdr:private_key    |         | Private key encrypted with the passkey stored in the **'Password'** field
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey2.png)
+
+### Establishing a connection
+
+Since the public key, private key and passphrase is regenerated every rotation, you need to pull down the latest private key file in order to connect to the destination server.  To verify this, copy-paste the `private_key` from the vault into your local filesystem and save it to a file such as `myprivatekey.pvk`.  On UNIX systems, make sure the permissions are set properly: `chmod 400 ~/myprivatekey.pvk`.  Now you can issue a connection using SSH:
+
+`ssh -i ~/myprivatekey.pvk user@hostname`
+
+Use the username and hostname field from your vault record.  You will be prompted for the passphrase.  Use the passphrase that is stored in Keeper's `password` field.
+
+
+
+
+
