@@ -41,7 +41,7 @@ def rotate(record, newpassword):
         with connection.cursor() as cursor:
             print("Connected to %s"%(host))
             # Create a new record
-            sql = 'SET PASSWORD FOR "%s"@"%s"=PASSWORD("%s");'%(user, host, newpassword)
+            sql = 'SET PASSWORD FOR "%s"@"%s"="%s";'%(user, host, newpassword)
             cursor.execute(sql)
 
         # connection is not autocommit by default. So you must commit to save
