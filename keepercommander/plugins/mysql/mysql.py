@@ -6,7 +6,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2016 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -31,25 +31,29 @@ def rotate(record, newpassword):
 
     try:
         # Connect to the database
-        connection = pymysql.connect(host=host,
-                                     user=user,
-                                     password=oldpassword,
-                                     db=db,
-                                     charset='utf8mb4',
+        connection = pymysql.connect(host=host, 
+                                     user=user, 
+                                     password=oldpassword, 
+                                     db=db, 
+                                     charset='utf8mb4', 
                                      cursorclass=pymysql.cursors.DictCursor)
 
         with connection.cursor() as cursor:
-            print("Connected to %s"%(host))
-            # Create a new record
-            sql = 'ALTER USER "%s"@"%s" IDENTIFIED BY "%s";'%(user, host, newpassword)
+            escaped = connection.escape(newpassword)
+            """ TBD - For MySQL 5.7+ use below command:
+                sql = 'ALTER USER "{}"@"{}" IDENTIFIED BY "{}";'.format(
+                    user, host, newpassword)
+            """
+            sql = 'SET PASSWORD = PASSWORD({});'.format(escaped)
             cursor.execute(sql)
 
-        # connection is not autocommit by default. So you must commit to save
-        # your changes.
         connection.commit()
-
         record.password = newpassword
         result = True
+    except pymysql.err.OperationalError as e:
+        print("MySQL Plugin Error: Unable to establish connection: " + str(e))
+    except pymysql.err.ProgrammingError as e:
+        print("MySQL Plugin Syntax Error: " + str(e))
     except:
         print("Error during connection to MySQL server")
     finally:

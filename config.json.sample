@@ -1,5 +1,5 @@
 {
-    "server":"https://keeperapp.com/v2/",
+    "server":"https://keepersecurity.com/api/v2/",
     "user":"",
     "password":"",
     "mfa_token":"",

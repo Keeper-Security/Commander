@@ -36,7 +36,7 @@ Here's an example config.json file:
 
 ```
 {                                                                               
-    "server":"https://keeperapp.com/v2/",
+    "server":"https://keepersecurity.com/api/v2/",
     "user":"your_email_here",
     "challenge":"your_challenge_here",
     "debug":false,

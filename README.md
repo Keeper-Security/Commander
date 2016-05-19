@@ -131,7 +131,7 @@ Here's an example config.json file:
 
 ```
 {
-    "server":"https://keeperapp.com/v2/",
+    "server":"https://keepersecurity.com/api/v2/",
     "user":"your_email_here",
     "password":"your_password_here",
     "debug":false,
@@ -158,7 +158,7 @@ In this case, Commander will start up using foo.json as the configuration.
 ### JSON file parameters
 
 ```
-server: do not change.  Default is https://keeperapp.com/v2/.
+server: do not change.  Default is https://keepersecurity.com/api/v2/.
 user: the Keeper email address
 password: the Keeper master password
 debug: turn on verbose debugging output
@@ -186,7 +186,7 @@ config.json:
 ```
 {
     "debug":false,
-    "server":"https://keeperapp.com/v2/",
+    "server":"https://keepersecurity.com/api/v2/",
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
     "timedelay":600,
@@ -281,7 +281,7 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
 ```
 {
     "debug":false,
-    "server":"https://keeperapp.com/v2/",
+    "server":"https://keepersecurity.com/api/v2/",
     "user":"email@company.com",
     "password":"123456",
     "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",

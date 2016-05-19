@@ -945,7 +945,7 @@ def rotate_password(params, record_uid):
 
         print('Rotation successful for record_uid=' + \
             str(new_record['record_uid']) + ', revision=' + \
-            str(new_record['revision']), ', new_revision=' + \
+            str(new_record['revision']) + ', new_revision=' + \
             str(new_revision))
 
         # update local cache

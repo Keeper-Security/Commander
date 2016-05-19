@@ -156,7 +156,7 @@ def get_params(config_filename):
         pass
 
     if not params.server:
-        params.server = 'https://keeperapp.com/v2/'
+        params.server = 'https://keepersecurity.com/api/v2/'
 
     return params
 
