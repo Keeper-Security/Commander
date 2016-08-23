@@ -30,7 +30,7 @@ When you grant and revoke access or rotate a password, it instantly updates to u
 
 ### Installation
 
-If you do not have python3 installed already (check by trying to run pip3 in the Terminal), you can install it by going to [python.org](https://www.python.org) and following the instructions).
+If you do not have Python 3 installed already (check by trying to run `pip3` in the Terminal), you can install it by going to [python.org](https://www.python.org) and following the instructions).
 
 Note: Restart your terminal session after installation
 
@@ -44,7 +44,7 @@ Note: Restart your terminal session after installation
 
 ### Upgrade
 
-To upgrade Keeper Commander to the newest version, call pip install with --upgrade parameter:
+To upgrade Keeper Commander to the newest version, call pip3 install with --upgrade parameter:
 
 ```bash
 pip3 install --upgrade keepercommander
@@ -54,7 +54,7 @@ pip3 install --upgrade keepercommander
 
 1. From the command line or script
 2. As an interactive shell
-3. In your own python program by importing the keepercommander package
+3. In your own Python program by importing the keepercommander package
 
 ### Command line usage
 ```
@@ -76,10 +76,10 @@ Commands:
 ```  
 **Environment variables**
 
-for --user and --password options, you can set environment variables KEEPER_SERVER, KEEPER_USER and KEEPER_PASWORD. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
+for `--user` and `--password` options, you can set environment variables `KEEPER_SERVER`, `KEEPER_USER` and `KEEPER_PASWORD`. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
 
 ### Interactive shell
-If you would like to use keeper interactively within a shell session, invoke shell by typing
+If you would like to use Keeper interactively within a shell session, invoke shell by typing
 
 ```bash
 keeper shell
@@ -109,13 +109,13 @@ Commands:
 
 * l (list): Displays the Record UID, Folder and Title for all records.
 
-* s (search): search across all record data and display the Record UID, Folder and Title for matching records.
+* s (search): Searches across all record data and display the Record UID, Folder and Title for matching records.
 
-* g (get): displays the full record details for a specified Record UID.  The Record UID can be determined by looking at the response from the "l" or "s" commands.
+* g (get): Displays the full record details for a specified Record UID.  The Record UID can be determined by looking at the response from the "l" or "s" commands.
 
-* r (rotate): rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
+* r (rotate): Rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
 
-* b (batch rotate): search across all record data and rotate the password for matching records.
+* b (batch rotate): Searches across all record data and rotate the password for matching records.
 
 The Record UID is a unique identifier for every record in your Keeper vault.  This is used for deep linking and also for password rotation as described below. The search/list/get commands can be used to look up the Record UID when setting up a password rotation scheduler.
 
@@ -175,7 +175,7 @@ You may ask, why is the master password stored in the JSON configuration file?  
 
 ### Scheduling & Automation
 
-If you want to fully automate commander operations, such as rotating a password on a regular schedule, there are a few different ways to accomplish this.
+If you want to fully automate Commander operations, such as rotating a password on a regular schedule, there are a few different ways to accomplish this.
 
 Using config.json file and **timedelay** setting, you tell Commander the time delay in seconds to wait and then reissue all commands.  This is the easiest way to schedule automated password resets.
 
