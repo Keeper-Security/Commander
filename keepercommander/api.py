@@ -22,11 +22,11 @@ import datetime
 from keepercommander import plugin_manager, params
 from keepercommander.record import Record
 from keepercommander.error import AuthenticationError, CommunicationError, CryptoError
-from Crypto import Random
-from Crypto.Hash import SHA256, HMAC, SHA
-from Crypto.Protocol.KDF import PBKDF2
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import AES, PKCS1_v1_5
+from Cryptodome import Random
+from Cryptodome.Hash import SHA256, HMAC, SHA
+from Cryptodome.Protocol.KDF import PBKDF2
+from Cryptodome.PublicKey import RSA
+from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 # Client version match required for server calls
 CLIENT_VERSION = 'c9.0.0'
@@ -34,7 +34,6 @@ current_milli_time = lambda: int(round(time.time() * 1000))
 
 # PKCS7 padding helpers 
 BS = 16
-pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS) 
 pad_binary = lambda s: s + ((BS - len(s) % BS) * chr(BS - len(s) % BS)).encode()
 unpad_binary = lambda s : s[0:-s[-1]]
 unpad_char = lambda s : s[0:-ord(s[-1])]
@@ -821,11 +820,11 @@ def rotate_password(params, record_uid):
         params.record_cache[record_uid]['record_key_unencrypted']
     iv = os.urandom(16)
     cipher = AES.new(record_key_unencrypted, AES.MODE_CBC, iv)
-    encrypted_data = iv + cipher.encrypt(pad(data_serialized))
+    encrypted_data = iv + cipher.encrypt(pad_binary(data_serialized.encode()))
 
     iv = os.urandom(16)
     cipher = AES.new(record_key_unencrypted, AES.MODE_CBC, iv)
-    encrypted_extra = iv + cipher.encrypt(pad(extra_serialized))
+    encrypted_extra = iv + cipher.encrypt(pad_binary(extra_serialized.encode()))
 
     if params.debug: print('encrypted_data: ' + str(encrypted_data))
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
@@ -1062,12 +1061,12 @@ def prepare_record(params, record, shared_folder_uid=''):
     # encrypt data with record key
     iv = os.urandom(16)
     cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
-    encrypted_data = iv + cipher.encrypt(pad(data_serialized))
+    encrypted_data = iv + cipher.encrypt(pad_binary(data_serialized.encode()))
 
     # encrypt extra with record key
     iv = os.urandom(16)
     cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
-    encrypted_extra = iv + cipher.encrypt(pad(extra_serialized))
+    encrypted_extra = iv + cipher.encrypt(pad_binary(extra_serialized.encode()))
 
     if params.debug: print('encrypted_data: ' + str(encrypted_data))
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
