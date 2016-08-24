@@ -1,5 +1,5 @@
 colorama
-pycrypto
+pycryptodomex
 requests
 tabulate
 click

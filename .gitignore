@@ -1,4 +1,5 @@
 .idea/
+.DS_Store
 Commander.iml
 .cache/
 venv/
