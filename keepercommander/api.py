@@ -29,7 +29,7 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 # Client version match required for server calls
-CLIENT_VERSION = 'c9.0.0'
+CLIENT_VERSION = 'c10.1.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
 
 # PKCS7 padding helpers 
@@ -63,11 +63,16 @@ def login(params):
             debug_response(params, payload, r)
 
         if not 'salt' in r.json():
-            if r.json()['result_code'] == 'Failed_to_find_user':
+            result_code = r.json()['result_code']
+
+            if result_code == 'Failed_to_find_user':
                 raise AuthenticationError('User account [' + \
                     str(params.user) + '] not found.')
 
-            if r.json()['result_code'] == 'auth_failed':
+            if result_code == 'invalid_client_version':
+                raise AuthenticationError(r.json()['message'])
+
+            if result_code == 'auth_failed':
                 raise AuthenticationError('Pre-auth failed.')
 
         # server doesn't include == at the end, but the module expects it
@@ -199,6 +204,33 @@ def login(params):
         else:
             raise CommunicationError('Unknown problem')
 
+
+def decrypt_record_key(encrypted_record_key, shared_folder_key):
+    decoded_key = base64.urlsafe_b64decode(encrypted_record_key + '==')
+    iv = decoded_key[:16]
+    ciphertext = decoded_key[16:]
+    cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
+    unencrypted_key = cipher.decrypt(ciphertext)[:32]
+    return unencrypted_key
+
+
+def shared_folders_containing_record(params, record_uid):
+    def contains_record(shared_folder):
+        if not shared_folder.records:
+            return False
+        return any(record.record_uid == record_uid for record in shared_folder.records)
+    return [shared_folder.shared_folder_uid for shared_folder in params.shared_folder_cache if contains_record(shared_folder)]
+
+
+def delete_shared_folder(params, shared_folder_uid):
+    shared_folder = params.shared_folder_cache[shared_folder_uid]
+    for record in shared_folder.records:
+        record_uid = record.record_uid
+        if not params.record_cache[record_uid].owner and len(shared_folders_containing_record(params, record_uid)) == 1:
+            del params.record_cache[record_uid]
+    del params.shared_folder_cache[shared_folder_uid]
+
+
 def sync_down(params):
     """Sync full or partial data down to the client"""
 
@@ -275,22 +307,62 @@ def sync_down(params):
                 if params.debug: print('Full Sync response')
                 params.record_cache = {}  
                 params.meta_data_cache = {}  
-                params.shared_folder_cache = {}  
+                params.shared_folder_cache = {}
+                params.team_cache = {}
+                params.non_shared_data_cache = {}
 
         if 'revision' in response_json:
             params.revision = response_json['revision']
             if params.debug: print('Getting revision ' + str(params.revision))
-    
+
         if 'removed_records' in response_json:
             if params.debug: print('Processing removed records')
             for uid in response_json['removed_records']:
-                del params.record_cache[uid]
-    
+                del params.meta_data_cache[uid]
+                is_in_sf = False
+                record = params.record_cache[uid]
+                for shared_folder_uid in params.shared_folder_cache:
+                    shared_folder = params.shared_folder_cache[shared_folder_uid]
+                    if 'records' in shared_folder:
+                        sf_records = shared_folder['records']
+                        for sf_record in sf_records:
+                            if 'record_uid' in sf_record:
+                                if sf_record['record_uid'] == uid:
+                                    if 'record_key' in sf_record and 'shared_folder_key' in shared_folder:
+                                        del record.can_edit
+                                        del record.can_share
+                                        del record.owner
+                                        record.record_key = sf_record.record_key
+                                        record.record_key_unencrypted = decrypt_record_key(sf_record['record_key'], shared_folder['shared_folder_key'])
+                                        record.record_key_type = 1
+                                        is_in_sf = True
+                                        break
+                    if is_in_sf:
+                        break
+                if not is_in_sf:
+                    del params.record_cache[uid]
+
+        if 'removed_teams' in response_json:
+            if params.debug: print('Processing removed teams')
+            for team_uid in response_json['removed_teams']:
+                team = params.team_cache[team_uid]
+                for sf_key in team.shared_folder_keys:
+                    shared_folder = params.shared_folder_cache[sf_key.shared_folder_uid]
+                    if not shared_folder or not shared_folder.teams:
+                        continue
+                    # some teams are left in the folder, do not delete
+                    if any(team.team_uid != team_uid for team in shared_folder.teams):
+                        continue
+                    delete_shared_folder(params, sf_key.shared_folder_uid)
+
+                del params.team_cache[team_uid]
+
+
         if 'removed_shared_folders' in response_json:
             if params.debug: print('Processing removed shared folders')
             for shared_folder in response_json['removed_shared_folders']:
                 if 'records' in shared_folder:
-                    for record in shared_folder['records']: 
+                    for record in shared_folder['records']:
                         if 'record_uid' in record:
                             record_uid = record['record_uid']
                             if record_uid in params.record_cache:
@@ -372,8 +444,19 @@ def sync_down(params):
         if 'shared_folders' in response_json:
             if params.debug: print('Processing shared_folders')
             for shared_folder in response_json['shared_folders']:
+
+                shared_folder_key = shared_folder['shared_folder_key']
+                # if not shared_folder_key:
+                #     shared_folder_key =
+
+
+                    # } else if (self._shared_folder_cache[shared_folder.shared_folder_uid] && self._shared_folder_cache[shared_folder.shared_folder_uid].shared_folder_key) {
+        # // Use the pre-existing key (that came from a team)
+        # shared_folder.shared_folder_key = self._shared_folder_cache[shared_folder.shared_folder_uid].shared_folder_key;
+
+
                 decoded_key = base64.urlsafe_b64decode(
-                    shared_folder['shared_folder_key'] +'==')
+                    shared_folder_key +'==')
 
                 if shared_folder['key_type'] == 1:
                     # decrypt folder key with data_key 
