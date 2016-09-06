@@ -489,15 +489,19 @@ def sync_down(params):
 
         if 'non_shared_data' in response_json:
             for non_shared_data in response_json['non_shared_data']:
-                decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
-                params.non_shared_data_cache[non_shared_data['record_uid']] = json.loads(decrypted_data)
+                try:
+                    decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
+                    params.non_shared_data_cache[non_shared_data['record_uid']] = json.loads(decrypted_data.decode('utf-8'))
+                except:
+                    if params.debug:
+                        print('Non-shared data for record ' + non_shared_data['record_uid'] + ' could not be decrypted')
 
         if 'teams' in response_json:
             for team in response_json['teams']:
                 if team['team_key_type'] == 2:
                     team['team_key'] = decrypt_rsa(team['team_key'], params.rsa_key)
                 else:
-                    team['team_key'] = decrypt_aes(team['team_key'], params.data_key)
+                    team['team_key'] = decrypt_data(team['team_key'], params.data_key)
                 decrypted_private_key, private_key, team['team_private_key'] = decrypt_rsa_key(team['team_private_key'], team['team_key'])
                 params.team_cache[team['team_uid']] = team
 
