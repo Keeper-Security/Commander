@@ -85,7 +85,7 @@ def login(params):
                 32, params.iterations, prf))
 
         # converts bytestream (b') to string 
-        params.auth_verifier = tmp_auth_verifier.decode()
+        params.auth_verifier = tmp_auth_verifier.decode().rstrip('=')
 
         if params.debug:
             print('<<< Auth Verifier:['+str(params.auth_verifier)+']')
@@ -448,7 +448,7 @@ def sync_down(params):
                     # note2: remove == from the end 
                     meta_data['record_key'] = \
                         (base64.urlsafe_b64encode(
-                            type1key).decode()).rstrip('==')
+                            type1key).decode()).rstrip('=')
                     meta_data['record_key_type'] = 1
 
                     # temporary flag for decryption routine below
@@ -476,7 +476,7 @@ def sync_down(params):
                     # note2: remove == from the end 
                     meta_data['record_key'] = \
                         (base64.urlsafe_b64encode(
-                            type1key).decode()).rstrip('==')
+                            type1key).decode()).rstrip('=')
                     meta_data['record_key_type'] = 1 
 
                     if params.debug: 
@@ -895,7 +895,7 @@ def rotate_password(params, record_uid):
         else:
             return False
     else:
-        return False
+        record_object.password = new_password
 
     data['secret2'] = record_object.password
 
@@ -951,8 +951,8 @@ def rotate_password(params, record_uid):
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
 
     # note: decode() converts bytestream (b') to string
-    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode()
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode()
+    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode().rstrip('=')
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode().rstrip('=')
 
     if params.debug: print('encoded_data: ' + str(encoded_data))
     if params.debug: print('encoded_extra: ' + str(encoded_extra))
@@ -1174,7 +1174,7 @@ def prepare_record(params, record, shared_folder_uid=''):
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
     type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
     encoded_type1key = (base64.urlsafe_b64encode(
-                           type1key).decode()).rstrip('==')
+                           type1key).decode()).rstrip('=')
 
     if params.debug: print('generated key=' + str(type1key))
     if params.debug: print('encoded=' + str(encoded_type1key))
@@ -1193,8 +1193,8 @@ def prepare_record(params, record, shared_folder_uid=''):
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
 
     # note: decode() converts bytestream (b') to string
-    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode()
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode()
+    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode().rstrip('=')
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode().rstrip('=')
 
     if params.debug: print('encoded_data: ' + str(encoded_data))
     if params.debug: print('encoded_extra: ' + str(encoded_extra))
@@ -1380,4 +1380,4 @@ def generate_random_records(params, num):
 def generate_record_uid():
     """ Generate url safe base 64 16 byte uid """
     return base64.urlsafe_b64encode(
-        os.urandom(16)).decode().rstrip('==') 
+        os.urandom(16)).decode().rstrip('=')
