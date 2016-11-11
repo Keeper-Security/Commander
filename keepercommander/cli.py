@@ -44,22 +44,40 @@ def list(params):
     except Exception as e:
         raise click.ClickException(e)
 
+@click.command('get-rec', help = 'Print Keeper record')
+@click.pass_obj
+@click.option('--uid', help='uid of the record to print')
+def get_rec(params, uid):
+    if not (uid):
+        raise click.ClickException("Need to specify uid option")
+    try:
+        api.sync_down(params)
+        if uid:
+            display.print_record(params, uid)
+    except Exception as e:
+        raise click.ClickException(e)
+
 @click.command(help = 'Rotate Keeper record')
 @click.pass_obj
 @click.option('--uid', help='uid of the record to rotate the password on')
 @click.option('--match', help='regular expression to select records for password rotation')
-def rotate(params, uid, match):
+@click.option('--print', flag_value=True, help='print the record content after rotation')
+def rotate(params, uid, match, print):
     if not (uid or match):
         raise click.ClickException("Need to specify either uid or match option")
     try:
         api.sync_down(params)
         if uid:
             api.rotate_password(params, uid)
+            if print:
+                display.print_record(params, uid)
         else:
             if filter:
                 results = api.search_records(params, match)
                 for r in results:
                     api.rotate_password(params, r.record_uid)
+                    if print:
+                        display.print_record(params, uid)
     except Exception as e:
         raise click.ClickException(e)
 

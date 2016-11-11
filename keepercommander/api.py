@@ -85,7 +85,7 @@ def login(params):
                 32, params.iterations, prf))
 
         # converts bytestream (b') to string 
-        params.auth_verifier = tmp_auth_verifier.decode()
+        params.auth_verifier = tmp_auth_verifier.decode().rstrip('==')
 
         if params.debug:
             print('<<< Auth Verifier:['+str(params.auth_verifier)+']')
@@ -895,7 +895,7 @@ def rotate_password(params, record_uid):
         else:
             return False
     else:
-        return False
+        record_object.password = new_password
 
     data['secret2'] = record_object.password
 
@@ -951,8 +951,8 @@ def rotate_password(params, record_uid):
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
 
     # note: decode() converts bytestream (b') to string
-    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode()
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode()
+    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode().rstrip('==')
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode().rstrip('==')
 
     if params.debug: print('encoded_data: ' + str(encoded_data))
     if params.debug: print('encoded_extra: ' + str(encoded_extra))
@@ -1193,8 +1193,8 @@ def prepare_record(params, record, shared_folder_uid=''):
     if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
 
     # note: decode() converts bytestream (b') to string
-    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode()
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode()
+    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode().rstrip('==')
+    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode().rstrip('==')
 
     if params.debug: print('encoded_data: ' + str(encoded_data))
     if params.debug: print('encoded_extra: ' + str(encoded_extra))

@@ -8,6 +8,7 @@
 # Copyright 2015 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import json
 
 from colorama import init
 from tabulate import tabulate
@@ -68,3 +69,15 @@ def formatted_history(history):
         print(h)
 
     print('')
+
+def print_record(params, record_uid):
+    """ Show record content """
+
+    try:
+        cached_rec = params.record_cache[record_uid]
+    except KeyError as e:
+        raise Exception('Record not found: ' + record_uid)
+    data = json.loads(cached_rec['data'].decode('utf-8'))
+    print(data)
+
+
