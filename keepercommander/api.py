@@ -105,6 +105,13 @@ def login(params):
                    '2fa_type':params.mfa_type, 
                    'username':params.user
                   }
+            if (params.mfa_type == 'one_time'):
+                try:
+                    expire_token = params.config['device_token_expiration']
+                except:
+                    expire_token = False
+                expire_days = 30 if expire_token else 9999
+                payload['device_token_expire_days'] = expire_days
 
         else:
             payload = {

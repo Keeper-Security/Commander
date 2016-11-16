@@ -276,7 +276,10 @@ Based on this example, Keeper Commander will execute the commands specified in c
 
 ### Two-Factor Authentication and Device Token
 
-If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. This device token is automatically saved to the config file when you login interactively. If you have multiple config files, you can just copy-paste this device token into your config.json file.  For example:
+If you have Two-Factor Authentication enabled on your Keeper account (highly recommended), Keeper Commander will prompt 
+you for the one-time passcode the first time you login.  After successfully logging in, you will be provided a device token. 
+This device token is automatically saved to the config file when you login interactively. 
+If you have multiple config files, you can just copy-paste this device token into your config.json file.  For example:
 
 ```
 {
@@ -286,11 +289,15 @@ If you have Two-Factor Authentication enabled on your Keeper account (highly rec
     "password":"123456",
     "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
     "mfa_type":"device_token",
+    "device_token_expiration":true,
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg", "r tlCK0x1chKH8keW8-NOraA"]
 }
 ```
+Note: If you want your device tokens to expire, set "device_token_expiration" to "true". If set, your device token will expire in 30 days.
 
-To activate Two-Factor Authentication on your Keeper account, login to the [Web App](https://keepersecurity.com/vault) and visit the Settings screen.  Keeper supports Text Message, Google Authenticator, RSA SecurID and Duo Security methods.
+To activate Two-Factor Authentication on your Keeper account, login to the [Web App](https://keepersecurity.com/vault) 
+and visit the Settings screen.  Keeper supports Text Message, Google Authenticator, RSA SecurID and Duo Security methods.
+
 
 ### Yubikey Support 
 
