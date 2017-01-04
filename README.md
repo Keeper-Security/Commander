@@ -76,7 +76,7 @@ Commands:
 ```  
 **Environment variables**
 
-for `--user` and `--password` options, you can set environment variables `KEEPER_SERVER`, `KEEPER_USER` and `KEEPER_PASWORD`. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
+for `--user` and `--password` options, you can set environment variables `KEEPER_SERVER`, `KEEPER_USER` and `KEEPER_PASSWORD`. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
 
 ### Interactive shell
 If you would like to use Keeper interactively within a shell session, invoke shell by typing
