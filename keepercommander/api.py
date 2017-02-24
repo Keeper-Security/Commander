@@ -252,6 +252,9 @@ def decrypt_aes(data, key):
 
 def decrypt_rsa(data, rsa_key):
     decoded_key = base64.urlsafe_b64decode(data + '==')
+    # some keys might come shorter due to stripping leading 0's
+    if 250 < len(decoded_key) < 256:
+        decoded_key = bytearray(256 - len(decoded_key)) + decoded_key
     dsize = SHA.digest_size
     sentinel = Random.new().read(15 + dsize)
     cipher = PKCS1_v1_5.new(rsa_key)

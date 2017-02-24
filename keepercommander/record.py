@@ -25,18 +25,22 @@ class Record:
         self.revision = revision 
 
     def load(self,data,revision=''):
+
+        def xstr(s):
+            return str(s or '')
+
         if 'folder' in data:
-            self.folder = data['folder']
+            self.folder = xstr(data['folder'])
         if 'title' in data:
-            self.title = data['title']
+            self.title = xstr(data['title'])
         if 'secret1' in data:
-            self.login = data['secret1']
+            self.login = xstr(data['secret1'])
         if 'secret2' in data:
-            self.password = data['secret2']
+            self.password = xstr(data['secret2'])
         if 'notes' in data:
-            self.notes = data['notes']
+            self.notes = xstr(data['notes'])
         if 'link' in data:
-            self.login_url = data['link']
+            self.login_url = xstr(data['link'])
         if 'custom' in data:
             self.custom_fields = data['custom']
         if revision:
