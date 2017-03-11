@@ -488,6 +488,7 @@ def sync_down(params):
                         (base64.urlsafe_b64encode(
                             type1key).decode()).rstrip('=')
                     meta_data['record_key_type'] = 1 
+                    meta_data['is_converted_record_type'] = True 
 
                     if params.debug: 
                         print('encrypted record key: ' + str(type1key)) 
@@ -973,6 +974,12 @@ def rotate_password(params, record_uid):
     new_record['version'] = 2 
     new_record['data'] = encoded_data
     new_record['extra'] = encoded_extra
+
+    # When converting record type, must send the record key
+    if 'is_converted_record_type' in params.record_cache[record_uid]:
+        if params.record_cache[record_uid]['is_converted_record_type']:
+            new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
+
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = params.record_cache[record_uid]['revision']
     if found_shared_folder_uid:
@@ -1080,6 +1087,7 @@ def rotate_password(params, record_uid):
 
         # update local cache
         params.record_cache[record_uid]['revision'] = new_revision
+        params.record_cache[record_uid]['is_converted_record_type'] = False
 
     else :
         if response_json['result_code']:
