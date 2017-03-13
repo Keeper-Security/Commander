@@ -55,6 +55,25 @@ def formatted_records(records):
         for r in records:
             r.display()
 
+def formatted_shared_folders(shared_folders):
+    """Display folders/titles/uids for the supplied records"""
+
+    # Sort by folder+title
+    shared_folders.sort(key=lambda x: (x.name if x.name else ' ').lower(), reverse=False)
+
+    if len(shared_folders) > 0:
+
+        table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(shared_folders)]
+        print(tabulate(table, headers=["#", 'Shared Folder UID', 'Name']))
+
+        print('')
+
+    # Under 5 recs, just display on the screen
+    if len(shared_folders) < 5:
+        for sf in shared_folders:
+            sf.display()
+
+
 def formatted_history(history):
     """ Show the history of commands"""
 

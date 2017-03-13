@@ -21,6 +21,7 @@ from keepercommander import generator
 import datetime
 from keepercommander import plugin_manager, params
 from keepercommander.record import Record
+from keepercommander.shared_folder import SharedFolder
 from keepercommander.error import AuthenticationError, CommunicationError, CryptoError
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256, HMAC, SHA
@@ -1124,6 +1125,45 @@ def get_record(params,record_uid):
 
     return rec
 
+def is_shared_folder(params,shared_folder_uid):
+    shared_folder_uid = shared_folder_uid.strip()
+
+    if not shared_folder_uid:
+        return False
+
+    if not params.shared_folder_cache:
+        return False
+
+    if not shared_folder_uid in params.shared_folder_cache:
+        return False
+
+    return True
+
+def get_shared_folder(params,shared_folder_uid):
+    """Return the referenced shared folder"""
+    shared_folder_uid = shared_folder_uid.strip()
+
+    if not shared_folder_uid:
+        print('No shared folder UID provided')
+        return
+
+    if not params.shared_folder_cache:
+        print('No shared folder cache.  Sync down first.')
+        return
+
+    if not shared_folder_uid in params.shared_folder_cache:
+        print('Shared folder UID not found.')
+        return
+
+    cached_sf = params.shared_folder_cache[shared_folder_uid]
+
+    if params.debug: print('Cached Shared Folder: ' + str(cached_sf))
+
+    sf = SharedFolder(shared_folder_uid)
+    sf.load(cached_sf, cached_sf['revision'])
+
+    return sf
+
 def search_records(params, searchstring):
     """Search and display folders/titles/uids"""
 
@@ -1146,6 +1186,30 @@ def search_records(params, searchstring):
             search_results.append(rec)
             
     return search_results
+
+def search_shared_folders(params, searchstring):
+    """Search shared folders """
+
+    if not params.shared_folder_cache:
+        print('No shared folder.  Sync down first.')
+        return
+
+    if searchstring != '': print('Searching for ' + searchstring)
+    p = re.compile(searchstring.lower())
+
+    search_results = [] 
+
+    for shared_folder_uid in params.shared_folder_cache:
+
+        sf = get_shared_folder(params, shared_folder_uid)
+
+        target = sf.to_lowerstring()
+
+        if p.search(target):
+            search_results.append(sf)
+     
+    return search_results
+
 
 def prepare_record(params, record, shared_folder_uid=''):
     ''' Prepares the record to be sent to the Keeper server

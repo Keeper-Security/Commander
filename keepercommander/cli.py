@@ -190,10 +190,22 @@ def do_command(params):
             results = api.search_records(params, '')
             display.formatted_records(results)
 
+    elif (params.command == 'lsf'):
+        if (len(params.shared_folder_cache) == 0): 
+            print('No shared folders')
+        else:
+            results = api.search_shared_folders(params, '') 
+            display.formatted_shared_folders(results)
+
     elif (params.command[:2] == 'g '):
-        r = api.get_record(params, params.command[2:])
-        if r:
-            r.display()
+        if (api.is_shared_folder(params, params.command[2:])):
+            sf = api.get_shared_folder(params, params.command[2:])
+            if sf:
+                sf.display()
+        else:
+            r = api.get_record(params, params.command[2:])
+            if r:
+                r.display()
 
     elif (params.command[:2] == 'r '):
         api.rotate_password(params, params.command[2:])
@@ -234,6 +246,7 @@ def do_command(params):
         print('\n\nCommands:\n')
         print('  d         ... download & decrypt data')
         print('  l         ... list folders and titles')
+        print('  lsf       ... list shared folders')
         print('  s <regex> ... search with regular expression')
         print('  g <uid>   ... get record details for uid')
         print('  r <uid>   ... rotate password for uid')
