@@ -248,7 +248,7 @@ def do_command(params):
         print('  l         ... list folders and titles')
         print('  lsf       ... list shared folders')
         print('  s <regex> ... search with regular expression')
-        print('  g <uid>   ... get record details for uid')
+        print('  g <uid>   ... get record or shared folder details for uid')
         print('  r <uid>   ... rotate password for uid')
         print('  b <regex> ... rotate password for matches of regular expression')
         print('  a         ... add a new record interactively')

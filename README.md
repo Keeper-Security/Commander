@@ -94,8 +94,9 @@ Commands:
 
   d         ... download & decrypt data
   l         ... list folders and titles
+  lsf       ... list shared folders 
   s <regex> ... search with regular expression
-  g <uid>   ... get record details for uid
+  g <uid>   ... get record or shared folder details
   r <uid>   ... rotate password for uid
   b <regex> ... rotate password for matches of regular expression
   a         ... add a new record interactively
