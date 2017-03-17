@@ -5,7 +5,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2016 Keeper Security Inc.
+# Copyright 2017 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -777,49 +777,79 @@ def decrypt_data_key(params):
     # save the encryption params 
     params.data_key = decrypted_data_key[:32]
 
-
 def decrypt_private_key(params):
     decrypted_private_key, params.private_key, params.rsa_key = decrypt_rsa_key(params.encrypted_private_key, params.data_key)
     if params.debug: print('RSA key: ' + str(decrypted_private_key))
     if params.debug: print('base64 RSA key: ' + str(params.private_key))
 
+def append_notes(params, record_uid, notes):
+    """ Append some notes to an existing record """
+    record = get_record(params, record_uid)
+    record.notes += notes
+    return update_record(params, record)
 
 def rotate_password(params, record_uid):
-    """ Rotate the password for the specified record UID """
+    """ Rotate the password for the specified record """
+    record = get_record(params, record_uid)
 
-    record_uid = record_uid.strip()
+    # generate a new password with any specified rules
+    rules = record.get("cmdr:rules")
+    if rules:
+        if params.debug: print("Rules found for record")
+        new_password = generator.generateFromRules(rules)
+    else:
+        if params.debug: print("No rules, just generate")
+        new_password = generator.generate()
 
-    if not record_uid:
-        print('No record UID provided')
-        return False
+    # execute rotation plugin associated with this record
+    plugin_name = record.get("cmdr:plugin")
+    if plugin_name:
+        # Some plugins might need to change the password in the process of rotation
+        # f.e. windows plugin gets rid of certain characters.
+        plugin = plugin_manager.get_plugin(plugin_name)
+        if plugin:
+            if hasattr(plugin, "adjust"):
+                new_password = plugin.adjust(new_password)
 
-    if not params.record_cache:
-        print('No record cache.  Sync down first.')
-        return False
+            print("Rotating with plugin " + str(plugin_name))
+            success = plugin.rotate(record, new_password)
+            if success:
+                if params.debug:
+                    print("Password rotation is successful for \"{0}\".".format(plugin_name))
+            else:
+                print("Password rotation failed for \"{0}\".".format(plugin_name))
+                return False
+        else:
+            return False
+    else:
+        print("Password rotated " + new_password)
+        record.password = new_password
 
-    if not record_uid in params.record_cache:
-        print('Record UID not found.')
-        return False
+    if update_record(params, record):
+        new_record = get_record(params, record_uid)
+        print('Rotation successful for record_uid=' + \
+            str(new_record.record_uid) + ', revision=' + \
+            str(new_record.revision))
 
-    # get the record object
+    return True
+
+def check_edit_permission(params, record_uid):
+    """Check record and shared folders for edit permission"""
     cached_rec = params.record_cache[record_uid]
 
-    # extract data and extra from record
     if 'data' in cached_rec:
-        data = json.loads(cached_rec['data'].decode('utf-8')) 
+        data = json.loads(cached_rec['data'].decode('utf-8'))
     else: data = {}
 
     if 'extra' in cached_rec:
-        extra = json.loads(cached_rec['extra'].decode('utf-8')) 
+        extra = json.loads(cached_rec['extra'].decode('utf-8'))
     else: extra = {}
 
-    # check for edit permissions
     can_edit = False
     if 'can_edit' in cached_rec:
         if params.debug: print('Edit permissions found in record')
         can_edit = True
 
-    # If record permission not there, check shared folders
     found_shared_folder_uid = ''
     if can_edit == False:
         for shared_folder_uid in params.shared_folder_cache:
@@ -833,7 +863,7 @@ def rotate_password(params, record_uid):
                             found_shared_folder_uid = shared_folder_uid
                             if 'can_edit' in sf_record:
                                 can_edit = True
-                                if params.debug: 
+                                if params.debug:
                                     print('Edit permissions found in folder')
                                 break
 
@@ -841,266 +871,8 @@ def rotate_password(params, record_uid):
         print('You do not have permissions to edit this record.')
         return False
 
-    if not params.server:
-        raise CommunicationError('No server provided')
-
-    if not params.user:
-        raise CommunicationError('No username provided')
-
-    # save previous password
-    if params.debug: print('Data: ' + str(data))
-    if params.debug: print('Extra: ' + str(extra))
-
-    # generate friendly datestamp
-    modified_time = int(round(time.time()))
-    modified_time_milli = modified_time * 1000 
-    datestamp = datetime.datetime.fromtimestamp(
-        modified_time).strftime('%Y-%m-%d %H:%M:%S')
-
-    # Backup old password in a custom field
-    custom_dict = {}
-    custom_dict['name'] = 'cmdr:Rotation @ '+str(datestamp)
-    custom_dict['value'] = data['secret2']
-    custom_dict['type'] = 'text' 
-
-    # serialize this dict
-    serialized = json.dumps(custom_dict)
-
-    # load as json
-    custom_dict_json = json.loads(serialized)
-
-    # Append to the current structure
-    data['custom'].append(custom_dict_json)
-    
-    if params.debug: 
-        print('Old password: ' + str(data['secret2']))
-
-    # load the data into a record object for convenience
-    record_object = Record()
-    record_object.load(data)
-
-    # generate a new password with any specified rules
-    rules = record_object.get("cmdr:rules")
-    if rules:
-        new_password = generator.generateFromRules(rules)
-    else:
-        new_password = generator.generate()
-
-    # execute rotation plugin associated with this record
-    plugin_name = record_object.get("cmdr:plugin")
-    if plugin_name:
-        # Some plugins might need to change the password in the process of rotation
-        # f.e. windows plugin gets rid of certain characters.
-        plugin = plugin_manager.get_plugin(plugin_name)
-        if plugin:
-            if hasattr(plugin, "adjust"):
-                new_password = plugin.adjust(new_password)
-
-            print("Rotating with plugin " + str(plugin_name))
-            success = plugin.rotate(record_object, new_password)
-            if success:
-                if params.debug:
-                    print("Password rotation is successful for \"{0}\".".format(plugin_name))
-            else:
-                print("Password rotation failed for \"{0}\".".format(plugin_name))
-                return False
-        else:
-            return False
-    else:
-        record_object.password = new_password
-
-    data['secret2'] = record_object.password
-
-    if params.debug: 
-        print('New password: ' + str(data['secret2']))
-
-    if params.debug: 
-        print('New record data: ' + str(data))
-
-    # Update the record cache with the cleartext data
-    if params.debug: print('data is ' + str(isinstance(data, dict)))
-    if params.debug: print('params.record_cache is ' + \
-        str(isinstance(params.record_cache, dict)))
-
-    # convert dict back to json then encode it 
-    params.record_cache[record_uid]['data'] = json.dumps(data).encode()
-
-    if params.debug: 
-        print('New record: ' + str(params.record_cache[record_uid]))
-        print('Data: ' + str(data))
-        print('Extra: ' + str(extra))
-
-    # Convert the data and extra dictionary to string object
-    # with double quotes instead of single quotes
-    data_serialized = json.dumps(data)
-    extra_serialized = json.dumps(extra)
-
-    if params.debug: print('data_serialized: ' + str(data_serialized))
-    if params.debug: print('extra_serialized: ' + str(extra_serialized))
-
-    # encrypt data and extra
-    if not 'record_key_unencrypted' in params.record_cache[record_uid]:
-        if plugin_name: 
-            print('Plugin updated password to: ' + new_password)
-        raise CryptoError('No record_key_unencrypted found for ' + record_uid)
-
-    if not 'record_key' in params.record_cache[record_uid]:
-        if plugin_name: 
-            print('Plugin updated password to: ' + new_password)
-        raise CryptoError('No record_key found for ' + record_uid)
-
-    record_key_unencrypted = \
-        params.record_cache[record_uid]['record_key_unencrypted']
-    iv = os.urandom(16)
-    cipher = AES.new(record_key_unencrypted, AES.MODE_CBC, iv)
-    encrypted_data = iv + cipher.encrypt(pad_binary(data_serialized.encode()))
-
-    iv = os.urandom(16)
-    cipher = AES.new(record_key_unencrypted, AES.MODE_CBC, iv)
-    encrypted_extra = iv + cipher.encrypt(pad_binary(extra_serialized.encode()))
-
-    if params.debug: print('encrypted_data: ' + str(encrypted_data))
-    if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
-
-    # note: decode() converts bytestream (b') to string
-    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode().rstrip('=')
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode().rstrip('=')
-
-    if params.debug: print('encoded_data: ' + str(encoded_data))
-    if params.debug: print('encoded_extra: ' + str(encoded_extra))
-
-    # build a record object
-    new_record = {}
-    new_record['record_uid'] = record_uid
-    new_record['version'] = 2 
-    new_record['data'] = encoded_data
-    new_record['extra'] = encoded_extra
-
-    # When converting record type, must send the record key
-    if 'is_converted_record_type' in params.record_cache[record_uid]:
-        if params.record_cache[record_uid]['is_converted_record_type']:
-            new_record['record_key'] = params.record_cache[record_uid]['record_key'] 
-
-    new_record['client_modified_time'] = modified_time_milli
-    new_record['revision'] = params.record_cache[record_uid]['revision']
-    if found_shared_folder_uid:
-        new_record['shared_folder_uid'] = found_shared_folder_uid
-
-    if 'udata' in params.record_cache[record_uid]:
-        new_record['udata'] = params.record_cache[record_uid]['udata']
-        
-    if params.debug: print('new_record: ' + str(new_record))
-
-    # create updated records
-    update_records = []
-    update_records.append(new_record)
-
-    def make_json(params, update_records):
-        return {
-               'client_time':current_milli_time(),
-               'device_id':'Commander', 
-               'device_name':'Commander', 
-               'command':'record_update', 
-               'update_records':update_records,
-               'protocol_version':1, 
-               'client_version':CLIENT_VERSION,
-               '2fa_token':params.mfa_token,
-               '2fa_type':params.mfa_type, 
-               'session_token':params.session_token, 
-               'username':params.user
-        }
-        
-    if not params.session_token:
-        try:
-            login(params)
-        except:
-            if plugin_name: 
-                print('Plugin updated password to: ' + new_password)
-            raise
-            
-    payload = make_json(params, update_records)
-
-    if params.debug: print('payload: ' + str(payload))
-    
-    try:
-        r = requests.post(params.server, json=payload)
-    except:
-        if plugin_name: 
-            print('Plugin updated password to: ' + new_password)
-        raise CommunicationError(sys.exc_info()[0])
-
-    response_json = r.json()
-
-    if params.debug:
-        debug_response(params, payload, r)
-
-    if response_json['result_code'] == 'auth_failed':
-        if params.debug: print('Re-authorizing.')
-
-        try:
-            login(params)
-        except:
-            if plugin_name: 
-                print('Plugin updated password to: ' + new_password)
-            raise
-
-        payload = make_json(params, update_records)
-
-        try:
-            r = requests.post(params.server, json=payload)
-        except:
-            print('Comm error during re-auth')
-            if plugin_name: 
-                print('Plugin updated password to: ' + new_password)
-            raise CommunicationError(sys.exc_info()[0])
-    
-        response_json = r.json()
-    
-        if params.debug:
-            debug_response(params, payload, r)
-
-    if response_json['result'] == 'success':
-        new_revision = 0
-        if 'update_records' in response_json:
-            for info in response_json['update_records']:
-                if info['record_uid'] == record_uid:
-                    if info['status'] == 'success':
-                        # all records in the transaction get the 
-                        # same revision.  this just checks 100% success
-                        new_revision = response_json['revision']
-             
-        if new_revision == 0:
-            print('Error: Revision not updated')
-            if plugin_name: 
-                print('Plugin updated password to: ' + new_password)
-            return False
-
-        if new_revision == new_record['revision']:
-            print('Error: Revision did not change')
-            if plugin_name: 
-                print('Plugin updated password to: ' + new_password)
-            return False
-
-        print('Rotation successful for record_uid=' + \
-            str(new_record['record_uid']) + ', revision=' + \
-            str(new_record['revision']) + ', new_revision=' + \
-            str(new_revision))
-
-        # update local cache
-        params.record_cache[record_uid]['revision'] = new_revision
-        params.record_cache[record_uid]['is_converted_record_type'] = False
-
-    else :
-        if response_json['result_code']:
-            if plugin_name: 
-                print('Plugin updated password to: ' + new_password)
-            raise CommunicationError('Unexpected problem: ' + \
-                response_json['result_code'])
-
-    return True
-
 def get_record(params,record_uid):    
-    """Return the referenced record"""
+    """Return the referenced record cache"""
     record_uid = record_uid.strip()
 
     if not record_uid:
@@ -1116,10 +888,9 @@ def get_record(params,record_uid):
         return
 
     cached_rec = params.record_cache[record_uid]
+    if params.debug: print('Cached rec: ' + str(cached_rec))
 
-    if params.debug: print('Cached Rec: ' + str(cached_rec))
     data = json.loads(cached_rec['data'].decode('utf-8')) 
-
     rec = Record(record_uid)
     rec.load(data,cached_rec['revision'])
 
@@ -1173,15 +944,11 @@ def search_records(params, searchstring):
 
     if searchstring != '': print('Searching for ' + searchstring)
     p = re.compile(searchstring.lower())
-
     search_results = []
 
     for record_uid in params.record_cache:
-
         rec = get_record(params, record_uid)
-
         target = rec.to_lowerstring()
-
         if p.search(target):
             search_results.append(rec)
             
@@ -1210,24 +977,20 @@ def search_shared_folders(params, searchstring):
      
     return search_results
 
-
 def prepare_record(params, record, shared_folder_uid=''):
-    ''' Prepares the record to be sent to the Keeper server
-    :return: record encrypted and ready to be included into record_update json
-    '''
+    """ Prepares the Record() object to be sent to the Keeper Cloud API
+        by serializing and encrypting it in the proper JSON format used for
+        transmission.  If the record has no UID, one is generated and the
+        encrypted record key is sent to the server.  If this record was
+        converted from RSA to AES 
+    """
+    needs_record_key = False
     if not record.record_uid:
         record.record_uid = generate_record_uid()
+        if params.debug: print('Generated Record UID: ' + record.record_uid)
+        needs_record_key = True
 
-    if params.debug: print('record UID: ' + record.record_uid)
-
-    if record.record_uid in params.record_cache:
-        raise Exception('Record UID already exists.')
-
-    # generate friendly datestamp
-    modified_time = int(round(time.time()))
-    modified_time_milli = modified_time * 1000
-    datestamp = datetime.datetime.fromtimestamp(
-        modified_time).strftime('%Y-%m-%d %H:%M:%S')
+    if params.debug: print('Needs record key = ' + str(needs_record_key))
 
     # initialize data and extra
     data = {}
@@ -1250,23 +1013,27 @@ def prepare_record(params, record, shared_folder_uid=''):
     if params.debug: print('Dictionary: ' + str(data))
     if params.debug: print('Serialized: : ' + str(data_serialized))
 
-    # generate a record key
-    unencrypted_key = os.urandom(32)
+    if needs_record_key:
+        unencrypted_key = os.urandom(32)
+        if params.debug: print('Generated a key=' + str(unencrypted_key))
+    else:
+        unencrypted_key = \
+                params.record_cache[record.record_uid]['record_key_unencrypted']
+
+    # Create encrypted record key
     iv = os.urandom(16)
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
     type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
     encoded_type1key = (base64.urlsafe_b64encode(
-                           type1key).decode()).rstrip('=')
+                               type1key).decode()).rstrip('=')
+    if params.debug: print('Encoded=' + str(encoded_type1key))
 
-    if params.debug: print('generated key=' + str(type1key))
-    if params.debug: print('encoded=' + str(encoded_type1key))
-
-    # encrypt data with record key
+    # Encrypt data with record key
     iv = os.urandom(16)
     cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
     encrypted_data = iv + cipher.encrypt(pad_binary(data_serialized.encode()))
 
-    # encrypt extra with record key
+    # Encrypt extra with record key
     iv = os.urandom(16)
     cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
     encrypted_extra = iv + cipher.encrypt(pad_binary(extra_serialized.encode()))
@@ -1281,7 +1048,10 @@ def prepare_record(params, record, shared_folder_uid=''):
     if params.debug: print('encoded_data: ' + str(encoded_data))
     if params.debug: print('encoded_extra: ' + str(encoded_extra))
 
-    # build a record object
+    modified_time = int(round(time.time()))
+    modified_time_milli = modified_time * 1000 
+
+    # build a record dict for upload
     new_record = {}
     new_record['record_uid'] = record.record_uid
     new_record['version'] = 2
@@ -1290,12 +1060,21 @@ def prepare_record(params, record, shared_folder_uid=''):
     new_record['udata'] = udata
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = 0
-    new_record['record_key'] = encoded_type1key
+
+    if record.record_uid in params.record_cache:
+        if 'revision' in params.record_cache[record.record_uid]:
+            new_record['revision'] = params.record_cache[record.record_uid]['revision']
+        if 'is_converted_record_type' in params.record_cache[record.record_uid]:
+            if params.debug: print('Converted record sends record key')
+            new_record['record_key'] = encoded_type1key
+
+    if needs_record_key:
+        new_record['record_key'] = encoded_type1key
+
     if shared_folder_uid:
         new_record['shared_folder_uid'] = shared_folder_uid
 
     if params.debug: print('new_record: ' + str(new_record))
-
     return new_record
 
 def make_request(params, command):
@@ -1306,8 +1085,6 @@ def make_request(params, command):
                'protocol_version':1,
                'client_version':CLIENT_VERSION,
         }
-
-
 
 def communicate(params, request):
 
@@ -1366,10 +1143,53 @@ def communicate(params, request):
 
     return response_json
 
+def update_record(params, record):
+    """ Push a record update to the cloud. 
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    print("Pushing update...")
+    update_record = prepare_record(params, record)
+    request = make_request(params, 'record_update')
+    request['update_records'] = [update_record]
+
+    response_json = communicate(params, request)
+
+    if response_json['result'] == 'success':
+        new_revision = 0
+        if 'update_records' in response_json:
+            for info in response_json['update_records']:
+                if info['record_uid'] == record.record_uid:
+                    if info['status'] == 'success':
+                        new_revision = response_json['revision']
+
+        if new_revision == 0:
+            print('Error: Revision not updated')
+            return False
+
+        if new_revision == update_record['revision']:
+            print('Error: Revision did not change')
+            return False
+
+        print('New record successful for record_uid=' + \
+            str(update_record['record_uid']) + ', revision=' + \
+            str(update_record['revision']), ', new_revision=' + \
+            str(new_revision))
+
+        update_record['revision'] = new_revision
+
+        # sync down the data which updates the caches
+        sync_down(params)
+
+        return True
+    else:
+        print('Record push failed')
+        return False
 
 def add_record(params):
     """ Create a new record with passed-in data or interactively.
-        The shared folder UID is also optional 
+        The shared folder UID is also optional.  The Record() object
+        is pushed to the Keeper Cloud API
     """
     record = Record()
     if not record.title:
@@ -1402,8 +1222,6 @@ def add_record(params):
             for info in response_json['add_records']:
                 if info['record_uid'] == record.record_uid:
                     if info['status'] == 'success':
-                        # all records in the transaction get the
-                        # same revision.  this just checks 100% success
                         new_revision = response_json['revision']
 
         if new_revision == 0:
@@ -1423,7 +1241,6 @@ def add_record(params):
 
         # sync down the data which updates the caches
         sync_down(params)
-
         return True
 
 def debug_response(params, payload, response):
@@ -1439,25 +1256,6 @@ def debug_response(params, payload, response):
         sort_keys=True, indent=4) + ']')
     if params.session_token:
         print('<<< Session Token:['+str(params.session_token)+']')
-
-def generate_random_records(params, num):
-    """ Create a randomized set of Keeper records 
-    from loremipsum import get_sentences
-
-    for i in [0:num]:
-        sentences_list = get_sentences(5)
-
-        r = Record()
-        r.title = sentences_list[0]
-        r.folder = sentences_list[1]
-        r.login = sentences_list[2]
-        r.password = sentences_list[3]
-        r.login_url = sentences_list[4]
-        r.notes = sentences_list[5]
-        r.custom_fields[0] = sentences_list[6]
-
-    return
-    """
 
 def generate_record_uid():
     """ Generate url safe base 64 16 byte uid """

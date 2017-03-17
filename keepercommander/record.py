@@ -10,7 +10,7 @@
 #
 
 class Record:
-    """Defines a Keeper Record"""
+    """Defines a user-friendly Keeper Record for display purposes"""
 
     def __init__(self,record_uid='',folder='',title='',login='',password='',
                  login_url='',notes='',custom_fields=[],revision=''):
