@@ -782,9 +782,11 @@ def decrypt_private_key(params):
     if params.debug: print('RSA key: ' + str(decrypted_private_key))
     if params.debug: print('base64 RSA key: ' + str(params.private_key))
 
-def append_notes(params, record_uid, notes):
+def append_notes(params, record_uid):
     """ Append some notes to an existing record """
     record = get_record(params, record_uid)
+
+    notes = input("... Notes to append: ")
     record.notes += notes
     return update_record(params, record)
 
@@ -890,9 +892,14 @@ def get_record(params,record_uid):
     cached_rec = params.record_cache[record_uid]
     if params.debug: print('Cached rec: ' + str(cached_rec))
 
-    data = json.loads(cached_rec['data'].decode('utf-8')) 
-    rec = Record(record_uid)
-    rec.load(data,cached_rec['revision'])
+    rec = Record()
+
+    try:
+        data = json.loads(cached_rec['data'].decode('utf-8')) 
+        rec = Record(record_uid)
+        rec.load(data,cached_rec['revision'])
+    except:
+        print('**** Error decrypting record ' + str(record_uid))
 
     return rec
 
@@ -1242,6 +1249,21 @@ def add_record(params):
         # sync down the data which updates the caches
         sync_down(params)
         return True
+
+def delete_record(params, record_uid):
+    """ Delete a record """  
+    request = make_request(params, 'record_update')
+    delete_records = []
+    delete_records.append(record_uid)
+    request['delete_records'] = delete_records
+    response_json = communicate(params, request)
+    if response_json['result'] != 'success':
+        print('Error: Record not deleted')
+        return False
+
+    print('Record deleted with success')
+    sync_down(params)
+    return True
 
 def debug_response(params, payload, response):
     print('')

@@ -210,6 +210,9 @@ def do_command(params):
     elif (params.command[:2] == 'r '):
         api.rotate_password(params, params.command[2:])
 
+    elif (params.command[:2] == 'd '):
+        api.delete_record(params, params.command[2:])
+
     elif (params.command == 'c'):
         print(chr(27) + "[2J")
 
@@ -221,6 +224,9 @@ def do_command(params):
         results = api.search_records(params, params.command[2:])
         for r in results:
             api.rotate_password(params, r.record_uid)
+
+    elif (params.command[:3] == 'an '):
+        api.append_notes(params, params.command[3:])
 
     elif (params.command == 'd'):
         api.sync_down(params)
@@ -252,6 +258,7 @@ def do_command(params):
         print('  r <uid>   ... rotate password for uid')
         print('  b <regex> ... rotate password for matches of regular expression')
         print('  a         ... add a new record interactively')
+        print('  an <uid>  ... append some notes to the specified record')
         print('  c         ... clear the screen')
         print('  h         ... show command history')
         print('  q         ... quit')
