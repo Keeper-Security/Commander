@@ -224,10 +224,19 @@ def decrypt_record_key(encrypted_record_key, shared_folder_key):
 
 def shared_folders_containing_record(params, record_uid):
     def contains_record(shared_folder):
+        if not 'records' in shared_folder:
+            return False
         if not shared_folder['records']:
             return False
         return any(record['record_uid'] == record_uid for record in shared_folder['records'])
-    return [shared_folder['shared_folder_uid'] for shared_folder in params.shared_folder_cache if contains_record(shared_folder)]
+
+    shared_folder_uids = []
+    for shared_folder_uid in params.shared_folder_cache:
+        shared_folder = params.shared_folder_cache[shared_folder_uid]
+        if contains_record(shared_folder):
+           shared_folder_uids.append(shared_folder_uid)
+
+    return shared_folder_uids
 
 
 def delete_shared_folder(params, shared_folder_uid):
@@ -1013,7 +1022,8 @@ def prepare_record(params, record, shared_folder_uid=''):
         by serializing and encrypting it in the proper JSON format used for
         transmission.  If the record has no UID, one is generated and the
         encrypted record key is sent to the server.  If this record was
-        converted from RSA to AES 
+        converted from RSA to AES we send the new record key. If the record
+        is in a shared folder, must send shared folder UID for edit permission.
     """
     needs_record_key = False
     if not record.record_uid:
@@ -1091,6 +1101,10 @@ def prepare_record(params, record, shared_folder_uid=''):
     new_record['udata'] = udata
     new_record['client_modified_time'] = modified_time_milli
     new_record['revision'] = 0
+
+    shared_folder_uids = shared_folders_containing_record(params, record.record_uid)
+    if( len(shared_folder_uids) > 0 ):
+        new_record['shared_folder_uid'] = shared_folder_uids[0] 
 
     if record.record_uid in params.record_cache:
         if 'revision' in params.record_cache[record.record_uid]:
