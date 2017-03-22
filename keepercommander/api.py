@@ -571,37 +571,61 @@ def sync_down(params):
                     raise CryptoError('Invalid folder key length')
                     
                 # decrypt the folder name
-                shared_folder['name'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key'])
-
+                shared_folder['name'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key']).decode('utf-8')
                 if params.debug: print('Folder name: ' + str(shared_folder['name']))
 
-                # add to local cache
-                if shared_folder['shared_folder_uid'] in params.shared_folder_cache and not shared_folder['full_sync']:
+                process_changes = False
+                if shared_folder['shared_folder_uid'] in params.shared_folder_cache:
+                    if params.debug: print('Shared folder exists in local cache') 
+
+                    if 'full_sync' in shared_folder:
+                        if shared_folder['full_sync'] == False:
+                            if params.debug: print('Process individual changes') 
+                            process_changes = True
+                    else:
+                        if params.debug: print('No full sync specified, so process individual changes') 
+                        process_changes = True
+
+                if process_changes:
                     existing_sf = params.shared_folder_cache[shared_folder['shared_folder_uid']]
+
                     if 'records_removed' in shared_folder:
                         existing_sf['records'] = [record for record in existing_sf['records']
-                                                  if record['record_uid'] not in shared_folder['records_removed']]
+                                                if record['record_uid'] not in shared_folder['records_removed']]
                         for record_uid in shared_folder['records_removed']:
                             if record_uid not in params.meta_data_cache:
                                 del params.record_cache[record_uid]
                         del shared_folder['records_removed']
+
                     if 'users_removed' in shared_folder:
                         existing_sf['users'] = [user for user in existing_sf['users']
                                                 if user['username'] not in shared_folder['users_removed']]
                         del shared_folder['users_removed']
+
                     if 'teams_removed' in shared_folder:
                         existing_sf['teams'] = [team for team in existing_sf['teams']
                                                 if team['team_uid'] not in shared_folder['teams_removed']]
-                        del shared_folder['users_removed']
+                        del shared_folder['teams_removed']
 
-                    merged_records = merge_lists_on_value(existing_sf['records'], shared_folder['records'], 'record_uid')
-                    merged_users = merge_lists_on_value(existing_sf['users'], shared_folder['users'], 'username')
-                    merged_teams = merge_lists_on_value(existing_sf['teams'], shared_folder['teams'], 'team_uid')
-                    existing_sf.update(shared_folder)
-                    existing_sf['records'] = merged_records
-                    existing_sf['users'] = merged_users
-                    existing_sf['teams'] = merged_teams
-                else:
+                    if 'records' in shared_folder:
+                        merged_records = merge_lists_on_value(existing_sf['records'], shared_folder['records'], 'record_uid')
+                        if params.debug: print("merged_records = " + str(merged_records))
+                        existing_sf['records'] = merged_records
+
+                    if 'users' in shared_folder:
+                        merged_users = merge_lists_on_value(existing_sf['users'], shared_folder['users'], 'username')
+                        if params.debug: print("merged_users = " + str(merged_users))
+                        existing_sf['users'] = merged_users
+
+                    if 'teams' in shared_folder:
+                        merged_teams = merge_lists_on_value(existing_sf['teams'], shared_folder['teams'], 'team_uid')
+                        if params.debug: print("merged_teams = " + str(merged_teams))
+                        existing_sf['teams'] = merged_teams
+
+                    existing_sf['name'] = shared_folder['name']
+
+                else: 
+                    if params.debug: print('Shared folder does not exist in local cache') 
                     params.shared_folder_cache[shared_folder['shared_folder_uid']] = shared_folder
 
         # decrypt record keys
