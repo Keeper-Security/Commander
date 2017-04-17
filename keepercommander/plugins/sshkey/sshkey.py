@@ -63,7 +63,7 @@ def rotate(record, newpassword):
         prefix = 'ssh-rsa'
         parts = [prefix.encode('ascii'), exp, mod]
         ssh_key_bytes = b''.join([b''.join([struct.pack('>I', len(i)), i]) for i in parts])
-        newPublicKeySSH = ' '.join([prefix, base64.b64encode(ssh_key_bytes).decode()])
+        newPublicKeySSH = ' '.join([prefix, base64.urlsafe_b64encode(ssh_key_bytes).decode()])
 
         hosts = [cf['value'] for cf in record.custom_fields if cf['name'] == 'cmdr:host']
 
