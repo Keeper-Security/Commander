@@ -5,6 +5,9 @@ from keepercommander import cli, display, api
 
 __version__ = '0.6.4'
 
+# blabla
+# akshdjasd
+
 @click.group()
 @click.option('--server', '-s', envvar='KEEPER_SERVER', help='Host address. You can set KEEPER_SERVER environment variable instead.')
 @click.option('--user', '-u', envvar='KEEPER_USER', help='Email address for the account. You can set KEEPER_USER environment variable instead.')
