@@ -505,7 +505,7 @@ def sync_down(params):
                         print('base64: ' + str(meta_data['record_key'])) 
 
                 # add to local cache
-                if params.debug: print('Adding meta data to cache')
+                if params.debug: print('Adding meta data to cache for ' + meta_data['record_uid'])
                 params.meta_data_cache[meta_data['record_uid']] = meta_data
 
         if 'non_shared_data' in response_json:
@@ -572,9 +572,6 @@ def sync_down(params):
                     else:
                         # Fail case.  No Shared Folder key anywhere.
                         continue
-
-                if params.debug:
-                    print('Type=' + str(shared_folder['key_type']) + ' Folder Key: ' + str(shared_folder['shared_folder_key']))
 
                 if len(shared_folder['shared_folder_key']) != 32:
                     raise CryptoError('Invalid folder key length')
@@ -1008,11 +1005,16 @@ def search_shared_folders(params, searchstring):
 
     for shared_folder_uid in params.shared_folder_cache:
 
+        if params.debug: print('Getting Shared Folder UID: ' + shared_folder_uid)
         sf = get_shared_folder(params, shared_folder_uid)
 
+        if params.debug: print('sf: ' + str(sf))
         target = sf.to_lowerstring()
 
+        if params.debug: print('Lowercase: ' + str(target))
+
         if p.search(target):
+            if params.debug: print('Search sucess')
             search_results.append(sf)
      
     return search_results

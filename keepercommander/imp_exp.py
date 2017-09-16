@@ -6,14 +6,13 @@ from keepercommander.record import Record
 def export(params, format, filename):
     api.sync_down(params)
 
-    records = [api.get_record(params, record_uid) for record_uid in params.record_cache if
-               params.meta_data_cache[record_uid]['owner']]
+    records = [api.get_record(params, record_uid) for record_uid in params.record_cache]
 
     records.sort(key=lambda x: ((x.folder if x.folder else ' ') + x.title).lower(), reverse=False)
 
     if format == 'json':
         with open(filename, 'w') as f:
-            json.dump([record.to_dictionary() for record in records], f, indent=2)
+            json.dump([record.to_dictionary() for record in records], f, indent=2, ensure_ascii=False)
     else:
         with open(filename, 'wt') as f:
             for record in records:

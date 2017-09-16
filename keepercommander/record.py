@@ -100,11 +100,20 @@ class Record:
         def tabulate(*args):
             return '\t'.join(args)
 
-        custom_fields = '\t'.join([field['name'] + '\t' + field['value'] for field in self.custom_fields])
-        return tabulate(self.folder, self.title, self.login, self.password, self.login_url, self.notes.replace('\n', '\\\\n'), custom_fields)
+        custom_fields = ''
+        if self.custom_fields:
+            for field in self.custom_fields:
+                if ('name' in field) and ('value' in field):
+                    custom_fields = '\t'.join([field['name'] + '\t' + \
+                        field['value'] for field in self.custom_fields])
+
+        return tabulate(self.folder, self.title, self.login, \
+                        self.password, self.login_url, self.notes.replace('\n', '\\\\n'), \
+                        custom_fields)
 
     def to_dictionary(self):
         return {
+            'uid': self.record_uid,
             'folder': self.folder,
             'title': self.title,
             'login': self.login,
