@@ -60,20 +60,33 @@ pip3 install --upgrade keepercommander
 ```
 Usage: keeper [OPTIONS] COMMAND [ARGS]...
 
+  Some commands have their own options. To see the help message for a specific command, type
+  keeper COMMAND --help
+  for example: keeper import --help
+
 Options:
-  -s, --server TEXT    Host address
-  -u, --user TEXT      Email address for the account
-  -p, --password TEXT  Master password for the account
+  -s, --server TEXT    Host address. You can set KEEPER_SERVER environment
+                       variable instead.
+  -u, --user TEXT      Email address for the account. You can set KEEPER_USER
+                       environment variable instead.
+  -p, --password TEXT  Master password for the account. You can set
+                       KEEPER_PASSWORD environment variable instead.
   --config TEXT        Config file to use
   --debug              Turn on debug mode
   --version            Show the version and exit.
   --help               Show this message and exit.
 
 Commands:
+  delete-all  Delete all Keeper records on server
+  export      Export data from Keeper to local file
+  get-rec     Print Keeper record
+  import      Import data from local file to Keeper
+  info        Print out current configuration
   list        List Keeper records
+  rotate      Rotate Keeper record
   shell       Use Keeper interactive shell
-  ...
 ```  
+
 **Environment variables**
 
 for `--user` and `--password` options, you can set environment variables `KEEPER_SERVER`, `KEEPER_USER` and `KEEPER_PASSWORD`. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
@@ -173,6 +186,40 @@ challenge: challenge phrase if you are using a Yubikey device
 If you have turned on two-factor authentication on your Keeper account, you will be prompted the first time you run Commander to enter the two-factor code.  Once authenticated, Commander will update the mfa_type and mfa_token parameters in the config file.  This way, subsequent calls are authenticated without needing additional two-factor tokens.
 
 You may ask, why is the master password stored in the JSON configuration file?  It doesn't need to be. You can omit the password field from the JSON file, and you'll be prompted with the password interactively.  It is our recommendation to set up a Keeper account that is solely used for Commander interaction. Using Keeper's sharing features, share the records with the Commander account that will be rotated.  Set a strong master password (such as a long hash key) and turn on Two-Factor authentication on this Commander account.  Then store the account master password in the JSON file and do not use this account for any other operations. 
+
+
+### Importing Data
+
+To import records into your vault, you can provide either JSON or tab-delimited file.
+If using a JSON file, make sure it's an a valid JSON array.  For example, here's a JSON array file with 2 records:
+
+```
+[{
+    "title":"Dev Server",
+    "folder": "Servers",
+    "login": "root",
+    "password": "lk4j139sk4j",
+    "login_url": "https://myserver.com",
+    "notes": "These are some notes.",
+    "custom_fields": [{"Security Group":"Private"}]
+},
+{
+    "title":"Prod Server",
+    "folder": "Servers",
+    "login": "root",
+    "password": "kj424094fsdjhfs4jf7h",
+    "login_url": "https://myprodserver.com",
+    "notes": "These are some notes.",
+    "custom_fields": [{"Security Group":"Public","IP Address":"12.45.67.8"}]
+}]
+```
+
+The format must be perfect JSON or it will fail.  The keys in each JSON hash must be present.  Use a JSON validator if you get errors running this.
+Here's the command to run:
+
+```
+keeper import --format=json import.json
+```
 
 ### Scheduling & Automation
 

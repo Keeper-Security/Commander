@@ -44,12 +44,12 @@ def list(params):
     except Exception as e:
         raise click.ClickException(e)
 
-@click.command('get-rec', help = 'Print Keeper record')
+@click.command('get-rec', help = 'Display Keeper record')
 @click.pass_obj
-@click.option('--uid', help='uid of the record to print')
+@click.option('--uid', help='UID of the record to display')
 def get_rec(params, uid):
     if not (uid):
-        raise click.ClickException("Need to specify uid option")
+        raise click.ClickException("Missing record UID parameter")
     try:
         api.sync_down(params)
         if uid:
@@ -59,12 +59,12 @@ def get_rec(params, uid):
 
 @click.command(help = 'Rotate Keeper record')
 @click.pass_obj
-@click.option('--uid', help='uid of the record to rotate the password on')
+@click.option('--uid', help='UID of the record to rotate the password on')
 @click.option('--match', help='regular expression to select records for password rotation')
-@click.option('--print', flag_value=True, help='print the record content after rotation')
+@click.option('--print', flag_value=True, help='display the record content after rotation')
 def rotate(params, uid, match, print):
     if not (uid or match):
-        raise click.ClickException("Need to specify either uid or match option")
+        raise click.ClickException("Need to specify either UID or match option")
     try:
         api.sync_down(params)
         if uid:
