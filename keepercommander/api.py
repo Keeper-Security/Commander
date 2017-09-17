@@ -316,7 +316,7 @@ def sync_down(params):
     if not params.user:
         raise CommunicationError('No username provided')
 
-    print('Downloading records...')
+    print('Syncing...')
 
     def make_json(params):
         return {
@@ -727,9 +727,9 @@ def sync_down(params):
             print('--- Folders Cache: ' + str(params.shared_folder_cache))
 
         if len(params.record_cache) == 1:
-            print('Downloaded & Decrypted [1] Record')
+            print('Decrypted [1] Record')
         else:
-            print('Downloaded & Decrypted [' + \
+            print('Decrypted [' + \
                 str(len(params.record_cache)) + '] Records')
 
     else :

@@ -5,7 +5,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2017 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 import sys
@@ -19,22 +19,18 @@ from keepercommander import display, api, imp_exp
 from keepercommander.params import KeeperParams
 from keepercommander.error import AuthenticationError, CommunicationError
 
-@click.command(help = 'Print out current configuration')
-@click.pass_obj
-def info(params):
-    print('Server: {0}'.format(params.server))
-    print('User: {0}'.format(params.user))
-    print('Password: {0}'.format(params.password))
-
+####### shell
 @click.command(help = 'Use Keeper interactive shell')
 @click.pass_obj
 def shell(params):
     loop(params)
 
-@click.command(help = 'List Keeper records')
+####### list
+@click.command(help = 'Display all record UID/titles')
 @click.pass_obj
 def list(params):
     try:
+        prompt_for_credentials(params)
         api.sync_down(params)
         if (len(params.record_cache) == 0):
             print('No records')
@@ -44,28 +40,44 @@ def list(params):
     except Exception as e:
         raise click.ClickException(e)
 
-@click.command('get-rec', help = 'Display Keeper record')
+####### get
+@click.command('get', help = 'Display specified Keeper record')
 @click.pass_obj
-@click.option('--uid', help='UID of the record to display')
-def get_rec(params, uid):
-    if not (uid):
-        raise click.ClickException("Missing record UID parameter")
+@click.argument('uid')
+def get(params, uid):
     try:
+        prompt_for_credentials(params)
         api.sync_down(params)
         if uid:
-            display.print_record(params, uid)
+            api.get_record(params,uid).display()
     except Exception as e:
         raise click.ClickException(e)
 
+####### search
+@click.command(help = 'Search vault with a regular expression')
+@click.argument('regex')
+@click.pass_obj
+def search(params, regex):
+    try:
+        prompt_for_credentials(params)
+        api.sync_down(params)
+        if (len(params.record_cache) == 0): 
+            print('No records')
+            return
+        results = api.search_records(params, regex) 
+        display.formatted_records(results)
+    except Exception as e:
+        raise click.ClickException(e)
+
+####### rotate
 @click.command(help = 'Rotate Keeper record')
 @click.pass_obj
-@click.option('--uid', help='UID of the record to rotate the password on')
+@click.argument('uid')
 @click.option('--match', help='regular expression to select records for password rotation')
 @click.option('--print', flag_value=True, help='display the record content after rotation')
 def rotate(params, uid, match, print):
-    if not (uid or match):
-        raise click.ClickException("Need to specify either UID or match option")
     try:
+        prompt_for_credentials(params)
         api.sync_down(params)
         if uid:
             api.rotate_password(params, uid)
@@ -81,31 +93,37 @@ def rotate(params, uid, match, print):
     except Exception as e:
         raise click.ClickException(e)
 
+####### import
 @click.command('import', help='Import data from local file to Keeper')
 @click.pass_obj
 @click.option('--format', type=click.Choice(['tab-separated', 'json']))
 @click.argument('filename')
 def _import(params, format, filename):
     try:
+        prompt_for_credentials(params)
         imp_exp._import(params, format, filename)
     except Exception as e:
         raise click.ClickException(e)
 
+####### export
 @click.command(help='Export data from Keeper to local file')
 @click.pass_obj
 @click.option('--format', type=click.Choice(['tab-separated', 'json']))
 @click.argument('filename')
 def export(params, format, filename):
     try:
+        prompt_for_credentials(params)
         imp_exp.export(params, format, filename)
     except Exception as e:
         raise click.ClickException(e)
 
+####### delete-all
 @click.command('delete-all', help='Delete all Keeper records on server')
 @click.confirmation_option(prompt='Are you sure you want to delete all Keeper records on the server?')
 @click.pass_obj
 def delete_all(params):
     try:
+        prompt_for_credentials(params)
         imp_exp.delete_all(params)
     except Exception as e:
         raise click.ClickException(e)
@@ -116,7 +134,7 @@ def goodbye():
     print('\nGoodbye.\n')
     sys.exit()
 
-def get_params(config_filename):
+def get_params_from_config(config_filename):
     params = KeeperParams()
     params.config_filename = 'config.json'
     if config_filename:
@@ -298,20 +316,24 @@ def runcommands(params):
                 ' Waiting for ' + str(timedelay) + ' seconds')
             time.sleep(timedelay)
 
+
+def prompt_for_credentials(params):
+        while not params.user:
+            params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+
+        while not params.password:
+            params.password = getpass.getpass(prompt='Password: ', stream=None)
+
+
 def loop(params):
 
     display.welcome()
 
     try:
 
-        while not params.user:
-            params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+        prompt_for_credentials(params)
 
-            # only prompt for password when no device token
-        while not params.password:
-            params.password = getpass.getpass(prompt='Password: ', stream=None)
-
-            # if commands are provided, execute those then exit
+        # if commands are provided, execute those then exit
         if params.commands:
             runcommands(params)
             goodbye()

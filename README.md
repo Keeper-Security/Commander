@@ -57,6 +57,14 @@ pip3 install --upgrade keepercommander
 3. In your own Python program by importing the keepercommander package
 
 ### Command line usage
+
+You can run actions directly from the command line, or you can use our interactive shell mode.  To run on the command line, just type:
+```
+$ keeper
+```
+
+The help screen displays as seen below.
+
 ```
 Usage: keeper [OPTIONS] COMMAND [ARGS]...
 
@@ -79,20 +87,77 @@ Options:
 Commands:
   delete-all  Delete all Keeper records on server
   export      Export data from Keeper to local file
-  get-rec     Print Keeper record
+  get         Display specified Keeper record
   import      Import data from local file to Keeper
-  info        Print out current configuration
-  list        List Keeper records
+  list        Display all record UID/titles
   rotate      Rotate Keeper record
+  search      Search vault with a regular expression
   shell       Use Keeper interactive shell
 ```  
+
+Running most commands will require you to authenticate to Keeper and decrypt your vault.  Authentication requires your email address ("user"), password and optionally your 2FA code.  You can do this interactively or store these parameters into a file called config.json or use environmental variables.
 
 **Environment variables**
 
 for `--user` and `--password` options, you can set environment variables `KEEPER_SERVER`, `KEEPER_USER` and `KEEPER_PASSWORD`. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
+### Running commands 
+
+As an example, below shows how to search your vault with a regular expression search parameter.  It will display search results with just record UID and title, and if there are less than 5 records it will display all of the record details.:
+
+```
+clurey@home:~/test/ $ keeper search "Capital.*One"
+Password: <typed in>
+Syncing...
+Decrypted [63] Records
+Searching for Capital.*One
+  #  Record UID              Folder    Title
+---  ----------------------  --------  -------------------
+  1  LYwEGKAvkRbCRfaH2wQgnA  TESTING   Capital One Example
+
+
+                 UID: LYwEGKAvkRbCRfaH2wQgnA
+            Revision: 162196517
+              Folder: TESTING             
+               Title: Capital One Example 
+               Login: craiglurey          
+            Password: xKLKd2hLc8vS1195RJaR
+                 URL: https://www.capitalone.com
+                Link: https://keepersecurity.com/vault#detail/LYwEGKAvkRbCRfaH2wQgnA
+```
+
+As seen here, the matching vault record is displayed on the screen.  Since the master password is not stored in any environmental variable or config file, you will be prompted to type in your master password. 
+
+As another example, to list all of the record UIDs and record titles in your vault:
+
+```
+clurey@home:~/test/ $ keeper list 
+
+1  7T13cQ6NQACZaT-7FXQsfg  Secure Documents       Case File #25
+2  2uSii52DF5ny1K8CEZoj8g  Secure Documents       Confidential Files
+3  6Z0uci6wesloF4YxtRUxzQ  Secure Documents       Medical Recs
+
+```
+
+To view a specific record, just use the record UID like this:
+ 
+```
+clurey@home:~/test/ $ keeper get LYwEGKAvkRbCRfaH2wQgnA
+Password: <typed in>
+Syncing...
+Decrypted [63] Records
+
+                 UID: LYwEGKAvkRbCRfaH2wQgnA
+            Revision: 162196517
+              Folder: TESTING             
+               Title: Capital One Example 
+               Login: craiglurey          
+            Password: xKLKd2hLc8vS1195RJaR
+                 URL: https://www.capitalone.com
+                Link: https://keepersecurity.com/vault#detail/LYwEGKAvkRbCRfaH2wQgnA
+```
 
 ### Interactive shell
-If you would like to use Keeper interactively within a shell session, invoke shell by typing
+To just authenticate a single time and run a series of commands, you can use Commander's interactive shell.  Invoke shell by typing
 
 ```bash
 keeper shell

@@ -21,7 +21,7 @@ def main(ctx, debug, server, user, password, config):
     for example: keeper import --help
     '''
     try:
-        params = cli.get_params(config)
+        params = cli.get_params_from_config(config)
         ctx.obj = params
     except Exception as e:
         print(e)
@@ -36,11 +36,11 @@ def main(ctx, debug, server, user, password, config):
     if password:
         params.password = password
 
-main.add_command(cli.info)
 main.add_command(cli.shell)
 main.add_command(cli.list)
 main.add_command(cli.rotate)
-main.add_command(cli.get_rec)
+main.add_command(cli.get)
+main.add_command(cli.search)
 main.add_command(cli.export)
 main.add_command(cli._import)
 main.add_command(cli.delete_all)
