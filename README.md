@@ -216,9 +216,9 @@ Commands:
 
 The Record UID is a unique identifier for every record in your Keeper vault.  This is used for deep linking and also for password rotation as described below. The search/list/get commands can be used to look up the Record UID when setting up a password rotation scheduler.
 
-### Deep linking to records
+### Deep linking to records (Web Vault Hyperlink)
 
-The Record UID that is displayed on password record output can be used for deep linking directly into the Web Vault and mobile platforms. The link format is like this: https://keepersecurity.com/vault#detail/XXXXXX where you simply replace XXXXXX with the Record UID.
+The Record UID that is displayed on password record output can be used for deep linking directly into the Keeper Web Vault only for privileged users. This Vault link can be stored and sent over unsecure channels because it only provides a reference to the record within your vault -- it does not provide access to the actual record content.  To access the content, you must still authenticate into the vault and decrypt the data.  The link is in the format `https://keepersecurity.com/vault#detail/XXXXXX` and you simply replace XXXXXX with the Record UID. Providing this link to another user does NOT initiate sharing.  To share a vault record, you must authenticate to your vault, open the record and click the "Share" feature.
 
 ### Automating Commander 
 
