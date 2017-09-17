@@ -97,13 +97,13 @@ Commands:
 
 Running most commands will require you to authenticate to Keeper and decrypt your vault.  Authentication requires your email address ("user"), master password ("password") and optionally your 2FA code.  You can type these parameters interactively in the terminal or you can store these parameters into a file called config.json.  You can also store the parameters in environmental variables.
 
-Here's a basic "config.json" file:
+Here's a basic "config.json" file which will prompt you for your Keeper master password upon every usage:
 
 ```
 {
     "server":"https://keepersecurity.com/api/v2/",
     "user":"youremail@company.com",
-    "password":"your_master_password_or_blank",
+    "password":"",
     "mfa_token":"",
     "mfa_type":"",
     "debug":false,
@@ -112,9 +112,11 @@ Here's a basic "config.json" file:
 }
 ```
 
-Any parameter that is not filled in will be prompted on the command line interactively.  More advanced usage of configuration files for automated commands is below.
+Any parameter that is not filled in will be prompted on the command line interactively. 
 
 Instead of using a config.json file for "server", "user" and "password" options, you can also set environment variables `KEEPER_SERVER`, `KEEPER_USER` and `KEEPER_PASSWORD`. Server, user and password specified as options have priority over server, user and password settings specified in the configuration file.  
+
+More advanced usage of configuration files for automated commands is in the <a href="#scheduling--automation">Scheduling & Automation</a> section below.  Yubikey security key devices can also be used to authenticate as described <a href="#yubikey-support">here</a>.
 
 ### Example commands 
 
