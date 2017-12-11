@@ -37,7 +37,7 @@ def welcome():
     print('')
 
 def formatted_records(records):
-    """Display folders/titles/uids for the supplied records"""
+    """Display folders/titles/uids for the supplied shared folders"""
 
     # Sort by folder+title
     records.sort(key=lambda x: ((x.folder if x.folder else ' ') + x.title).lower(), reverse=False)
@@ -72,6 +72,23 @@ def formatted_shared_folders(shared_folders):
         for sf in shared_folders:
             sf.display()
 
+def formatted_teams(teams):
+    """Display names/uids for the supplied teams"""
+
+    # Sort by name
+    teams.sort(key=lambda x: (x.name if x.name else ' ').lower(), reverse=False)
+
+    if len(teams) > 0:
+
+        table = [[i + 1, team.team_uid, team.name] for i, team in enumerate(teams)]
+        print(tabulate(table, headers=["#", 'Team UID', 'Name']))
+
+        print('')
+
+    # Under 5 recs, just display on the screen
+    if len(teams) < 5:
+        for team in teams:
+            team.display()
 
 def formatted_history(history):
     """ Show the history of commands"""

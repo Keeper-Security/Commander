@@ -12,21 +12,42 @@
 class SharedFolder:
     """Defines a Keeper Shared Folder"""
 
-    def __init__(self,shared_folder_uid='',revision='',manage_records=False,manage_users=True,name='',records=[],users=[]):
+    def __init__(self,shared_folder_uid='',revision='',default_manage_records=False,
+                 default_manage_users=False,default_can_edit=False,default_can_share=False,
+                 name='',records=[],users=[],teams=[]):
         self.shared_folder_uid = shared_folder_uid 
         self.revision = revision
-        self.manage_records = manage_records 
-        self.manage_users = manage_users 
+        self.default_manage_records = default_manage_records 
+        self.default_manage_users = default_manage_users 
+        self.default_can_edit = default_can_edit 
+        self.default_can_share = default_can_share 
         self.name = name 
         self.records = records 
         self.users = users 
+        self.teams = teams 
 
     def load(self,sf,revision=''):
-        self.manage_records = sf['manage_records']
-        self.manage_users = sf['manage_users']
+        self.default_manage_records = sf['default_manage_records']
+        self.default_manage_users = sf['default_manage_users']
+        self.default_can_edit = sf['default_can_edit']
+        self.default_can_share = sf['default_can_share']
         self.name = sf['name']
-        self.records = sf['records']
-        self.users = sf['users']
+
+        if 'records' in sf:
+            self.records = sf['records']
+        else:
+            self.records = []
+
+        if 'users' in sf:
+            self.users = sf['users']
+        else:
+            self.users = []
+
+        if 'teams' in sf:
+            self.teams = sf['teams']
+        else:
+            self.teams = []
+
         self.revision = revision
 
     def display(self):
@@ -34,8 +55,10 @@ class SharedFolder:
         print('{0:>20s}: {1:<20s}'.format('Shared Folder UID',self.shared_folder_uid))
         print('{0:>20s}: {1}'.format('Revision',self.revision))
         print('{0:>20s}: {1}'.format('Name',self.name))
-        print('{0:>20s}: {1}'.format('Manage Records',self.manage_records))
-        print('{0:>20s}: {1}'.format('Manage Users',self.manage_users))
+        print('{0:>20s}: {1}'.format('Default Manage Records',self.default_manage_records))
+        print('{0:>20s}: {1}'.format('Default Manage Users',self.default_manage_users))
+        print('{0:>20s}: {1}'.format('Default Can Edit',self.default_can_edit))
+        print('{0:>20s}: {1}'.format('Default Can Share',self.default_can_share))
         print('')
         print('{0:>20s}:'.format('Record Permissions'))
 
@@ -51,9 +74,24 @@ class SharedFolder:
                 print('{0:>20s}: {1}: {2}, {3}: {4}'.format(u['username'],'Can Manage Records',u['manage_records'],'Can Manage Users',u['manage_users']))
 
         print('')
+        print('{0:>20s}:'.format('Team Permissions'))
+
+        if len(self.teams) > 0:
+            for t in self.teams:
+                print('{0:>20s}: {1}: {2}, {3}: {4}'.format(t['name'],'Can Manage Records',t['manage_records'],'Can Manage Users',t['manage_users']))
+
+        print('')
 
     def to_string(self):
-        target = self.shared_folder_uid + str(self.users)
+        target = self.shared_folder_uid + str(self.users) + str(self.teams)
+        return target
+
+    def to_lowerstring(self):
+        return self.to_string().lower()
+
+
+    def to_string(self):
+        target = self.shared_folder_uid + str(self.users) + str(self.teams)
         return target
 
     def to_lowerstring(self):

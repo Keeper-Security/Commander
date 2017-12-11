@@ -32,11 +32,18 @@ def list(params):
     try:
         prompt_for_credentials(params)
         api.sync_down(params)
-        if (len(params.record_cache) == 0):
-            print('No records')
-            return
-        results = api.search_records(params, '')
-        display.formatted_records(results)
+        if (len(params.record_cache) > 0):
+            results = api.search_records(params, '')
+            display.formatted_records(results)
+
+        if (len(params.shared_folder_cache) > 0):
+            results = api.search_shared_folders(params, '')
+            display.formatted_shared_folders(results)
+
+        if (len(params.team_cache) > 0):
+            results = api.search_teams(params, '')
+            display.formatted_teams(results)
+
     except Exception as e:
         raise click.ClickException(e)
 
@@ -215,11 +222,22 @@ def do_command(params):
             results = api.search_shared_folders(params, '') 
             display.formatted_shared_folders(results)
 
+    elif (params.command == 'lt'):
+        if (len(params.team_cache) == 0): 
+            print('No teams')
+        else:
+            results = api.search_teams(params, '') 
+            display.formatted_teams(results)
+
     elif (params.command[:2] == 'g '):
         if (api.is_shared_folder(params, params.command[2:])):
             sf = api.get_shared_folder(params, params.command[2:])
             if sf:
                 sf.display()
+        elif (api.is_team(params, params.command[2:])):
+            team = api.get_team(params, params.command[2:])
+            if team:
+                team.display()
         else:
             r = api.get_record(params, params.command[2:])
             if r:
@@ -269,8 +287,9 @@ def do_command(params):
     else:
         print('\n\nCommands:\n')
         print('  d         ... download & decrypt data')
-        print('  l         ... list folders and titles')
+        print('  l         ... list folders and record titles')
         print('  lsf       ... list shared folders')
+        print('  lt        ... list teams')
         print('  s <regex> ... search with regular expression')
         print('  g <uid>   ... get record or shared folder details for uid')
         print('  r <uid>   ... rotate password for uid')

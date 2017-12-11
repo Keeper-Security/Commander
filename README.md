@@ -7,16 +7,18 @@
 
 Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com).  Keeper Commander is designed to perform targeted password rotations and eliminate the use of hardcoded passwords in your systems and software.  Commander will securely rotate passwords in your Keeper vault and then instantly push the changes to all users with privileged access to the password.  Using our connector [plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins), Commander executes a strong password rotation directly to the target system (Unix Logins, Databases, Active Directory, network devices, etc...).
 
-Commander also has a command-line shell interface which provides instant terminal access to your vault on any Unix, Mac or Windows system.  Since Keeper Commander is an open source SDK and written in Python, it can be customized to meet your needs and integrated into your back-end systems.
+Commander also has a command-line shell interface for accessing your Keeper vault, importing data and performing other actions from any Unix, Mac or Windows system.  Since Keeper Commander is an open source SDK and written in Python, it can be customized to meet your needs and integrated into your back-end systems.
 
 [Here's a Video](https://youtu.be/p50OKRiaxl8) demonstrating Commander.
 
 ### Use Cases
 
+* Access passwords through a terminal or SSH session
+* Import or export vault records   
+* Add password records programatically to your Keeper vault
 * Eliminate hard-coded or plaintext passwords in back-end systems
 * Rotate passwords on shared accounts 
 * Perform password rotations on target systems
-* Access passwords through a terminal or SSH session
 * Authenticate with Yubikey and other 2FA methods
 * Schedule and automate rotations 
 
@@ -87,7 +89,7 @@ Options:
 Commands:
   delete-all  Delete all Keeper records on server
   export      Export data from Keeper to local file
-  get         Display specified Keeper record
+  get         Display specified Keeper record/folder/team
   import      Import data from local file to Keeper
   list        Display all record UID/titles
   rotate      Rotate Keeper record
@@ -191,6 +193,7 @@ Commands:
   d         ... download & decrypt data
   l         ... list folders and titles
   lsf       ... list shared folders 
+  lt        ... list teams 
   s <regex> ... search with regular expression
   g <uid>   ... get record or shared folder details
   r <uid>   ... rotate password for uid
@@ -204,11 +207,15 @@ Commands:
 
 * d (download): Downloads all records from the account, decrypts the data key, private key, decrypts records and shared folders.
 
-* l (list): Displays the Record UID, Folder and Title for all records.
+* l (list): Displays the Record UID, Folder and Title for all stored records.
+
+* lsf (list shared folders): Displays a list of all Shared Folder UID and names 
+
+* lt (list teams): Displays a list of all Team UID and names 
 
 * s (search): Searches across all record data and display the Record UID, Folder and Title for matching records.
 
-* g (get): Displays the full record details for a specified Record UID.  The Record UID can be determined by looking at the response from the "l" or "s" commands.
+* g (get): Displays the full details for a specified Record UID, Shared Folder UID or Team UID.  For records, this will show the login, password, custom fields and other record-related information that you would normally see in your Keeper Vault.  For Shared Folders, this will display the records stored in the shared folder, user permissions and team permissions associated with the shared folder.  For Teams, this will display the team name and team permissions as specified in the Keeper Admin Console.
 
 * r (rotate): Rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
 
@@ -514,14 +521,16 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Kindle and Amazon App Store](http://amzn.com/B00NUK3F6S)
 
-[Windows Phone](http://www.windowsphone.com/en-us/store/app/keeper/8d9e0020-9785-e011-986b-78e7d1fa76f8)
+[Windows Phone](https://www.microsoft.com/en-us/store/p/keeper-password-manager/9wzdncrdmpt6)
 
 
 ### Cross-Platform Desktop App (Mac, PC, Linux)
 
-[Windows PC](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktop.exe)
+[Windows PC, 32-bit](https://keepersecurity.com/desktop_electron/Win32/KeeperSetup32.zip)
+[Windows PC, 64-bit](https://keepersecurity.com/desktop_electron/Win64/KeeperSetup64.zip)
+[Windows PC, 32-bit MSI Installer](https://keepersecurity.com/desktop_electron/Win32/KeeperSetup32.msi)
 
-[Mac](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktop.dmg)
+[Mac](https://keepersecurity.com/desktop_electron/Darwin/KeeperSetup.dmg)
 
 [Linux](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktopLinux.zip)
 
@@ -529,15 +538,9 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Mac App Store](https://itunes.apple.com/us/app/keeper-password-manager-digital/id414781829?mt=12)
 
-### Microsoft Store Platform
+### Microsoft Store (Windows 10, Surface) Platform
 
-[Microsoft Store Version - Windows 10](https://www.microsoft.com/store/apps/9wzdncrdmpt6)
-
-[Microsoft Store Version - Windows 8.1 and earlier](http://apps.microsoft.com/windows/app/07fe8361-f512-4873-91a1-acd0cb4c851d)
-
-[Microsoft Store Version - Windows Phone 8.1 and earlier](http://windowsphone.com/s?appid=8d9e0020-9785-e011-986b-78e7d1fa76f8)
-
-[Surface](http://apps.microsoft.com/windows/en-us/app/keeper/07fe8361-f512-4873-91a1-acd0cb4c851d)
+[Microsoft Store Version - Windows 10](https://www.microsoft.com/en-us/store/p/keeper-password-manager/9wzdncrdmpt6)
 
 ### Web-Based Apps and Browser Extensions
 
@@ -548,6 +551,8 @@ Keeper is free for local password management on your device.  Premium subscripti
 [KeeperFill for Firefox](https://addons.mozilla.org/en-US/firefox/addon/keeper-password-manager-digita/)
 
 [KeeperFill for Safari](https://safari-extensions.apple.com/details/?id=com.keepersecurity.safari.KeeperExtension-234QNB7GCA)
+
+[KeeperFill for Edge](https://www.microsoft.com/en-us/store/p/keeper-password-manager-digital-vault/9n0mnnslfz1t)
 
 [KeeperFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
 

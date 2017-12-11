@@ -22,6 +22,7 @@ import datetime
 from keepercommander import plugin_manager, params
 from keepercommander.record import Record
 from keepercommander.shared_folder import SharedFolder
+from keepercommander.team import Team
 from keepercommander.error import AuthenticationError, CommunicationError, CryptoError
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256, HMAC, SHA
@@ -324,7 +325,8 @@ def sync_down(params):
                    'sfheaders',
                    'sfrecords',
                    'sfusers',
-                   'sfteams'
+                   'sfteams',
+                   'teams'
                ],
                'revision':params.revision,
                'client_time':current_milli_time(),
@@ -555,15 +557,19 @@ def sync_down(params):
 
         if 'shared_folders' in response_json:
             if params.debug: print('Processing shared_folders')
+            if params.debug: print(str(response_json['shared_folders']))
+
             for shared_folder in response_json['shared_folders']:
 
                 if 'shared_folder_key' in shared_folder:
                     shared_folder_key = shared_folder['shared_folder_key']
                     if shared_folder['key_type'] == 1:
-                        # decrypt folder key with data_key
+                        if params.debug: print('decrypt folder key with data_key')
+                        if params.debug: print(str(shared_folder_key))
+                        if params.debug: print(str(params.data_key))
                         shared_folder['shared_folder_key'] = decrypt_data(shared_folder_key, params.data_key)
                     if shared_folder['key_type'] == 2:
-                        # decrypt folder key with RSA key
+                        if params.debug: print('decrypt folder key with RSA key')
                         shared_folder['shared_folder_key'] = decrypt_rsa(shared_folder_key, params.rsa_key)
                 else:
                     sf = params.shared_folder_cache[shared_folder['shared_folder_uid']]
@@ -947,6 +953,21 @@ def is_shared_folder(params,shared_folder_uid):
 
     return True
 
+def is_team(params,team_uid):
+    team_uid = team_uid.strip()
+
+    if not team_uid:
+        return False
+
+    if not params.team_cache:
+        return False
+
+    if not team_uid in params.team_cache:
+        return False
+
+    return True 
+
+
 def get_shared_folder(params,shared_folder_uid):
     """Return the referenced shared folder"""
     shared_folder_uid = shared_folder_uid.strip()
@@ -971,6 +992,74 @@ def get_shared_folder(params,shared_folder_uid):
     sf.load(cached_sf, cached_sf['revision'])
 
     return sf
+
+def get_team(params,team_uid):
+    """Return the referenced team """
+    team_uid = team_uid.strip()
+
+    if not team_uid:
+        print('No team UID provided')
+        return
+
+    if not params.team_cache:
+        print('No team cache.  Sync down first.')
+        return
+
+    if not team_uid in params.team_cache:
+        print('Team UID not found.')
+        return
+
+    cached_team = params.team_cache[team_uid]
+
+    if params.debug: print('Cached Team: ' + str(cached_team))
+
+    team = Team(team_uid)
+    team.load(cached_team)
+
+    return team
+
+
+#def get_team_key(params, team_uid):
+#    return
+
+#def get_user_key(params, username):
+#    return
+
+def create_shared_folder(params, sf_json):
+    """ sf_json is defined in the below example:
+    {
+      "name":"My Shared Folder",
+      "operation":"add",
+      "add_records":[
+        {
+          "record_uid":"YWRkcmVjb3JkICAgICAgIA",
+          "record_key":"record key encrypted with shared folder key",
+          "can_share":true,
+          "can_edit":true
+        }
+      ],
+      "add_users":[
+        {
+          "email":"somebody@company.com",
+          "manage_users":true,
+          "manage_records":true,
+          "shared_folder_key":"shared folder key encrypted with recipients public key",
+          "key_type":2
+        }
+      ],
+      "add_teams":[
+        {
+          "team_uid":"UID of the team",
+          "manage_users":true,
+          "manage_records":true,
+          "shared_folder_key":"shared folder key encrypted with team's public key",
+          "key_type":2
+        }
+      ]
+    }
+    """
+    return
+   
 
 def search_records(params, searchstring):
     """Search and display folders/titles/uids"""
@@ -1014,8 +1103,36 @@ def search_shared_folders(params, searchstring):
         if params.debug: print('Lowercase: ' + str(target))
 
         if p.search(target):
-            if params.debug: print('Search sucess')
+            if params.debug: print('Search success')
             search_results.append(sf)
+     
+    return search_results
+
+def search_teams(params, searchstring):
+    """Search teams """
+
+    if not params.team_cache:
+        print('No teams.  Sync down first.')
+        return
+
+    if searchstring != '': print('Searching for ' + searchstring)
+    p = re.compile(searchstring.lower())
+
+    search_results = [] 
+
+    for team_uid in params.team_cache:
+
+        if params.debug: print('Getting Team UID: ' + team_uid)
+        team = get_team(params, team_uid)
+
+        if params.debug: print('team: ' + str(team))
+        target = team.to_lowerstring()
+
+        if params.debug: print('Lowercase: ' + str(target))
+
+        if p.search(target):
+            if params.debug: print('Search success')
+            search_results.append(team)
      
     return search_results
 
