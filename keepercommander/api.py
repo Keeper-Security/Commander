@@ -1019,47 +1019,96 @@ def get_team(params,team_uid):
     return team
 
 
-#def get_team_key(params, team_uid):
-#    return
+def get_user_key(params, username):
+    ''' Return the public RSA key for the given username '''
 
-#def get_user_key(params, username):
-#    return
+    if params.debug: print('Getting public key for user=' + username)
 
-def create_shared_folder(params, sf_json):
-    """ sf_json is defined in the below example:
-    {
-      "name":"My Shared Folder",
-      "operation":"add",
-      "add_records":[
-        {
-          "record_uid":"YWRkcmVjb3JkICAgICAgIA",
-          "record_key":"record key encrypted with shared folder key",
-          "can_share":true,
-          "can_edit":true
-        }
-      ],
-      "add_users":[
-        {
-          "email":"somebody@company.com",
-          "manage_users":true,
-          "manage_records":true,
-          "shared_folder_key":"shared folder key encrypted with recipients public key",
-          "key_type":2
-        }
-      ],
-      "add_teams":[
-        {
-          "team_uid":"UID of the team",
-          "manage_users":true,
-          "manage_records":true,
-          "shared_folder_key":"shared folder key encrypted with team's public key",
-          "key_type":2
-        }
-      ]
-    }
-    """
-    return
-   
+    request = make_request(params, 'public_keys')
+    users = []
+    users.append(username)
+    request['key_owners'] = users
+    response_json = communicate(params, request)
+    if response_json['result'] != 'success':
+        print('Error: unable to retreive public keys for ' + username)
+        return False
+
+    returned_key = b''
+    for public_key in response_json['public_keys']:
+        if 'public_key' in public_key:
+            if public_key['key_owner'] == username:
+                returned_key = public_key['public_key']
+
+    if returned_key == b'':
+        print('Error: unable to locate public key for ' + username)
+    else:
+        if params.debug: 
+            print('Retrieved public key for user: ' + str(returned_key))
+
+    returned_key = returned_key.rstrip('=')
+    returned_key = returned_key + '='
+
+    return returned_key
+
+
+def get_encrypted_sf_key_from_team(params, team_uid, shared_folder_key):
+    ''' Return an encrypted shared folder key based on a team UID ''' 
+
+    if params.debug: print('Getting key object for Team UID=' + team_uid)
+    
+    request = make_request(params, 'team_get_keys')
+    team_uids = [] 
+    team_uids.append(team_uid)
+    request['teams'] = team_uids
+    response_json = communicate(params, request)
+    if response_json['result'] != 'success':
+        print('Error: unable to retreive key for Team UID=' + team_uid)
+        return False
+
+    encrypted_sf_key = b''
+    for key in response_json['keys']:
+        if 'result_code' in key:
+            if key['result_code'] == 'doesnt_exist':
+                if 'team_uid' in key:
+                    print('Error: team UID ' + key['team_uid'] + 'does not exist')
+                    break 
+
+        if 'key' in key:
+            if key['team_uid'] == team_uid:
+                if params.debug: print('Found match for team key: ' + str(key['key']))
+
+                if key['type'] == 1:
+                    if params.debug: print('Team key encrypted with user data key')
+                    team_key = decrypt_data(key['key'], params.data_key)
+
+                    if params.debug: print('Encrypting SF key with Team Key')
+                    iv = os.urandom(16)
+                    cipher = AES.new(team_key, AES.MODE_CBC, iv)
+                    encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
+
+                elif key['type'] == 2:
+                    if params.debug: print('Key encrypted with RSA pulic key')
+                    team_key = decrypt_rsa(key['key'], params.rsa_key)
+
+                    if params.debug: print('Encrypting SF key with Team Key')
+                    iv = os.urandom(16)
+                    cipher = AES.new(team_key, AES.MODE_CBC, iv)
+                    encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
+
+                elif key['type'] == 3:
+                    if params.debug: print('Encrypting SF key with Public Key')
+                    h = SHA.new(shared_folder_key)
+                    rsa_key = RSA.importKey(base64.urlsafe_b64decode(key['key']))
+                    if params.debug: print('RSA Key: ' + str(rsa_key))
+                    cipher = PKCS1_v1_5.new(rsa_key)
+                    encrypted_sf_key = cipher.encrypt(shared_folder_key+h.digest())
+
+                else:
+                    if params.debug: print('Invalid key type')
+
+    if params.debug: print('Encrypted shared folder key: ' + str(encrypted_sf_key))
+    return encrypted_sf_key 
+
 
 def search_records(params, searchstring):
     """Search and display folders/titles/uids"""
@@ -1241,6 +1290,100 @@ def prepare_record(params, record, shared_folder_uid=''):
     if params.debug: print('new_record: ' + str(new_record))
     return new_record
 
+
+def prepare_shared_folder(params, shared_folder):
+    """ Prepares the SharedFolder() object to be sent to the Keeper Cloud API
+        by serializing and encrypting it in the proper JSON format used for
+        transmission.  If the record has no UID, one is generated and the
+        encrypted record key is sent to the server.  If this record was
+        converted from RSA to AES we send the new record key. If the record
+        is in a shared folder, must send shared folder UID for edit permission.
+    """
+    if params.debug: print('prepare_shared_folder')
+
+    needs_sf_key = False
+    if not shared_folder.shared_folder_uid:
+        shared_folder.shared_folder_uid = generate_record_uid()
+        if params.debug: print('Generated Shared Folder UID: ' + shared_folder.shared_folder_uid)
+        needs_sf_key = True
+
+    # build a shared folder dict for upload
+    new_sf = {}
+    new_sf['name'] = shared_folder.name 
+    new_sf['shared_folder_uid'] = shared_folder.shared_folder_uid 
+    new_sf['operation'] = 'add' 
+    new_sf['revision'] = 0 
+    new_sf['default_can_edit'] = shared_folder.default_can_edit 
+    new_sf['default_can_share'] = shared_folder.default_can_share 
+    new_sf['default_manage_records'] = shared_folder.default_manage_records 
+    new_sf['default_manage_users'] = shared_folder.default_manage_users 
+    new_sf['add_records'] = shared_folder.records 
+    new_sf['add_teams'] = shared_folder.teams 
+    new_sf['add_users'] = shared_folder.users 
+
+    if needs_sf_key:
+        shared_folder_key = os.urandom(32)
+        if params.debug: print('Generated new SF key=' + str(shared_folder_key))
+    else:
+        shared_folder_key = \
+                params.shared_folder_cache[shared_folder.shared_folder_uid]['shared_folder_key']
+
+    for t in new_sf['add_teams']:
+        # encrypt shared folder key with team public key  
+        if params.debug: print('Getting encrypted SF key for Team UID=' + str(t['team_uid']))
+        encrypted_sf_key = get_encrypted_sf_key_from_team(params, t['team_uid'], shared_folder_key)
+        t['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=')
+        if params.debug: print('Encrypted shared folder key=' + str(t['shared_folder_key']))
+
+    for u in new_sf['add_users']:
+        if u['username'] == params.user:
+            # this is me, so encrypt shared folder key with data key
+            if params.debug: print('Encrypt SF key with data key')
+            iv = os.urandom(16)
+            cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+            encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
+        else:
+            # encrypt shared folder key with user's public key
+            if params.debug: print('Encrypt SF key with public key')
+            public_key = get_user_key(params, u['username'])
+            h = SHA.new(shared_folder_key)
+            rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
+            cipher = PKCS1_v1_5.new(rsa_key)
+            encrypted_sf_key = cipher.encrypt(shared_folder_key+h.digest())
+        u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=') 
+        if params.debug: print('Encrypted shared folder key from user=' + str(u['shared_folder_key']))
+
+    for r in new_sf['add_records']:
+        if params.debug: print('encrypt record key with the shared folder key')
+        iv = os.urandom(16)
+        cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
+        record_uid = r['record_uid']
+
+        if record_uid in params.record_cache:
+            if params.debug: print('Found record in cache: ' + str(params.record_cache[record_uid]))
+            record_key = params.record_cache[record_uid]['record_key_unencrypted'] 
+            type1key = iv + cipher.encrypt(pad_binary(record_key))
+            encoded_type1key = (base64.urlsafe_b64encode(
+                                   type1key).decode()).rstrip('=')
+            r['record_key'] = encoded_type1key
+            if params.debug: print('Encrypted record key=' + str(r['record_key']))
+        else:
+            print('Error: No record found in cache with UID='+record_uid)
+
+    if params.debug: print('Encrypt folder name with shared folder key')
+    if params.debug: print('Encrypting SF name=' + str(shared_folder.name))
+    if params.debug: print('Encoded: ' + str(shared_folder.name.encode()))
+
+    iv = os.urandom(16)
+    cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
+    encrypted_name = iv + cipher.encrypt(pad_binary(shared_folder.name.encode()))
+
+    if params.debug: print('encrypted shared folder name: ' + str(encrypted_name))
+    new_sf['name'] = base64.urlsafe_b64encode(encrypted_name).decode().rstrip('=') 
+
+    return new_sf
+
+
 def make_request(params, command):
         return {
                'device_id':'Commander',
@@ -1254,7 +1397,7 @@ def communicate(params, request):
 
     def authorize_request():
         request['client_time'] = current_milli_time()
-        request['2fa_token'] = params.mfa_token,
+        request['2fa_token'] = params.mfa_token
         request['2fa_type'] = params.mfa_type
         request['session_token'] = params.session_token
         request['username'] = params.user
@@ -1266,7 +1409,6 @@ def communicate(params, request):
             raise
 
     authorize_request()
-
     if params.debug: print('payload: ' + str(request))
 
     try:
@@ -1425,7 +1567,7 @@ def delete_record(params, record_uid):
 def debug_response(params, payload, response):
     print('')
     print('>>> Request server:[' + params.server + ']')
-    print('>>> Request JSON:[' + str(payload) + ']')
+    print('>>> Request JSON:[' + json.dumps(payload) + ']')
     print('')
     print('<<< Response Code:[' + str(response.status_code) + ']')
     print('<<< Response Headers:[' + str(response.headers) + ']')

@@ -101,7 +101,7 @@ def rotate(params, uid, match, print):
         raise click.ClickException(e)
 
 ####### import
-@click.command('import', help='Import data from local file to Keeper')
+@click.command('import', help='Import password records from local file')
 @click.pass_obj
 @click.option('--format', type=click.Choice(['tab-separated', 'json']))
 @click.argument('filename')
@@ -112,8 +112,19 @@ def _import(params, format, filename):
     except Exception as e:
         raise click.ClickException(e)
 
+####### create_sf
+@click.command('create_sf', help='Create shared folders from JSON input file')
+@click.pass_obj
+@click.argument('filename')
+def create_sf(params, filename):
+    try:
+        prompt_for_credentials(params)
+        imp_exp.create_sf(params, filename)
+    except Exception as e:
+        raise click.ClickException(e)
+
 ####### export
-@click.command(help='Export data from Keeper to local file')
+@click.command(help='Export password records from Keeper')
 @click.pass_obj
 @click.option('--format', type=click.Choice(['tab-separated', 'json']))
 @click.argument('filename')
@@ -285,7 +296,7 @@ def do_command(params):
         pass
 
     else:
-        print('\n\nCommands:\n')
+        print('\n\nShell Commands:\n')
         print('  d         ... download & decrypt data')
         print('  l         ... list folders and record titles')
         print('  lsf       ... list shared folders')

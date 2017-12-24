@@ -278,7 +278,7 @@ If you have turned on two-factor authentication on your Keeper account, you will
 You may ask, why is the master password stored in the JSON configuration file?  It doesn't need to be. You can omit the password field from the JSON file, and you'll be prompted with the password interactively.  It is our recommendation to set up a Keeper account that is solely used for Commander interaction. Using Keeper's sharing features, share the records with the Commander account that will be rotated.  Set a strong master password (such as a long hash key) and turn on Two-Factor authentication on this Commander account.  Then store the account master password in the JSON file and do not use this account for any other operations. 
 
 
-### Importing Data
+### Importing Password Records into Keeper
 
 To import records into your vault, you can provide either JSON or tab-delimited file.
 If using a JSON file, make sure it's an a valid JSON array.  For example, here's a JSON array file with 2 records:
@@ -309,6 +309,56 @@ Here's the command to run:
 
 ```
 keeper import --format=json import.json
+```
+
+### Importing Shared Folders into Keeper
+
+To automatically create Shared Folders into your vault, you need to provide a JSON file in the format defined below..
+
+A shared folder is an object which contains Keeper records, default permissions, users and teams.  You must specify the name of the folder, the default permissions, which specific records to add, which users to add and which teams (if any) to add.  Records are defined by the Record UID.  Users are defined by their email address (note: the user must exist).  Teams are defined by the Team UID.  Records, teams and users must exist prior to creating the shared folder, or the command will fail.  Record UID and Team UID can be found using Commander ("list" command). Use a JSON validator if you get errors running this command.  Make sure it's an a valid JSON array.  For example, here's a JSON array file with one shared folder defined: 
+
+```
+    [{
+      "name":"My Shared Folder",
+      "default_can_edit": false,
+      "default_can_share": false,
+      "default_manage_records": false,
+      "default_manage_users": false,
+      "records":[
+        {
+          "record_uid":"YWRkcmVjb3JkICAgICAgIA",
+          "can_share":true,
+          "can_edit":true
+        }
+      ],
+      "users":[
+        {
+          "username":"somebody@company.com",
+          "manage_users":false,
+          "manage_records":false
+        },
+        {
+          "username":"me@company.com",
+          "manage_users":true,
+          "manage_records":true
+        }
+      ],
+      "teams":[
+        {
+          "team_uid":"yKz9nxpJS1yzDxBl-Akdog",
+          "manage_users":true,
+          "manage_records":true
+        }
+      ]
+    }]
+```
+
+Note that all users with access to the shared folder must be specified, even the user who is executing the API call.
+
+Here's the example command to run:
+
+```
+keeper create_sf my_shared_folder.json
 ```
 
 ### Scheduling & Automation
