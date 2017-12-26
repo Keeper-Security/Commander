@@ -146,15 +146,17 @@ def login(params):
 
             if 'device_token' in response_json:
                 params.mfa_token = response_json['device_token']
-                # save token to config file
                 params.config['mfa_type'] = 'device_token'
                 params.config['mfa_token'] = params.mfa_token 
+                if params.debug: print('params.mfa_token=' + params.mfa_token)
+
+                # save token to config file if the file exists
                 try:
                     with open(params.config_filename, 'w') as f:
                         json.dump(params.config, f, ensure_ascii=False)
                         print('Updated mfa_token in ' + params.config_filename)
                 except:
-                    print('Unable to update mfa_token') 
+                    if params.debug: print('Unable to update mfa_token') 
 
             if params.mfa_token:
                 params.mfa_type = 'device_token'
@@ -1111,7 +1113,8 @@ def get_encrypted_sf_key_from_team(params, team_uid, shared_folder_key):
 
 
 def search_records(params, searchstring):
-    """Search and display folders/titles/uids"""
+    """Search for string in record contents 
+       and return array of Record objects """
 
     if not params.record_cache:
         print('No record cache.  Sync down first.')
@@ -1492,29 +1495,8 @@ def update_record(params, record):
         print('Record push failed')
         return False
 
-def add_record(params):
-    """ Create a new record with passed-in data or interactively.
-        The shared folder UID is also optional.  The Record() object
-        is pushed to the Keeper Cloud API
-    """
-    record = Record()
-    if not record.title:
-        while not record.title:
-            record.title = input("... Title (req'd): ")
-        record.folder = input("... Folder: ")
-        record.login = input("... Login: ")
-        record.password = input("... Password: ")
-        record.login_url = input("... Login URL: ")
-        record.notes = input("... Notes: ")
-        while True:
-            custom_dict = {}
-            custom_dict['name'] = input("... Custom Field Name : ") 
-            if not custom_dict['name']:
-                break
-
-            custom_dict['value'] = input("... Custom Field Value : ") 
-            custom_dict['type'] = 'text' 
-            record.custom_fields.append(custom_dict)
+def add_record(params, record):
+    """ Create a new Keeper record """
 
     new_record = prepare_record(params, record)
     request = make_request(params, 'record_update')
@@ -1544,6 +1526,9 @@ def add_record(params):
             str(new_revision))
 
         new_record['revision'] = new_revision
+
+        # update record UID
+        record.record_uid = new_record['record_uid']
 
         # sync down the data which updates the caches
         sync_down(params)

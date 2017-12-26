@@ -59,6 +59,10 @@ To run the interactive shell, type:
 keeper shell
 ```
 
+### Custom integrations
+
+See the [custom](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/custom) folder for examples on creating your own custom scripts to interface with Keeper from your own source code.
+
 ### Help
 
 If you need help, found a bug, or you're interested in contributing, email us at ops@keepersecurity.com.

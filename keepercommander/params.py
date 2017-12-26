@@ -11,9 +11,9 @@
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self,config_filename='',config={}, server='',
+    def __init__(self,config_filename='',config={}, server='https://keepersecurity.com/api/v2/',
                  user='',password='',mfa_token='',
-                 mfa_type='',command='',commands=[],plugins=[],
+                 mfa_type='device_token',command='',commands=[],plugins=[],
                  session_token='',salt='',iterations='',
                  encrypted_private_key='', encryption_params='',
                  data_key='',private_key='',

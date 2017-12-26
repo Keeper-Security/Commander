@@ -577,7 +577,9 @@ Keeper is free for local password management on your device.  Premium subscripti
 ### Cross-Platform Desktop App (Mac, PC, Linux)
 
 [Windows PC, 32-bit](https://keepersecurity.com/desktop_electron/Win32/KeeperSetup32.zip)
+
 [Windows PC, 64-bit](https://keepersecurity.com/desktop_electron/Win64/KeeperSetup64.zip)
+
 [Windows PC, 32-bit MSI Installer](https://keepersecurity.com/desktop_electron/Win32/KeeperSetup32.msi)
 
 [Mac](https://keepersecurity.com/desktop_electron/Darwin/KeeperSetup.dmg)

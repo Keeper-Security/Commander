@@ -15,6 +15,7 @@ import click
 import datetime
 import time
 
+from keepercommander.record import Record
 from keepercommander import display, api, imp_exp
 from keepercommander.params import KeeperParams
 from keepercommander.error import AuthenticationError, CommunicationError
@@ -279,7 +280,25 @@ def do_command(params):
         api.sync_down(params)
 
     elif (params.command == 'a'):
-        api.add_record(params)
+        record = Record()
+        while not record.title:
+            record.title = input("... Title (req'd): ")
+        record.folder = input("... Folder: ")
+        record.login = input("... Login: ")
+        record.password = input("... Password: ")
+        record.login_url = input("... Login URL: ")
+        record.notes = input("... Notes: ")
+        while True:
+            custom_dict = {} 
+            custom_dict['name'] = input("... Custom Field Name : ") 
+            if not custom_dict['name']:
+                break
+
+            custom_dict['value'] = input("... Custom Field Value : ") 
+            custom_dict['type'] = 'text' 
+            record.custom_fields.append(custom_dict)
+
+        api.add_record(params, record)
 
     elif (params.command == 'h'):
         display.formatted_history(stack)
