@@ -51,6 +51,7 @@ setup(name='keepercommander',
                 'keepercommander.plugins.sshkey',
                 'keepercommander.plugins.unixpasswd',
                 'keepercommander.plugins.windows',
+                'keepercommander.plugins.pspasswd',
                 'keepercommander.yubikey',
                 ],
 
