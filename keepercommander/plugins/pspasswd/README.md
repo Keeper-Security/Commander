@@ -1,11 +1,21 @@
 Commander Plugin for Windows PSPasswd.exe Command
 ----
 
-This plugin allows rotating any user account password on a remote computer using the pspasswd.exe tool. 
+This plugin provides IT Admins with the ability to rotate the password of a remote system's administrative local password. The password is rotated using the widely used "pspasswd" utility and the change is syncronized to a specific Keeper record in your vault.  
 
-### Dependencies
+The way this plugin is implemented requires that Commander and pspasswd is installed on the Domain Controller.  The instructions in this README assume that you are executing Commander scripts from the Domain Controller.
 
-1) Install PSTools
+### Setup and Dependencies
+
+1) Enabled Remote Service Management on each target computer
+
+Assuming all computers are domain-attached and reachable from the Domain Controller, ensure that "Remote Service Management" is allowed for inbound in Domain by enabling the relevant Firewall rule on all computers.  On each of the target computers, go to Windows Firewall rules -> Inbound Rules -> and enabled the "Remote Service Management" rule.
+
+2) Install Commander
+
+Python and Commander only need to be installed on the domain controller.  Follow the [instructions](https://github.com/Keeper-Security/Commander#installation) provided on the Commander github page.
+
+3) Install pspasswd 
 
 - Download the [PSTools Package](https://docs.microsoft.com/en-us/sysinternals/downloads/pspasswd) from Microsoft
 
@@ -55,7 +65,7 @@ This would generate a new password with :
 
 ### Manually executing this command
 
-To run the command manually, just login to Keeper interactive shell, locate the record and use the "rotate" command:
+To run the command manually, just login to Keeper interactive shell, locate the record and use the "rotate" command.  Here's an example:
 
 ```
 $ keeper shell
@@ -69,8 +79,8 @@ $ keeper shell
  password manager & digital vault
 
 
-User(Email):
-Password:
+User(Email): *******
+Password: *******
 Syncing...
 Decrypted [1] Record
 Keeper > l
@@ -88,6 +98,21 @@ Keeper > l
           cmdr:rules: 4,6,3,8
 
 Keeper > r HKj0T-NmBndy8SJ6ttbt1A
+Rotating with plugin pspasswd
+
+PsPasswd v1.24 - Local and remote password changer
+Copyright (C) 2003-2016 Mark Russinovich
+Sysinternals - www.sysinternals.com
+
+Password successfully changed.
+
+Password changed successfully
+Pushing update...
+New record successful for record_uid=HKj0T-NmBndy8SJ6ttbt1A, revision=194238452 , new_revision=194243895
+Syncing...
+Decrypted [1] Record
+Rotation successful for record_uid=HKj0T-NmBndy8SJ6ttbt1A, revision=194243895
+Keeper >
 ```
 
 ### Auto-command execution
@@ -105,4 +130,7 @@ Example config.json file:
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then rotate this password using the plugin programmed into the record. Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.  The Record UID is also viewable on the Keeper Web Vault and Desktop App.
+In this example, we are telling Commander to first download and decrypt records, then rotate the password (record UID HKj0T-NmBndy8SJ6ttbt1A) using the plugin programmed into the record. To locate the Record UID, simply view it on the commander interactive shell or view it on the Keeper Web Vault and Desktop App (small 'key' icon to the right of the record title).
+
+We're excited about the use cases for this plugin. If you have any feature requests, please contact us at ops@keepersecurity.com.
+
