@@ -7,15 +7,15 @@ The way this plugin is implemented requires that Commander and pspasswd is insta
 
 ### Setup and Dependencies
 
-1) Enabled Remote Service Management on each target computer
+1. Enabled Remote Service Management on each target computer
 
-Assuming all computers are domain-attached and reachable from the Domain Controller, ensure that "Remote Service Management" is allowed for inbound in Domain by enabling the relevant Firewall rule on all computers.  On each of the target computers, go to Windows Firewall rules -> Inbound Rules -> and enabled the "Remote Service Management" rule.
+- Assuming all computers are domain-attached and reachable from the Domain Controller, ensure that "Remote Service Management" is allowed for inbound in Domain by enabling the relevant Firewall rule on all computers.  On each of the target computers, go to Windows Firewall rules -> Inbound Rules -> and enabled the "Remote Service Management" rule.
 
-2) Install Commander
+2. Install Commander
 
-Python and Commander only need to be installed on the domain controller.  Follow the [instructions](https://github.com/Keeper-Security/Commander#installation) provided on the Commander github page.
+- Python and Commander only need to be installed on the domain controller.  Follow the [instructions](https://github.com/Keeper-Security/Commander#installation) provided on the Commander github page.
 
-3) Install pspasswd 
+3. Install pspasswd 
 
 - Download the [PSTools Package](https://docs.microsoft.com/en-us/sysinternals/downloads/pspasswd) from Microsoft
 
@@ -34,7 +34,7 @@ Python and Commander only need to be installed on the domain controller.  Follow
   On newer systems, just click "New" then type in the full path to the install, e.g.:
   C:\Users\craig\PSTools
 
-2) Add the following Custom Fields to the record that you want to rotate within Keeper
+4. Add the following Custom Fields to the record that you want to rotate within Keeper
 
 ```
 Name: cmdr:plugin
@@ -44,7 +44,7 @@ Name: cmdr:host
 Value: <computer or computers where the local account exists>
 ```
 
-3) Commander will use the "Login" field, "cmdr:host" and "cmdr:rules" fields of your Keeper record to execute the password rotation.
+5. Commander will use the "Login" field, "cmdr:host" and "cmdr:rules" fields of your Keeper record to execute the password rotation.
 
 ### Optional custom fields
 
@@ -132,5 +132,5 @@ Example config.json file:
 
 In this example, we are telling Commander to first download and decrypt records, then rotate the password (record UID HKj0T-NmBndy8SJ6ttbt1A) using the plugin programmed into the record. To locate the Record UID, simply view it on the commander interactive shell or view it on the Keeper Web Vault and Desktop App (small 'key' icon to the right of the record title).
 
-We're excited about the use cases for this plugin. If you have any feature requests, please contact us at ops@keepersecurity.com.
+If you have any feature requests for this plugin, please contact us at ops@keepersecurity.com.
 
