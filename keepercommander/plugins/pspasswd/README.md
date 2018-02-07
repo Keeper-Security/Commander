@@ -1,4 +1,4 @@
-Commander Plugin for Windows net Command
+Commander Plugin for Windows PSPasswd.exe Command
 ----
 
 This plugin allows rotating any user account password on a remote computer using the pspasswd.exe tool. 
