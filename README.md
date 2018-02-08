@@ -30,7 +30,29 @@ Changes made through Keeper Commander instantly propagate to the users who have 
 
 When you grant and revoke access or rotate a password, it instantly updates to users on their mobile and desktop devices. Control access to highly secure systems by rotating passwords and pushing those credentials to users - all within the Keeper ecosystem.
 
-### Installation
+### Installation - Windows 
+
+Unless you're planning to modify code or build Python scripts, the quick and easy way to install Commander on Windows is using the [WinPython](https://winpython.github.io/) package.
+
+Instructions:
+
+1. Download and install [WinPython](https://winpython.github.io/)
+
+2. From the install folder of WinPython, run the "WinPython Command Prompt" 
+
+3. Install Commander from the command prompt:
+
+```bash
+pip3 install keepercommander
+```
+
+To start using Commander just type:
+
+```bash
+keeper shell
+```
+
+### Installation - Mac and Linux OS
 
 If you do not have Python 3 installed already (check by trying to run `pip3` in the Terminal), you can install it by going to [python.org](https://www.python.org) and following the instructions).
 
