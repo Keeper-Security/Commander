@@ -37,9 +37,7 @@ Unless you're planning to modify code or build Python scripts, the quick and eas
 Instructions:
 
 1. Download and install [WinPython](https://winpython.github.io/)
-
 2. From the install folder of WinPython, run the "WinPython Command Prompt" 
-
 3. Install Commander from the command prompt:
 
 ```bash
