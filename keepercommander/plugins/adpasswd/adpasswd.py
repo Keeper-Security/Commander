@@ -6,7 +6,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -17,17 +17,20 @@ from ldap3 import Server, Connection, ALL
        pip3 install ldap3
 """
 
-
 def rotate(record, newpassword):
     result = False
 
+    old_password = record.password
     host = record.get('cmdr:host')
     user_dn = record.get('cmdr:userdn')
+    use_ssl = record.get('cmdr:use_ssl')
 
     try:
+        # print('Connecting to ' + host)
+
         server = Server(
             host=host,
-            use_ssl=True,
+            use_ssl=(use_ssl in ['True','true','yes','Yes','y','Y','T','t']),
             get_info=ALL)
 
         conn = Connection(
@@ -36,16 +39,22 @@ def rotate(record, newpassword):
             password=record.password,
             auto_bind=True)
 
-        changePwdResult = conn.extend.microsoft.modify_password(user_dn, newpassword)
+        # print('Connection: ' + str(conn))
+        # print('Server Info: ' + str(server.info))
+        # print('Whoami: ' + str(conn.extend.standard.who_am_i()))
+
+        changePwdResult = conn.extend.microsoft.modify_password(
+            user=user_dn, new_password=newpassword, old_password=old_password)
 
         if (changePwdResult == True):
             print('Password changed successfully')
             record.password = newpassword
             result = True
         else:
-            print("Server returned this message: %s" % (changePwdResult))
+            print('Error with adpasswd change: ' + conn.result)
 
         conn.unbind()
+
     except:
         print("Error during connection to AD server")
 
