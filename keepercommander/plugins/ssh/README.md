@@ -49,7 +49,6 @@ Example:
 ```
 {                                                                               
     "debug":false,
-    "server":"https://keepersecurity.com/api/v2/",
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]

@@ -123,7 +123,6 @@ Here's a basic "config.json" file which will prompt you for your Keeper master p
 
 ```
 {
-    "server":"https://keepersecurity.com/api/v2/",
     "user":"youremail@company.com",
     "password":"",
     "mfa_token":"",
@@ -255,7 +254,6 @@ Here's an example config.json file:
 
 ```
 {
-    "server":"https://keepersecurity.com/api/v2/",
     "user":"your_email_here",
     "password":"your_password_here",
     "debug":false,
@@ -282,7 +280,7 @@ In this case, Commander will start up using foo.json as the configuration.
 ### JSON Config file format
 
 ```
-server: do not change.  Default is https://keepersecurity.com/api/v2/.
+server: do not change
 user: the Keeper email address
 password: the Keeper master password
 debug: turn on verbose debugging output
@@ -394,7 +392,6 @@ config.json:
 ```
 {
     "debug":false,
-    "server":"https://keepersecurity.com/api/v2/",
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
     "timedelay":600,
@@ -492,7 +489,6 @@ If you have multiple config files, you can just copy-paste this device token int
 ```
 {
     "debug":false,
-    "server":"https://keepersecurity.com/api/v2/",
     "user":"email@company.com",
     "password":"123456",
     "mfa_token":"vFcl44TdjQcgTVfCMlUw0O9DIw8mOg8fJypGOlS_Rw0WfXbCD9iw",
@@ -594,7 +590,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 [Windows Phone](https://www.microsoft.com/en-us/store/p/keeper-password-manager/9wzdncrdmpt6)
 
 
-### Cross-Platform Desktop App (Mac, PC, Linux)
+### Cross-Platform Desktop App
 
 [Windows PC, 32-bit](https://keepersecurity.com/desktop_electron/Win32/KeeperSetup32.zip)
 
@@ -604,17 +600,13 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Mac](https://keepersecurity.com/desktop_electron/Darwin/KeeperSetup.dmg)
 
-[Linux](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/KeeperDesktopLinux.zip)
-
-### Mac App Store (Thin Client)
-
-[Mac App Store](https://itunes.apple.com/us/app/keeper-password-manager-digital/id414781829?mt=12)
 
 ### Microsoft Store (Windows 10, Surface) Platform
 
 [Microsoft Store Version - Windows 10](https://www.microsoft.com/en-us/store/p/keeper-password-manager/9wzdncrdmpt6)
 
-### Web-Based Apps and Browser Extensions
+
+### Web Vault and Browser Extensions
 
 [Web App - Online Vault](https://keepersecurity.com/vault)
 
@@ -625,8 +617,6 @@ Keeper is free for local password management on your device.  Premium subscripti
 [KeeperFill for Safari](https://safari-extensions.apple.com/details/?id=com.keepersecurity.safari.KeeperExtension-234QNB7GCA)
 
 [KeeperFill for Edge](https://www.microsoft.com/en-us/store/p/keeper-password-manager-digital-vault/9n0mnnslfz1t)
-
-[KeeperFill for Internet Explorer](https://s3.amazonaws.com/keepersecurity/en_US/static/apps/SetupKeeperIE.exe)
 
 [Enterprise Admin Console](https://keepersecurity.com/console)
 
