@@ -48,6 +48,36 @@ def list(params):
     except Exception as e:
         raise click.ClickException(e)
 
+####### list_sf
+@click.command(help = 'Display all Shared Folder UID/titles')
+@click.pass_obj
+def list_sf(params):
+    try:
+        prompt_for_credentials(params)
+        api.sync_down(params)
+
+        if (len(params.shared_folder_cache) > 0):
+            results = api.search_shared_folders(params, '')
+            display.formatted_shared_folders(results)
+
+    except Exception as e:
+        raise click.ClickException(e)
+
+####### list_teams
+@click.command(help = 'Display all Teams')
+@click.pass_obj
+def list_teams(params):
+    try:
+        prompt_for_credentials(params)
+        api.sync_down(params)
+
+        if (len(params.team_cache) > 0):
+            results = api.search_teams(params, '')
+            display.formatted_teams(results)
+
+    except Exception as e:
+        raise click.ClickException(e)
+
 ####### get
 @click.command('get', help = 'Display specified Keeper record')
 @click.pass_obj

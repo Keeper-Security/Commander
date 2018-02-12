@@ -5,11 +5,13 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2017 Keeper Security Inc.
+# Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-# Example showing how to search the vault 
+# Example code showing how to search the vault 
 #
+# Usage:
+#    python search.py
 
 import sys
 import getpass
@@ -25,17 +27,24 @@ while not my_params.user:
 while not my_params.password:
     my_params.password = getpass.getpass(prompt='Master Password: ', stream=None)
 
+searchstring = getpass.getpass(prompt='Search String: ', stream=None)
 api.sync_down(my_params)
 
-# Search for 'Test'
-results = api.search_records(my_params, 'Test') 
-
-# Display results. 
-# see record.py for available fields or 
-# call display.formatted_records(results) to show
-# all record details
-
+# Search records
+results = api.search_records(my_params, searchstring) 
 for r in results:
     print('Record UID ' + r.record_uid + ' matches')
+    # Note: see record.py for available fields or 
+    #       call display.formatted_records(results) to show all record details
+
+# Search shared folders
+results = api.search_shared_folders(my_params, searchstring) 
+for sf in results:
+    print('Shared Folder UID ' + sf.shared_folder_uid + ' matches')
+
+# Search teams
+results = api.search_teams(my_params, searchstring) 
+for t in results:
+    print('Team UID ' + t.team_uid + ' matches')
 
 
