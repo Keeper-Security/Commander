@@ -23,10 +23,10 @@ def export(params, format, filename):
     records.sort(key=lambda x: ((x.folder if x.folder else ' ') + x.title).lower(), reverse=False)
 
     if format == 'json':
-        with open(filename, 'w') as f:
+        with open(filename, mode="w", encoding="utf8") as f:
             json.dump([record.to_dictionary() for record in records], f, indent=2, ensure_ascii=False)
     else:
-        with open(filename, 'wt') as f:
+        with open(filename, mode="wt", encoding="utf8") as f:
             for record in records:
                 f.write(record.to_tab_delimited() + '\n')
             print('{0} records exported to {1}'.format(len(records), filename))
@@ -73,13 +73,13 @@ def _import(params, format, filename):
 
     if format == 'json':
         def read_json():
-            with open(filename, 'rt') as f:
+            with open(filename, mode="rt", encoding="utf8") as f:
                 return json.load(f)
 
         records_to_add = [api.prepare_record(params, parse_record_json(json)) for json in read_json()]
     else:
         def read_lines():
-            with open(filename, 'rt') as f:
+            with open(filename, mode="rt", encoding="utf8") as f:
                 return f.readlines()
 
         records_to_add = [api.prepare_record(params, parse_line(line)) for line in read_lines()]
@@ -104,7 +104,7 @@ def create_sf(params, filename):
     api.sync_down(params)
 
     def read_json():
-        with open(filename, 'rt') as f:
+        with open(filename, mode="rt", encoding="utf8") as f:
             return json.load(f)
 
     print('Creating shared folder(s)...')
