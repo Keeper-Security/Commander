@@ -109,9 +109,11 @@ def create_sf(params, filename):
 
     print('Creating shared folder(s)...')
     num_success = 0
+    add_records_success = [] 
+    user_success = [] 
 
     for json_sf in read_json():
-        print('Preparing shared folder')
+        print('Preparing shared folder in read_json')
         my_shared_folder = api.prepare_shared_folder(params, parse_sf_json(json_sf))
         request = api.make_request(params, 'shared_folder_update')
 
@@ -120,22 +122,24 @@ def create_sf(params, filename):
         if params.debug: print('Sending request')
         response_json = api.communicate(params, request)
 
-        user_success = [info for info in response_json['add_users'] if info['status'] == 'success']
-        if len(user_success) > 0:
-            print("{0} users added successfully".format(len(user_success)))
+        if 'add_users' in response_json:
+            user_success = [info for info in response_json['add_users'] if info['status'] == 'success']
+            if len(user_success) > 0:
+                print("{0} users added successfully".format(len(user_success)))
 
-        user_failures = [info for info in response_json['add_users'] if info['status'] != 'success']
-        if len(user_failures) > 0:
-            print("{0} users failed to get added".format(len(user_failures)))
+            user_failures = [info for info in response_json['add_users'] if info['status'] != 'success']
+            if len(user_failures) > 0:
+                print("{0} users failed to get added".format(len(user_failures)))
 
-        add_records_success = [info for info in response_json['add_records'] if info['status'] == 'success']
-        if len(add_records_success) > 0:
-            print("{0} records added successfully".format(len(add_records_success)))
-
-        add_records_failures = [info for info in response_json['add_records'] if info['status'] != 'success']
-        if len(add_records_failures) > 0:
-            print("{0} records failed to get added".format(len(add_records_failures)))
-
+        if 'add_records' in response_json:
+            add_records_success = [info for info in response_json['add_records'] if info['status'] == 'success']
+            if len(add_records_success) > 0:
+                print("{0} records added successfully".format(len(add_records_success)))
+    
+            add_records_failures = [info for info in response_json['add_records'] if info['status'] != 'success']
+            if len(add_records_failures) > 0:
+                print("{0} records failed to get added".format(len(add_records_failures)))
+    
         if len(user_success)+len(add_records_success) > 0:
             num_success += 1
             print('Created shared folder ' + request['shared_folder_uid'] + 'with success')

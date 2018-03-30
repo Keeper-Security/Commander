@@ -724,10 +724,9 @@ def sync_down(params):
             print('Note: You have pending share requests.')
 
         if 'sharing_changes' in response_json:
+            # Not doing anything with this yet
             for sharing_change in response_json['sharing_changes']:
                 record_uid = sharing_change['record_uid']
-                if record_uid in params.record_cache:
-                    params.record_cache[record_uid].shared = sharing_change['shared']
 
         if params.debug:
             print('--- Meta Data Cache: ' + str(params.meta_data_cache))
@@ -1301,6 +1300,8 @@ def prepare_shared_folder(params, shared_folder):
         encrypted record key is sent to the server.  If this record was
         converted from RSA to AES we send the new record key. If the record
         is in a shared folder, must send shared folder UID for edit permission.
+
+        shared_folder is a SharedFolder object. 
     """
     if params.debug: print('prepare_shared_folder')
 
@@ -1314,65 +1315,77 @@ def prepare_shared_folder(params, shared_folder):
     new_sf = {}
     new_sf['name'] = shared_folder.name 
     new_sf['shared_folder_uid'] = shared_folder.shared_folder_uid 
-    new_sf['operation'] = 'add' 
-    new_sf['revision'] = 0 
     new_sf['default_can_edit'] = shared_folder.default_can_edit 
     new_sf['default_can_share'] = shared_folder.default_can_share 
     new_sf['default_manage_records'] = shared_folder.default_manage_records 
     new_sf['default_manage_users'] = shared_folder.default_manage_users 
-    new_sf['add_records'] = shared_folder.records 
-    new_sf['add_teams'] = shared_folder.teams 
-    new_sf['add_users'] = shared_folder.users 
+
+    if shared_folder.records:
+        new_sf['add_records'] = shared_folder.records 
+
+    if shared_folder.teams:
+        new_sf['add_teams'] = shared_folder.teams 
+
+    if shared_folder.users:
+        new_sf['add_users'] = shared_folder.users 
 
     if needs_sf_key:
+        new_sf['operation'] = 'add' 
+        new_sf['revision'] = 0 
         shared_folder_key = os.urandom(32)
         if params.debug: print('Generated new SF key=' + str(shared_folder_key))
     else:
+        new_sf['operation'] = 'update' 
+        if params.debug: print('Updating shared folder with revision=' + str(shared_folder.revision))
+        new_sf['revision'] = shared_folder.revision 
         shared_folder_key = \
                 params.shared_folder_cache[shared_folder.shared_folder_uid]['shared_folder_key']
 
-    for t in new_sf['add_teams']:
-        # encrypt shared folder key with team public key  
-        if params.debug: print('Getting encrypted SF key for Team UID=' + str(t['team_uid']))
-        encrypted_sf_key = get_encrypted_sf_key_from_team(params, t['team_uid'], shared_folder_key)
-        t['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=')
-        if params.debug: print('Encrypted shared folder key=' + str(t['shared_folder_key']))
+    if 'add_teams' in new_sf:
+        for t in new_sf['add_teams']:
+            # encrypt shared folder key with team public key  
+            if params.debug: print('Getting encrypted SF key for Team UID=' + str(t['team_uid']))
+            encrypted_sf_key = get_encrypted_sf_key_from_team(params, t['team_uid'], shared_folder_key)
+            t['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=')
+            if params.debug: print('Encrypted shared folder key=' + str(t['shared_folder_key']))
 
-    for u in new_sf['add_users']:
-        if u['username'] == params.user:
-            # this is me, so encrypt shared folder key with data key
-            if params.debug: print('Encrypt SF key with data key')
+    if 'add_users' in new_sf:
+        for u in new_sf['add_users']:
+            if u['username'] == params.user:
+                # this is me, so encrypt shared folder key with data key
+                if params.debug: print('Encrypt SF key with data key')
+                iv = os.urandom(16)
+                cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
+                encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
+            else:
+                # encrypt shared folder key with user's public key
+                if params.debug: print('Encrypt SF key with public key')
+                public_key = get_user_key(params, u['username'])
+                h = SHA.new(shared_folder_key)
+                rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
+                cipher = PKCS1_v1_5.new(rsa_key)
+                encrypted_sf_key = cipher.encrypt(shared_folder_key+h.digest())
+            u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=') 
+            if params.debug: print('Encrypted shared folder key from user=' + str(u['shared_folder_key']))
+
+    if 'add_records' in new_sf:
+        for r in new_sf['add_records']:
+            if params.debug: print('encrypt record key with the shared folder key')
             iv = os.urandom(16)
-            cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-            encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
-        else:
-            # encrypt shared folder key with user's public key
-            if params.debug: print('Encrypt SF key with public key')
-            public_key = get_user_key(params, u['username'])
-            h = SHA.new(shared_folder_key)
-            rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
-            cipher = PKCS1_v1_5.new(rsa_key)
-            encrypted_sf_key = cipher.encrypt(shared_folder_key+h.digest())
-        u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=') 
-        if params.debug: print('Encrypted shared folder key from user=' + str(u['shared_folder_key']))
-
-    for r in new_sf['add_records']:
-        if params.debug: print('encrypt record key with the shared folder key')
-        iv = os.urandom(16)
-        cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
-        record_uid = r['record_uid']
-
-        if record_uid in params.record_cache:
-            if params.debug: print('Found record in cache: ' + str(params.record_cache[record_uid]))
-            record_key = params.record_cache[record_uid]['record_key_unencrypted'] 
-            type1key = iv + cipher.encrypt(pad_binary(record_key))
-            encoded_type1key = (base64.urlsafe_b64encode(
-                                   type1key).decode()).rstrip('=')
-            r['record_key'] = encoded_type1key
-            if params.debug: print('Encrypted record key=' + str(r['record_key']))
-        else:
-            print('Error: No record found in cache with UID='+record_uid)
-
+            cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
+            record_uid = r['record_uid']
+    
+            if record_uid in params.record_cache:
+                if params.debug: print('Found record in cache: ' + str(params.record_cache[record_uid]))
+                record_key = params.record_cache[record_uid]['record_key_unencrypted'] 
+                type1key = iv + cipher.encrypt(pad_binary(record_key))
+                encoded_type1key = (base64.urlsafe_b64encode(
+                                       type1key).decode()).rstrip('=')
+                r['record_key'] = encoded_type1key
+                if params.debug: print('Encrypted record key=' + str(r['record_key']))
+            else:
+                print('Error: No record found in cache with UID='+record_uid)
+    
     if params.debug: print('Encrypt folder name with shared folder key')
     if params.debug: print('Encrypting SF name=' + str(shared_folder.name))
     if params.debug: print('Encoded: ' + str(shared_folder.name.encode()))
@@ -1494,6 +1507,27 @@ def update_record(params, record):
     else:
         print('Record push failed')
         return False
+
+
+def update_shared_folder(params, shared_folder):
+    """ Push a shared folder update to the cloud. 
+        Takes a SharedFolder() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    print("Pushing shared folder update...")
+    update_shared_folder = prepare_shared_folder(params, shared_folder) 
+    request = make_request(params, 'shared_folder_update')
+    request.update(update_shared_folder)
+
+    if params.debug: print('Sending request')
+    response_json = communicate(params, request)
+
+    if params.debug: print('Reponse: ' + str(response_json))
+
+    # sync down the data which updates the caches
+    sync_down(params)
+    return True
+
 
 def add_record(params, record):
     """ Create a new Keeper record """
