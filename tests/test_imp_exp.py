@@ -18,7 +18,7 @@ class TestImpExp:
         self.assert_sample_record(record)
 
     def test_parse_json(self):
-        record = parse_json({
+        record = parse_record_json({
             'folder': 'folder',
             'title': 'title',
             'login': 'login',
