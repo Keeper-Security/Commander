@@ -1,4 +1,4 @@
-from keepercommander.imp_exp import parse_line, parse_json
+from keepercommander.imp_exp import parse_line, parse_record_json
 
 class TestImpExp:
 
@@ -18,7 +18,7 @@ class TestImpExp:
         self.assert_sample_record(record)
 
     def test_parse_json(self):
-        record = parse_json({
+        record = parse_record_json({
             'folder': 'folder',
             'title': 'title',
             'login': 'login',
