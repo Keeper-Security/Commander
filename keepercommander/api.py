@@ -31,7 +31,7 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 # Client version match required for server calls
-CLIENT_VERSION = 'c10.1.0'
+CLIENT_VERSION = 'c12.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
 
 # PKCS7 padding helpers 
