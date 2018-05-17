@@ -17,6 +17,7 @@ import re
 import getpass
 import time
 import os
+import hashlib
 from keepercommander import generator
 import datetime
 from keepercommander import plugin_manager, params
@@ -31,7 +32,7 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 # Client version match required for server calls
-CLIENT_VERSION = 'c10.1.0'
+CLIENT_VERSION = 'c12.0.0'
 current_milli_time = lambda: int(round(time.time() * 1000))
 
 # PKCS7 padding helpers 
@@ -82,9 +83,9 @@ def login(params):
         params.iterations = r.json()['iterations']
     
         prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
-        tmp_auth_verifier = base64.urlsafe_b64encode(
-            PBKDF2(params.password, params.salt, 
-                32, params.iterations, prf))
+        tmp_auth_verifier = PBKDF2(params.password, params.salt, 32, params.iterations, prf)
+        tmp_auth_verifier = hashlib.sha256(tmp_auth_verifier).digest()
+        tmp_auth_verifier = base64.urlsafe_b64encode(tmp_auth_verifier)
 
         # converts bytestream (b') to string 
         params.auth_verifier = tmp_auth_verifier.decode().rstrip('=')
