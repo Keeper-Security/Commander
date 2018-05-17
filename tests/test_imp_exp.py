@@ -1,4 +1,4 @@
-from keepercommander.imp_exp import parse_line, parse_json
+from keepercommander.imp_exp import parse_line, parse_record_json
 
 class TestImpExp:
 
