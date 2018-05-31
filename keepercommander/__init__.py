@@ -3,7 +3,7 @@ import click
 
 from keepercommander import cli, display, api
 
-__version__ = '0.7.10'
+__version__ = '0.7.11'
 
 @click.group()
 @click.option('--server', '-s', envvar='KEEPER_SERVER', help='Host address. You can set KEEPER_SERVER environment variable instead.')
@@ -47,6 +47,8 @@ main.add_command(cli.export)
 main.add_command(cli._import)
 main.add_command(cli.create_sf)
 main.add_command(cli.delete_all)
+main.add_command(cli.test_rsa)
+main.add_command(cli.test_aes)
 
 if __name__ == "__main__":
     sys.exit(main())

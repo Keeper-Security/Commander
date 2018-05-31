@@ -154,6 +154,28 @@ def create_sf(params, filename):
     except Exception as e:
         raise click.ClickException(e)
 
+####### test_rsa
+@click.command('test_rsa', help='Test RSA encryption/decryption')
+@click.pass_obj
+def test_rsa(params):
+    try:
+        prompt_for_credentials(params)
+        api.sync_down(params)
+        api.test_rsa(params)
+    except Exception as e:
+        raise click.ClickException(e)
+
+####### test_aes
+@click.command('test_aes', help='Test AES encryption/decryption')
+@click.pass_obj
+def test_aes(params):
+    try:
+        prompt_for_credentials(params)
+        api.sync_down(params)
+        api.test_aes(params)
+    except Exception as e:
+        raise click.ClickException(e)
+
 ####### export
 @click.command(help='Export password records from Keeper')
 @click.pass_obj

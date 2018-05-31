@@ -26,7 +26,7 @@ from keepercommander.shared_folder import SharedFolder
 from keepercommander.team import Team
 from keepercommander.error import AuthenticationError, CommunicationError, CryptoError
 from Cryptodome import Random
-from Cryptodome.Hash import SHA256, HMAC, SHA
+from Cryptodome.Hash import SHA256, HMAC
 from Cryptodome.Protocol.KDF import PBKDF2
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
@@ -216,6 +216,66 @@ def login(params):
         else:
             raise CommunicationError('Unknown problem')
 
+def test_rsa(params):
+    """Unit test to validate our RSA encryption/decryption"""
+    if params.debug: print('RSA encryption test routine for ' + params.user)
+    public_key = get_user_key(params, params.user)
+
+    if params.debug: print('Public key: ' + str(public_key))
+    if params.debug: print('RSA Private Key (Bytes): ' + str(params.private_key))
+    if params.debug: print('RSA Private Key (Object): ' + str(params.rsa_key))
+
+    record_key = os.urandom(32)
+    if params.debug: print('Record key: ' + str(record_key))
+
+    h = SHA256.new(record_key)
+    public_rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
+    cipher = PKCS1_v1_5.new(public_rsa_key)
+    encrypted_record_key = cipher.encrypt(record_key)
+    if params.debug: print('Encrypted record key: ' + str(encrypted_record_key))
+
+    encoded_encrypted_record_key = base64.urlsafe_b64encode(encrypted_record_key).decode().rstrip('=')
+    if params.debug: print('base64 encoded encrypted record key: ' + str(encoded_encrypted_record_key))
+
+    decrypted_key = decrypt_rsa(encoded_encrypted_record_key, params.rsa_key)
+    if params.debug: print('decrypted key: ' + str(decrypted_key))
+
+    if record_key == decrypted_key:
+        print('RSA encryption test successful')
+    else:
+        print('RSA encryption test failed')
+
+
+def test_aes(params):
+    """Unit test to validate our AES encryption/decryption"""
+    if params.debug: print('AES-256 encryption test routine for ' + params.user)
+
+    record_key = os.urandom(32)
+    data_key = os.urandom(32)
+
+    if params.debug: print('Record key: ' + str(record_key))
+    if params.debug: print('Data key: ' + str(data_key))
+
+    iv = os.urandom(16)
+    cipher = AES.new(data_key, AES.MODE_CBC, iv)
+    encrypted_record_key = iv + cipher.encrypt(pad_binary(record_key))
+    if params.debug: print('Encrypted record key: ' + str(encrypted_record_key))
+
+    encoded_encrypted_record_key = base64.urlsafe_b64encode(encrypted_record_key).decode().rstrip('=')
+    if params.debug: print('base64 encoded encrypted record key: ' + str(encoded_encrypted_record_key))
+
+    decoded_key = base64.urlsafe_b64decode(encoded_encrypted_record_key + '==')
+    iv = decoded_key[:16]
+    ciphertext = decoded_key[16:]
+    cipher = AES.new(data_key, AES.MODE_CBC, iv)
+    decrypted_key = cipher.decrypt(ciphertext)[:32]
+    if params.debug: print('decrypted key: ' + str(decrypted_key))
+
+    if record_key == decrypted_key:
+        print('AES-256 encryption test successful')
+    else:
+        print('AES-256 encryption test failed')
+
 
 def decrypt_record_key(encrypted_record_key, shared_folder_key):
     decoded_key = base64.urlsafe_b64decode(encrypted_record_key + '==')
@@ -269,7 +329,7 @@ def decrypt_rsa(data, rsa_key):
     # some keys might come shorter due to stripping leading 0's
     if 250 < len(decoded_key) < 256:
         decoded_key = bytearray(256 - len(decoded_key)) + decoded_key
-    dsize = SHA.digest_size
+    dsize = SHA256.digest_size
     sentinel = Random.new().read(15 + dsize)
     cipher = PKCS1_v1_5.new(rsa_key)
     return cipher.decrypt(decoded_key, sentinel)
@@ -1099,11 +1159,10 @@ def get_encrypted_sf_key_from_team(params, team_uid, shared_folder_key):
 
                 elif key['type'] == 3:
                     if params.debug: print('Encrypting SF key with Public Key')
-                    h = SHA.new(shared_folder_key)
                     rsa_key = RSA.importKey(base64.urlsafe_b64decode(key['key']))
                     if params.debug: print('RSA Key: ' + str(rsa_key))
                     cipher = PKCS1_v1_5.new(rsa_key)
-                    encrypted_sf_key = cipher.encrypt(shared_folder_key+h.digest())
+                    encrypted_sf_key = cipher.encrypt(shared_folder_key)
 
                 else:
                     if params.debug: print('Invalid key type')
@@ -1362,10 +1421,9 @@ def prepare_shared_folder(params, shared_folder):
                 # encrypt shared folder key with user's public key
                 if params.debug: print('Encrypt SF key with public key')
                 public_key = get_user_key(params, u['username'])
-                h = SHA.new(shared_folder_key)
                 rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
                 cipher = PKCS1_v1_5.new(rsa_key)
-                encrypted_sf_key = cipher.encrypt(shared_folder_key+h.digest())
+                encrypted_sf_key = cipher.encrypt(shared_folder_key)
             u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=') 
             if params.debug: print('Encrypted shared folder key from user=' + str(u['shared_folder_key']))
 
