@@ -90,13 +90,13 @@ mv_parser.error = raise_parse_exception
 mv_parser.exit = suppress_exit
 
 
-add_parser = argparse.ArgumentParser(prog='record')
+add_parser = argparse.ArgumentParser(prog='add')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
 add_parser.add_argument('--password', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='comma separated key-value pairs')
-add_parser.add_argument('--base-folder', dest='base_folder', action='store', help='folder where record is to be created')
+add_parser.add_argument('--folder', dest='folder', action='store', help='folder where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
 add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
 add_parser.add_argument('title', type=str, action='store', help='record title')
@@ -689,8 +689,8 @@ class RecordAddCommand(Command):
                         })
 
             folder = None
-            if opts.base_folder is not None:
-                src = try_resolve_path(params, opts.base_folder)
+            if opts.folder is not None:
+                src = try_resolve_path(params, opts.folder)
                 if src is not None:
                     folder, name = src
             if folder is None:

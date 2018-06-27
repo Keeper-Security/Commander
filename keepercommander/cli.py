@@ -402,6 +402,7 @@ def do_command(params):
             print('  ln <src> <dst> ... link record or folder to another folder')
             print('  mkdir <folder> ... create a folder')
             print('  rmdir <folder> ... remove a folder')
+            print('  add <record>   ... add a record')
             print('  rm <record>    ... remove a record')
             print('  s <regex>      ... search with regular expression')
             print('  g <uid>        ... get record or shared folder details for uid')
