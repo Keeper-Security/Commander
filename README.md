@@ -600,6 +600,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Mac](https://keepersecurity.com/desktop_electron/Darwin/KeeperSetup.dmg)
 
+[Linux](https://keepersecurity.com/download.html)
 
 ### Microsoft Store (Windows 10, Surface) Platform
 
