@@ -23,6 +23,8 @@ install_requires = [
     'requests',
     'tabulate',
     'click',
+    'prompt_toolkit',
+    'asciitree'
 ]
 
 setup(name='keepercommander',

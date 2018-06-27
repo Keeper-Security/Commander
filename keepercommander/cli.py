@@ -8,6 +8,7 @@
 # Copyright 2017 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import os
 import sys
 import getpass
 import json
@@ -15,10 +16,18 @@ import click
 import datetime
 import time
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.enums import EditingMode
+
 from keepercommander.record import Record
 from keepercommander import display, api, imp_exp
 from keepercommander.params import KeeperParams
 from keepercommander.error import AuthenticationError, CommunicationError
+from keepercommander.subfolder import BaseFolderNode
+from keepercommander.autocomplete import CommandCompleter
+
+from keepercommander.commands import register_commands as register_folder_commands
 
 ####### shell
 @click.command(help = 'Use Keeper interactive shell')
@@ -267,126 +276,148 @@ def get_params_from_config(config_filename):
 
     return params
 
+commands = {}
+
+register_folder_commands(commands)
 
 def do_command(params):
-    if (params.command == 'q'):
+    if params.command == 'q':
         return False
 
-    elif (params.command == 'l'):
-        if (len(params.record_cache) == 0):
-            print('No records')
+    cmd = params.command.strip()
+    args = ''
+    pos = cmd.find(' ')
+    if pos > 0:
+        args = cmd[pos+1:].strip()
+        cmd = cmd[:pos]
+
+    if len(cmd) > 0:
+
+        if cmd in commands:
+            commands[cmd].execute(params, args, command=cmd)
+        elif cmd == 'l':
+            if (len(params.record_cache) == 0):
+                print('No records')
+            else:
+                results = api.search_records(params, '')
+                display.formatted_records(results)
+
+        elif cmd == 'lsf':
+            if (len(params.shared_folder_cache) == 0):
+                print('No shared folders')
+            else:
+                results = api.search_shared_folders(params, '')
+                display.formatted_shared_folders(results)
+
+        elif cmd == 'lt':
+            if (len(params.team_cache) == 0):
+                print('No teams')
+            else:
+                results = api.search_teams(params, '')
+                display.formatted_teams(results)
+
+        elif cmd == 'g':
+            if api.is_shared_folder(params, args):
+                sf = api.get_shared_folder(params, args)
+                if sf:
+                    sf.display()
+            elif api.is_team(params, args):
+                team = api.get_team(params, args)
+                if team:
+                    team.display()
+            else:
+                r = api.get_record(params, args)
+                if r:
+                    r.display()
+
+        elif cmd == 'r':
+            api.rotate_password(params, args)
+
+        elif cmd == 'dr':
+            api.delete_record(params, args)
+
+        elif cmd == 'c':
+            print(chr(27) + "[2J")
+
+        elif cmd == 's':
+            results = api.search_records(params, args)
+            display.formatted_records(results, params=params)
+
+        elif cmd == 'b':
+            results = api.search_records(params, args)
+            for r in results:
+                api.rotate_password(params, r.record_uid)
+
+        elif cmd == 'an':
+            api.append_notes(params, args)
+
+        elif cmd == 'd':
+            api.sync_down(params)
+
+        elif cmd == 'a':
+            record = Record()
+            while not record.title:
+                record.title = input("... Title (req'd): ")
+            record.folder = input("... Folder: ")
+            record.login = input("... Login: ")
+            record.password = input("... Password: ")
+            record.login_url = input("... Login URL: ")
+            record.notes = input("... Notes: ")
+            while True:
+                custom_dict = {}
+                custom_dict['name'] = input("... Custom Field Name : ")
+                if not custom_dict['name']:
+                    break
+
+                custom_dict['value'] = input("... Custom Field Value : ")
+                custom_dict['type'] = 'text'
+                record.custom_fields.append(custom_dict)
+
+            api.add_record(params, record)
+
+        elif cmd == 'h':
+            display.formatted_history(stack)
+
+        elif cmd == 'debug':
+            if params.debug:
+                params.debug = False
+                print('Debug OFF')
+            else:
+                params.debug = True
+                print('Debug ON')
+
+        elif params.command == '':
+            pass
+
         else:
-            results = api.search_records(params, '')
-            display.formatted_records(results)
-
-    elif (params.command == 'lsf'):
-        if (len(params.shared_folder_cache) == 0): 
-            print('No shared folders')
-        else:
-            results = api.search_shared_folders(params, '') 
-            display.formatted_shared_folders(results)
-
-    elif (params.command == 'lt'):
-        if (len(params.team_cache) == 0): 
-            print('No teams')
-        else:
-            results = api.search_teams(params, '') 
-            display.formatted_teams(results)
-
-    elif (params.command[:2] == 'g '):
-        if (api.is_shared_folder(params, params.command[2:])):
-            sf = api.get_shared_folder(params, params.command[2:])
-            if sf:
-                sf.display()
-        elif (api.is_team(params, params.command[2:])):
-            team = api.get_team(params, params.command[2:])
-            if team:
-                team.display()
-        else:
-            r = api.get_record(params, params.command[2:])
-            if r:
-                r.display()
-
-    elif (params.command[:2] == 'r '):
-        api.rotate_password(params, params.command[2:])
-
-    elif (params.command[:2] == 'd '):
-        api.delete_record(params, params.command[2:])
-
-    elif (params.command == 'c'):
-        print(chr(27) + "[2J")
-
-    elif (params.command[:2] == 's '):
-        results = api.search_records(params, params.command[2:])
-        display.formatted_records(results)
-
-    elif (params.command[:2] == 'b '):
-        results = api.search_records(params, params.command[2:])
-        for r in results:
-            api.rotate_password(params, r.record_uid)
-
-    elif (params.command[:3] == 'an '):
-        api.append_notes(params, params.command[3:])
-
-    elif (params.command == 'd'):
-        api.sync_down(params)
-
-    elif (params.command == 'a'):
-        record = Record()
-        while not record.title:
-            record.title = input("... Title (req'd): ")
-        record.folder = input("... Folder: ")
-        record.login = input("... Login: ")
-        record.password = input("... Password: ")
-        record.login_url = input("... Login URL: ")
-        record.notes = input("... Notes: ")
-        while True:
-            custom_dict = {} 
-            custom_dict['name'] = input("... Custom Field Name : ") 
-            if not custom_dict['name']:
-                break
-
-            custom_dict['value'] = input("... Custom Field Value : ") 
-            custom_dict['type'] = 'text' 
-            record.custom_fields.append(custom_dict)
-
-        api.add_record(params, record)
-
-    elif (params.command == 'h'):
-        display.formatted_history(stack)
-
-    elif (params.command == 'debug'):
-        if params.debug:
-            params.debug = False
-            print('Debug OFF')
-        else:
-            params.debug = True
-            print('Debug ON')
-
-    elif params.command == '':
-        pass
-
-    else:
-        print('\n\nShell Commands:\n')
-        print('  d         ... download & decrypt data')
-        print('  l         ... list folders and record titles')
-        print('  lsf       ... list shared folders')
-        print('  lt        ... list teams')
-        print('  s <regex> ... search with regular expression')
-        print('  g <uid>   ... get record or shared folder details for uid')
-        print('  r <uid>   ... rotate password for uid')
-        print('  b <regex> ... rotate password for matches of regular expression')
-        print('  a         ... add a new record interactively')
-        print('  an <uid>  ... append some notes to the specified record')
-        print('  c         ... clear the screen')
-        print('  h         ... show command history')
-        print('  q         ... quit')
-        print('')
+            print('\n\nShell Commands:\n')
+            print('  d              ... download & decrypt data')
+            print('  l              ... list record titles')
+            print('  lsf            ... list shared folders')
+            print('  lt             ... list teams')
+            print('  tree           ... display folder tree')
+            print('  ls <folder>    ... list the content of folder')
+            print('  cd <folder>    ... change current folder')
+            print('  mv <src> <dst> ... move record or folder to another folder')
+            print('  ln <src> <dst> ... link record or folder to another folder')
+            print('  mkdir <folder> ... create a folder')
+            print('  rmdir <folder> ... remove a folder')
+            print('  rm <record>    ... remove a record')
+            print('  s <regex>      ... search with regular expression')
+            print('  g <uid>        ... get record or shared folder details for uid')
+            print('  r <uid>        ... rotate password for uid')
+            print('  b <regex>      ... rotate password for matches of regular expression')
+            print('  a              ... add a new record interactively')
+            print('  an <uid>       ... append some notes to the specified record')
+            print('  c              ... clear the screen')
+            print('  h              ... show command history')
+            print('  q              ... quit')
+            print('')
 
     if params.command:
-        if params.command != 'h':
-            stack.append(params.command)
-            stack.reverse()
+        if params.command not in {'h'}:
+            if len(stack) == 0 or stack[0] != params.command:
+                stack.insert(0, params.command)
 
     return True
 
@@ -427,11 +458,9 @@ def prompt_for_credentials(params):
 
 
 def loop(params):
-
     display.welcome()
 
     try:
-
         prompt_for_credentials(params)
 
         # if commands are provided, execute those then exit
@@ -441,15 +470,28 @@ def loop(params):
 
         if params.debug: print('Params: ' + str(params))
 
-        # start with a sync download
-        if not params.command:
-            params.command = 'd'
+        prompt_session = None
+        if os.isatty(0):
+            completer = CommandCompleter(params)
+            prompt_session = PromptSession(multiline=False,
+                                           editing_mode=EditingMode.VI,
+                                           completer=completer,
+                                           complete_style=CompleteStyle.MULTI_COLUMN,
+                                           complete_while_typing=False)
+
 
         # go into interactive mode
         while True:
+            if params.sync_data:
+                api.sync_down(params)
+
             if not params.command:
                 try:
-                    params.command = input("Keeper > ")
+                    if prompt_session is not None:
+                        params.command = prompt_session.prompt(get_prompt(params)+ '> ')
+                    else:
+                        params.command = input(get_prompt(params) + '> ')
+
                 except KeyboardInterrupt:
                     print('')
                 except EOFError:
@@ -472,3 +514,36 @@ def loop(params):
 
     except KeyboardInterrupt:
         goodbye()
+
+
+def get_prompt(params):
+    if params.current_folder is None:
+        if params.root_folder:
+            params.current_folder = ''
+        else:
+            return 'Keeper'
+
+    prompt = ''
+    f = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
+    while True:
+        if len(prompt) > 0:
+            prompt = '/' + prompt
+        name = f.name
+        if f.type == BaseFolderNode.SharedFolderType:
+            name = name + '$'
+        prompt = name + prompt
+
+        if f == params.root_folder:
+            break
+
+        if f.parent_uid is not None:
+            f = params.folder_cache[f.parent_uid]
+        else:
+            if f.type == BaseFolderNode.SharedFolderFolderType:
+                f = params.folder_cache[f.shared_folder_uid]
+            else:
+                f = params.root_folder
+    if len(prompt) > 40:
+        prompt = '...' + prompt[-40:]
+
+    return prompt

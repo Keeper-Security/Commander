@@ -8,6 +8,8 @@
 # Contact: ops@keepersecurity.com
 #
 
+from keepercommander.subfolder import get_folder_path, find_folders
+
 class Record:
     """Defines a user-friendly Keeper Record for display purposes"""
 
@@ -63,11 +65,16 @@ class Record:
         if not found:
             self.custom_fields.append({'name': name, 'value': value})
 
-    def display(self):
+    def display(self, **kwargs):
         print('') 
         print('{0:>20s}: {1:<20s}'.format('UID',self.record_uid))
         print('{0:>20s}: {1}'.format('Revision',self.revision))
-        if self.folder: print('{0:>20s}: {1:<20s}'.format('Folder',self.folder))
+
+        if 'params' in kwargs:
+            params = kwargs['params']
+            folders = [get_folder_path(params, x) for x in find_folders(params, self.record_uid)]
+            print('{0:>20s}: {1:<20s}'.format('Folder', ', '.join(folders)))
+
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title',self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
         if self.password: print('{0:>20s}: {1:<20s}'.format('Password',self.password))
