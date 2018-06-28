@@ -339,13 +339,10 @@ class FolderMakeCommand(Command):
             folder_key = os.urandom(32)
             encryption_key = params.data_key
             if request['folder_type'] == 'shared_folder_folder':
-                if base_folder.type == BaseFolderNode.SharedFolderFolderType:
-                    sf = params.folder_cache[base_folder.shared_folder_uid]
-                    encryption_key = sf.key
-                    request['shared_folder_uid'] = sf.uid
-                elif base_folder.type == 'shared_folder':
-                    encryption_key = base_folder.key
-                    request['shared_folder_uid'] = base_folder.uid
+                sf_uid = base_folder.shared_folder_uid if base_folder.type == BaseFolderNode.SharedFolderFolderType else base_folder.uid
+                sf = params.shared_folder_cache[sf_uid]
+                encryption_key = sf['shared_folder_key']
+                request['shared_folder_uid'] = sf_uid
 
             request['key'] = api.encrypt_aes(folder_key, encryption_key)
             if base_folder.type not in {BaseFolderNode.RootFolderType, BaseFolderNode.SharedFolderType}:
