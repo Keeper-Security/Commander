@@ -758,17 +758,20 @@ def sync_down(params):
                         del shared_folder['teams_removed']
 
                     if 'records' in shared_folder:
-                        merged_records = merge_lists_on_value(existing_sf['records'], shared_folder['records'], 'record_uid')
+                        existing_records = existing_sf['records'] if 'records' in existing_sf else []
+                        merged_records = merge_lists_on_value(existing_records, shared_folder['records'], 'record_uid')
                         if params.debug: print("merged_records = " + str(merged_records))
                         existing_sf['records'] = merged_records
 
                     if 'users' in shared_folder:
-                        merged_users = merge_lists_on_value(existing_sf['users'], shared_folder['users'], 'username')
+                        existing_users = existing_sf['users'] if 'users' in existing_sf else ''
+                        merged_users = merge_lists_on_value(existing_users, shared_folder['users'], 'username')
                         if params.debug: print("merged_users = " + str(merged_users))
                         existing_sf['users'] = merged_users
 
                     if 'teams' in shared_folder:
-                        merged_teams = merge_lists_on_value(existing_sf['teams'], shared_folder['teams'], 'team_uid')
+                        existing_teams = existing_sf['teams'] if 'teams' in existing_sf else ''
+                        merged_teams = merge_lists_on_value(existing_teams, shared_folder['teams'], 'team_uid')
                         if params.debug: print("merged_teams = " + str(merged_teams))
                         existing_sf['teams'] = merged_teams
 
@@ -1431,6 +1434,7 @@ def search_teams(params, searchstring):
      
     return search_results
 
+
 def prepare_record(params, record, shared_folder_uid=''):
     """ Prepares the Record() object to be sent to the Keeper Cloud API
         by serializing and encrypting it in the proper JSON format used for
@@ -1473,14 +1477,14 @@ def prepare_record(params, record, shared_folder_uid=''):
         if params.debug: print('Generated a key=' + str(unencrypted_key))
     else:
         unencrypted_key = \
-                params.record_cache[record.record_uid]['record_key_unencrypted']
+            params.record_cache[record.record_uid]['record_key_unencrypted']
 
     # Create encrypted record key
     iv = os.urandom(16)
     cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
     type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
     encoded_type1key = (base64.urlsafe_b64encode(
-                               type1key).decode()).rstrip('=')
+        type1key).decode()).rstrip('=')
     if params.debug: print('Encoded=' + str(encoded_type1key))
 
     # Encrypt data with record key
@@ -1504,7 +1508,7 @@ def prepare_record(params, record, shared_folder_uid=''):
     if params.debug: print('encoded_extra: ' + str(encoded_extra))
 
     modified_time = int(round(time.time()))
-    modified_time_milli = modified_time * 1000 
+    modified_time_milli = modified_time * 1000
 
     # build a record dict for upload
     new_record = {}
@@ -1518,7 +1522,7 @@ def prepare_record(params, record, shared_folder_uid=''):
 
     shared_folder_uids = shared_folders_containing_record(params, record.record_uid)
     if( len(shared_folder_uids) > 0 ):
-        new_record['shared_folder_uid'] = shared_folder_uids[0] 
+        new_record['shared_folder_uid'] = shared_folder_uids[0]
 
     if record.record_uid in params.record_cache:
         if 'revision' in params.record_cache[record.record_uid]:
@@ -1535,7 +1539,6 @@ def prepare_record(params, record, shared_folder_uid=''):
 
     if params.debug: print('new_record: ' + str(new_record))
     return new_record
-
 
 def prepare_shared_folder(params, shared_folder):
     """ Prepares the SharedFolder() object to be sent to the Keeper Cloud API

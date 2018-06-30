@@ -169,7 +169,6 @@ class CommandCompleter(Completer):
                         rs = try_resolve_path(self.params, extra['prefix'])
                         if rs is not None:
                             folder, name = rs
-                            name = name.lower()
                             if context != 'record':
                                 for uid in folder.subfolders:
                                     f = self.params.folder_cache[uid]
@@ -180,6 +179,7 @@ class CommandCompleter(Completer):
                                         yield Completion(n, display=n + '/', start_position=-len(name))
 
                             if context != 'folder':
+                                name = name.lower()
                                 folder_uid = folder.uid or ''
                                 if folder_uid in self.params.subfolder_record_cache:
                                     for uid in self.params.subfolder_record_cache[folder_uid]:

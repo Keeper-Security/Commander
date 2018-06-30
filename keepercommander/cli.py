@@ -143,7 +143,7 @@ def rotate(params, uid, match, print):
 ####### import
 @click.command('import', help='Import password records from local file')
 @click.pass_obj
-@click.option('--format', type=click.Choice(['tab-separated', 'json']))
+@click.option('--format', type=click.Choice(['json', 'keeper-csv', 'keepass']))
 @click.argument('filename')
 def _import(params, format, filename):
     try:
@@ -188,7 +188,7 @@ def test_aes(params):
 ####### export
 @click.command(help='Export password records from Keeper')
 @click.pass_obj
-@click.option('--format', type=click.Choice(['tab-separated', 'json']))
+@click.option('--format', type=click.Choice(['json', 'keeper-csv']))
 @click.argument('filename')
 def export(params, format, filename):
     try:

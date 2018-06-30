@@ -10,7 +10,7 @@
 #
 
 
-def get_folder_path(params, folder_uid):
+def get_folder_path(params, folder_uid, delimiter='/'):
     uid = folder_uid
     path = ''
     while uid in params.folder_cache:
@@ -18,9 +18,10 @@ def get_folder_path(params, folder_uid):
         name = f.name
         if f.type == 'shared_folder':
             name = name + '$'
-        path = name + '/' + path
+        name = name.replace(delimiter, 2*delimiter)
+        path = name + delimiter + path
         uid = f.parent_uid
-    return '/' + path
+    return delimiter + path
 
 
 def find_folders(params, record_uid):
