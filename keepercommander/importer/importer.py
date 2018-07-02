@@ -83,7 +83,6 @@ class Record:
         self.custom_fields = []
 
 
-
 class BaseImporter:
     def execute(self, filename):
         '''
@@ -91,7 +90,7 @@ class BaseImporter:
         :rtype: collections.Iterable[Record]
         '''
         if not os.path.isfile(filename):
-            raise Exception('File \'{0}\ does not exist'.format(filename))
+            raise Exception('File \'{0}\' does not exist'.format(filename))
 
         yield from self.do_import(filename)
 

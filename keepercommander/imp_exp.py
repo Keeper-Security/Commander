@@ -11,7 +11,6 @@
 
 import os
 import json
-import time
 import hashlib
 from keepercommander import api
 from keepercommander.record import Record
@@ -24,34 +23,29 @@ def export(params, format, filename):
     api.sync_down(params)
 
     records = [api.get_record(params, record_uid) for record_uid in params.record_cache]
-
     records.sort(key=lambda x: ((x.folder if x.folder else ' ') + x.title).lower(), reverse=False)
 
-    if format == 'json':
-        with open(filename, mode="w", encoding='utf-8') as f:
-            json.dump([record.to_dictionary() for record in records], f, indent=2, ensure_ascii=False)
-    else:
-        exporter = exporter_for_format(format)()
-        """:type : BaseExporter"""
+    exporter = exporter_for_format(format)()
+    """:type : BaseExporter"""
 
-        recs = []
-        for r in records:
-            rec = ImportRecord()
-            rec.title = r.title
-            rec.login = r.login
-            rec.password = r.password
-            rec.login_url = r.login_url
-            rec.notes = r.notes
-            rec.custom_fields.extend(r.custom_fields)
-            fols = find_folders(params, r.record_uid)
-            for x in fols:
-                if len(x) > 0:
-                    rec.folder = get_folder_path(params, x, delimiter=PathDelimiter)
-                    break
-            recs.append(rec)
+    recs = []
+    for r in records:
+        rec = ImportRecord()
+        rec.title = r.title
+        rec.login = r.login
+        rec.password = r.password
+        rec.login_url = r.login_url
+        rec.notes = r.notes
+        rec.custom_fields.extend(r.custom_fields)
+        fols = find_folders(params, r.record_uid)
+        for x in fols:
+            if len(x) > 0:
+                rec.folder = get_folder_path(params, x, delimiter=PathDelimiter)
+                break
+        recs.append(rec)
 
-        if len(recs) > 0:
-            exporter.execute(filename, recs)
+    if len(recs) > 0:
+        exporter.execute(filename, recs)
 
 
 def parse_line(line):
@@ -97,98 +91,75 @@ def _import(params, format, filename):
     api.login(params)
     api.sync_down(params)
 
-    if format == 'json':
-        def read_json():
-            with open(filename, mode="rt", encoding="utf8") as f:
-                return json.load(f)
+    importer = importer_for_format(format)()
+    """:type : BaseImporter"""
 
-        records_to_add = [api.prepare_record(params, parse_record_json(x)) for x in read_json()]
+    success = 0
+    record_hash = {}
+    for r_uid in params.record_cache:
+        rec = api.get_record(params, r_uid)
+        h = hashlib.md5()
+        hs = '{0}|{1}|{2}'.format(rec.title or '', rec.login or '', rec.password or '')
+        h.update(hs.encode())
+        record_hash[h.hexdigest()] = r_uid
 
-        if (len(records_to_add) == 0):
-            print('No records to import')
-            return
-
-        request = api.make_request(params, 'record_update')
-        print('importing {0} records to Keeper'.format(len(records_to_add)))
-        request['add_records'] = records_to_add
-        response_json = api.communicate(params, request)
-        success = [info for info in response_json['add_records'] if info['status'] == 'success']
-        if len(success) > 0:
-            print("{0} records imported successfully".format(len(success)))
-        failures = [info for info in response_json['add_records'] if info['status'] != 'success']
-        if len(failures) > 0:
-            print("{0} records failed to import".format(len(failures)))
-
-    else:
-        importer = importer_for_format(format)()
-        """:type : BaseImporter"""
-
-        success = 0
-        record_hash = {}
-        for r_uid in params.record_cache:
-            rec = api.get_record(params, r_uid)
+    for x in importer.execute(filename):
+        if type(x) is ImportRecord:
             h = hashlib.md5()
-            hs = '{0}|{1}|{2}'.format(rec.title or '', rec.login or '', rec.password or '')
+            hs = '{0}|{1}|{2}'.format(x.title or '', x.login or '', x.password or '')
             h.update(hs.encode())
-            record_hash[h.hexdigest()] = r_uid
+            hash = h.hexdigest()
+            if hash in record_hash:
+                continue
 
-        for x in importer.execute(filename):
-            if type(x) is ImportRecord:
-                h = hashlib.md5()
-                hs = '{0}|{1}|{2}'.format(x.title or '', x.login or '', x.password or '')
-                h.update(hs.encode())
-                hash = h.hexdigest()
-                if hash in record_hash:
-                    continue
+            folder_uid = resolve_folder(params, x.folder)
+            record_key = os.urandom(32)
+            data = {
+                'title': x.title or '',
+                'secret1': x.login or '',
+                'secret2': x.password or '',
+                'link': x.login_url or '',
+                'notes': x.notes or '',
+                'custom': x.custom_fields
+            }
+            rq = {
+                'command': 'record_add',
+                'record_uid': api.generate_record_uid(),
+                'record_type': 'password',
+                'record_key': api.encrypt_aes(record_key, params.data_key),
+                'folder_type': 'user_folder',
+                'how_long_ago': 0,
+                'data': api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
+            }
+            key_encryption_key = params.data_key
+            if folder_uid:
+                if folder_uid in params.folder_cache:
+                    folder = params.folder_cache[folder_uid]
+                    if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        rq['folder_uid'] = folder.uid
+                        rq['folder_type'] = 'shared_folder' if folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
+                        sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
+                        sf = params.shared_folder_cache[sh_uid]
+                        rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
+                        if 'key_type' not in sf:
+                            if 'teams' in sf:
+                                for team in sf['teams']:
+                                    rq['team_uid'] = team['team_uid']
+                                    if team['manage_records']:
+                                        break
+                    else:
+                        rq['folder_uid'] = folder.uid
 
-                folder_uid = resolve_folder(params, x.folder)
-                record_key = os.urandom(32)
-                data = {
-                    'title': x.title or '',
-                    'secret1': x.login or '',
-                    'secret2': x.password or '',
-                    'link': x.login_url or '',
-                    'notes': x.notes or '',
-                    'custom': x.custom_fields
-                }
-                rq = {
-                    'command': 'record_add',
-                    'record_uid': api.generate_record_uid(),
-                    'record_type': 'password',
-                    'record_key': api.encrypt_aes(record_key, params.data_key),
-                    'folder_type': 'user_folder',
-                    'how_long_ago': 0,
-                    'data': api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
-                }
-                key_encryption_key = params.data_key
-                if folder_uid:
-                    if folder_uid in params.folder_cache:
-                        folder = params.folder_cache[folder_uid]
-                        if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                            rq['folder_uid'] = folder.uid
-                            rq['folder_type'] = 'shared_folder' if folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
-                            sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
-                            sf = params.shared_folder_cache[sh_uid]
-                            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
-                            if 'key_type' not in sf:
-                                if 'teams' in sf:
-                                    for team in sf['teams']:
-                                        rq['team_uid'] = team['team_uid']
-                                        if team['manage_records']:
-                                            break
-                        else:
-                            rq['folder_uid'] = folder.uid
+            try:
+                rs = api.communicate(params, rq)
+                success = success + 1
+            except Exception as e:
+                print(e)
 
-                try:
-                    rs = api.communicate(params, rq)
-                    success = success + 1
-                except Exception as e:
-                    print(e)
+        api.sync_down(params)
 
-            api.sync_down(params)
-
-        if success > 0:
-            print("{0} records imported successfully".format(success))
+    if success > 0:
+        print("{0} records imported successfully".format(success))
 
 
 def create_sf(params, filename):

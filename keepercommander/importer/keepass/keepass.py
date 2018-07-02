@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import base64
 import libkeepass
 
 from keepercommander.importer.importer import PathDelimiter, BaseImporter, Record
