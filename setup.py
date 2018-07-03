@@ -22,7 +22,6 @@ install_requires = [
     'pycryptodomex',
     'requests',
     'tabulate',
-    'click',
     'prompt_toolkit',
     'asciitree'
 ]

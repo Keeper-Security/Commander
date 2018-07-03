@@ -228,6 +228,7 @@ def login(params, attempt=0):
         else:
             raise CommunicationError('Unknown problem')
 
+
 def test_rsa(params):
     """Unit test to validate our RSA encryption/decryption"""
     if params.debug: print('RSA encryption test routine for ' + params.user)
@@ -1062,18 +1063,12 @@ def decrypt_data_key(params):
     # save the encryption params 
     params.data_key = decrypted_data_key[:32]
 
+
 def decrypt_private_key(params):
     decrypted_private_key, params.private_key, params.rsa_key = decrypt_rsa_key(params.encrypted_private_key, params.data_key)
     if params.debug: print('RSA key: ' + str(decrypted_private_key))
     if params.debug: print('base64 RSA key: ' + str(params.private_key))
 
-def append_notes(params, record_uid):
-    """ Append some notes to an existing record """
-    record = get_record(params, record_uid)
-
-    notes = input("... Notes to append: ")
-    record.notes += notes
-    return update_record(params, record)
 
 def rotate_password(params, record_uid):
     """ Rotate the password for the specified record """
@@ -1202,6 +1197,7 @@ def is_shared_folder(params,shared_folder_uid):
 
     return True
 
+
 def is_team(params,team_uid):
     team_uid = team_uid.strip()
 
@@ -1223,15 +1219,15 @@ def get_shared_folder(params,shared_folder_uid):
 
     if not shared_folder_uid:
         print('No shared folder UID provided')
-        return
+        return None
 
     if not params.shared_folder_cache:
         print('No shared folder cache.  Sync down first.')
-        return
+        return None
 
     if not shared_folder_uid in params.shared_folder_cache:
         print('Shared folder UID not found.')
-        return
+        return None
 
     cached_sf = params.shared_folder_cache[shared_folder_uid]
 
@@ -1241,6 +1237,7 @@ def get_shared_folder(params,shared_folder_uid):
     sf.load(cached_sf, cached_sf['revision'])
 
     return sf
+
 
 def get_team(params,team_uid):
     """Return the referenced team """
@@ -1405,6 +1402,7 @@ def search_shared_folders(params, searchstring):
             search_results.append(sf)
      
     return search_results
+
 
 def search_teams(params, searchstring):
     """Search teams """

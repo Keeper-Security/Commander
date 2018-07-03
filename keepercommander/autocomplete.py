@@ -12,8 +12,10 @@
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
-from keepercommander.commands import ls_parser, cd_parser, mkdir_parser, rmdir_parser, mv_parser, rm_parser
+from keepercommander.commands.folder import ls_parser, cd_parser, mkdir_parser, rmdir_parser, mv_parser
+from keepercommander.commands.record import rm_parser, append_parser
 from keepercommander import api
+from keepercommander import cli
 
 def try_resolve_path(params, path):
     if type(path) is str:
@@ -101,7 +103,13 @@ class CommandCompleter(Completer):
         try:
             if document.is_cursor_at_the_end:
                 pos = document.text.find(' ')
-                if pos > 0:
+                if pos == -1:
+                    cmds = [x for x in cli.commands if x.startswith(document.text)]
+                    if len(cmds) > 0:
+                        cmds.sort()
+                        for c in cmds:
+                            yield Completion(c, start_position=-len(document.text))
+                elif pos > 0:
                     cmd = document.text[:pos]
                     raw_input = document.text[pos+1:].strip()
                     context = ''
@@ -148,6 +156,13 @@ class CommandCompleter(Completer):
                             opts, _ = rm_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.name or ''
                             context = 'path'
+                    elif cmd == 'append-notes':
+                        args = CommandCompleter.fix_input(raw_input)
+                        if args is not None:
+                            extra['escape_space'] = args == raw_input
+                            opts, _ = append_parser.parse_known_args(shlex.split(args))
+                            extra['prefix'] = opts.name or ''
+                            context = 'path'
                     elif cmd in {'mv', 'ln'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
@@ -169,16 +184,15 @@ class CommandCompleter(Completer):
                         rs = try_resolve_path(self.params, extra['prefix'])
                         if rs is not None:
                             folder, name = rs
-                            if context != 'record':
-                                for uid in folder.subfolders:
-                                    f = self.params.folder_cache[uid]
-                                    if f.name.startswith(name) and len(name) < len(f.name):
-                                        n = f.name
-                                        if extra.get('escape_space'):
-                                            n = n.replace(' ', '\\ ')
-                                        yield Completion(n, display=n + '/', start_position=-len(name))
+                            for uid in folder.subfolders:
+                                f = self.params.folder_cache[uid]
+                                if f.name.startswith(name) and len(name) < len(f.name):
+                                    n = f.name
+                                    if extra.get('escape_space'):
+                                        n = n.replace(' ', '\\ ')
+                                    yield Completion(n, display=n + '/', start_position=-len(name))
 
-                            if context != 'folder':
+                            if context == 'path':
                                 name = name.lower()
                                 folder_uid = folder.uid or ''
                                 if folder_uid in self.params.subfolder_record_cache:

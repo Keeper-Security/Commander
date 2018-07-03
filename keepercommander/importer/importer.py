@@ -95,18 +95,14 @@ class BaseImporter:
         yield from self.do_import(filename)
 
     def do_import(self, filename):
+        '''
+        :type filename: str
+        :rtype: collections.Iterable[Record]
+        '''
         raise NotImplemented()
 
 
 class BaseExporter:
-    def do_export(self, filename, records):
-        '''
-        :type filename: str
-        :type records: collections.Iterable[Record]
-        :rtype: None
-        '''
-        raise NotImplemented()
-
     def execute(self, filename, records):
         '''
         :type filename: str
@@ -114,4 +110,12 @@ class BaseExporter:
         :rtype: None
         '''
         self.do_export(filename, records)
+
+    def do_export(self, filename, records):
+        '''
+        :type filename: str
+        :type records: collections.Iterable[Record]
+        :rtype: None
+        '''
+        raise NotImplemented()
 

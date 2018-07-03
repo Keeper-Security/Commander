@@ -1,4 +1,4 @@
-#  _  __
+#_  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -23,29 +23,26 @@ from keepercommander import api
 from keepercommander import display
 from keepercommander.subfolder import BaseFolderNode, get_folder_path, find_folders
 from keepercommander.record import Record
-from keepercommander import generator
 
-def raise_parse_exception(m):
-    raise Exception(m)
+from .base import user_choice, suppress_exit, raise_parse_exception, Command
 
 
-def suppress_exit():
-    raise Exception()
-
-
-def register_commands(commands):
+def register_commands(commands, aliases, command_info):
     commands['ls'] = FolderListCommand()
     commands['cd'] = FolderCdCommand()
     commands['tree'] = FolderTreeCommand()
     commands['mkdir'] = FolderMakeCommand()
     commands['rmdir'] = FolderRemoveCommand()
     commands['mv'] = FolderMoveCommand()
-    commands['ln'] = commands['mv']
-    commands['add'] = RecordAddCommand()
-    commands['rm'] = RecordRemoveCommand()
+    aliases['ln'] = 'mv'
+
+    for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser]:
+        command_info[p.prog] = p.description
+    command_info['ln'] = 'Create a link between record or folder'
 
 
-ls_parser = argparse.ArgumentParser(prog='ls')
+
+ls_parser = argparse.ArgumentParser(prog='ls', description='List folder content')
 ls_parser.add_argument('-l', '--list', dest='detail', action='store_true', help='show detailed list')
 ls_parser.add_argument('-f', '--folders', dest='folders', action='store_true', help='display folders')
 ls_parser.add_argument('-r', '--records', dest='records', action='store_true', help='display records')
@@ -54,20 +51,26 @@ ls_parser.error = raise_parse_exception
 ls_parser.exit = suppress_exit
 
 
-cd_parser = argparse.ArgumentParser(prog='cd|tree')
+cd_parser = argparse.ArgumentParser(prog='cd', description='Change current folder')
 cd_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder name')
 cd_parser.error = raise_parse_exception
 cd_parser.exit = suppress_exit
 
 
-rmdir_parser = argparse.ArgumentParser(prog='rmdir')
+tree_parser = argparse.ArgumentParser(prog='tree', description='Display folder structure')
+tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder name')
+tree_parser.error = raise_parse_exception
+tree_parser.exit = suppress_exit
+
+
+rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove folder and its content')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
 rmdir_parser.add_argument('name', nargs='?', type=str, action='store', help='folder path')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
 
-mkdir_parser = argparse.ArgumentParser(prog='mkdir')
+mkdir_parser = argparse.ArgumentParser(prog='mkdir', description='Create folder')
 mkdir_parser.add_argument('--shared', dest='shared_folder', action='store_true', help='create shared folder')
 mkdir_parser.add_argument('--user', dest='user_folder', action='store_true', help='create user folder')
 mkdir_parser.add_argument('-a', '--all', dest='grant', action='store_true', help='anyone has all permissions by default')
@@ -80,7 +83,7 @@ mkdir_parser.error = raise_parse_exception
 mkdir_parser.exit = suppress_exit
 
 
-mv_parser = argparse.ArgumentParser(prog='mv|ln')
+mv_parser = argparse.ArgumentParser(prog='mv', description='Move record or folder')
 mv_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 mv_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 mv_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
@@ -88,32 +91,6 @@ mv_parser.add_argument('src', nargs='?', type=str, action='store', help='source 
 mv_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder')
 mv_parser.error = raise_parse_exception
 mv_parser.exit = suppress_exit
-
-
-add_parser = argparse.ArgumentParser(prog='add')
-add_parser.add_argument('--login', dest='login', action='store', help='login name')
-add_parser.add_argument('--password', dest='password', action='store', help='password')
-add_parser.add_argument('--url', dest='url', action='store', help='url')
-add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-add_parser.add_argument('--custom', dest='custom', action='store', help='comma separated key-value pairs')
-add_parser.add_argument('--folder', dest='folder', action='store', help='folder where record is to be created')
-add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
-add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
-add_parser.add_argument('title', type=str, action='store', help='record title')
-add_parser.error = raise_parse_exception
-add_parser.exit = suppress_exit
-
-
-rm_parser = argparse.ArgumentParser(prog='rm')
-rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-rm_parser.add_argument('name', nargs='?', type=str, action='store', help='record path')
-rm_parser.error = raise_parse_exception
-rm_parser.exit = suppress_exit
-
-
-class Command:
-    def execute(self, params, args, **kwargs):
-        raise NotImplemented()
 
 
 class FolderListCommand(Command):
@@ -222,8 +199,6 @@ class FolderListCommand(Command):
                     rows = ['  '.join(x) for x in tbl]
                     print('\n'.join(rows))
 
-
-
         except Exception as e:
             print(e)
 
@@ -250,7 +225,7 @@ class FolderTreeCommand(Command):
 
     def execute(self, params, args, **kwargs):
         try:
-            opts, _ = cd_parser.parse_known_args(shlex.split(args))
+            opts, _ = tree_parser.parse_known_args(shlex.split(args))
             rs = try_resolve_path(params, opts.folder or '')
             if rs is not None:
                 folder, pattern = rs
@@ -654,193 +629,7 @@ class FolderMoveCommand(Command):
                 params.sync_data = True
             else:
                 print(rs['message'])
-        except Exception as e:
-            print(e)
-
-
-class RecordAddCommand(Command):
-
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = add_parser.parse_args(shlex.split(args))
-            if opts.generate:
-                opts.password = generator.generate(16)
-
-            if not opts.force:
-                if opts.login is None:
-                    opts.login = input('...' + 'Login: '.rjust(16))
-                if opts.password is None:
-                    opts.password = input('...' + 'Password: '.rjust(16))
-                if opts.url is None:
-                    opts.url = input('...' + 'Login URL: '.rjust(16))
-
-            custom = []
-            if opts.custom is not None:
-                pairs = opts.custom.split(',')
-                for pair in pairs:
-                    idx = pair.find(':')
-                    if idx > 0:
-                        custom.append({
-                            'name': pair[:idx].trim(),
-                            'value': pair[idx+1:].trim()
-                        })
-
-            folder = None
-            if opts.folder is not None:
-                src = try_resolve_path(params, opts.folder)
-                if src is not None:
-                    folder, name = src
-            if folder is None:
-                folder = params.folder_cache[params.current_folder] if len(params.current_folder) > 0 else params.root_folder
-
-            record_key = os.urandom(32)
-            rq = {
-                'command': 'record_add',
-                'record_uid': api.generate_record_uid(),
-                'record_type': 'password',
-                'record_key': api.encrypt_aes(record_key, params.data_key),
-                'how_long_ago': 0
-            }
-            if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                rq['folder_uid'] = folder.uid
-                rq['folder_type'] = 'shared_folder' if folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
-
-                sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
-                sf = params.shared_folder_cache[sh_uid]
-                rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
-                if 'key_type' not in sf:
-                    if 'teams' in sf:
-                        for team in sf['teams']:
-                            rq['team_uid'] = team['team_uid']
-                            if team['manage_records']:
-                                break
-            else:
-                rq['folder_type'] = 'user_folder'
-                if folder.type != BaseFolderNode.RootFolderType:
-                    rq['folder_uid'] = folder.uid
-
-            data = {
-                'title': opts.title,
-                'secret1': opts.login or '',
-                'secret2': opts.password or '',
-                'link': opts.url or '',
-                'notes': opts.notes or '',
-                'custom': custom
-            }
-            rq['data'] =  api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
-
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                params.sync_data = True
-            else:
-                print(rs['message'])
 
         except Exception as e:
             print(e)
 
-
-class RecordRemoveCommand(Command):
-
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = rm_parser.parse_args(shlex.split(args))
-
-            folder = None
-            name = None
-            if opts.name is not None:
-                rs = try_resolve_path(params, opts.name)
-                if rs is not None:
-                    folder, name = rs
-
-            if folder is None or name is None:
-                print('Enter name of existing record')
-                return
-
-            record_uid = None
-            if name in params.record_cache:
-                record_uid = name
-                folders = list(find_folders(params, record_uid))
-                #TODO support multiple folders
-                if len(folders) > 0:
-                    folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
-            else:
-                folder_uid = folder.uid or ''
-                if folder_uid in params.subfolder_record_cache:
-                    for uid in params.subfolder_record_cache[folder_uid]:
-                        r = api.get_record(params, uid)
-                        if r.title.lower() == name.lower():
-                            record_uid = uid
-                            break
-
-            if record_uid is None:
-                print('Enter name of existing record')
-                return
-
-            del_obj = {
-                'delete_resolution': 'unlink',
-                'object_uid': record_uid,
-                'object_type': 'record'
-            }
-            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-                del_obj['from_type'] = 'user_folder'
-                if folder.type == BaseFolderNode.UserFolderType:
-                    del_obj['from_uid'] = folder.uid
-            else:
-                del_obj['from_type'] = 'shared_folder_folder'
-                del_obj['from_uid'] = folder.uid
-
-            rq = {
-                'command': 'pre_delete',
-                'objects': [del_obj]
-            }
-
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                pdr = rs['pre_delete_response']
-
-                np = 'y'
-                if not opts.force:
-                    summary = pdr['would_delete']['deletion_summary']
-                    for x in summary:
-                        print(x)
-                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    rq = {
-                        'command': 'delete',
-                        'pre_delete_token': pdr['pre_delete_token']
-                    }
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        params.sync_data = True
-                    else:
-                        print(rs['message'])
-
-        except Exception as e:
-            print(e)
-
-
-def user_choice(question, choice, default= '', show_choice=True, multi_choice=False):
-    choices = [ch.upper() if ch.upper() == default.upper() else ch.lower()  for ch in choice]
-
-    result = ''
-    while True:
-        pr = question
-        if show_choice:
-            pr = pr + ' [' + '/'.join(choices) + ']'
-
-        pr = pr + ': '
-        result = input(pr)
-
-        if len(result) == 0:
-            return default
-
-        if multi_choice:
-            s1 = set([x.lower() for x in choices])
-            s2 = set([x.lower() for x in result])
-            if s2 < s1:
-                return ''.join(s2)
-            pass
-        elif any(map(lambda x: x.upper() == result.upper(), choices)):
-            return result
-
-        print('Error: invalid input')

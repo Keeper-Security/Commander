@@ -13,8 +13,6 @@ import os
 import json
 import hashlib
 from keepercommander import api
-from keepercommander.record import Record
-from keepercommander.shared_folder import SharedFolder
 from keepercommander.importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseImporter, BaseExporter, Record as ImportRecord
 from keepercommander.subfolder import BaseFolderNode, find_folders, get_folder_path
 
@@ -46,45 +44,6 @@ def export(params, format, filename):
 
     if len(recs) > 0:
         exporter.execute(filename, recs)
-
-
-def parse_line(line):
-    fields = line.split('\t')
-    record = Record()
-    record.folder = fields[0]
-    record.title = fields[1]
-    record.login = fields[2]
-    record.password = fields[3]
-    record.login_url = fields[4]
-    record.notes = fields[5].replace('\\\\n', '\n')
-    record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in
-                            range(6, len(fields) - 1, 2)]
-    return record
-
-
-def parse_record_json(record_json):
-    record = Record()
-    record.folder = record_json['folder']
-    record.title = record_json['title']
-    record.login = record_json['login']
-    record.password = record_json['password']
-    record.login_url = record_json['login_url']
-    record.notes = record_json['notes']
-    record.custom_fields = record_json['custom_fields']
-    return record
-
-
-def parse_sf_json(sf_json):
-    sf = SharedFolder()
-    sf.default_manage_records = sf_json['default_manage_records']
-    sf.default_manage_users = sf_json['default_manage_users']
-    sf.default_can_edit = sf_json['default_can_edit']
-    sf.default_can_share = sf_json['default_can_share']
-    sf.name = sf_json['name']
-    sf.records = sf_json['records']
-    sf.users = sf_json['users']
-    sf.teams = sf_json['teams']
-    return sf
 
 
 def _import(params, format, filename):
@@ -162,6 +121,58 @@ def _import(params, format, filename):
         print("{0} records imported successfully".format(success))
 
 
+'''
+####### create_sf
+@click.command('create_sf', help='Create shared folders from JSON input file')
+@click.pass_obj
+@click.argument('filename')
+def create_sf(params, filename):
+    try:
+        prompt_for_credentials(params)
+        imp_exp.create_sf(params, filename)
+    except Exception as e:
+        raise click.ClickException(e)
+
+
+def parse_line(line):
+    fields = line.split('\t')
+    record = Record()
+    record.folder = fields[0]
+    record.title = fields[1]
+    record.login = fields[2]
+    record.password = fields[3]
+    record.login_url = fields[4]
+    record.notes = fields[5].replace('\\\\n', '\n')
+    record.custom_fields = [{'name': fields[i], 'value': fields[i + 1], 'type': 'text'} for i in
+                            range(6, len(fields) - 1, 2)]
+    return record
+
+
+def parse_record_json(record_json):
+    record = Record()
+    record.folder = record_json['folder']
+    record.title = record_json['title']
+    record.login = record_json['login']
+    record.password = record_json['password']
+    record.login_url = record_json['login_url']
+    record.notes = record_json['notes']
+    record.custom_fields = record_json['custom_fields']
+    return record
+
+
+def parse_sf_json(sf_json):
+    sf = SharedFolder()
+    sf.default_manage_records = sf_json['default_manage_records']
+    sf.default_manage_users = sf_json['default_manage_users']
+    sf.default_can_edit = sf_json['default_can_edit']
+    sf.default_can_share = sf_json['default_can_share']
+    sf.name = sf_json['name']
+    sf.records = sf_json['records']
+    sf.users = sf_json['users']
+    sf.teams = sf_json['teams']
+    return sf
+
+
 def create_sf(params, filename):
     api.sync_down(params)
 
@@ -208,6 +219,7 @@ def create_sf(params, filename):
 
     if num_success > 0:
         print('Successfully created ['+str(num_success)+'] shared folders')
+'''
 
 
 def delete_all(params):

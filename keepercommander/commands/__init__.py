@@ -8,3 +8,7 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
+from .base import register_commands
+
+__all__ = ['register_commands']
