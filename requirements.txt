@@ -2,5 +2,6 @@ colorama
 pycryptodomex
 requests
 tabulate
-click
+prompt_toolkit
+asciitree
 pytest

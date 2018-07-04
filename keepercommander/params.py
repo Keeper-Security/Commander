@@ -19,7 +19,7 @@ class KeeperParams:
                  data_key='',private_key='',
                  revision=0, rsa_key='', auth_verifier='',
                  record_cache={}, meta_data_cache={}, shared_folder_cache={},
-                 team_cache = {}, debug=False, timedelay=0):
+                 team_cache = {}, subfolder_cache={}, debug=False, timedelay=0):
         self.config_filename = config_filename
         self.config = config
         self.auth_verifier = auth_verifier 
@@ -43,7 +43,13 @@ class KeeperParams:
         self.meta_data_cache = meta_data_cache
         self.shared_folder_cache = shared_folder_cache
         self.team_cache = team_cache
+        self.subfolder_cache = subfolder_cache
+        self.subfolder_record_cache = {}
+        self.root_folder = None
+        self.current_folder = None
+        self.folder_cache = None
         self.rsa_key = rsa_key
         self.debug = debug
         self.timedelay = timedelay
+        self.sync_data = True
 

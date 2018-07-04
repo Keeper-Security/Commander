@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
@@ -10,5 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-__version__ = '0.7.12'
+from .base import register_commands
 
+__all__ = ['register_commands']
