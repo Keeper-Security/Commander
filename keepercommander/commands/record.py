@@ -14,12 +14,9 @@ import argparse
 import shlex
 import json
 
+from .. import generator, api, display
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
-
-from keepercommander import generator
-from keepercommander import api
-from keepercommander import display
-from keepercommander.subfolder import BaseFolderNode, find_folders, try_resolve_path
 
 
 def register_commands(commands, aliases, command_info):

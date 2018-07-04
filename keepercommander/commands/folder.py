@@ -18,12 +18,9 @@ import functools
 import os
 import json
 
-from keepercommander.subfolder import try_resolve_path
-from keepercommander import api
-from keepercommander import display
-from keepercommander.subfolder import BaseFolderNode, get_folder_path, find_folders
-from keepercommander.record import Record
-
+from .. import api, display
+from ..subfolder import BaseFolderNode, try_resolve_path
+from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 
 
@@ -39,7 +36,6 @@ def register_commands(commands, aliases, command_info):
     for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser]:
         command_info[p.prog] = p.description
     command_info['ln'] = 'Create a link between record or folder'
-
 
 
 ls_parser = argparse.ArgumentParser(prog='ls', description='List folder content')

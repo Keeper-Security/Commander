@@ -20,16 +20,16 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
-from keepercommander import display, api
-from keepercommander.error import AuthenticationError, CommunicationError
-from keepercommander.subfolder import BaseFolderNode
-from keepercommander.autocomplete import CommandCompleter
+from . import display, api
+from .error import AuthenticationError, CommunicationError
+from .subfolder import BaseFolderNode
+from .autocomplete import CommandCompleter
+from .commands import register_commands
 
 
 stack = []
 
 
-from keepercommander.commands import register_commands
 commands = {}
 aliases = {}
 command_info = collections.OrderedDict()

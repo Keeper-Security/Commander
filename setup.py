@@ -42,6 +42,11 @@ setup(name='keepercommander',
       keywords='security password',
 
       packages=['keepercommander',
+                'keepercommander.commands',
+                'keepercommander.importer',
+                'keepercommander.importer.json',
+                'keepercommander.importer.csv',
+                'keepercommander.importer.keepass',
                 'keepercommander.plugins.adpasswd',
                 'keepercommander.plugins.awskey',
                 'keepercommander.plugins.mssql',
@@ -58,7 +63,7 @@ setup(name='keepercommander',
 
       entry_points={
           "console_scripts": [
-              "keeper=keepercommander:main",
+              "keeper=keepercommander.__main__:main",
           ],
       },
       install_requires=install_requires

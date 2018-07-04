@@ -11,7 +11,7 @@
 
 import libkeepass
 
-from keepercommander.importer.importer import PathDelimiter, BaseImporter, Record
+from ..importer import PathDelimiter, BaseImporter, Record
 
 
 class KeepassImporter(BaseImporter):

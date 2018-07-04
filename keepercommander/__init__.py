@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
@@ -8,3 +9,6 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
+__version__ = '0.7.12'
+

@@ -12,8 +12,7 @@
 import argparse
 import shlex
 
-from keepercommander import api, display, imp_exp
-
+from .. import api, display, imp_exp
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 
 

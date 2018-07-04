@@ -12,10 +12,10 @@
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
-from keepercommander.commands.folder import ls_parser, cd_parser, mkdir_parser, rmdir_parser, mv_parser
-from keepercommander.commands.record import rm_parser, append_parser
-from keepercommander import api
-from keepercommander import cli
+from .commands.folder import ls_parser, cd_parser, mkdir_parser, rmdir_parser, mv_parser
+from .commands.record import rm_parser, append_parser
+from . import api
+from . import cli
 
 def try_resolve_path(params, path):
     if type(path) is str:

@@ -18,15 +18,14 @@ import getpass
 import time
 import os
 import hashlib
-from keepercommander import generator
-from keepercommander.subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, RootFolderNode
 
-import datetime
-from keepercommander import plugin_manager, params
-from keepercommander.record import Record
-from keepercommander.shared_folder import SharedFolder
-from keepercommander.team import Team
-from keepercommander.error import AuthenticationError, CommunicationError, CryptoError
+from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, RootFolderNode
+from . import generator, plugin_manager, params
+from .record import Record
+from .shared_folder import SharedFolder
+from .team import Team
+from .error import AuthenticationError, CommunicationError, CryptoError
+
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256, HMAC
 from Cryptodome.Protocol.KDF import PBKDF2

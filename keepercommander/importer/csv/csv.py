@@ -10,7 +10,8 @@
 #
 
 import csv
-from keepercommander.importer.importer import strip_path_delimiter, path_components, PathDelimiter, BaseImporter, BaseExporter, Record
+from ..importer import strip_path_delimiter, path_components, PathDelimiter, BaseImporter, BaseExporter, Record
+
 
 '''
 0 - folder

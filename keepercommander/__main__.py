@@ -17,9 +17,9 @@ import argparse
 import shlex
 import json
 
-from keepercommander.params import KeeperParams
-from keepercommander import cli
-
+from .params import KeeperParams
+from . import cli
+from . import __version__
 
 def get_params_from_config(config_filename):
     params = KeeperParams()
@@ -96,14 +96,15 @@ parser.add_argument('--keeper-user', '-ku', dest='user', action='store', default
                     help='Email address for the account. You can set KEEPER_USER environment variable instead.')
 parser.add_argument('--keeper-password', '-kp', dest='password', action='store', default=os.environ.get('KEEPER_PASSWORD', None),
                     help='Master password for the account. You can set KEEPER_PASSWORD environment variable instead.')
+parser.add_argument('--version', dest='version', action='store_true', help='Display version')
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
-parser.add_argument('command', action='store', help='Command')
+parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
 
 
-if __name__ == '__main__':
+def main():
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
     opts, cmd_options = parser.parse_known_args(sys.argv[1:])
@@ -121,15 +122,21 @@ if __name__ == '__main__':
     if opts.password:
         params.password = opts.password
 
-    if opts.command == '?':
+    if opts.version:
+        print('Keeper Commander, version {0}'.format(__version__))
+        return
+
+    if (opts.command or '') in {'?', ''}:
         usage('')
 
     if opts.command != 'shell':
         options = ' '.join([shlex.quote(x) for x in cmd_options])
-        command =  opts.command + ' ' + options
+        command = opts.command + ' ' + options
         params.commands.append(command)
         params.commands.append('q')
 
     cli.loop(params)
 
 
+if __name__ == '__main__':
+    main()

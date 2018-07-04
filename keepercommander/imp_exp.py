@@ -12,9 +12,10 @@
 import os
 import json
 import hashlib
-from keepercommander import api
-from keepercommander.importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseImporter, BaseExporter, Record as ImportRecord
-from keepercommander.subfolder import BaseFolderNode, find_folders, get_folder_path
+
+from . import api
+from .importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseImporter, BaseExporter, Record as ImportRecord
+from .subfolder import BaseFolderNode, find_folders, get_folder_path
 
 
 def export(params, format, filename):
@@ -44,6 +45,7 @@ def export(params, format, filename):
 
     if len(recs) > 0:
         exporter.execute(filename, recs)
+        print('{0} records exported'.format(len(recs)))
 
 
 def _import(params, format, filename):

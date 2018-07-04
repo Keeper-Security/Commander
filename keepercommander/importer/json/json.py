@@ -11,7 +11,7 @@
 
 import json
 
-from keepercommander.importer.importer import BaseImporter, BaseExporter, Record
+from ..importer import BaseImporter, BaseExporter, Record
 
 
 class KeeperJsonImporter(BaseImporter):

@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .keeper_csv import KeeperCsvImporter as Importer, KeeperCsvExporter as Exporter
+from .csv import KeeperCsvImporter as Importer, KeeperCsvExporter as Exporter
 
 __all__ = ['Importer', 'Exporter']
