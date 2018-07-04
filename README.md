@@ -88,33 +88,56 @@ $ keeper
 The help screen displays as seen below.
 
 ```
-Usage: keeper [OPTIONS] COMMAND [ARGS]...
+usage: /Users/skolupaev/PY/test/bin/keeper [--keeper-server SERVER]
+                                           [--keeper-user USER]
+                                           [--keeper-password PASSWORD]
+                                           [--version] [--config CONFIG]
+                                           [--debug]
+                                           [command] [options [options ...]]
 
-  Some commands have their own options. To see the help message for a specific command, type
-  keeper COMMAND --help
-  for example: keeper import --help
+positional arguments:
+  command               Command
+  options               Options
 
-Options:
-  -s, --server TEXT    Host address. You can set KEEPER_SERVER environment
-                       variable instead.
-  -u, --user TEXT      Email address for the account. You can set KEEPER_USER
-                       environment variable instead.
-  -p, --password TEXT  Master password for the account. You can set
-                       KEEPER_PASSWORD environment variable instead.
-  --config TEXT        Config file to use
-  --debug              Turn on debug mode
-  --version            Show the version and exit.
-  --help               Show this message and exit.
+optional arguments:
+  --keeper-server SERVER, -ks SERVER
+                        Host address. You can set KEEPER_SERVER environment
+                        variable instead.
+  --keeper-user USER, -ku USER
+                        Email address for the account. You can set KEEPER_USER
+                        environment variable instead.
+  --keeper-password PASSWORD, -kp PASSWORD
+                        Master password for the account. You can set
+                        KEEPER_PASSWORD environment variable instead.
+  --version             Display version
+  --config CONFIG       Config file to use
+  --debug               Turn on debug mode
 
 Commands:
-  delete-all  Delete all Keeper records on server
-  export      Export data from Keeper to local file
-  get         Display specified Keeper record/folder/team
-  import      Import data from local file to Keeper
-  list        Display all record UID/titles
-  rotate      Rotate Keeper record
-  search      Search vault with a regular expression
-  shell       Use Keeper interactive shell
+  list|l          ... Display all record UID/titles
+  get-uid|g       ... Display specified Keeper record/folder/team
+  add|a           ... Add record
+  rm              ... Remove record
+  append-note|an  ... Append notes to existing record
+  list-sf|lsf     ... Display all shared folders
+  list-team|lt    ... Display all teams
+  cd              ... Change current folder
+  ls              ... List folder content
+  tree            ... Display folder structure
+  mkdir           ... Create folder
+  rmdir           ... Remove folder and its content
+  mv              ... Move record or folder
+  ln              ... Create a link between record or folder
+  rotate|r        ... Rotate Keeper record
+  import          ... Import data from local file to Keeper
+  export          ... Export data from Keeper to local file
+  shell           ... Use Keeper interactive shell
+  d               ... Download & decrypt data
+  c               ... Clear the screen
+  h               ... Show command history
+  q               ... Quit
+
+Type 'command -h' to display help on command
 ```  
 
 Running most commands will require you to authenticate to Keeper and decrypt your vault.  Authentication requires your email address ("user"), master password ("password") and optionally your 2FA code.  You can type these parameters interactively in the terminal or you can store these parameters into a file called config.json.  You can also store the parameters in environmental variables.
@@ -144,14 +167,14 @@ More advanced usage of configuration files for automated commands is in the <a h
 Here's an example on searching your vault with a regular expression.  Commander will display search results in a list with just record UID and title, and if there are less than 5 records it will display all of the record details.
 
 ```
-clurey@home:~/test/ $ keeper search "Capital.*One"
+clurey@home:~/test/ $ keeper list "Capital.*One"
 Password: <typed in>
 Syncing...
 Decrypted [63] Records
 Searching for Capital.*One
-  #  Record UID              Folder    Title
----  ----------------------  --------  -------------------
-  1  LYwEGKAvkRbCRfaH2wQgnA  TESTING   Capital One Example
+  #  Record UID              Title                                Login                  URL
+---  ----------------------  -----------------------------------  ---------------------  --------------------------------
+  1  LYwEGKAvkRbCRfaH2wQgnA  Capital One Example                  craiglurey             https://www.capitalone.com
 
 
                  UID: LYwEGKAvkRbCRfaH2wQgnA
@@ -171,9 +194,9 @@ As another example, to list all of the record UIDs and record titles in your vau
 ```
 clurey@home:~/test/ $ keeper list 
 
-1  7T13cQ6NQACZaT-7FXQsfg  Secure Documents       Case File #25
-2  2uSii52DF5ny1K8CEZoj8g  Secure Documents       Confidential Files
-3  6Z0uci6wesloF4YxtRUxzQ  Secure Documents       Medical Recs
+1  7T13cQ6NQACZaT-7FXQsfg  Case File #25
+2  2uSii52DF5ny1K8CEZoj8g  Confidential Files
+3  6Z0uci6wesloF4YxtRUxzQ  Medical Recs
 
 ```
 
@@ -205,22 +228,33 @@ keeper shell
 To see a list of supported commands, simply type '?':
 
 ```
-Keeper > ?
+My Vault> ?
 
 Commands:
+  list|l          ... Display all record UID/titles
+  get|g           ... Display specified Keeper record/folder/team
+  add|a           ... Add record
+  rm              ... Remove record
+  append-note|an  ... Append notes to existing record
+  list-sf|lsf     ... Display all shared folders
+  list-team|lt    ... Display all teams
+  cd              ... Change current folder
+  ls              ... List folder content
+  tree            ... Display folder structure
+  mkdir           ... Create folder
+  rmdir           ... Remove folder and its content
+  mv              ... Move record or folder
+  ln              ... Create a link between record or folder
+  rotate|r        ... Rotate Keeper record
+  import          ... Import data from local file to Keeper
+  export          ... Export data from Keeper to local file
+  shell           ... Use Keeper interactive shell
+  d               ... Download & decrypt data
+  c               ... Clear the screen
+  h               ... Show command history
+  q               ... Quit
 
-  d         ... download & decrypt data
-  l         ... list folders and titles
-  lsf       ... list shared folders 
-  lt        ... list teams 
-  s <regex> ... search with regular expression
-  g <uid>   ... get record or shared folder details
-  r <uid>   ... rotate password for uid
-  b <regex> ... rotate password for matches of regular expression
-  a         ... add a new record interactively
-  c         ... clear the screen
-  h         ... show command history
-  q         ... quit
+Type 'command -h' to display help on command
 
 ```
 
@@ -228,17 +262,15 @@ Commands:
 
 * l (list): Displays the Record UID, Folder and Title for all stored records.
 
+* s (search): Same as list.
+
 * lsf (list shared folders): Displays a list of all Shared Folder UID and names 
 
 * lt (list teams): Displays a list of all Team UID and names 
 
-* s (search): Searches across all record data and display the Record UID, Folder and Title for matching records.
-
 * g (get): Displays the full details for a specified Record UID, Shared Folder UID or Team UID.  For records, this will show the login, password, custom fields and other record-related information that you would normally see in your Keeper Vault.  For Shared Folders, this will display the records stored in the shared folder, user permissions and team permissions associated with the shared folder.  For Teams, this will display the team name and team permissions as specified in the Keeper Admin Console.
 
 * r (rotate): Rotates the password field of a specified Keeper record.  The new password generated is by default set to a very strong 64-byte ASCII-based string.  The previous password is also backed up and stored as a custom field in the record, saved with the timestamp of the change.
-
-* b (batch rotate): Searches across all record data and rotate the password for matching records.
 
 The Record UID is a unique identifier for every record in your Keeper vault.  This is used for deep linking and also for password rotation as described below. The search/list/get commands can be used to look up the Record UID when setting up a password rotation scheduler.
 
@@ -328,7 +360,7 @@ Here's the command to run:
 ```
 keeper import --format=json import.json
 ```
-
+<!---
 ### Importing Shared Folders into Keeper
 
 To automatically create Shared Folders into your vault, you need to provide a JSON file in the format defined below..
@@ -378,7 +410,7 @@ Here's the example command to run:
 ```
 keeper create_sf my_shared_folder.json
 ```
-
+-->
 ### Scheduling & Automation
 
 If you want to fully automate Commander operations, such as rotating a password on a regular schedule, there are a few different ways to accomplish this.
