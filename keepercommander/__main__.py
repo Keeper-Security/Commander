@@ -107,7 +107,7 @@ parser.error = usage
 def main():
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
-    opts, cmd_options = parser.parse_known_args(sys.argv[1:])
+    opts, _ = parser.parse_known_args(sys.argv[1:])
     params = get_params_from_config(opts.config)
 
     if opts.debug:
@@ -130,7 +130,7 @@ def main():
         usage('')
 
     if opts.command != 'shell':
-        options = ' '.join([shlex.quote(x) for x in cmd_options])
+        options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
         command = opts.command + ' ' + options
         params.commands.append(command)
         params.commands.append('q')

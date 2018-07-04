@@ -25,7 +25,7 @@ def register_commands(commands, aliases, command_info):
     commands['list'] = RecordListCommand()
     commands['list-sf'] = RecordListSfCommand()
     commands['list-team'] = RecordListTeamCommand()
-    commands['get-uid'] = RecordGetUidCommand()
+    commands['get'] = RecordGetUidCommand()
     commands['append-notes'] = RecordAppendNotesCommand()
     aliases['a'] = 'add'
     aliases['s'] = 'list'
@@ -33,7 +33,7 @@ def register_commands(commands, aliases, command_info):
     aliases['l'] = 'list'
     aliases['lsf'] = 'list-sf'
     aliases['lt'] = 'list-team'
-    aliases['g'] = 'get-uid'
+    aliases['g'] = 'get'
     aliases['an'] = 'append-notes'
 
     for p in [list_parser, get_info_parser, add_parser, rm_parser, append_parser]:
@@ -69,7 +69,7 @@ list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
 
-get_info_parser = argparse.ArgumentParser(prog='get-uid|g', description='Display specified Keeper record/folder/team')
+get_info_parser = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
