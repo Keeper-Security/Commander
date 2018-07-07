@@ -43,6 +43,28 @@ unpad_binary = lambda s : s[0:-s[-1]]
 unpad_char = lambda s : s[0:-ord(s[-1])]
 
 
+def run_command(params, request):
+    request['client_version'] = CLIENT_VERSION
+    try:
+        r = requests.post(params.server, json=request)
+        return r.json()
+    except:
+        print('Communication error')
+        raise CommunicationError(sys.exc_info()[0])
+
+
+def derive_key(password, salt, iterations):
+    prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
+    return PBKDF2(password, salt, 32, iterations, prf)
+
+
+def auth_verifier(password, salt, iterations):
+    derived_key = derive_key(password, salt, iterations)
+    derived_key = hashlib.sha256(derived_key).digest()
+    au_ver = base64.urlsafe_b64encode(derived_key)
+    return au_ver.decode().rstrip('=')
+
+
 def login(params, attempt=0):
     """Login to the server and get session token"""
     
@@ -72,6 +94,8 @@ def login(params, attempt=0):
             result_code = rs['result_code']
 
             if result_code == 'Failed_to_find_user':
+                params.user = ''
+                params.password = ''
                 raise AuthenticationError('User account [' + \
                     str(params.user) + '] not found.')
 
@@ -195,6 +219,7 @@ def login(params, attempt=0):
             else:
                 print('Hmm... keys not provided in login response.')
 
+            params.sync_data = True
             success = True
 
         elif ( response_json['result_code'] == 'need_totp' or
@@ -216,6 +241,7 @@ def login(params, attempt=0):
                 return 
                 
         elif response_json['result_code'] == 'auth_failed':
+            params.password = ''
             raise AuthenticationError('Authentication failed.')
 
         elif response_json['result_code'] == 'throttled':
