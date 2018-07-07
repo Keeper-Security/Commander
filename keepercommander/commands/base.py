@@ -10,6 +10,9 @@
 #
 
 
+import argparse
+import shlex
+
 def register_commands(commands, aliases, command_info):
     from .record import register_commands as record_commands
     record_commands(commands, aliases, command_info)
@@ -19,6 +22,9 @@ def register_commands(commands, aliases, command_info):
 
     from .utils import register_commands as misc_commands
     misc_commands(commands, aliases, command_info)
+
+    from .register import register_commands as register_commands
+    register_commands(commands, aliases, command_info)
 
     command_info['shell'] = 'Use Keeper interactive shell'
     command_info['d'] = 'Download & decrypt data'
@@ -63,6 +69,28 @@ def suppress_exit():
 
 
 class Command:
-    def execute(self, params, args, **kwargs):
+    def execute(self, params, **kwargs):
         raise NotImplemented()
+
+    def execute_args(self, params, args, **kwargs):
+        try:
+            parser = self.get_parser()
+            d = {}
+            d.update(kwargs)
+            if parser is not None:
+                opts = parser.parse_args(shlex.split(args))
+                d.update(opts.__dict__)
+
+            self.execute(params, **d)
+        except Exception as e:
+            print(e)
+
+    def get_parser(self):
+        '''
+        :rtype: argparse.ArgumentParser
+        '''
+        return None
+
+    def is_authorised(self):
+        return True
 

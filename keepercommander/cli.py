@@ -56,6 +56,15 @@ def do_command(params):
         return False
 
     if params.command == 'd':
+        if params.session_token:
+            api.sync_down(params)
+
+    elif params.command == 'login':
+        params.session_token = ''
+        params.user = ''
+        params.password = ''
+        prompt_for_credentials(params)
+        api.login(params)
         api.sync_down(params)
 
     elif params.command == 'h':
@@ -81,11 +90,20 @@ def do_command(params):
             cmd = cmd[:pos]
 
         if len(cmd) > 0:
+            orig_cmd = cmd
             if cmd in aliases and cmd not in commands:
                 cmd = aliases[cmd]
 
             if cmd in commands:
-                commands[cmd].execute(params, args, command=cmd)
+                command = commands[cmd]
+                if command.is_authorised():
+                    if not params.session_token:
+                        prompt_for_credentials(params)
+                        api.login(params)
+                    if params.sync_data:
+                        api.sync_down(params)
+
+                command.execute_args(params, args, command=orig_cmd)
             else:
                 display_command_help()
                 return True
@@ -117,7 +135,7 @@ def runcommands(params):
 
             params.command = ''
 
-        if (timedelay == 0):
+        if timedelay == 0:
             keep_running = False
         else:
             print(datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S') + \
@@ -137,8 +155,6 @@ def loop(params):
     display.welcome()
 
     try:
-        prompt_for_credentials(params)
-
         if params.debug: print('Params: ' + str(params))
 
         prompt_session = None
@@ -150,14 +166,19 @@ def loop(params):
                                            complete_style=CompleteStyle.MULTI_COLUMN,
                                            complete_while_typing=False)
 
+        if params.user and params.password:
+            print('Logging on...')
+            api.login(params)
+            api.sync_down(params)
+
         # go into interactive mode
         while True:
             if len(params.commands) > 0:
                 params.command = params.commands[0]
                 params.commands = params.commands[1:]
 
-            if params.sync_data:
-                api.sync_down(params)
+                if params.command.startswith('create-user '):
+                    pass
 
             if not params.command:
                 try:
@@ -191,11 +212,14 @@ def loop(params):
 
 
 def get_prompt(params):
-    if params.current_folder is None:
-        if params.root_folder:
-            params.current_folder = ''
-        else:
-            return 'Keeper'
+    if params.session_token:
+        if params.current_folder is None:
+            if params.root_folder:
+                params.current_folder = ''
+            else:
+                return 'Keeper'
+    else:
+        return 'Not logged in'
 
     prompt = ''
     f = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder

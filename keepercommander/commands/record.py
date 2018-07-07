@@ -11,7 +11,6 @@
 
 import os
 import argparse
-import shlex
 import json
 
 from .. import generator, api, display
@@ -83,259 +82,260 @@ append_parser.exit = suppress_exit
 
 
 class RecordAddCommand(Command):
+    def get_parser(self):
+        return add_parser
 
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = add_parser.parse_args(shlex.split(args))
-            if opts.generate:
-                opts.password = generator.generate(16)
+    def execute(self, params, **kwargs):
+        title = kwargs['title'] if 'title' in kwargs else None
+        login = kwargs['login'] if 'login' in kwargs else None
+        password = kwargs['password'] if 'password' in kwargs else None
+        url = kwargs['url'] if 'url' in kwargs else None
+        custom_list = kwargs['custom'] if 'custom' in kwargs else None
+        notes = kwargs['notes'] if 'notes' in kwargs else None
 
-            if not opts.force:
-                if opts.login is None:
-                    opts.login = input('...' + 'Login: '.rjust(16))
-                if opts.password is None:
-                    opts.password = input('...' + 'Password: '.rjust(16))
-                if opts.url is None:
-                    opts.url = input('...' + 'Login URL: '.rjust(16))
+        generate = kwargs['generate'] if 'generate' in kwargs else None
+        if generate:
+            password = generator.generate(16)
 
-            custom = []
-            if opts.custom is not None:
-                pairs = opts.custom.split(',')
-                for pair in pairs:
-                    idx = pair.find(':')
-                    if idx > 0:
-                        custom.append({
-                            'name': pair[:idx].trim(),
-                            'value': pair[idx+1:].trim()
-                        })
+        force = kwargs['force'] if 'force' in kwargs else None
+        if not force:
+            if not title:
+                title = input('...' + 'Title: '.rjust(16))
+            if not login:
+                login = input('...' + 'Login: '.rjust(16))
+            if not password:
+                password = input('...' + 'Password: '.rjust(16))
+            if not url:
+                url = input('...' + 'Login URL: '.rjust(16))
 
-            folder = None
-            if opts.folder is not None:
-                src = try_resolve_path(params, opts.folder)
-                if src is not None:
-                    folder, name = src
-            if folder is None:
-                folder = params.folder_cache[params.current_folder] if len(params.current_folder) > 0 else params.root_folder
+        custom = []
+        if custom_list:
+            pairs = custom_list.split(',')
+            for pair in pairs:
+                idx = pair.find(':')
+                if idx > 0:
+                    custom.append({
+                        'name': pair[:idx].trim(),
+                        'value': pair[idx+1:].trim()
+                    })
 
-            record_key = os.urandom(32)
-            rq = {
-                'command': 'record_add',
-                'record_uid': api.generate_record_uid(),
-                'record_type': 'password',
-                'record_key': api.encrypt_aes(record_key, params.data_key),
-                'how_long_ago': 0
-            }
-            if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+        folder = None
+        folder_name = kwargs['folder'] if 'folder' in kwargs else None
+        if folder_name:
+            src = try_resolve_path(params, folder_name)
+            if src is not None:
+                folder, name = src
+        if folder is None:
+            folder = params.folder_cache[params.current_folder] if len(params.current_folder) > 0 else params.root_folder
+
+        record_key = os.urandom(32)
+        rq = {
+            'command': 'record_add',
+            'record_uid': api.generate_record_uid(),
+            'record_type': 'password',
+            'record_key': api.encrypt_aes(record_key, params.data_key),
+            'how_long_ago': 0
+        }
+        if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+            rq['folder_uid'] = folder.uid
+            rq['folder_type'] = 'shared_folder' if folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
+
+            sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
+            sf = params.shared_folder_cache[sh_uid]
+            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
+            if 'key_type' not in sf:
+                if 'teams' in sf:
+                    for team in sf['teams']:
+                        rq['team_uid'] = team['team_uid']
+                        if team['manage_records']:
+                            break
+        else:
+            rq['folder_type'] = 'user_folder'
+            if folder.type != BaseFolderNode.RootFolderType:
                 rq['folder_uid'] = folder.uid
-                rq['folder_type'] = 'shared_folder' if folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
 
-                sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
-                sf = params.shared_folder_cache[sh_uid]
-                rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
-                if 'key_type' not in sf:
-                    if 'teams' in sf:
-                        for team in sf['teams']:
-                            rq['team_uid'] = team['team_uid']
-                            if team['manage_records']:
-                                break
-            else:
-                rq['folder_type'] = 'user_folder'
-                if folder.type != BaseFolderNode.RootFolderType:
-                    rq['folder_uid'] = folder.uid
+        data = {
+            'title': title or '',
+            'secret1': login or '',
+            'secret2': password or '',
+            'link': url or '',
+            'notes': notes or '',
+            'custom': custom
+        }
+        rq['data'] =  api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
-            data = {
-                'title': opts.title,
-                'secret1': opts.login or '',
-                'secret2': opts.password or '',
-                'link': opts.url or '',
-                'notes': opts.notes or '',
-                'custom': custom
-            }
-            rq['data'] =  api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
-
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                params.sync_data = True
-            else:
-                print(rs['message'])
-
-        except Exception as e:
-            print(e)
+        rs = api.communicate(params, rq)
+        if rs['result'] == 'success':
+            params.sync_data = True
+        else:
+            print(rs['message'])
 
 
 class RecordRemoveCommand(Command):
+    def get_parser(self):
+        return rm_parser
 
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = rm_parser.parse_args(shlex.split(args))
+    def execute(self, params, **kwargs):
+        folder = None
+        name = None
+        record_path = kwargs['name'] if 'name' in kwargs else None
+        if record_path:
+            rs = try_resolve_path(params, record_path)
+            if rs is not None:
+                folder, name = rs
 
-            folder = None
-            name = None
-            if opts.name is not None:
-                rs = try_resolve_path(params, opts.name)
-                if rs is not None:
-                    folder, name = rs
+        if folder is None or name is None:
+            print('Enter name of existing record')
+            return
 
-            if folder is None or name is None:
-                print('Enter name of existing record')
-                return
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+            folders = list(find_folders(params, record_uid))
+            #TODO support multiple folders
+            if len(folders) > 0:
+                folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
+        else:
+            folder_uid = folder.uid or ''
+            if folder_uid in params.subfolder_record_cache:
+                for uid in params.subfolder_record_cache[folder_uid]:
+                    r = api.get_record(params, uid)
+                    if r.title.lower() == name.lower():
+                        record_uid = uid
+                        break
 
-            record_uid = None
-            if name in params.record_cache:
-                record_uid = name
-                folders = list(find_folders(params, record_uid))
-                #TODO support multiple folders
-                if len(folders) > 0:
-                    folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
-            else:
-                folder_uid = folder.uid or ''
-                if folder_uid in params.subfolder_record_cache:
-                    for uid in params.subfolder_record_cache[folder_uid]:
-                        r = api.get_record(params, uid)
-                        if r.title.lower() == name.lower():
-                            record_uid = uid
-                            break
+        if record_uid is None:
+            print('Enter name of existing record')
+            return
 
-            if record_uid is None:
-                print('Enter name of existing record')
-                return
-
-            del_obj = {
-                'delete_resolution': 'unlink',
-                'object_uid': record_uid,
-                'object_type': 'record'
-            }
-            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-                del_obj['from_type'] = 'user_folder'
-                if folder.type == BaseFolderNode.UserFolderType:
-                    del_obj['from_uid'] = folder.uid
-            else:
-                del_obj['from_type'] = 'shared_folder_folder'
+        del_obj = {
+            'delete_resolution': 'unlink',
+            'object_uid': record_uid,
+            'object_type': 'record'
+        }
+        if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+            del_obj['from_type'] = 'user_folder'
+            if folder.type == BaseFolderNode.UserFolderType:
                 del_obj['from_uid'] = folder.uid
+        else:
+            del_obj['from_type'] = 'shared_folder_folder'
+            del_obj['from_uid'] = folder.uid
 
-            rq = {
-                'command': 'pre_delete',
-                'objects': [del_obj]
-            }
+        rq = {
+            'command': 'pre_delete',
+            'objects': [del_obj]
+        }
 
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                pdr = rs['pre_delete_response']
+        rs = api.communicate(params, rq)
+        if rs['result'] == 'success':
+            pdr = rs['pre_delete_response']
 
-                np = 'y'
-                if not opts.force:
-                    summary = pdr['would_delete']['deletion_summary']
-                    for x in summary:
-                        print(x)
-                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    rq = {
-                        'command': 'delete',
-                        'pre_delete_token': pdr['pre_delete_token']
-                    }
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        params.sync_data = True
-                    else:
-                        print(rs['message'])
-
-        except Exception as e:
-            print(e)
+            force = kwargs['force'] if 'force' in kwargs else None
+            np = 'y'
+            if not force:
+                summary = pdr['would_delete']['deletion_summary']
+                for x in summary:
+                    print(x)
+                np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+            if np.lower() == 'y':
+                rq = {
+                    'command': 'delete',
+                    'pre_delete_token': pdr['pre_delete_token']
+                }
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    params.sync_data = True
+                else:
+                    print(rs['message'])
 
 
 class RecordListCommand(Command):
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = list_parser.parse_args(shlex.split(args))
-            results = api.search_records(params, opts.pattern or '')
-            if results:
-                display.formatted_records(results, params=params)
+    def get_parser(self):
+        return list_parser
 
-        except Exception as e:
-            print(e)
+    def execute(self, params, **kwargs):
+        pattern = kwargs['pattern'] if 'pattern' in kwargs else None
+        results = api.search_records(params, pattern or '')
+        if results:
+            display.formatted_records(results, params=params)
 
 
 class RecordListSfCommand(Command):
-    def execute(self, params, args, **kwargs):
-        try:
-            results = api.search_shared_folders(params, '')
-            if results:
-                display.formatted_shared_folders(results)
-
-        except Exception as e:
-            print(e)
+    def execute(self, params, **kwargs):
+        results = api.search_shared_folders(params, '')
+        if results:
+            display.formatted_shared_folders(results)
 
 
 class RecordListTeamCommand(Command):
-    def execute(self, params, args, **kwargs):
-        try:
-            results = api.search_teams(params, '')
-            if results:
-                display.formatted_teams(results)
-
-        except Exception as e:
-            print(e)
+    def execute(self, params, **kwargs):
+        results = api.search_teams(params, '')
+        if results:
+            display.formatted_teams(results)
 
 
 class RecordGetUidCommand(Command):
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = get_info_parser.parse_args(shlex.split(args))
+    def get_parser(self):
+        return get_info_parser
 
-            if api.is_shared_folder(params, opts.uid):
-                sf = api.get_shared_folder(params, opts.uid)
-                sf.display()
-            elif api.is_team(params, opts.uid):
-                team = api.get_team(params, opts.uid)
-                team.display()
-            else:
-                r = api.get_record(params, opts.uid)
-                if r:
-                    r.display(params=params)
+    def execute(self, params, **kwargs):
+        uid = kwargs['uid'] if 'uid' in kwargs else None
+        if not uid:
+            print('UID parameter is required')
+            return
 
-        except Exception as e:
-            print(e)
+        if api.is_shared_folder(params, uid):
+            sf = api.get_shared_folder(params, uid)
+            sf.display()
+        elif api.is_team(params, uid):
+            team = api.get_team(params, uid)
+            team.display()
+        else:
+            r = api.get_record(params, uid)
+            if r:
+                r.display(params=params)
 
 
 class RecordAppendNotesCommand(Command):
-    def execute(self, params, args, **kwargs):
-        try:
-            opts = append_parser.parse_args(shlex.split(args))
-            if opts.name is None:
-                append_parser.print_help()
-                return
+    def get_parser(self):
+        return append_parser
 
-            record_uid = None
-            if opts.name in params.record_cache:
-                record_uid = opts.name
-            else:
-                rs = try_resolve_path(params, opts.name)
-                if rs is not None:
-                    folder, name = rs
-                    if folder is not None and name is not None:
-                        folder_uid = folder.uid or ''
-                        if folder_uid in params.subfolder_record_cache:
-                            for uid in params.subfolder_record_cache[folder_uid]:
-                                r = api.get_record(params, uid)
-                                if r.title.lower() == name.lower():
-                                    record_uid = uid
-                                    break
+    def execute(self, params, **kwargs):
+        name = kwargs['name'] if 'name' in kwargs else None
 
-            if record_uid is None:
-                print('Enter name or uid of existing record')
-                return
+        if not name:
+            append_parser.print_help()
+            return
 
-            while len(opts.notes or '') == 0:
-                opts.notes = input("... Notes to append: ")
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
 
-            record = api.get_record(params, record_uid)
+        if record_uid is None:
+            print('Enter name or uid of existing record')
+            return
 
-            record.notes += opts.notes
-            api.update_record(params, record)
-            params.sync_data = True
+        notes = kwargs['notes'] if 'notes' in kwargs else None
+        while not notes:
+            notes = input("... Notes to append: ")
 
-        except Exception as e:
-            print(e)
+        record = api.get_record(params, record_uid)
+
+        record.notes += notes
+        api.update_record(params, record)
+        params.sync_data = True
 
 
 
