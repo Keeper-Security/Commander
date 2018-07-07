@@ -115,7 +115,7 @@ optional arguments:
 
 Commands:
   list|l          ... Display all record UID/titles
-  get-uid|g       ... Display specified Keeper record/folder/team
+  get|g           ... Display specified Keeper record/folder/team
   add|a           ... Add record
   rm              ... Remove record
   append-note|an  ... Append notes to existing record
@@ -131,6 +131,7 @@ Commands:
   rotate|r        ... Rotate Keeper record
   import          ... Import data from local file to Keeper
   export          ... Export data from Keeper to local file
+  create_user     ... Create Keeper User
   shell           ... Use Keeper interactive shell
   d               ... Download & decrypt data
   c               ... Clear the screen
@@ -248,6 +249,7 @@ Commands:
   rotate|r        ... Rotate Keeper record
   import          ... Import data from local file to Keeper
   export          ... Export data from Keeper to local file
+  create_user     ... Create Keeper User
   shell           ... Use Keeper interactive shell
   d               ... Download & decrypt data
   c               ... Clear the screen
