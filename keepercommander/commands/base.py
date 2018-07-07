@@ -93,4 +93,3 @@ class Command:
 
     def is_authorised(self):
         return True
-

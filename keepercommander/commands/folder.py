@@ -30,11 +30,10 @@ def register_commands(commands, aliases, command_info):
     commands['mkdir'] = FolderMakeCommand()
     commands['rmdir'] = FolderRemoveCommand()
     commands['mv'] = FolderMoveCommand()
-    aliases['ln'] = 'mv'
+    commands['ln'] = FolderLinkCommand()
 
-    for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser]:
+    for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser, ln_parser]:
         command_info[p.prog] = p.description
-    command_info['ln'] = 'Create a link between record or folder'
 
 
 ls_parser = argparse.ArgumentParser(prog='ls', description='List folder content')
@@ -86,6 +85,16 @@ mv_parser.add_argument('src', nargs='?', type=str, action='store', help='source 
 mv_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder')
 mv_parser.error = raise_parse_exception
 mv_parser.exit = suppress_exit
+
+
+ln_parser = argparse.ArgumentParser(prog='ln', description='Create a link between record or folder')
+ln_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
+ln_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
+ln_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
+ln_parser.add_argument('src', nargs='?', type=str, action='store', help='source path')
+ln_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder')
+ln_parser.error = raise_parse_exception
+ln_parser.exit = suppress_exit
 
 
 class FolderListCommand(Command):
@@ -454,12 +463,16 @@ class FolderMoveCommand(Command):
     def get_parser(self):
         return mv_parser
 
+    def is_move(self):
+        return True
+
     def execute(self, params, **kwargs):
         src_path = kwargs['src'] if 'src' in kwargs else None
         dst_path = kwargs['dst'] if 'dst' in kwargs else None
 
         if not src_path or not dst_path:
-            mv_parser.print_help()
+            parser = self.get_parser()
+            parser.print_help()
             return
 
         src = try_resolve_path(params, src_path)
@@ -483,10 +496,6 @@ class FolderMoveCommand(Command):
                 print('Record "{0}" not found'.format(name))
                 return
 
-        is_link = False
-        if 'command' in kwargs:
-            is_link = kwargs['command'] == 'ln'
-
         dst = try_resolve_path(params, dst_path)
         if dst is None:
             print('Destination path should be existing folder')
@@ -498,7 +507,7 @@ class FolderMoveCommand(Command):
 
         rq = {
             'command': 'move',
-            'link': is_link,
+            'link': not self.is_move(),
             'move': []
         }
         if dst_folder.type == BaseFolderNode.RootFolderType:
@@ -612,3 +621,10 @@ class FolderMoveCommand(Command):
         else:
             print(rs['message'])
 
+
+class FolderLinkCommand(FolderMoveCommand):
+    def is_move(self):
+        return False
+
+    def get_parser(self):
+        return ln_parser
