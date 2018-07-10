@@ -23,9 +23,10 @@ class Record:
         self.login_url = login_url
         self.notes = notes 
         self.custom_fields = custom_fields
+        self.attachments = None
         self.revision = revision 
 
-    def load(self,data,revision=''):
+    def load(self, data, **kwargs):
 
         def xstr(s):
             return str(s or '')
@@ -44,8 +45,10 @@ class Record:
             self.login_url = xstr(data['link'])
         if 'custom' in data:
             self.custom_fields = data['custom']
-        if revision:
-            self.revision = revision
+        if 'revision' in kwargs:
+            self.revision = kwargs['revision']
+        if 'extra' in kwargs:
+            self.attachments = kwargs['extra'].get('files')
 
     def get(self,field):
         result = ''
@@ -67,13 +70,15 @@ class Record:
 
     def display(self, **kwargs):
         print('') 
-        print('{0:>20s}: {1:<20s}'.format('UID',self.record_uid))
-        print('{0:>20s}: {1}'.format('Revision',self.revision))
+        print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
+        print('{0:>20s}: {1}'.format('Revision', self.revision))
 
         if 'params' in kwargs:
             params = kwargs['params']
             folders = [get_folder_path(params, x) for x in find_folders(params, self.record_uid)]
-            print('{0:>20s}: {1:<20s}'.format('Folder', ', '.join(folders)))
+            for i in range(len(folders)):
+                folder = folders[i]
+                print('{0:>20s}: {1:<20s}'.format('Folder' if i == 0 else '', folders[i]))
 
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title',self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
@@ -90,6 +95,23 @@ class Record:
         if self.notes:
             print('{0:>20s}: {1:<20s}'.format('Notes',self.notes))
 
+        if self.attachments:
+            for i in range(len(self.attachments)):
+                atta = self.attachments[i]
+                size = atta.get('size') or 0
+                scale = 'b'
+                if size > 0:
+                    if size > 1000:
+                        size = size / 1024
+                        scale = 'Kb'
+                    if size > 1000:
+                        size = size / 1024
+                        scale = 'Mb'
+                    if size > 1000:
+                        size = size / 1024
+                        scale = 'Gb'
+                sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
+                print('{0:>20s}: {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments' if i == 0 else '', atta.get('name'), sz, scale, 'ID', atta.get('id')))
         print('')
 
     def to_string(self):

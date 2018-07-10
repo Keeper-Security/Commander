@@ -45,7 +45,7 @@ def formatted_records(records, **kwargs):
     """Display folders/titles/uids for the supplied shared folders"""
 
     # Sort by folder+title
-    records.sort(key=lambda x: ((x.folder if x.folder else ' ') + x.title).lower(), reverse=False)
+    records.sort(key=lambda x: x.title.lower(), reverse=False)
 
     if len(records) > 0:
 

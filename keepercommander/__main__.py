@@ -89,7 +89,7 @@ def usage(m):
     exit(1)
 
 
-parser = argparse.ArgumentParser(prog=sys.argv[0], add_help=False)
+parser = argparse.ArgumentParser(prog='keeper', add_help=False)
 parser.add_argument('--keeper-server', '-ks', dest='server', action='store', default=os.environ.get('KEEPER_SERVER', None),
                     help='Host address. You can set KEEPER_SERVER environment variable instead.')
 parser.add_argument('--keeper-user', '-ku', dest='user', action='store', default=os.environ.get('KEEPER_USER', None),
@@ -129,7 +129,9 @@ def main():
     if (opts.command or '') in {'?', ''}:
         usage('')
 
-    if opts.command != 'shell':
+    if opts.command == 'shell':
+        del cli.command_info['shell']
+    else:
         flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
         options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
         command = ' '.join([opts.command, flags, options])

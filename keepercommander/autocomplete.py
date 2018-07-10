@@ -13,7 +13,7 @@ import shlex
 
 from prompt_toolkit.completion import Completion, Completer
 from .commands.folder import ls_parser, cd_parser, mkdir_parser, rmdir_parser, mv_parser
-from .commands.record import rm_parser, append_parser
+from .commands.record import rm_parser, append_parser, download_parser
 from . import api
 from . import cli
 
@@ -161,6 +161,13 @@ class CommandCompleter(Completer):
                         if args is not None:
                             extra['escape_space'] = args == raw_input
                             opts, _ = append_parser.parse_known_args(shlex.split(args))
+                            extra['prefix'] = opts.name or ''
+                            context = 'path'
+                    elif cmd == 'download-attachment':
+                        args = CommandCompleter.fix_input(raw_input)
+                        if args is not None:
+                            extra['escape_space'] = args == raw_input
+                            opts, _ = download_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.name or ''
                             context = 'path'
                     elif cmd in {'mv', 'ln'}:

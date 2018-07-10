@@ -1202,7 +1202,10 @@ def get_record(params,record_uid):
     try:
         data = json.loads(cached_rec['data'].decode('utf-8')) 
         rec = Record(record_uid)
-        rec.load(data,cached_rec['revision'])
+        extra = None
+        if 'extra' in cached_rec:
+            extra = json.loads(cached_rec['extra'].decode('utf-8'))
+        rec.load(data, revision=cached_rec['revision'], extra=extra)
     except:
         print('**** Error decrypting record ' + str(record_uid))
 
@@ -1852,6 +1855,7 @@ def delete_record(params, record_uid):
     sync_down(params)
     return True
 
+
 def debug_response(params, payload, response):
     print('')
     print('>>> Request server:[' + params.server + ']')
@@ -1910,3 +1914,43 @@ def prepare_folder_tree(params):
     for f in params.folder_cache.values():
         pf = params.folder_cache[f.parent_uid] if f.parent_uid is not None else params.root_folder
         pf.subfolders.append(f.uid)
+
+
+def get_record_permissions(params, record_uids):
+    to_get = []
+    for uid in record_uids:
+        if uid in params.record_cache:
+            r = params.record_cache[uid]
+            shared = r.get('shared')
+            if shared and 'permissions' not in r:
+                ro = resolve_record_access_path(params, uid)
+                to_get.append(ro)
+
+    if len(to_get) > 0:
+        rq = {
+            'command': 'get_records',
+            'records': to_get
+        }
+
+
+def resolve_record_access_path(params, record_uid, path=None, for_writing=False):
+    if path is None:
+        path = {}
+
+    #TODO respect for_writing
+    path['record_uid'] = record_uid
+    if record_uid not in params.meta_data_cache: #shared through shared folder
+        for sf_uid in params.shared_folder_cache:
+            sf = params.shared_folder_cache[sf_uid]
+            if 'records' in sf:
+                if any(sfr['record_uid'] == record_uid for sfr in sf['records']):
+                    if 'shared_folder_key' not in sf:
+                        if 'teams' in sf:
+                            for team in sf['teams']:
+                                path['shared_folder_uid'] = sf_uid
+                                path['team_uid'] = team['team_uid']
+                                break
+                    else:
+                        path['shared_folder_uid'] = sf_uid
+                        break
+    return path

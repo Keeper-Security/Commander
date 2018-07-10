@@ -38,15 +38,17 @@ class KeeperJsonExporter(BaseExporter):
     def do_export(self, filename, records):
         rs = []
         for r in records:
-            rs.append({
-                'folder': r.folder,
-                'title': r.title,
-                'login': r.login,
-                'password': r.password,
-                'login_url': r.login_url,
-                'notes': r.notes,
+            ro = {
+                'title': r.title or '',
+                'login': r.login or '',
+                'password': r.password or '',
+                'login_url': r.login_url or '',
+                'notes': r.notes or '',
                 'custom_fields': r.custom_fields
-            })
+            }
+            if r.folder:
+                ro['folder'] = r.folder
+            rs.append(ro)
 
         with open(filename, mode="w", encoding='utf-8') as f:
             json.dump(rs, f, indent=2, ensure_ascii=False)

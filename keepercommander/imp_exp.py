@@ -14,7 +14,7 @@ import json
 import hashlib
 
 from . import api
-from .importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseImporter, BaseExporter, Record as ImportRecord
+from .importer.importer import importer_for_format, exporter_for_format, path_components, strip_path_delimiter,PathDelimiter, BaseImporter, BaseExporter, Record as ImportRecord
 from .subfolder import BaseFolderNode, find_folders, get_folder_path
 
 
@@ -39,7 +39,8 @@ def export(params, format, filename):
         fols = find_folders(params, r.record_uid)
         for x in fols:
             if len(x) > 0:
-                rec.folder = get_folder_path(params, x, delimiter=PathDelimiter)
+                folder_path = get_folder_path(params, x, delimiter=PathDelimiter)
+                rec.folder = strip_path_delimiter(folder_path)
                 break
         recs.append(rec)
 
