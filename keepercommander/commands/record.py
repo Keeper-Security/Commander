@@ -12,6 +12,10 @@
 import os
 import argparse
 import json
+import requests
+import base64
+
+from Cryptodome.Cipher import AES
 
 from .. import generator, api, display
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
@@ -26,6 +30,7 @@ def register_commands(commands, aliases, command_info):
     commands['list-team'] = RecordListTeamCommand()
     commands['get'] = RecordGetUidCommand()
     commands['append-notes'] = RecordAppendNotesCommand()
+    commands['download-attachment'] = RecordDownloadAttachmentCommand()
     aliases['a'] = 'add'
     aliases['s'] = 'list'
     aliases['search'] = 'list'
@@ -34,8 +39,9 @@ def register_commands(commands, aliases, command_info):
     aliases['lt'] = 'list-team'
     aliases['g'] = 'get'
     aliases['an'] = 'append-notes'
+    aliases['da'] = 'download-attachment'
 
-    for p in [list_parser, get_info_parser, add_parser, rm_parser, append_parser]:
+    for p in [list_parser, get_info_parser, add_parser, rm_parser, append_parser, download_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -80,6 +86,20 @@ append_parser.add_argument('name', nargs='?', type=str, action='store', help='re
 append_parser.error = raise_parse_exception
 append_parser.exit = suppress_exit
 
+
+download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
+#download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted.')
+download_parser.add_argument('name', nargs='?', type=str, action='store', help='record path or UID')
+download_parser.error = raise_parse_exception
+download_parser.exit = suppress_exit
+
+#
+# upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachment')
+# upload_parser.add_argument('--file', dest='file', action='store', help='file path')
+# upload_parser.add_argument('name', nargs='?', type=str, action='store', help='record path or UID')
+# upload_parser.error = raise_parse_exception
+# upload_parser.exit = suppress_exit
+#
 
 class RecordAddCommand(Command):
     def get_parser(self):
@@ -304,7 +324,7 @@ class RecordAppendNotesCommand(Command):
         name = kwargs['name'] if 'name' in kwargs else None
 
         if not name:
-            append_parser.print_help()
+            self.get_parser().print_help()
             return
 
         record_uid = None
@@ -338,4 +358,84 @@ class RecordAppendNotesCommand(Command):
         params.sync_data = True
 
 
+class RecordDownloadAttachmentCommand(Command):
+    def get_parser(self):
+        return download_parser
 
+    def execute(self, params, **kwargs):
+        name = kwargs['name'] if 'name' in kwargs else None
+
+        if not name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            print('Enter name or uid of existing record')
+            return
+
+        r = params.record_cache[record_uid]
+        file_ids = []
+        if 'udata' in r:
+            if 'file_ids' in r['udata']:
+                file_ids.extend(r['udata']['file_ids'])
+
+        if len(file_ids) == 0:
+            print('No attachemnts associated with the record')
+            return
+
+        rq = {
+            'command': 'request_download',
+            'file_ids': file_ids,
+        }
+        api.resolve_record_access_path(params, record_uid, path=rq)
+
+        rs = api.communicate(params, rq)
+        if rs['result'] == 'success':
+            for file_id, dl in zip(file_ids, rs['downloads']):
+                if 'url' in dl:
+                    file_key = None
+                    file_name = None
+                    extra = json.loads(r['extra'].decode())
+                    if 'files' in extra:
+                        for f_info in extra['files']:
+                            if f_info['id'] == file_id:
+                                file_key = base64.urlsafe_b64decode(f_info['key'] + '==')
+                                file_name = f_info['name']
+                                break
+
+                    if file_key:
+                        rq_http = requests.get(dl['url'], stream=True)
+                        print('Downloading \'{0}\''.format(file_name))
+                        with open(file_name, 'wb') as f:
+                            iv = rq_http.raw.read(16)
+                            cipher = AES.new(file_key, AES.MODE_CBC, iv)
+                            finished = False
+                            while not finished:
+                                to_decrypt = rq_http.raw.read(10240)
+                                if len(to_decrypt) > 0:
+                                    decrypted = cipher.decrypt(to_decrypt)
+                                    f.write(decrypted)
+                                else:
+                                    finished = True
+                    else:
+                        print('File \'{0}\': Failed to file encryption key'.format(file_name))
+
+
+                else:
+                    print('File \'{0}\' download error: {1}'.format(file_id, dl['message']))

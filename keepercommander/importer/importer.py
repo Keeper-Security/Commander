@@ -89,10 +89,11 @@ class BaseImporter:
         :type filename: str
         :rtype: collections.Iterable[Record]
         '''
-        if not os.path.isfile(filename):
+        path = os.path.expanduser(filename)
+        if not os.path.isfile(path):
             raise Exception('File \'{0}\' does not exist'.format(filename))
 
-        yield from self.do_import(filename)
+        yield from self.do_import(path)
 
     def do_import(self, filename):
         '''
@@ -109,7 +110,8 @@ class BaseExporter:
         :type records: collections.Iterable[Record]
         :rtype: None
         '''
-        self.do_export(filename, records)
+        path = os.path.expanduser(filename)
+        self.do_export(path, records)
 
     def do_export(self, filename, records):
         '''

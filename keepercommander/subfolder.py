@@ -19,7 +19,10 @@ def get_folder_path(params, folder_uid, delimiter='/'):
         if f.type == 'shared_folder':
             name = name + '$'
         name = name.replace(delimiter, 2*delimiter)
-        path = name + delimiter + path
+        if len(path) > 0:
+            path = name + delimiter + path
+        else:
+            path = name
         uid = f.parent_uid
     return delimiter + path
 
