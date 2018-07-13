@@ -16,21 +16,20 @@ def get_folder_path(params, folder_uid, delimiter='/'):
     while uid in params.folder_cache:
         f = params.folder_cache[uid]
         name = f.name
-        if f.type == 'shared_folder':
-            name = name + '$'
         name = name.replace(delimiter, 2*delimiter)
         if len(path) > 0:
             path = name + delimiter + path
         else:
             path = name
         uid = f.parent_uid
-    return delimiter + path
+    return path
 
 
 def find_folders(params, record_uid):
     for fuid in params.subfolder_record_cache:
         if record_uid in params.subfolder_record_cache[fuid]:
-            yield fuid
+            if fuid:
+                yield fuid
 
 
 def try_resolve_path(params, path):
@@ -96,6 +95,23 @@ class BaseFolderNode:
         self.parent_uid = None
         self.name = None
         self.subfolders = []
+
+    def get_folder_type(self):
+        if self.type == BaseFolderNode.RootFolderType:
+            return 'Root'
+        elif self.type == BaseFolderNode.UserFolderType:
+            return 'Regular Folder'
+        elif self.type == BaseFolderNode.SharedFolderType:
+            return 'Shared Folder'
+        elif self.type == BaseFolderNode.SharedFolderFolderType:
+            return 'Subfolder in Shared Folder'
+        return ''
+
+    def display(self, **kwargs):
+        print('')
+        print('{0:>20s}: {1:<20s}'.format('Folder UID', self.uid))
+        print('{0:>20s}: {1:<20s}'.format('Folder Type', self.get_folder_type()))
+        print('{0:>20s}: {1}'.format('Name', self.name))
 
 
 class UserFolderNode(BaseFolderNode):

@@ -13,6 +13,8 @@
 import argparse
 import shlex
 
+from ..params import KeeperParams
+
 def register_commands(commands, aliases, command_info):
     from .record import register_commands as record_commands
     record_commands(commands, aliases, command_info)
@@ -27,14 +29,13 @@ def register_commands(commands, aliases, command_info):
     register_commands(commands, aliases, command_info)
 
     command_info['shell'] = 'Use Keeper interactive shell'
-    command_info['d'] = 'Download & decrypt data'
     command_info['c'] = 'Clear the screen'
     command_info['h'] = 'Show command history'
     command_info['q'] = 'Quit'
 
 
 def user_choice(question, choice, default= '', show_choice=True, multi_choice=False):
-    choices = [ch.upper() if ch.upper() == default.upper() else ch.lower()  for ch in choice]
+    choices = [ch.lower() if ch.upper() == default.upper() else ch.lower()  for ch in choice]
 
     result = ''
     while True:
@@ -70,6 +71,9 @@ def suppress_exit():
 
 class Command:
     def execute(self, params, **kwargs):
+        '''
+        :type params: KeeperParams
+        '''
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):

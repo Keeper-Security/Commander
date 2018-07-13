@@ -10,7 +10,7 @@
 #
 
 import csv
-from ..importer import strip_path_delimiter, path_components, PathDelimiter, BaseImporter, BaseExporter, Record
+from ..importer import strip_path_delimiter, path_components, PathDelimiter, BaseImporter, BaseExporter, Record, Folder
 
 
 '''
@@ -33,22 +33,29 @@ class KeeperCsvImporter(BaseImporter):
             for row in reader:
                 if len(row) >= 7:
                     record = Record()
-                    folder = strip_path_delimiter(row[6])
-                    if len(folder) > 0:
-                        folder = folder + '$'
-
-                    sf = strip_path_delimiter(row[0])
-                    if len(sf) > 0:
-                        if len(folder) > 0:
-                            folder = folder + PathDelimiter
-                        folder = folder + sf
-
-                    record.folder = folder
                     record.title = row[1]
                     record.login = row[2]
                     record.password = row[3]
                     record.login_url = row[4]
                     record.notes = row[5]
+
+                    if row[0] or row[6]:
+                        folder = Folder()
+                        folder.domain = row[6]
+                        found = True
+                        while found:
+                            found = False
+                            for flag in ['reshare', 'edit']:
+                                suffix = '#' + flag
+                                if folder.domain.endswith(suffix):
+                                    found = True
+                                    if flag == 'reshare':
+                                        folder.can_share = True
+                                    elif flag == 'edit':
+                                        folder.can_edit = True
+                                    folder.domain = folder.domain[:-len(suffix)]
+                        folder.path = row[0]
+                        record.folders = [folder]
 
                     if len(row) > 7:
                         for i in range(7, len(row)-1, 2):
@@ -67,18 +74,18 @@ class KeeperCsvExporter(BaseExporter):
             writer = csv.writer(csvfile)
             for r in records:
                 domain = ''
-                subfolder = ''
-                if len(r.folder or '') > 0:
-                    for x in path_components(r.folder):
-                        name = x.replace(PathDelimiter, 2*PathDelimiter)
-                        if len(subfolder) > 0:
-                            subfolder = subfolder + PathDelimiter
-                        subfolder = subfolder + name
-                        if subfolder.endswith('$'):
-                            subfolder = subfolder[:-1]
-                            domain = subfolder
-                            subfolder = ''
-                row = [subfolder, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
+                path = ''
+                if r.folders:
+                    for folder in r.folders:
+                        domain = folder.domain or ''
+                        path = folder.path or ''
+                        if domain:
+                            if folder.can_edit:
+                                domain = domain + '#edit'
+                            if folder.can_share:
+                                domain = domain + '#reshare'
+                        break
+                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
                 if r.custom_fields is not None:
                     for x in r.custom_fields:
                         if 'name' in x and 'value' in x:

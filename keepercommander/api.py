@@ -94,10 +94,10 @@ def login(params, attempt=0):
             result_code = rs['result_code']
 
             if result_code == 'Failed_to_find_user':
+                email = params.user
                 params.user = ''
                 params.password = ''
-                raise AuthenticationError('User account [' + \
-                    str(params.user) + '] not found.')
+                raise AuthenticationError('User account [{0}] not found.'.format(email))
 
             if result_code == 'invalid_client_version':
                 raise AuthenticationError(r.json()['message'])
@@ -132,17 +132,17 @@ def login(params, attempt=0):
     success = False
     while not success:
 
+        payload = {
+            'command':'login',
+            'include':['keys', 'license'],
+            'version':2,
+            'auth_response':params.auth_verifier,
+            'client_version':CLIENT_VERSION,
+            'username':params.user
+        }
         if params.mfa_token:
-            payload = {
-                   'command':'login', 
-                   'include':['keys'],
-                   'version':2, 
-                   'auth_response':params.auth_verifier,
-                   'client_version':CLIENT_VERSION,
-                   '2fa_token':params.mfa_token,
-                   '2fa_type':params.mfa_type, 
-                   'username':params.user
-                  }
+            payload['2fa_token'] = params.mfa_token
+            payload['2fa_type'] = params.mfa_type
             if (params.mfa_type == 'one_time'):
                 try:
                     expire_token = params.config['device_token_expiration']
@@ -150,16 +150,6 @@ def login(params, attempt=0):
                     expire_token = False
                 expire_days = 30 if expire_token else 9999
                 payload['device_token_expire_days'] = expire_days
-
-        else:
-            payload = {
-                   'command':'login', 
-                   'include':['keys'],
-                   'version':2, 
-                   'auth_response':params.auth_verifier,
-                   'client_version':CLIENT_VERSION,
-                   'username':params.user
-                  }
 
         try:
             r = requests.post(params.server, json=payload)
@@ -219,6 +209,9 @@ def login(params, attempt=0):
             else:
                 print('Hmm... keys not provided in login response.')
 
+            if 'license' in response_json:
+                params.license = response_json['license']
+
             params.sync_data = True
             success = True
 
@@ -231,8 +224,7 @@ def login(params, attempt=0):
 
                 while not params.mfa_token:
                     try:
-                        params.mfa_token = getpass.getpass(
-                            prompt='Two-Factor Code: ', stream=None)
+                        params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
                     except (KeyboardInterrupt):
                         print('Cancelled')
                         raise
@@ -513,7 +505,6 @@ def sync_down(params):
                 is_in_sf = False
                 record = params.record_cache[uid]
 
-
                 for shared_folder_uid in params.shared_folder_cache:
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     if 'records' not in shared_folder:
@@ -533,6 +524,9 @@ def sync_down(params):
                     if is_in_sf:
                         break
                 if not is_in_sf:
+                    if '' in params.subfolder_record_cache:
+                        if uid in params.subfolder_record_cache['']:
+                            params.subfolder_record_cache[''].remove(uid)
                     pending_record_remove.add(uid)
 
         if 'removed_teams' in response_json:
@@ -553,15 +547,19 @@ def sync_down(params):
 
                 del params.team_cache[team_uid]
 
+        pending_shared_folder_remove = set()
         if 'removed_shared_folders' in response_json:
             if params.debug: print('Processing removed shared folders')
             for uid in response_json['removed_shared_folders']:
-                shared_folder = params.shared_folder_cache[uid]
-                if 'teams' in shared_folder and len(shared_folder['teams']) > 0 and is_local_shared_folder(shared_folder):
-                    del shared_folder['manage_records']
-                    del shared_folder['manage_users']
+                if uid in params.shared_folder_cache:
+                    shared_folder = params.shared_folder_cache[uid]
+                    if 'teams' in shared_folder and len(shared_folder['teams']) > 0 and is_local_shared_folder(shared_folder):
+                        del shared_folder['manage_records']
+                        del shared_folder['manage_users']
+                    else:
+                        delete_shared_folder(params, uid)
                 else:
-                    delete_shared_folder(params, uid)
+                    pending_shared_folder_remove.add(uid)
 
                 if uid in params.subfolder_cache:
                     del params.subfolder_cache[uid]
@@ -725,6 +723,10 @@ def sync_down(params):
             if params.debug: print(str(response_json['shared_folders']))
 
             for shared_folder in response_json['shared_folders']:
+                if shared_folder['shared_folder_uid'] in pending_shared_folder_remove:
+                    pending_shared_folder_remove.remove(shared_folder['shared_folder_uid'])
+                    continue
+
                 if 'shared_folder_key' in shared_folder:
                     shared_folder_key = shared_folder['shared_folder_key']
                     if shared_folder['key_type'] == 1:

@@ -49,11 +49,11 @@ def register_commands(commands, aliases, command_info):
 
 add_parser = argparse.ArgumentParser(prog='add|a', description='Add record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
-add_parser.add_argument('--password', dest='password', action='store', help='password')
+add_parser.add_argument('--pass', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='comma separated key-value pairs')
-add_parser.add_argument('--folder', dest='folder', action='store', help='folder where record is to be created')
+add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
 add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
 add_parser.add_argument('title', type=str, action='store', help='record title')
@@ -93,13 +93,6 @@ download_parser.add_argument('name', nargs='?', type=str, action='store', help='
 download_parser.error = raise_parse_exception
 download_parser.exit = suppress_exit
 
-#
-# upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachment')
-# upload_parser.add_argument('--file', dest='file', action='store', help='file path')
-# upload_parser.add_argument('name', nargs='?', type=str, action='store', help='record path or UID')
-# upload_parser.error = raise_parse_exception
-# upload_parser.exit = suppress_exit
-#
 
 class RecordAddCommand(Command):
     def get_parser(self):
@@ -130,28 +123,43 @@ class RecordAddCommand(Command):
 
         custom = []
         if custom_list:
-            pairs = custom_list.split(',')
-            for pair in pairs:
-                idx = pair.find(':')
-                if idx > 0:
-                    custom.append({
-                        'name': pair[:idx].trim(),
-                        'value': pair[idx+1:].trim()
-                    })
+            if type(custom_list) == str:
+                pairs = custom_list.split(',')
+                for pair in pairs:
+                    idx = pair.find(':')
+                    if idx > 0:
+                        custom.append({
+                            'name': pair[:idx].trim(),
+                            'value': pair[idx+1:].trim()
+                        })
+            elif type(custom_list) == list:
+                for c in custom_list:
+                    if type(c) == dict:
+                        name = c.get('name')
+                        value = c.get('value')
+                        if name and value:
+                            custom.append({
+                                'name': name,
+                                'value': value
+                            })
 
         folder = None
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
         if folder_name:
-            src = try_resolve_path(params, folder_name)
-            if src is not None:
-                folder, name = src
+            if folder_name in params.folder_cache:
+                folder = params.folder_cache[folder_name]
+            else:
+                src = try_resolve_path(params, folder_name)
+                if src is not None:
+                    folder, name = src
         if folder is None:
-            folder = params.folder_cache[params.current_folder] if len(params.current_folder) > 0 else params.root_folder
+            folder = params.folder_cache[params.current_folder] if params.current_folder else params.root_folder
 
         record_key = os.urandom(32)
+        record_uid = api.generate_record_uid()
         rq = {
             'command': 'record_add',
-            'record_uid': api.generate_record_uid(),
+            'record_uid': record_uid,
             'record_type': 'password',
             'record_key': api.encrypt_aes(record_key, params.data_key),
             'how_long_ago': 0
@@ -187,6 +195,7 @@ class RecordAddCommand(Command):
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
             params.sync_data = True
+            return record_uid
         else:
             print(rs['message'])
 
@@ -310,6 +319,9 @@ class RecordGetUidCommand(Command):
         elif api.is_team(params, uid):
             team = api.get_team(params, uid)
             team.display()
+        elif uid in params.folder_cache:
+            f = params.folder_cache[uid]
+            f.display(params=params)
         else:
             r = api.get_record(params, uid)
             if r:
@@ -389,14 +401,15 @@ class RecordDownloadAttachmentCommand(Command):
             print('Enter name or uid of existing record')
             return
 
-        r = params.record_cache[record_uid]
         file_ids = []
-        if 'udata' in r:
-            if 'file_ids' in r['udata']:
-                file_ids.extend(r['udata']['file_ids'])
+        r = params.record_cache[record_uid]
+        extra = json.loads(r['extra'].decode())
+        if 'files' in extra:
+            for f_info in extra['files']:
+                file_ids.append(f_info['id'])
 
         if len(file_ids) == 0:
-            print('No attachemnts associated with the record')
+            print('No attachments associated with the record')
             return
 
         rq = {
@@ -421,8 +434,8 @@ class RecordDownloadAttachmentCommand(Command):
 
                     if file_key:
                         rq_http = requests.get(dl['url'], stream=True)
-                        print('Downloading \'{0}\''.format(file_name))
                         with open(file_name, 'wb') as f:
+                            print('Downloading \'{0}\''.format(os.path.abspath(f.name)))
                             iv = rq_http.raw.read(16)
                             cipher = AES.new(file_key, AES.MODE_CBC, iv)
                             finished = False
@@ -435,7 +448,5 @@ class RecordDownloadAttachmentCommand(Command):
                                     finished = True
                     else:
                         print('File \'{0}\': Failed to file encryption key'.format(file_name))
-
-
                 else:
                     print('File \'{0}\' download error: {1}'.format(file_id, dl['message']))

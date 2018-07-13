@@ -11,7 +11,7 @@
 
 import json
 
-from ..importer import BaseImporter, BaseExporter, Record
+from ..importer import BaseImporter, BaseExporter, Record, Folder
 
 
 class KeeperJsonImporter(BaseImporter):
@@ -21,7 +21,6 @@ class KeeperJsonImporter(BaseImporter):
             if type(j) == list:
                 for r in j:
                     record = Record()
-                    record.folder = r['folder']
                     record.title = r['title']
                     record.login = r['login']
                     record.password = r['password']
@@ -30,6 +29,15 @@ class KeeperJsonImporter(BaseImporter):
                     if 'custom_fields' in r:
                         for cf in r['custom_fields']:
                             record.custom_fields.append({'name': cf['name'], 'value': cf['value']})
+                    if 'folders' in r:
+                        record.folders = []
+                        for f in r['folders']:
+                            folder = Folder()
+                            folder.domain = f.get('shared_folder')
+                            folder.path = f.get('folder')
+                            folder.can_edit = f.get('can_edit') or False
+                            folder.can_share = f.get('can_share') or False
+                            record.folders.append(folder)
 
                     yield record
 
@@ -46,8 +54,20 @@ class KeeperJsonExporter(BaseExporter):
                 'notes': r.notes or '',
                 'custom_fields': r.custom_fields
             }
-            if r.folder:
-                ro['folder'] = r.folder
+            if r.folders:
+                ro['folders'] = []
+                for folder in r.folders:
+                    if folder.domain or folder.path:
+                        fo = {}
+                        ro['folders'].append(fo)
+                        if folder.domain:
+                            fo['shared_folder'] = folder.domain
+                        if folder.path:
+                            fo['folder'] = folder.path
+                        if folder.can_edit:
+                            fo['can_edit'] = True
+                        if folder.can_share:
+                            fo['can_share'] = True
             rs.append(ro)
 
         with open(filename, mode="w", encoding='utf-8') as f:

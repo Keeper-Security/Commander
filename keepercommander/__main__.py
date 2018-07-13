@@ -59,7 +59,8 @@ def get_params_from_config(config_filename):
                     params.mfa_type = params.config['mfa_type']
 
                 if 'commands' in params.config:
-                    params.commands = params.config['commands']
+                    if params.config['commands']:
+                        params.commands.extend(params.config['commands'])
 
                 if 'plugins' in params.config:
                     params.plugins = params.config['plugins']
@@ -90,12 +91,9 @@ def usage(m):
 
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False)
-parser.add_argument('--keeper-server', '-ks', dest='server', action='store', default=os.environ.get('KEEPER_SERVER', None),
-                    help='Host address. You can set KEEPER_SERVER environment variable instead.')
-parser.add_argument('--keeper-user', '-ku', dest='user', action='store', default=os.environ.get('KEEPER_USER', None),
-                    help='Email address for the account. You can set KEEPER_USER environment variable instead.')
-parser.add_argument('--keeper-password', '-kp', dest='password', action='store', default=os.environ.get('KEEPER_PASSWORD', None),
-                    help='Master password for the account. You can set KEEPER_PASSWORD environment variable instead.')
+parser.add_argument('--server', '-ks', dest='server', action='store', help='Keeper Host address.')
+parser.add_argument('--user', '-ku', dest='user', action='store', help='Email address for the account.')
+parser.add_argument('--password', '-kp', dest='password', action='store', help='Master password for the account.')
 parser.add_argument('--version', dest='version', action='store_true', help='Display version')
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
@@ -114,7 +112,7 @@ def main():
         params.debug = opts.debug
 
     if opts.server:
-        params.server = opts.server
+        params.server = 'https://{0}/api/v2/'.format(opts.server)
 
     if opts.user:
         params.user = opts.user
