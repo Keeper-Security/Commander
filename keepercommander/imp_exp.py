@@ -265,6 +265,7 @@ def prepare_record_link(params, records):
     for rec in records:
         if rec.folders and rec.record_uid:
             if rec.record_uid in params.record_cache:
+                record = params.record_cache[rec.record_uid]
                 folder_ids = list(find_folders(params, rec.record_uid))
                 for fol in rec.folders:
                     if fol.uid and fol.uid in params.folder_cache:
@@ -292,7 +293,7 @@ def prepare_record_link(params, records):
                                 req['move'].append(mo)
 
                                 transition_key = None
-                                record_key = rec['record_key_unencrypted']
+                                record_key = record['record_key_unencrypted']
                                 if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                                     if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                                         ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else \
