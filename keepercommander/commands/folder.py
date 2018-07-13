@@ -18,7 +18,7 @@ import os
 import json
 
 from .. import api, display
-from ..subfolder import BaseFolderNode, try_resolve_path
+from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 
@@ -46,27 +46,27 @@ ls_parser.exit = suppress_exit
 
 
 cd_parser = argparse.ArgumentParser(prog='cd', description='Change current folder')
-cd_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder name')
+cd_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 cd_parser.error = raise_parse_exception
 cd_parser.exit = suppress_exit
 
 
 tree_parser = argparse.ArgumentParser(prog='tree', description='Display folder structure')
-tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder name')
+tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 tree_parser.error = raise_parse_exception
 tree_parser.exit = suppress_exit
 
 
 rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove folder and its content')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
-rmdir_parser.add_argument('name', nargs='?', type=str, action='store', help='folder path')
+rmdir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
 
 mkdir_parser = argparse.ArgumentParser(prog='mkdir', description='Create folder')
-mkdir_parser.add_argument('--shared', dest='shared_folder', action='store_true', help='create shared folder')
-mkdir_parser.add_argument('--user', dest='user_folder', action='store_true', help='create user folder')
+mkdir_parser.add_argument('-sf', '--shared-folder', dest='shared_folder', action='store_true', help='create shared folder')
+mkdir_parser.add_argument('-uf', '--user-folder', dest='user_folder', action='store_true', help='create user folder')
 mkdir_parser.add_argument('-a', '--all', dest='grant', action='store_true', help='anyone has all permissions by default')
 mkdir_parser.add_argument('-u', '--manage-users', dest='manage_users', action='store_true', help='anyone can manage users by default')
 mkdir_parser.add_argument('-r', '--manage-records', dest='manage_records', action='store_true', help='anyone can manage records by default')
@@ -81,8 +81,8 @@ mv_parser = argparse.ArgumentParser(prog='mv', description='Move record or folde
 mv_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 mv_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 mv_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
-mv_parser.add_argument('src', nargs='?', type=str, action='store', help='source path')
-mv_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder')
+mv_parser.add_argument('src', nargs='?', type=str, action='store', help='source path to folder/record or UID')
+mv_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder or UID')
 mv_parser.error = raise_parse_exception
 mv_parser.exit = suppress_exit
 
@@ -91,8 +91,8 @@ ln_parser = argparse.ArgumentParser(prog='ln', description='Create a link betwee
 ln_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 ln_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 ln_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
-ln_parser.add_argument('src', nargs='?', type=str, action='store', help='source path')
-ln_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder')
+ln_parser.add_argument('src', nargs='?', type=str, action='store', help='source path to folder/record or UID')
+ln_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder or UID')
 ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
 
@@ -172,8 +172,6 @@ class FolderListCommand(Command):
                     name = f.name
                     if len(name) > 40:
                         name = name[:25] + '...' + name[-12:]
-                    if f.type == BaseFolderNode.SharedFolderType:
-                        name = name + '$'
                     names.append(name + '/')
                 names.sort()
 
@@ -212,13 +210,16 @@ class FolderCdCommand(Command):
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else ''
         if folder_name:
-            rs = try_resolve_path(params, folder_name)
-            if rs is not None:
-                folder, pattern = rs
-                if len(pattern) == 0:
-                    params.current_folder = folder.uid
-                else:
-                    print('cd: Folder {0} not found'.format(folder_name))
+            if folder_name in params.folder_cache:
+                params.current_folder = folder_name
+            else:
+                rs = try_resolve_path(params, folder_name)
+                if rs is not None:
+                    folder, pattern = rs
+                    if len(pattern) == 0:
+                        params.current_folder = folder.uid
+                    else:
+                        print('cd: Folder {0} not found'.format(folder_name))
 
 
 class FolderTreeCommand(Command):
@@ -227,13 +228,16 @@ class FolderTreeCommand(Command):
 
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
-        rs = try_resolve_path(params, folder_name)
-        if rs is not None:
-            folder, pattern = rs
-            if len(pattern) == 0:
-                display.formatted_tree(params,  folder)
-            else:
-                print('cd: Folder {0} not found'.format(folder_name))
+        if folder_name in params.folder_cache:
+            display.formatted_tree(params, params.folder_cache[folder_name])
+        else:
+            rs = try_resolve_path(params, folder_name)
+            if rs is not None:
+                folder, pattern = rs
+                if len(pattern) == 0:
+                    display.formatted_tree(params, folder)
+                else:
+                    print('cd: Folder {0} not found'.format(folder_name))
 
 
 class FolderMakeCommand(Command):
@@ -358,15 +362,18 @@ class FolderRemoveCommand(Command):
 
     def execute(self, params, **kwargs):
         folder = None
-        name = kwargs['name'] if 'name' in kwargs else None
+        name = kwargs['folder'] if 'folder' in kwargs else None
         if name:
-            rs = try_resolve_path(params, name)
-            if rs is not None:
-                folder, name = rs
-                if len(name or '') > 0:
-                    folder = None
-                elif folder.type == BaseFolderNode.RootFolderType:
-                    folder = None
+            if name in params.folder_cache:
+                folder = params.folder_cache[name]
+            else:
+                rs = try_resolve_path(params, name)
+                if rs is not None:
+                    folder, name = rs
+                    if len(name or '') > 0:
+                        folder = None
+                    elif folder.type == BaseFolderNode.RootFolderType:
+                        folder = None
 
         if folder is None:
             print('Enter name of the existing folder')
@@ -475,35 +482,55 @@ class FolderMoveCommand(Command):
             parser.print_help()
             return
 
-        src = try_resolve_path(params, src_path)
-        if src is None:
-            print('Source path should be existing record or folder')
-            return
-
-        src_folder, name = src
         src_record_uid = None
-        if len(name) > 0:
-            src_folder_uid = src_folder.uid or ''
-            if src_folder_uid in params.subfolder_record_cache:
-                for uid in params.subfolder_record_cache[src_folder_uid]:
-                    r = params.record_cache[uid]
-                    rec = api.get_record(params, uid)
-                    if name in {rec.title, rec.record_uid}:
-                        src_record_uid = rec.record_uid
-                        break
+        src_folder = None
 
-            if src_record_uid is None:
-                print('Record "{0}" not found'.format(name))
+        if src_path in params.record_cache:
+            src_record_uid = src_path
+            if '' in params.subfolder_record_cache:
+                if src_record_uid in params.subfolder_record_cache['']:
+                    src_folder = params.root_folder
+            if src_folder is None:
+                for folder_uid in find_folders(params, src_record_uid):
+                    src_folder = params.folder_cache[folder_uid]
+                    break
+            if src_folder is None:
+                src_folder = params.root_folder
+        elif src_path in params.folder_cache:
+            src_folder = params.folder_cache[src_path]
+        else:
+            src = try_resolve_path(params, src_path)
+            if src is None:
+                print('Source path should be existing record or folder')
                 return
 
-        dst = try_resolve_path(params, dst_path)
-        if dst is None:
-            print('Destination path should be existing folder')
-            return
-        dst_folder, name = dst
-        if len(name) > 0:
-            print('Destination path should be existing folder')
-            return
+            src_folder, name = src
+            if len(name) > 0:
+                src_folder_uid = src_folder.uid or ''
+                if src_folder_uid in params.subfolder_record_cache:
+                    for uid in params.subfolder_record_cache[src_folder_uid]:
+                        r = params.record_cache[uid]
+                        rec = api.get_record(params, uid)
+                        if name in {rec.title, rec.record_uid}:
+                            src_record_uid = rec.record_uid
+                            break
+
+                if src_record_uid is None:
+                    print('Record "{0}" not found'.format(name))
+                    return
+
+        dst_folder = None
+        if dst_path in params.folder_cache:
+            dst_folder = params.folder_cache[dst_path]
+        else:
+            dst = try_resolve_path(params, dst_path)
+            if dst is None:
+                print('Destination path should be existing folder')
+                return
+            dst_folder, name = dst
+            if len(name) > 0:
+                print('Destination path should be existing folder')
+                return
 
         rq = {
             'command': 'move',
@@ -534,7 +561,7 @@ class FolderMoveCommand(Command):
                     dp.add(f.uid)
                 f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
             if sp <= dp:
-                print('Cannot move/link folder to self oa a child')
+                print('Cannot move/link folder to self or a child')
                 return
 
             parent_folder = params.folder_cache[src_folder.parent_uid] if src_folder.parent_uid is not None else None

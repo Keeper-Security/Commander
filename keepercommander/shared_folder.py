@@ -53,7 +53,6 @@ class SharedFolder:
     def display(self):
         print('') 
         print('{0:>20s}: {1:<20s}'.format('Shared Folder UID',self.shared_folder_uid))
-        print('{0:>20s}: {1}'.format('Revision',self.revision))
         print('{0:>20s}: {1}'.format('Name',self.name))
         print('{0:>20s}: {1}'.format('Default Manage Records',self.default_manage_records))
         print('{0:>20s}: {1}'.format('Default Manage Users',self.default_manage_users))

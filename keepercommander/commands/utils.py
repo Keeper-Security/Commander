@@ -11,19 +11,28 @@
 
 import argparse
 
+from getpass import getpass
+from urllib.parse import urlsplit
+
 from .. import api, display, imp_exp
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 
 
 def register_commands(commands, aliases, command_info):
+    commands['sync-down'] = SyncDownCommand()
     commands['rotate'] = RecordRotateCommand()
     commands['import'] = RecordImportCommand()
     commands['export'] = RecordExportCommand()
     commands['delete_all'] = RecordDeleteAllCommand()
+    commands['whoami'] = WhoamiCommand()
+    commands['login'] = LoginCommand()
+    commands['logout'] = LogoutCommand()
     commands['test'] = TestCommand()
     aliases['r'] = 'rotate'
-    for p in [rotate_parser, import_parser, export_parser]:
+    aliases['d'] = 'sync-down'
+    for p in [rotate_parser, import_parser, export_parser, whoami_parser, login_parser, logout_parser]:
         command_info[p.prog] = p.description
+    command_info['sync-down|d'] = 'Download & decrypt data'
 
 
 rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate Keeper record')
@@ -35,6 +44,7 @@ rotate_parser.exit = suppress_exit
 
 
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from local file to Keeper')
+import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='dislay Keeper CSV import instructions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 import_parser.add_argument('filename', type=str, help='file name')
 import_parser.error = raise_parse_exception
@@ -42,6 +52,7 @@ import_parser.exit = suppress_exit
 
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
+export_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='dislay Keeper CSV import instructions')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv'], required=True, help='file format')
 export_parser.add_argument('filename', type=str, help='file name')
 export_parser.error = raise_parse_exception
@@ -52,6 +63,29 @@ test_parser = argparse.ArgumentParser(prog='test', description='Test KeeperComma
 test_parser.add_argument('area', type=str, choices=['aes', 'rsa'], help='test area')
 test_parser.error = raise_parse_exception
 test_parser.exit = suppress_exit
+
+
+whoami_parser = argparse.ArgumentParser(prog='whoami', description='Information about logged in user')
+whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+whoami_parser.error = raise_parse_exception
+whoami_parser.exit = suppress_exit
+
+
+login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper')
+login_parser.add_argument('-p', '--password', dest='password', action='store', help='master password')
+login_parser.add_argument('email', nargs='?', type=str, help='account email')
+login_parser.error = raise_parse_exception
+login_parser.exit = suppress_exit
+
+
+logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper')
+logout_parser.error = raise_parse_exception
+logout_parser.exit = suppress_exit
+
+
+class SyncDownCommand(Command):
+    def execute(self, params, **kwargs):
+        api.sync_down(params)
 
 
 class RecordRotateCommand(Command):
@@ -73,8 +107,28 @@ class RecordRotateCommand(Command):
                 if print_result:
                     display.print_record(params, r.record_uid)
 
+csv_instructions = '''File Format
+Folder, Title, Login, Password, Login URL, Notes, Custom Fields
 
-class RecordImportCommand(Command):
+- To specify subfolders, use backslash "\\" between folder names
+- To make a shared folder specify the name or path to it in the 6th field
+
+Example 1: Create a regular folder at the root level with 2 custom fields
+My Business Stuff, Twitter, marketing@company.com, 123456, https://twitter.com, These are some notes, API Key, 5555, Date Created, 2018-04-02
+
+Example 2: Create a shared subfolder inside another folder with edit and re-share permission
+Personal, Twitter, craig@gmail.com, 123456, https://twitter.com, Social Media#edit#reshare
+'''
+
+class ImporterCommand(Command):
+    def execute_args(self, params, args, **kwargs):
+        if args.find('--display-cvs') >= 0 or args.find('-dc') >= 0:
+            print(csv_instructions)
+        else:
+            Command.execute_args(self, params, args, **kwargs)
+
+
+class RecordImportCommand(ImporterCommand):
     def get_parser(self):
         return import_parser
 
@@ -87,7 +141,7 @@ class RecordImportCommand(Command):
             print('Missing argument')
 
 
-class RecordExportCommand(Command):
+class RecordExportCommand(ImporterCommand):
     def get_parser(self):
         return export_parser
 
@@ -117,3 +171,101 @@ class TestCommand(Command):
             api.test_rsa(params)
         elif area == 'aes':
             api.test_aes(params)
+
+
+class WhoamiCommand(Command):
+    def get_parser(self):
+        return whoami_parser
+
+    def execute(self, params, **kwargs):
+        is_verbose = kwargs.get('verbose') or False
+        if is_verbose:
+            if params.server:
+                parts = urlsplit(params.server)
+                host = parts[1]
+                cp = host.rfind(':')
+                if cp > 0:
+                    host = host[:cp]
+                data_center = 'EU' if host.endswith('.eu') else 'US'
+                print('{0:>20s}: {1}'.format('Data Center', data_center))
+                environment = ''
+                if host.startswith('dev.'):
+                    environment = 'DEV'
+                elif host.startswith('qa.'):
+                    environment = 'QA'
+                if environment:
+                    print('{0:>20s}: {1}'.format('Environment', environment))
+            print('')
+
+        if params.session_token:
+            print('{0:>20s}: {1:<20s}'.format('Logged in as', params.user))
+            if params.license:
+                print('')
+                print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', params.license['product_type_name']))
+                print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
+                if 'bytes_total' in params.license:
+                    storage_bytes = params.license['bytes_total']
+                    storage_gb = storage_bytes >> 30
+                    print('{0:>20s} {1:>20s}: {2}GB'.format('Storage', 'Capacity', storage_gb))
+                    storage_usage = params.license['bytes_used'] * 100 // storage_bytes
+                    print('{0:>20s} {1:>20s}: {2}%'.format('', 'Usage', storage_usage))
+                    print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['storage_expiration_date']))
+
+            if is_verbose:
+                print('')
+                print('{0:>20s}: {1}'.format('Records', len(params.record_cache)))
+                sf_count = len(params.shared_folder_cache)
+                if sf_count > 0:
+                    print('{0:>20s}: {1}'.format('Shared Folders', sf_count))
+                team_count = len(params.team_cache)
+                if team_count > 0:
+                    print('{0:>20s}: {1}'.format('Teams', team_count))
+
+        else:
+            print('{0:>20s}:'.format('Not logged in'))
+
+
+class LoginCommand(Command):
+    def get_parser(self):
+        return login_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        params.clear_session()
+
+        user = kwargs.get('email') or ''
+        password = kwargs.get('password') or ''
+
+        try:
+            if not user:
+                user = input('... {0:>16}: '.format('User(Email)')).strip()
+            if not user:
+                return
+
+            if not password:
+                password = getpass(prompt='... {0:>16}: '.format('Password'), stream=None).strip()
+            if not password:
+                return
+        except KeyboardInterrupt as e:
+            print('Canceled')
+            return
+
+        params.user = user
+        params.password = password
+
+        print('Logging in...')
+        api.login(params)
+
+
+class LogoutCommand(Command):
+    def get_parser(self):
+        return logout_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        params.clear_session()
+

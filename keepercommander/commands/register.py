@@ -14,13 +14,17 @@ import getpass
 import re
 import os
 import base64
+from urllib.parse import urlsplit, urlunsplit
 
 from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
+from Cryptodome.Util.asn1 import DerSequence
+from Cryptodome.Math.Numbers import Integer
 
 from .. import api, generator
 from .record import RecordAddCommand
 from email.utils import parseaddr
+from ..params import KeeperParams
 
 from .base import raise_parse_exception, suppress_exit, Command
 
@@ -35,7 +39,8 @@ def register_commands(commands, aliases, command_info):
 register_parser = argparse.ArgumentParser(prog='create_user', description='Create Keeper User')
 register_parser.add_argument('--store-record', dest='store', action='store_true', help='store credentials into Keeper record (must be logged in)')
 register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
-register_parser.add_argument('-p', '--password', dest='password', action='store', help='user password')
+register_parser.add_argument('--pass', dest='password', action='store', help='user password')
+register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store', help='data center.')
 #register_parser.add_argument('--skip-backup', dest='skip', action='store_true', help='skip data key backup')
 #register_parser.add_argument('-q', '--question', dest='question', action='store', help='security question')
 #register_parser.add_argument('-a', '--answer', dest='answer', action='store', help='security answer')
@@ -96,7 +101,28 @@ class RegisterCommand(Command):
                     for fr in failed_rules:
                         print(fr)
 
-        iterations = 10000
+        new_params = KeeperParams()
+        new_params.server = params.server
+        if 'data_center' in kwargs:
+            data_center = kwargs['data_center']
+            parts = list(urlsplit(new_params.server))
+            host = parts[1]
+            port = ''
+            colon_pos = host.rfind(':')
+            if colon_pos > 0:
+                port = host[colon_pos:]
+                host = host[:colon_pos]
+            suffix = '.eu' if data_center == 'eu' else '.com'
+            if not host.endswith(suffix):
+                dot_pos = host.rfind('.')
+                if dot_pos > 0:
+                    host = host[:dot_pos] + suffix
+            parts[1] = host+port
+            new_params.server = urlunsplit(parts)
+
+
+
+        iterations = 100000
         salt = os.urandom(16)
         auth_verifier = b''
         auth_verifier = auth_verifier + b'\x01' + iterations.to_bytes(3, 'big') + salt
@@ -114,8 +140,20 @@ class RegisterCommand(Command):
         encryption_params = encryption_params + iv + cipher.encrypt(dk)
 
         rsa_key = RSA.generate(2048)
-        private_key = rsa_key.export_key(format='DER')
-        public_key = rsa_key.publickey().export_key(format='DER')
+        private_key = DerSequence([0,
+                                   rsa_key.n,
+                                   rsa_key.e,
+                                   rsa_key.d,
+                                   rsa_key.p,
+                                   rsa_key.q,
+                                   rsa_key.d % (rsa_key.p-1),
+                                   rsa_key.d % (rsa_key.q-1),
+                                   Integer(rsa_key.q).inverse(rsa_key.p)
+                                   ]).encode()
+        pub_key = rsa_key.publickey()
+        public_key = DerSequence([pub_key.n,
+                                  pub_key.e
+                                  ]).encode()
 
         rq = {
             'command': 'register',
@@ -132,7 +170,7 @@ class RegisterCommand(Command):
             'client_key': api.encrypt_aes(os.urandom(32), data_key)
         }
 
-        rs = api.run_command(params, rq)
+        rs = api.run_command(new_params, rq)
         if rs['result'] == 'success':
 #                if not opts.skip:
 #                    while len(opts.question or '') == 0:

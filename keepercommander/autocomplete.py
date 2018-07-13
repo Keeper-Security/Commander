@@ -12,7 +12,7 @@
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
-from .commands.folder import ls_parser, cd_parser, mkdir_parser, rmdir_parser, mv_parser
+from .commands.folder import ls_parser, cd_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser
 from .commands.record import rm_parser, append_parser, download_parser
 from . import api
 from . import cli
@@ -132,7 +132,7 @@ class CommandCompleter(Completer):
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
-                            opts, _ = cd_parser.parse_known_args(shlex.split(args))
+                            opts, _ = tree_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.folder or ''
                             context = 'folder'
                     elif cmd == 'mkdir':
@@ -147,7 +147,7 @@ class CommandCompleter(Completer):
                         if args is not None:
                             extra['escape_space'] = args == raw_input
                             opts, _ = rmdir_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.name or ''
+                            extra['prefix'] = opts.folder or ''
                             context = 'folder'
                     elif cmd == 'rm':
                         args = CommandCompleter.fix_input(raw_input)

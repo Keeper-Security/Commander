@@ -116,8 +116,6 @@ def formatted_folders(folders):
 def formatted_tree(params, folder):
     def tree_node(node):
         name = node.name
-        if node.type == 'shared_folder':
-            name = name + '$'
 
         sfs = [params.folder_cache[sfuid] for sfuid in node.subfolders]
 

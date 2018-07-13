@@ -11,7 +11,7 @@
 
 import libkeepass
 
-from ..importer import PathDelimiter, BaseImporter, Record
+from ..importer import PathDelimiter, BaseImporter, Record, Folder
 
 
 class KeepassImporter(BaseImporter):
@@ -49,7 +49,9 @@ class KeepassImporter(BaseImporter):
                         folder = KeepassImporter.get_folder(group)
                         for entry in entries:
                             record = Record()
-                            record.folder = folder
+                            fol = Folder()
+                            fol.path = folder
+                            record.folders = [fol]
                             # node = entry.find('UUID')
                             # if node is not None:
                             #     record.record_uid = base64.urlsafe_b64encode(base64.b64decode(node.text)).decode().rstrip('=')

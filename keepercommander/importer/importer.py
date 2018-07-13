@@ -71,16 +71,25 @@ def path_components(path, delimiter=PathDelimiter):
                 p = ''
 
 
+class Folder:
+    def __init__(self):
+        self.uid = None
+        self.domain = None # type: str
+        self.path = None # type: str
+        self.can_edit = False
+        self.can_share = False
+
+
 class Record:
     def __init__(self):
         self.record_uid = None
-        self.folder = None
         self.title = None
         self.login = None
         self.password = None
         self.login_url = None
         self.notes = None
         self.custom_fields = []
+        self.folders = None     # type: [Folder]
 
 
 class BaseImporter:

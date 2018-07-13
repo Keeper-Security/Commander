@@ -55,18 +55,6 @@ def do_command(params):
     if params.command == 'q':
         return False
 
-    if params.command == 'd':
-        if params.session_token:
-            api.sync_down(params)
-
-    elif params.command == 'login':
-        params.session_token = ''
-        params.user = ''
-        params.password = ''
-        prompt_for_credentials(params)
-        api.login(params)
-        api.sync_down(params)
-
     elif params.command == 'h':
         display.formatted_history(stack)
 
@@ -98,12 +86,20 @@ def do_command(params):
                 command = commands[cmd]
                 if command.is_authorised():
                     if not params.session_token:
-                        prompt_for_credentials(params)
-                        api.login(params)
-                    if params.sync_data:
-                        api.sync_down(params)
+                        try:
+                            prompt_for_credentials(params)
+                            print('Logging in...')
+                            api.login(params)
+                            api.sync_down(params)
+                        except KeyboardInterrupt as e:
+                            print('Canceled')
+                            return True
 
                 command.execute_args(params, args, command=orig_cmd)
+
+                if params.session_token:
+                    if params.sync_data:
+                        api.sync_down(params)
             else:
                 display_command_help()
                 return True
@@ -167,7 +163,7 @@ def loop(params):
                                            complete_while_typing=False)
 
         if params.user and params.password:
-            print('Logging on...')
+            print('Logging in...')
             api.login(params)
             api.sync_down(params)
 
@@ -176,9 +172,6 @@ def loop(params):
             if len(params.commands) > 0:
                 params.command = params.commands[0]
                 params.commands = params.commands[1:]
-
-                if params.command.startswith('create-user '):
-                    pass
 
             if not params.command:
                 try:
@@ -227,8 +220,6 @@ def get_prompt(params):
         if len(prompt) > 0:
             prompt = '/' + prompt
         name = f.name
-        if f.type == BaseFolderNode.SharedFolderType:
-            name = name + '$'
         prompt = name + prompt
 
         if f == params.root_folder:

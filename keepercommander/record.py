@@ -71,7 +71,6 @@ class Record:
     def display(self, **kwargs):
         print('') 
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
-        print('{0:>20s}: {1}'.format('Revision', self.revision))
 
         if 'params' in kwargs:
             params = kwargs['params']
@@ -84,7 +83,7 @@ class Record:
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
         if self.password: print('{0:>20s}: {1:<20s}'.format('Password',self.password))
         if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL',self.login_url))
-        print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
+        #print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
         
         if len(self.custom_fields) > 0:
             for c in self.custom_fields:

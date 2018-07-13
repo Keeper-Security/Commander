@@ -47,9 +47,39 @@ class KeeperParams:
         self.subfolder_record_cache = {}
         self.root_folder = None
         self.current_folder = None
-        self.folder_cache = None
+        self.folder_cache = {}
         self.rsa_key = rsa_key
         self.debug = debug
         self.timedelay = timedelay
         self.sync_data = True
+        self.license = None
 
+    def clear_session(self):
+        self.auth_verifier = ''
+        self.user = ''
+        self.password = ''
+        self.mfa_type = 'device_token'
+        self.mfa_token = ''
+        self.command = ''
+        self.commands.clear()
+        self.session_token = ''
+        self.salt = ''
+        self.iterations = 0
+        self.encrypted_private_key = ''
+        self.encryption_params = ''
+        self.data_key = b''
+        self.private_key = ''
+        self.revision = 0
+        self.record_cache.clear()
+        self.meta_data_cache.clear()
+        self.shared_folder_cache.clear()
+        self.team_cache.clear()
+        self.subfolder_cache .clear()
+        self.subfolder_record_cache.clear()
+        if self.folder_cache:
+            self.folder_cache.clear()
+
+        self.root_folder = None
+        self.current_folder = None
+        self.sync_data = True
+        self.license = None
