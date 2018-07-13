@@ -31,17 +31,17 @@ class KeeperCsvImporter(BaseImporter):
         with open(filename, "r", encoding='utf-8') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
-                if len(row) >= 7:
+                if len(row) >= 6:
                     record = Record()
                     record.title = row[1]
                     record.login = row[2]
                     record.password = row[3]
                     record.login_url = row[4]
                     record.notes = row[5]
-
-                    if row[0] or row[6]:
+                    sh_folder = row[6] if len(row) > 6 else ''
+                    if row[0] or sh_folder:
                         folder = Folder()
-                        folder.domain = row[6]
+                        folder.domain = sh_folder
                         found = True
                         while found:
                             found = False

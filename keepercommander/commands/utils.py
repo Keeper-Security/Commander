@@ -122,7 +122,7 @@ Personal, Twitter, craig@gmail.com, 123456, https://twitter.com, Social Media#ed
 
 class ImporterCommand(Command):
     def execute_args(self, params, args, **kwargs):
-        if args.find('--display-cvs') >= 0 or args.find('-dc') >= 0:
+        if args.find('--display-csv') >= 0 or args.find('-dc') >= 0:
             print(csv_instructions)
         else:
             Command.execute_args(self, params, args, **kwargs)
