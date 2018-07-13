@@ -27,8 +27,9 @@ class KeeperJsonImporter(BaseImporter):
                     record.login_url = r['login_url']
                     record.notes = r['notes']
                     if 'custom_fields' in r:
-                        for cf in r['custom_fields']:
-                            record.custom_fields.append({'name': cf['name'], 'value': cf['value']})
+                        custom_fields = r['custom_fields']
+                        for cf in custom_fields:
+                            record.custom_fields.append({'name': cf, 'value': custom_fields[cf]})
                     if 'folders' in r:
                         record.folders = []
                         for f in r['folders']:
@@ -52,8 +53,13 @@ class KeeperJsonExporter(BaseExporter):
                 'password': r.password or '',
                 'login_url': r.login_url or '',
                 'notes': r.notes or '',
-                'custom_fields': r.custom_fields
+                'custom_fields': {}
             }
+            for cf in r.custom_fields:
+                name = cf.get('name')
+                value = cf.get('value')
+                if name and value:
+                    ro['custom_fields'][name] = value
             if r.folders:
                 ro['folders'] = []
                 for folder in r.folders:
