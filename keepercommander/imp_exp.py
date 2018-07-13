@@ -123,7 +123,12 @@ def prepare_folder_add(params, records):
         h = hashlib.md5()
         hs = '{0}|{1}'.format((fol.name or '').lower(), fol.parent_uid or '')
         h.update(hs.encode())
-        folder_hash[h.hexdigest()] = f_uid, fol.type
+        shared_folder_key = None
+        if fol.type in { BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+            sf_uid = fol.shared_folder_uid if fol.type == BaseFolderNode.SharedFolderFolderType else fol.uid
+            if sf_uid in params.shared_folder_cache:
+                shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key']
+        folder_hash[h.hexdigest()] = f_uid, fol.type, shared_folder_key
 
     folder_add = []
     for rec in records:
@@ -131,6 +136,7 @@ def prepare_folder_add(params, records):
             for fol in rec.folders:
                 parent_uid = ''
                 parent_shared_folder_uid = None
+                parent_shared_folder_key = None
                 parent_type = BaseFolderNode.RootFolderType
                 for is_domain in [True, False]:
                     path = fol.domain if is_domain else fol.path
@@ -160,9 +166,8 @@ def prepare_folder_add(params, records):
                             request['folder_type'] = folder_type
 
                             encryption_key = params.data_key
-                            if request['folder_type'] == 'shared_folder_folder' and parent_shared_folder_uid:
-                                sf = params.shared_folder_cache[parent_shared_folder_uid]
-                                encryption_key = sf['shared_folder_key']
+                            if request['folder_type'] == 'shared_folder_folder' and parent_shared_folder_uid and parent_shared_folder_key:
+                                encryption_key = parent_shared_folder_key
                                 request['shared_folder_uid'] = parent_shared_folder_uid
 
                             folder_key = os.urandom(32)
@@ -174,15 +179,16 @@ def prepare_folder_add(params, records):
                                 request['name'] = api.encrypt_aes(comp.encode('utf-8'), folder_key)
                                 request['manage_users'] = True
                                 request['manage_records'] = True
+                                parent_shared_folder_key = folder_key
 
                             data = {'name': comp}
                             request['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
                             folder_add.append(request)
                             parent_uid = folder_uid
                             parent_type = folder_type
-                            folder_hash[digest] = parent_uid, parent_type
+                            folder_hash[digest] = parent_uid, parent_type, parent_shared_folder_key
                         else:
-                            parent_uid, parent_type = folder_hash[digest]
+                            parent_uid, parent_type, parent_shared_folder_key = folder_hash[digest]
 
                         if parent_type == BaseFolderNode.SharedFolderType:
                             parent_shared_folder_uid = parent_uid
