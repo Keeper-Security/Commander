@@ -108,16 +108,16 @@ class RecordRotateCommand(Command):
                     display.print_record(params, r.record_uid)
 
 csv_instructions = '''File Format
-Folder, Title, Login, Password, Login URL, Notes, Custom Fields
+Folder, Title, Login, Password, Login URL, Notes, Shared Folder, Custom Fields
 
 - To specify subfolders, use backslash "\\" between folder names
 - To make a shared folder specify the name or path to it in the 6th field
 
 Example 1: Create a regular folder at the root level with 2 custom fields
-My Business Stuff, Twitter, marketing@company.com, 123456, https://twitter.com, These are some notes, API Key, 5555, Date Created, 2018-04-02
+My Business Stuff, Twitter, marketing@company.com, 123456, https://twitter.com, These are some notes,, API Key, 5555, Date Created, 2018-04-02
 
 Example 2: Create a shared subfolder inside another folder with edit and re-share permission
-Personal, Twitter, craig@gmail.com, 123456, https://twitter.com, Social Media#edit#reshare
+Personal, Twitter, craig@gmail.com, 123456, https://twitter.com,, Social Media#edit#reshare
 '''
 
 class ImporterCommand(Command):

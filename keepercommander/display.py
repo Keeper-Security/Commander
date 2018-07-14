@@ -13,6 +13,7 @@ from colorama import init
 from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
+from .subfolder import BaseFolderNode
 
 
 init()
@@ -48,9 +49,34 @@ def formatted_records(records, **kwargs):
     records.sort(key=lambda x: x.title.lower(), reverse=False)
 
     if len(records) > 0:
+        shared_folder = None
+        if 'folder' in kwargs and 'params' in kwargs:
+            params = kwargs['params']
+            fuid = kwargs['folder']
+            if fuid in params.folder_cache:
+                folder = params.folder_cache[fuid]
+                if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                    if folder.type == BaseFolderNode.SharedFolderFolderType:
+                        fuid = folder.shared_folder_uid
+                else:
+                    fuid = None
+                if fuid and fuid in params.shared_folder_cache:
+                    shared_folder = params.shared_folder_cache[fuid]
 
         table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32]] for i, r in enumerate(records)]
-        print(tabulate(table, headers=["#", 'Record UID', 'Title', 'Login', 'URL']))
+        headers = ["#", 'Record UID', 'Title', 'Login', 'URL']
+        if shared_folder and 'records' in shared_folder:
+            headers.append('Flags')
+            for row in table:
+                flag = ''
+                for sfr in shared_folder['records']:
+                    if sfr['record_uid'] == row[1]:
+                        flag = flag + ('W' if sfr['can_edit'] else '_') + ' '
+                        flag = flag + ('S' if sfr['can_share'] else '_')
+                        break
+                row.append(flag)
+
+        print(tabulate(table, headers=headers))
 
         print('')
 

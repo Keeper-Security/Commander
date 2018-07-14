@@ -120,8 +120,6 @@ class RegisterCommand(Command):
             parts[1] = host+port
             new_params.server = urlunsplit(parts)
 
-
-
         iterations = 100000
         salt = os.urandom(16)
         auth_verifier = b''
