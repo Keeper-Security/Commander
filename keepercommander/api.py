@@ -27,8 +27,7 @@ from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError
 
 from Cryptodome import Random
-from Cryptodome.Hash import SHA256, HMAC
-from Cryptodome.Protocol.KDF import PBKDF2
+from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
@@ -54,8 +53,7 @@ def run_command(params, request):
 
 
 def derive_key(password, salt, iterations):
-    prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
-    return PBKDF2(password, salt, 32, iterations, prf)
+    return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations, 32)
 
 
 def auth_verifier(password, salt, iterations):
@@ -116,9 +114,8 @@ def login(params, attempt=0):
         # server doesn't include == at the end, but the module expects it
         params.salt = base64.urlsafe_b64decode(r.json()['salt']+'==')
         params.iterations = r.json()['iterations']
-    
-        prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
-        tmp_auth_verifier = PBKDF2(params.password, params.salt, 32, params.iterations, prf)
+
+        tmp_auth_verifier = derive_key(params.password, params.salt, params.iterations)
         tmp_auth_verifier = hashlib.sha256(tmp_auth_verifier).digest()
         tmp_auth_verifier = base64.urlsafe_b64encode(tmp_auth_verifier)
 
@@ -497,37 +494,21 @@ def sync_down(params):
             params.revision = response_json['revision']
             if params.debug: print('Getting revision ' + str(params.revision))
 
-        pending_record_remove = set()
+        removed_record_uids = []
+
         if 'removed_records' in response_json:
             if params.debug: print('Processing removed records')
             for uid in response_json['removed_records']:
-                del params.meta_data_cache[uid]
-                is_in_sf = False
-                record = params.record_cache[uid]
+                removed_record_uids.append(uid)
+                if uid in params.meta_data_cache:
+                    del params.meta_data_cache[uid]
 
-                for shared_folder_uid in params.shared_folder_cache:
-                    shared_folder = params.shared_folder_cache[shared_folder_uid]
-                    if 'records' not in shared_folder:
-                        continue
-                    for sf_record in shared_folder['records']:
-                        if 'record_uid' not in sf_record:
+                for fuid in params.subfolder_record_cache:
+                    if fuid in params.folder_cache:
+                        if params.folder_cache[fuid].type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                             continue
-                        if sf_record['record_uid'] == uid and 'record_key' in sf_record and 'shared_folder_key' in shared_folder:
-                            del record['can_edit']
-                            del record['can_share']
-                            del record['owner']
-                            record['record_key'] = sf_record['record_key']
-                            record['record_key_unencrypted'] = decrypt_record_key(sf_record['record_key'], shared_folder['shared_folder_key'])
-                            record['record_key_type'] = 1
-                            is_in_sf = True
-                            break
-                    if is_in_sf:
-                        break
-                if not is_in_sf:
-                    if '' in params.subfolder_record_cache:
-                        if uid in params.subfolder_record_cache['']:
-                            params.subfolder_record_cache[''].remove(uid)
-                    pending_record_remove.add(uid)
+                    if uid in params.subfolder_record_cache[fuid]:
+                        params.subfolder_record_cache[fuid].remove(uid)
 
         if 'removed_teams' in response_json:
             if params.debug: print('Processing removed teams')
@@ -552,19 +533,32 @@ def sync_down(params):
             if params.debug: print('Processing removed shared folders')
             for uid in response_json['removed_shared_folders']:
                 if uid in params.shared_folder_cache:
+                    # mark records to unlink
                     shared_folder = params.shared_folder_cache[uid]
-                    if 'teams' in shared_folder and len(shared_folder['teams']) > 0 and is_local_shared_folder(shared_folder):
-                        del shared_folder['manage_records']
-                        del shared_folder['manage_users']
-                    else:
-                        delete_shared_folder(params, uid)
+                    if 'records' in shared_folder:
+                        for sfr in shared_folder['records']:
+                            if 'record_uid' in sfr:
+                                removed_record_uids.append(sfr['record_uid'])
+
+                    # find shared folder folders
+                    sffs = [uid]
+                    for sf_uid in params.subfolder_cache:
+                        sf = params.subfolder_cache[sf_uid]
+                        if 'type' in sf:
+                            if sf['type'] == 'shared_folder_folder':
+                                if sf['shared_folder_uid'] == uid:
+                                    sffs.append(sf['folder_uid'])
+
+                    for f_uid in sffs:
+                        if f_uid in params.subfolder_cache:
+                            del params.subfolder_cache[f_uid]
+                        if f_uid in params.subfolder_record_cache:
+                            del params.subfolder_record_cache[f_uid]
+                    # if 'teams' in shared_folder and len(shared_folder['teams']) > 0 and is_local_shared_folder(shared_folder):
+                    #     del shared_folder['manage_records']
+                    #     del shared_folder['manage_users']
                 else:
                     pending_shared_folder_remove.add(uid)
-
-                if uid in params.subfolder_cache:
-                    del params.subfolder_cache[uid]
-                if uid in params.subfolder_record_cache:
-                    del params.subfolder_record_cache[uid]
 
         if 'user_folders_removed' in response_json:
             for ufr in response_json['user_folders_removed']:
@@ -600,23 +594,18 @@ def sync_down(params):
 
         if 'shared_folder_folder_records_removed' in response_json:
             for sfrrr in response_json['shared_folder_folder_records_removed']:
-                if 'folder_uid'in sfrrr:
-                    if sfrrr['folder_uid'] in params.subfolder_record_cache:
-                        rs = params.subfolder_record_cache[sfrrr['folder_uid']]
-                        ruid = sfrrr['record_uid']
-                        if ruid in rs:
-                            rs.remove(ruid)
-                else:
-                    pass
+                f_uid = sfrrr['folder_uid'] if 'folder_uid' in sfrrr else sfrrr['shared_folder_uid']
+                if f_uid in params.subfolder_record_cache:
+                    rs = params.subfolder_record_cache[f_uid]
+                    r_uid = sfrrr['record_uid']
+                    if r_uid in rs:
+                        rs.remove(r_uid)
 
         # convert record keys from RSA to AES-256
         if 'record_meta_data' in response_json:
             if params.debug: print('Processing record_meta_data')
             for meta_data in response_json['record_meta_data']:
                 if params.debug: print('meta data: ' + str(meta_data))
-
-                if meta_data['record_uid'] in pending_record_remove:
-                    pending_record_remove.remove(meta_data['record_uid'])
 
                 if 'record_key' not in meta_data:
                     # old record that doesn't have a record key so make one
@@ -771,8 +760,7 @@ def sync_down(params):
                         existing_sf['records'] = [record for record in existing_sf['records']
                                                 if record['record_uid'] not in shared_folder['records_removed']]
                         for record_uid in shared_folder['records_removed']:
-                            if record_uid not in params.meta_data_cache:
-                                del params.record_cache[record_uid]
+                            removed_record_uids.append(record_uid)
                         del shared_folder['records_removed']
 
                     if 'users_removed' in shared_folder:
@@ -926,12 +914,6 @@ def sync_down(params):
                     params.subfolder_record_cache[key] = set()
                 record_uid = sffr['record_uid']
                 params.subfolder_record_cache[key].add(record_uid)
-                if record_uid in pending_record_remove:
-                    pending_record_remove.remove(record_uid)
-
-        for uid in pending_record_remove:
-            if uid in params.record_cache:
-                del params.record_cache[uid]
 
         if 'pending_shares_from' in response_json:
             print('Note: You have pending share requests.')
@@ -940,6 +922,17 @@ def sync_down(params):
             # Not doing anything with this yet
             for sharing_change in response_json['sharing_changes']:
                 record_uid = sharing_change['record_uid']
+
+        # delete unlinked records
+        for r_uid in removed_record_uids:
+            if r_uid in params.record_cache:
+                found = False
+                for records in params.subfolder_record_cache.values():
+                    if r_uid in records:
+                        found = True
+                        break
+                if not found:
+                    del params.record_cache[r_uid]
 
         prepare_folder_tree(params)
 
@@ -1022,18 +1015,6 @@ def convert_to_folders(params):
     return False
 
 
-def num_folders_with_record(record_uid):
-    counter = 0
-
-    for shared_folder in params.shared_folder_cache:
-        if 'records' in shared_folder:
-            for record in shared_folder['records']:
-                if 'record_uid' in record:
-                    if record['record_uid'] == record_uid:
-                        counter += 1
-
-    return counter
-
 def decrypt_data_key(params):
     """ Decrypt the data key returned by the server 
     Format:
@@ -1071,8 +1052,7 @@ def decrypt_data_key(params):
         raise CryptoError('Invalid encryption parameters: iterations too low')
 
     # generate cipher key from master password and encryption params
-    prf = lambda p,s: HMAC.new(p,s,SHA256).digest()
-    key = PBKDF2(params.password, salt, 32, iterations, prf)
+    key = derive_key(params.password, salt, iterations)
 
     # decrypt the <encrypted data key>
     cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -1404,6 +1384,7 @@ def search_records(params, searchstring):
             search_results.append(rec)
             
     return search_results
+
 
 def search_shared_folders(params, searchstring):
     """Search shared folders """
@@ -1914,8 +1895,9 @@ def prepare_folder_tree(params):
             params.folder_cache[shf.uid] = shf
 
     for f in params.folder_cache.values():
-        pf = params.folder_cache[f.parent_uid] if f.parent_uid is not None else params.root_folder
-        pf.subfolders.append(f.uid)
+        parent_folder = params.folder_cache.get(f.parent_uid) if f.parent_uid else params.root_folder
+        if parent_folder:
+            parent_folder.subfolders.append(f.uid)
 
 
 def get_record_permissions(params, record_uids):

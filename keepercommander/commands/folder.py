@@ -97,6 +97,14 @@ ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
 
 
+chmod_parser = argparse.ArgumentParser(prog='chmod', description='Change permissions on on shared folder or record')
+chmod_parser.add_argument('-s', '--share', dest='share', choices=['on', 'off'], required=True,  action='store', help='grant share permission')
+chmod_parser.add_argument('-e', '--edit', dest='edit', choices=['on', 'off'], required=True, action='store', help='grant edit permission')
+chmod_parser.add_argument('path', nargs='?', type=str, action='store', help='path to shared folder/record or UID')
+chmod_parser.error = raise_parse_exception
+chmod_parser.exit = suppress_exit
+
+
 class FolderListCommand(Command):
 
     @staticmethod
@@ -165,7 +173,7 @@ class FolderListCommand(Command):
                 if len(folders) > 0:
                     display.formatted_folders(folders)
                 if len(records) > 0:
-                    display.formatted_records(records, params=params)
+                    display.formatted_records(records, params=params, folder=folder.uid)
             else:
                 names = []
                 for f in folders:

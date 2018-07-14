@@ -33,12 +33,12 @@ class KeeperCsvImporter(BaseImporter):
             for row in reader:
                 if len(row) >= 6:
                     record = Record()
-                    record.title = row[1]
-                    record.login = row[2]
-                    record.password = row[3]
-                    record.login_url = row[4]
-                    record.notes = row[5]
-                    sh_folder = row[6] if len(row) > 6 else ''
+                    record.title = (row[1] or '').strip()
+                    record.login = (row[2] or '').strip()
+                    record.password = (row[3] or '').strip()
+                    record.login_url = (row[4] or '').strip()
+                    record.notes = (row[5] or '').strip()
+                    sh_folder = (row[6] if len(row) > 6 else '').strip()
                     if row[0] or sh_folder:
                         folder = Folder()
                         folder.domain = sh_folder
@@ -54,14 +54,14 @@ class KeeperCsvImporter(BaseImporter):
                                     elif flag == 'edit':
                                         folder.can_edit = True
                                     folder.domain = folder.domain[:-len(suffix)]
-                        folder.path = row[0]
+                        folder.path = (row[0] or '').strip()
                         record.folders = [folder]
 
                     if len(row) > 7:
                         for i in range(7, len(row)-1, 2):
                             if i+1 < len(row):
-                                key = row[i]
-                                value = row[i+1]
+                                key = (row[i] or '').strip()
+                                value = (row[i+1] or '').strip()
                                 if len(key) > 0 and len(value) > 0:
                                     record.custom_fields.append({'name': key, 'value': value})
                     yield record
