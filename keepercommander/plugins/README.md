@@ -21,7 +21,7 @@ Using Commander to rotate passwords, combined with the flexibility of Keeper's s
 
 To activate a plugin for a particular Keeper record, you first need to update the custom fields for that record with special keywords that are used by Commander.  For example, here is a MySQL database record:
 
-<img src="../images/vault_screen1.png" width="625">
+<img src="../images/vault_screen2.png" width="625">
 
 Now on the command line you can use the *download* command to pull down your changes...
 

@@ -39,12 +39,14 @@ Example:
 
 ```
 {                                                                               
-    "debug":false,
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
 }
 ```
 
-In this example, we are telling Commander to first download and decrypt records, then reset a password. The custom fields in the record give the plugin the information it needs to rotate the password appropriately. As you can see, each unique password record in the Keeper system is represented by a unique record UID.  Use the "l" or "s" command in Commander's interactive mode to display the record UIDs in your account.
+In this example, we are telling Commander to first download and decrypt records, then rotate the password (record UID HKj0T-NmBndy8SJ6ttbt1A) using the plugin programmed into the record. To locate the Record UID, simply view it on the commander interactive shell or view it on the Keeper Web Vault and Desktop App (small 'key' icon to the right of the record title).
 
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/record_uid.png)
+
+If you have any feature requests for this plugin, please contact us at ops@keepersecurity.com.

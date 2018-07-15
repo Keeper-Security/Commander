@@ -56,8 +56,3 @@ Since the public key, private key and passphrase is regenerated every rotation, 
 `ssh -i ~/myprivatekey.pvk user@hostname`
 
 Use the username and hostname field from your vault record.  You will be prompted for the passphrase.  Use the passphrase that is stored in Keeper's `password` field.
-
-
-
-
-

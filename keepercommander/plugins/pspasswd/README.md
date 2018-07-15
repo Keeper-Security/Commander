@@ -123,7 +123,6 @@ Example config.json file:
 
 ```
 {                                                                               
-    "debug":false,
     "user":"yourkeeperaccount@company.com",
     "password":"yourkeepermasterpassword",
     "commands":["d", "r HKj0T-NmBndy8SJ6ttbt1A"]
