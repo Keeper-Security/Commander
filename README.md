@@ -295,22 +295,24 @@ $ keeper import --format=json import.json
 File Format:
 Folder, Title, Login, Password, Login URL, Notes, Shared Folder, Custom Fields
 
-* To specify subfolders, use backslash "\" between folder names
-* To make a shared folder specify the name or path to it in the 6th field
+* To specify subfolders, use backslash "\\" between folder names
+* To set shared folder permission, use the #edit or #reshare tags as shown in the example below.
 
-Example 1: Create a regular folder at the root level with 2 custom fields
-```My Business Stuff, Twitter, marketing@company.com, 123456, https://twitter.com, These are some notes,, API Key, 5555, Date Created, 2018-04-02```
+Example 1: Import record into a record folder at the root level with 2 custom fields
 
-Example 2: Create a shared subfolder inside another folder with edit and re-share permission
-```Personal, Twitter, craig@gmail.com, 123456, https://twitter.com,, Social Media#edit#reshare```
+```My Business Stuff,Twitter,marketing@company.com,123456,https://twitter.com,These are some notes,,API Key,5555,Date Created,2018-04-02```
+
+Example 2: Import record into personal folder and shared folder with edit and re-share permission
+
+```Personal,Twitter,craig@gmail.com,123456,https://twitter.com,,Social Media#edit#reshare```
 
 **Keepass Import**
 
-Keeper supports importing the folder and record structure directly from an encrypted Keepass file.
+Keeper supports importing the record and folder structure directly from an encrypted Keepass file.
 
 ```bash
 $ keeper import --format=keepass test.kdbx
-...  Password: *********
+...  Password: <type keepass file password> 
 ```
 
 ### Advanced Configuration File
@@ -351,7 +353,7 @@ Notes:
 
 * ```challenge``` parameter is the challenge phrase when using a Yubikey device to authenticate. 
 
-Commander supports the ability to authenticate a session with a connected Yubikey device instead of using a Master Password.  To configure Yubikey authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  You will end up using a challenge phrase to authenticate instead of the master password.
+To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a master password.
 
 * ```device_token_expiration``` can be set to ```true``` to expire 2FA device tokens after 30 days.
 
@@ -386,13 +388,17 @@ Keeper is a zero-knowledge platform.  This means that the server does not have a
 
 When you create a Keeper account from our [web app](https://keepersecurity.com/vault) or [mobile/desktop app](https://keepersecurity.com/download), you are asked to create a Master Password and a security question.  The Keeper app creates your crypto keys, RSA keys and encryption parameters (iv, salt, iterations).  Your RSA private key is encrypted with your data key, and your data key is encrypted with your Master Password.  The encrypted version of your data key is stored in Keeper's Cloud Security Vault and provided to you after successful device authentication.
 
-When you login to Keeper on any device (or on Commander), your Master Password is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt your data key.  The data key is used to decrypt individual record keys.  Finally, your record keys are then used to decrypt your stored vault information.
+When you login to Keeper on any device (or on Commander), your Master Password is used to derive a 256-bit PBKDF2 key.  This key is used to decrypt your data key.  The data key is used to decrypt individual record keys, shared folder keys and team keys.  Record keys, shared folder keys and team keys are then used to decrypt each individual record in the vault.
 
 When storing information to your vault, Keeper stores and synchronizes the encrypted data.
 
-For added security, you can enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings screen.  When logging into Commander with Two-Factor Authentication turned on, you will be asked for a one time passcode.  After successful authentication, you will be provided with a device token that can be used for subsequent requests without having to re-authenticate.
+We strongly recommend that you enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings screen.  When logging into Commander with Two-Factor Authentication turned on, you will be asked for a one-time passcode.  After successful authentication, Commander receives a device token that can be used for subsequent requests without another two-factor auth request.
 
-To learn about Keeper's security, certifications and implementation details, visit the [Security Disclosure](https://keepersecurity.com/security.html) page on our website.
+For more details on Keeper's security architecture, certifications and implementation details, visit the [Security Disclosure](https://keepersecurity.com/security.html) page of our website. If you have any specific questions related to security, email security@keepersecurity.com.
+
+### Vulnerability Disclosure Program
+
+Keeper has partnered with Bugcrowd to manage our vulnerability disclosure program. Please submit reports through https://bugcrowd.com/keepersecurity or send an email to security@keepersecurity.com.
 
 ### About Keeper
 
