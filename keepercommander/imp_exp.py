@@ -177,8 +177,6 @@ def prepare_folder_add(params, records):
 
                             if request['folder_type'] == 'shared_folder':
                                 request['name'] = api.encrypt_aes(comp.encode('utf-8'), folder_key)
-                                request['manage_users'] = True
-                                request['manage_records'] = True
                                 parent_shared_folder_key = folder_key
 
                             data = {'name': comp}
