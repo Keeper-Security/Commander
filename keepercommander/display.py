@@ -80,13 +80,14 @@ def formatted_records(records, **kwargs):
 
         print('')
 
+    skip_details = kwargs.get('skip_details') or False
     # Under 5 recs, just display on the screen
-    if len(records) < 5:
+    if len(records) < 5 and not skip_details:
         for r in records:
             r.display(**kwargs)
 
 
-def formatted_shared_folders(shared_folders):
+def formatted_shared_folders(shared_folders, **kwargs):
     """Display folders/titles/uids for the supplied records"""
 
     # Sort by folder+title
@@ -99,13 +100,14 @@ def formatted_shared_folders(shared_folders):
 
         print('')
 
+    skip_details = kwargs.get('skip_details') or False
     # Under 5 recs, just display on the screen
-    if len(shared_folders) < 5:
+    if len(shared_folders) < 5 and not skip_details:
         for sf in shared_folders:
             sf.display()
 
 
-def formatted_teams(teams):
+def formatted_teams(teams, **kwargs):
     """Display names/uids for the supplied teams"""
 
     # Sort by name
@@ -118,8 +120,9 @@ def formatted_teams(teams):
 
         print('')
 
+    skip_details = kwargs.get('skip_details') or False
     # Under 5 recs, just display on the screen
-    if len(teams) < 5:
+    if len(teams) < 5 and not skip_details:
         for team in teams:
             team.display()
 

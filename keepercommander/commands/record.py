@@ -25,6 +25,7 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 def register_commands(commands, aliases, command_info):
     commands['add'] = RecordAddCommand()
     commands['rm'] = RecordRemoveCommand()
+    commands['search'] = SearchCommand()
     commands['list'] = RecordListCommand()
     commands['list-sf'] = RecordListSfCommand()
     commands['list-team'] = RecordListTeamCommand()
@@ -32,8 +33,7 @@ def register_commands(commands, aliases, command_info):
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     aliases['a'] = 'add'
-    aliases['s'] = 'list'
-    aliases['search'] = 'list'
+    aliases['s'] = 'search'
     aliases['l'] = 'list'
     aliases['lsf'] = 'list-sf'
     aliases['lt'] = 'list-team'
@@ -41,7 +41,7 @@ def register_commands(commands, aliases, command_info):
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
 
-    for p in [list_parser, get_info_parser, add_parser, rm_parser, append_parser, download_parser]:
+    for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser, download_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -72,6 +72,12 @@ list_parser = argparse.ArgumentParser(prog='list|l', description='Display all re
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
+
+
+search_parser = argparse.ArgumentParser(prog='search|s', description='Search with regular expression')
+search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+search_parser.error = raise_parse_exception
+search_parser.exit = suppress_exit
 
 
 get_info_parser = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
@@ -276,6 +282,32 @@ class RecordRemoveCommand(Command):
                     params.sync_data = True
                 else:
                     print(rs['message'])
+
+
+class SearchCommand(Command):
+    def get_parser(self):
+        return search_parser
+
+    def execute(self, params, **kwargs):
+        pattern = (kwargs['pattern'] if 'pattern' in kwargs else None) or ''
+
+        # Search records
+        results = api.search_records(params, pattern)
+        if results:
+            print('')
+            display.formatted_records(results, params=params, skip_details=True)
+
+        # Search shared folders
+        results = api.search_shared_folders(params, pattern)
+        if results:
+            print('')
+            display.formatted_shared_folders(results, params=params, skip_details=True)
+
+        # Search teams
+        results = api.search_teams(params, pattern)
+        if results:
+            print('')
+            display.formatted_teams(results, params=params, skip_details=True)
 
 
 class RecordListCommand(Command):
