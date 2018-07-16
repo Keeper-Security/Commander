@@ -97,14 +97,6 @@ ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
 
 
-chmod_parser = argparse.ArgumentParser(prog='chmod', description='Change permissions on on shared folder or record')
-chmod_parser.add_argument('-s', '--share', dest='share', choices=['on', 'off'], required=True,  action='store', help='grant share permission')
-chmod_parser.add_argument('-e', '--edit', dest='edit', choices=['on', 'off'], required=True, action='store', help='grant edit permission')
-chmod_parser.add_argument('path', nargs='?', type=str, action='store', help='path to shared folder/record or UID')
-chmod_parser.error = raise_parse_exception
-chmod_parser.exit = suppress_exit
-
-
 class FolderListCommand(Command):
 
     @staticmethod
@@ -310,11 +302,11 @@ class FolderMakeCommand(Command):
                     else:
                         if 'u' in s1:
                             request['manage_users'] = True
-                        if 'r' is s1:
+                        if 'r' in s1:
                             request['manage_records'] = True
-                        if 'e' is s1:
+                        if 'e' in s1:
                             request['can_edit'] = True
-                        if 's' is s1:
+                        if 's' in s1:
                             request['can_share'] = True
             else:
                 request['folder_type'] = 'user_folder'

@@ -86,13 +86,13 @@ class SharedFolder:
         return target
 
     def to_lowerstring(self):
-        return self.to_string().lower()
-
-
-    def to_string(self):
-        target = self.shared_folder_uid + str(self.users) + str(self.teams)
-        return target
-
-    def to_lowerstring(self):
-        return self.to_string().lower()
-
+        keywords = [self.shared_folder_uid, self.name]
+        if self.users:
+            for u in self.users:
+                keywords.append(u['username'])
+        if self.teams:
+            for t in self.teams:
+                keywords.append(t['name'])
+                keywords.append(t['team_uid'])
+        keywords = [x.lower() for x in keywords]
+        return '\n'.join(keywords)

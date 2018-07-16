@@ -1373,7 +1373,7 @@ def search_records(params, searchstring):
         print('No record cache.  Sync down first.')
         return
 
-    if searchstring != '': print('Searching for ' + searchstring)
+    if params.debug and searchstring: print('Searching for ' + searchstring)
     p = re.compile(searchstring.lower())
     search_results = []
 
@@ -1393,7 +1393,7 @@ def search_shared_folders(params, searchstring):
         print('No shared folder.  Sync down first.')
         return
 
-    if searchstring != '': print('Searching for ' + searchstring)
+    if params.debug and searchstring: print('Searching for ' + searchstring)
     p = re.compile(searchstring.lower())
 
     search_results = [] 
@@ -1422,7 +1422,7 @@ def search_teams(params, searchstring):
         print('No teams.  Sync down first.')
         return
 
-    if searchstring != '': print('Searching for ' + searchstring)
+    if params.debug and searchstring: print('Searching for ' + searchstring)
     p = re.compile(searchstring.lower())
 
     search_results = [] 
@@ -1607,12 +1607,14 @@ def prepare_shared_folder(params, shared_folder):
 
     if 'add_users' in new_sf:
         for u in new_sf['add_users']:
+            has_self = False
             if u['username'] == params.user:
                 # this is me, so encrypt shared folder key with data key
                 if params.debug: print('Encrypt SF key with data key')
                 iv = os.urandom(16)
                 cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
                 encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
+                has_self = True
             else:
                 # encrypt shared folder key with user's public key
                 if params.debug: print('Encrypt SF key with public key')
@@ -1620,8 +1622,18 @@ def prepare_shared_folder(params, shared_folder):
                 rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
                 cipher = PKCS1_v1_5.new(rsa_key)
                 encrypted_sf_key = cipher.encrypt(shared_folder_key)
-            u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=') 
+
+            u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=')
             if params.debug: print('Encrypted shared folder key from user=' + str(u['shared_folder_key']))
+
+            if not has_self and needs_sf_key:
+                new_sf['add_users'].append(
+                    {
+                        'username': params.user,
+                        'manage_users': True,
+                        'manage_records': True,
+                        'shared_folder_key': encrypt_aes(shared_folder_key, params.data_key)
+                    })
 
     if 'add_records' in new_sf:
         for r in new_sf['add_records']:
