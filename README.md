@@ -284,7 +284,7 @@ If using a JSON file, make sure it's an a valid JSON array.  For example, here's
 }]
 ```
 
-The format must be strict JSON or it will fail parsing.
+The format must be strict JSON or it will fail parsing. To import this file:
 
 ```bash
 $ keeper import --format=json import.json
@@ -292,19 +292,34 @@ $ keeper import --format=json import.json
 
 **CSV Record Import**
 
+Keeper supports .csv text file import using comma delimited fields.
+
 File Format:
 Folder, Title, Login, Password, Login URL, Notes, Shared Folder, Custom Fields
 
 * To specify subfolders, use backslash "\\" between folder names
-* To set shared folder permission, use the #edit or #reshare tags as shown in the example below.
+* To set shared folder permission on the record, use the #edit or #reshare tags as seen below 
+* Enclose fields in quotes for multi-line or special characters
+* Ensure files are UTF-8 encoded for support of international or double-byte characters 
 
-Example 1: Import record into a record folder at the root level with 2 custom fields
+Below is an example csv file that showcases several import features including personal folders, shared folders, subfolders, special characters and multi-line fields.
 
-```My Business Stuff,Twitter,marketing@company.com,123456,https://twitter.com,These are some notes,,API Key,5555,Date Created,2018-04-02```
+```
+Business,Twitter,marketing@company.com,"a bad password",https://twitter.com,Some interesting notes!,,API Key,"131939-AAAEKJLE-491231$##%!",Date Created,2018-04-02
+Subfolder1,Twitter,craig@gmail.com,xwVnk0hfJmd2M$2l4shGF#p,https://twitter.com,,Social Media\Customer1#edit#reshare
+Subfolder2,Facebook,craig@gmail.com,TycWyxodkQw4IrX9VFxj8F8,https://facebook.com,,Social Media\Customer2#edit#reshare
+,Google Dev Account,mydevaccount@gmail.com,"8123,9fKJRefa$!@#4912fkk!--3",https://accounts.google.com,"Google Cloud ID 448812771239122
+Account Number 449128
+This is multi-line",Shared Accounts#edit#reshare,2FA Phone Number,+19165551212
+```
 
-Example 2: Import record into personal folder and shared folder with edit and re-share permission
+To import this file:
+```bash
+$ keeper import --format=csv test.csv
+4 records imported successfully
+```
 
-```Personal,Twitter,craig@gmail.com,123456,https://twitter.com,,Social Media#edit#reshare```
+The resulting vault will look like [this image](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/csv_import.png)
 
 **Keepass Import**
 
