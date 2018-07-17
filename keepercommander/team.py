@@ -36,5 +36,7 @@ class Team:
         return target
 
     def to_lowerstring(self):
-        return self.to_string().lower()
+        keywords = [self.team_uid, self.name]
+        keywords = [x.lower() for x in keywords]
+        return '\n'.join(keywords)
 

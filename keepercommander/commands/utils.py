@@ -22,6 +22,8 @@ def register_commands(commands, aliases, command_info):
     commands['sync-down'] = SyncDownCommand()
     commands['rotate'] = RecordRotateCommand()
     commands['import'] = RecordImportCommand()
+    commands['import'] = RecordImportCommand()
+    commands['import_sf'] = SharedFolderImportCommand()
     commands['export'] = RecordExportCommand()
     commands['delete_all'] = RecordDeleteAllCommand()
     commands['whoami'] = WhoamiCommand()
@@ -49,6 +51,12 @@ import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'k
 import_parser.add_argument('filename', type=str, help='file name')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
+
+
+import_sf_parser = argparse.ArgumentParser(prog='import_sf', description='Create shared folders from JSON input file')
+import_sf_parser.add_argument('filename', type=str, help='file name')
+import_sf_parser.error = raise_parse_exception
+import_sf_parser.exit = suppress_exit
 
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
@@ -107,6 +115,7 @@ class RecordRotateCommand(Command):
                 if print_result:
                     display.print_record(params, r.record_uid)
 
+
 csv_instructions = '''File Format
 Folder, Title, Login, Password, Login URL, Notes, Shared Folder, Custom Fields
 
@@ -119,6 +128,7 @@ My Business Stuff, Twitter, marketing@company.com, 123456, https://twitter.com, 
 Example 2: Create a shared subfolder inside another folder with edit and re-share permission
 Personal, Twitter, craig@gmail.com, 123456, https://twitter.com,, Social Media#edit#reshare
 '''
+
 
 class ImporterCommand(Command):
     def execute_args(self, params, args, **kwargs):
@@ -139,6 +149,18 @@ class RecordImportCommand(ImporterCommand):
             imp_exp._import(params, format, filename)
         else:
             print('Missing argument')
+
+
+class SharedFolderImportCommand(Command):
+    def get_parser(self):
+        return import_sf_parser
+
+    def execute(self, params, **kwargs):
+        filename = kwargs['filename'] if 'filename' in kwargs else None
+        if format and filename:
+            imp_exp.create_sf(params, filename)
+        else:
+            print('Missing `filename` argument')
 
 
 class RecordExportCommand(ImporterCommand):
