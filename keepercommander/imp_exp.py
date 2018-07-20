@@ -116,11 +116,11 @@ def export(params, file_format, filename):
     for r in records:
         rec = ImportRecord()
         rec.uid = r.record_uid
-        rec.title = r.title
-        rec.login = r.login
-        rec.password = r.password
-        rec.login_url = r.login_url
-        rec.notes = r.notes
+        rec.title = r.title.strip('\x00') if r.title else ''
+        rec.login = r.login.strip('\x00') if r.login else ''
+        rec.password = r.password.strip('\x00') if r.password else ''
+        rec.login_url = r.login_url.strip('\x00') if r.login_url else ''
+        rec.notes = r.notes.strip('\x00') if r.notes else ''
         for cf in r.custom_fields:
             name = cf.get('name')
             value = cf.get('value')
