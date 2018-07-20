@@ -62,10 +62,12 @@ class KeeperCsvImporter(BaseImporter):
                             if i+1 < len(row):
                                 key = (row[i] or '').strip()
                                 value = (row[i+1] or '').strip()
-                                if len(key) > 0 and len(value) > 0:
-                                    record.custom_fields.append({'name': key, 'value': value})
+                                if key and value:
+                                    record.custom_fields[key] = value
                     yield record
 
+    def extension(self):
+        return 'csv'
 
 class KeeperCsvExporter(BaseExporter):
 
@@ -73,22 +75,25 @@ class KeeperCsvExporter(BaseExporter):
         with open(filename, 'w', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
             for r in records:
-                domain = ''
-                path = ''
-                if r.folders:
-                    for folder in r.folders:
-                        domain = folder.domain or ''
-                        path = folder.path or ''
-                        if domain:
-                            if folder.can_edit:
-                                domain = domain + '#edit'
-                            if folder.can_share:
-                                domain = domain + '#reshare'
-                        break
-                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
-                if r.custom_fields is not None:
-                    for x in r.custom_fields:
-                        if 'name' in x and 'value' in x:
-                            row.append(x['name'])
-                            row.append(x['value'])
-                writer.writerow(row)
+                if type(r) == Record:
+                    domain = ''
+                    path = ''
+                    if r.folders:
+                        for folder in r.folders:
+                            domain = folder.domain or ''
+                            path = folder.path or ''
+                            if domain:
+                                if folder.can_edit:
+                                    domain = domain + '#edit'
+                                if folder.can_share:
+                                    domain = domain + '#reshare'
+                            break
+                    row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
+                    if r.custom_fields:
+                        for cf in r.custom_fields:
+                            row.append(cf)
+                            row.append(r.custom_fields[cf])
+                    writer.writerow(row)
+
+    def extension(self):
+        return 'csv'

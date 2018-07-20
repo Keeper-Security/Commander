@@ -61,7 +61,7 @@ import_sf_parser.exit = suppress_exit
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
 export_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
-export_parser.add_argument('--format', dest='format', choices=['json', 'csv'], required=True, help='file format')
+export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 export_parser.add_argument('filename', type=str, help='file name')
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit

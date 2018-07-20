@@ -162,10 +162,14 @@ def loop(params):
                                            complete_style=CompleteStyle.MULTI_COLUMN,
                                            complete_while_typing=False)
 
-        if params.user and params.password:
-            print('Logging in...')
-            api.login(params)
-            api.sync_down(params)
+        if params.user:
+            if not params.password:
+                print('Enter password for {0}'.format(params.user))
+                params.password = getpass.getpass(prompt='Password: ', stream=None)
+            if params.password:
+                print('Logging in...')
+                api.login(params)
+                api.sync_down(params)
 
         # go into interactive mode
         while True:

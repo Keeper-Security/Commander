@@ -71,6 +71,25 @@ def path_components(path, delimiter=PathDelimiter):
                 p = ''
 
 
+class Permission:
+    def __init__(self):
+        self.uid = None
+        self.name = None
+        self.manage_users = None
+        self.manage_records = None
+
+
+class SharedFolder:
+    def __init__(self):
+        self.uid = None
+        self.path = None
+        self.manage_users = None
+        self.manage_records = None
+        self.can_edit = None
+        self.can_share = None
+        self.permissions = None  # type: [Permission]
+
+
 class Folder:
     def __init__(self):
         self.uid = None
@@ -82,13 +101,13 @@ class Folder:
 
 class Record:
     def __init__(self):
-        self.record_uid = None
+        self.uid = None
         self.title = None
         self.login = None
         self.password = None
         self.login_url = None
         self.notes = None
-        self.custom_fields = []
+        self.custom_fields = {}
         self.folders = None     # type: [Folder]
 
 
@@ -99,6 +118,11 @@ class BaseImporter:
         :rtype: collections.Iterable[Record]
         '''
         path = os.path.expanduser(filename)
+        if not os.path.isfile(path):
+            ext = self.extension()
+            if ext:
+                path = path + '.' + ext
+
         if not os.path.isfile(path):
             raise Exception('File \'{0}\' does not exist'.format(filename))
 
@@ -111,22 +135,39 @@ class BaseImporter:
         '''
         raise NotImplemented()
 
+    def extension(self):
+        return ''
+
 
 class BaseExporter:
     def execute(self, filename, records):
         '''
         :type filename: str
-        :type records: collections.Iterable[Record]
+        :type records: collections.Iterable[SharedFolder or Record]
         :rtype: None
         '''
+
         path = os.path.expanduser(filename)
+        if path.find('.') < 0:
+            ext = self.extension()
+            if ext:
+                path = path + '.' + ext
+
         self.do_export(path, records)
 
     def do_export(self, filename, records):
         '''
         :type filename: str
-        :type records: collections.Iterable[Record]
+        :type records: collections.Iterable[SharedFolder or Record]
         :rtype: None
         '''
         raise NotImplemented()
 
+    def has_shared_folders(self):
+        return False
+
+    def has_attachments(self):
+        return False
+
+    def extension(self):
+        return ''

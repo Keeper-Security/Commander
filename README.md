@@ -193,7 +193,7 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```import``` Import data from local file to Keeper (JSON, CSV, Keepass)
 
-* ```export``` Export data from Keeper to local file (JSON, CSV)
+* ```export``` Export data from Keeper to local file (JSON, CSV, Keepass)
 
 * ```export_all``` Export all data and attachments in .zip format (Coming Soon!)
 

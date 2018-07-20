@@ -8,6 +8,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+
 class KeeperParams:
     """ Global storage of data during the session """
 
