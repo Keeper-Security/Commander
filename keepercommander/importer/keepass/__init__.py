@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .keepass import KeepassImporter as Importer
+from .keepass import KeepassImporter as Importer, KeepassExporter as Exporter
 
-__all__ = ['Importer']
+__all__ = ['Importer', 'Exporter']

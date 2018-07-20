@@ -25,6 +25,7 @@ from .record import Record
 from .shared_folder import SharedFolder
 from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError
+from .commands.base import user_choice
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -356,6 +357,12 @@ def encrypt_aes(data, key):
     iv = os.urandom(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     encrypted_data = iv + cipher.encrypt(pad_binary(data))
+    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('==')
+
+
+def encrypt_rsa(data, rsa_key):
+    cipher = PKCS1_v1_5.new(rsa_key)
+    encrypted_data = cipher.encrypt(data)
     return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('==')
 
 
@@ -890,9 +897,11 @@ def sync_down(params):
             check_convert_to_folders = False
             for sff in response_json['shared_folder_folders']:
                 encrypted_key = sff['shared_folder_folder_key']
-                sf = params.shared_folder_cache[sff['shared_folder_uid']]
-                sff['folder_key_unencrypted'] = decrypt_data(encrypted_key, sf['shared_folder_key'])
-                params.subfolder_cache[sff['folder_uid']] = sff
+                sf_uid = sff['shared_folder_uid']
+                if sf_uid in params.shared_folder_cache:
+                    sf = params.shared_folder_cache[sf_uid]
+                    sff['folder_key_unencrypted'] = decrypt_data(encrypted_key, sf['shared_folder_key'])
+                    params.subfolder_cache[sff['folder_uid']] = sff
 
         if 'user_folder_shared_folders' in response_json:
             check_convert_to_folders = False
@@ -914,9 +923,6 @@ def sync_down(params):
                     params.subfolder_record_cache[key] = set()
                 record_uid = sffr['record_uid']
                 params.subfolder_record_cache[key].add(record_uid)
-
-        if 'pending_shares_from' in response_json:
-            print('Note: You have pending share requests.')
 
         if 'sharing_changes' in response_json:
             # Not doing anything with this yet
@@ -941,13 +947,31 @@ def sync_down(params):
             print('--- Record Cache: ' + str(params.record_cache))
             print('--- Folders Cache: ' + str(params.shared_folder_cache))
 
+        if 'pending_shares_from' in response_json:
+            accepted = False
+            for user in response_json['pending_shares_from']:
+                print('Note: You have pending share request(s) from ' + user)
+                answer = user_choice('Do you want to accept these requests?', 'yn', 'n')
+                rq = {
+                    'command': 'accept_share' if answer == 'y' else 'cancel_share',
+                    'from_email': user
+                }
+                try:
+                    rs = communicate(params, rq)
+                    if rs['result'] == 'success':
+                        accepted = accepted or answer == 'y'
+                except:
+                    pass
+            if accepted:
+                sync_down(params)
+                return
+
         try:
             if check_convert_to_folders:
                 rq = {
                     'command': 'check_flag',
                     'flag': 'folders'
                 }
-
                 rs = communicate(params, rq)
                 if rs['result'] == 'success':
                     if not rs['value']:

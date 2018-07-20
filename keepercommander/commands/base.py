@@ -34,7 +34,7 @@ def register_commands(commands, aliases, command_info):
     command_info['q'] = 'Quit'
 
 
-def user_choice(question, choice, default= '', show_choice=True, multi_choice=False):
+def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
     choices = [ch.lower() if ch.upper() == default.upper() else ch.lower()  for ch in choice]
 
     result = ''
