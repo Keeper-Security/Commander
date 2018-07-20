@@ -198,101 +198,104 @@ class KeepassExporter(BaseExporter):
                     node = sub_node
 
             for r in rs:
-                node = kdb.obj_root.Root.Group
-                fol = None
-                if r.folders:
-                    fol = r.folders[0]
-                    for is_shared in [True, False]:
-                        path = fol.domain if is_shared else fol.path
-                        if path:
-                            comps = list(path_components(path))
-                            for i in range(len(comps)):
-                                comp = comps[i]
-                                sub_node = node.find('Group[Name=\'{0}\']'.format(comp))
-                                if sub_node is None:
-                                    sub_node = objectify.Element('Group')
-                                    sub_node.UUID = base64.b64encode(os.urandom(16)).decode()
-                                    sub_node.Name = comp
-                                node.append(sub_node)
-                                node = sub_node
-                entry = None
-                entries = node.findall('Entry')
-                if len(entries) > 0:
-                    for en in entries:
-                        title = ''
-                        login = ''
-                        password = ''
-                        if hasattr(en, 'String'):
-                            for sn in en.String:
-                                if hasattr(sn, 'Key') and hasattr(sn, 'Value'):
-                                    key = sn.Key.text
-                                    value = sn.Value.text
-                                    if key == 'Title':
-                                        title = value
-                                    elif key == 'UserName':
-                                        login = value
-                                    elif key == 'Password':
-                                        password = value
-                        if title == r.title and login == r.login and password == r.password:
-                            entry = node
-                            break
+                try:
+                    node = kdb.obj_root.Root.Group
+                    fol = None
+                    if r.folders:
+                        fol = r.folders[0]
+                        for is_shared in [True, False]:
+                            path = fol.domain if is_shared else fol.path
+                            if path:
+                                comps = list(path_components(path))
+                                for i in range(len(comps)):
+                                    comp = comps[i]
+                                    sub_node = node.find('Group[Name=\'{0}\']'.format(comp))
+                                    if sub_node is None:
+                                        sub_node = objectify.Element('Group')
+                                        sub_node.UUID = base64.b64encode(os.urandom(16)).decode()
+                                        sub_node.Name = comp
+                                    node.append(sub_node)
+                                    node = sub_node
+                    entry = None
+                    entries = node.findall('Entry')
+                    if len(entries) > 0:
+                        for en in entries:
+                            title = ''
+                            login = ''
+                            password = ''
+                            if hasattr(en, 'String'):
+                                for sn in en.String:
+                                    if hasattr(sn, 'Key') and hasattr(sn, 'Value'):
+                                        key = sn.Key.text
+                                        value = sn.Value.text
+                                        if key == 'Title':
+                                            title = value
+                                        elif key == 'UserName':
+                                            login = value
+                                        elif key == 'Password':
+                                            password = value
+                            if title == r.title and login == r.login and password == r.password:
+                                entry = node
+                                break
 
-                strings = {
-                    'URL': r.login_url,
-                    'Notes': r.notes
-                }
-                if r.custom_fields:
-                    for cf in r.custom_fields:
-                        strings[cf] = r.custom_fields[cf]
+                    strings = {
+                        'URL': r.login_url,
+                        'Notes': r.notes
+                    }
+                    if r.custom_fields:
+                        for cf in r.custom_fields:
+                            strings[cf] = r.custom_fields[cf]
 
-                if entry is None:
-                    entry = objectify.Element('Entry')
-                    if r.uid:
-                        entry.UUID = base64.b64encode(base64.urlsafe_b64decode(r.uid + '==')).decode()
-                    else:
-                        entry.UUID = base64.b64encode(os.urandom(16)).decode()
-                    node.append(entry)
-
-                    strings['Title'] = r.title,
-                    strings['UserName'] = r.login,
-                    strings['Password'] = r.password,
-                else:
-                    for str_node in entry.findall('String'):
-                        if hasattr(str_node, 'Key'):
-                            key = str_node.Key
-                            if key in strings:
-                                value = strings[key]
-                                if value:
-                                    str_node.Value = value
-                                    strings.pop(key)
-                if not fol is None:
-                    if fol.domain:
-                        keeper = entry.find('Keeper')
-                        if keeper:
-                            keeper.clear()
+                    if entry is None:
+                        entry = objectify.Element('Entry')
+                        if r.uid:
+                            entry.UUID = base64.b64encode(base64.urlsafe_b64decode(r.uid + '==')).decode()
                         else:
-                            keeper = objectify.Element('Keeper')
-                            entry.append(keeper)
+                            entry.UUID = base64.b64encode(os.urandom(16)).decode()
+                        node.append(entry)
 
-                        keeper.CanEdit = fol.can_edit
-                        keeper.CanShare = fol.can_share
-                        for f in r.folders[1:]:
-                            link = objectify.Element('Link')
-                            keeper.append(link)
-                            if f.domain:
-                                link.Domain = f.domain
-                                link.CanEdit = f.can_edit
-                                link.CanShare = f.can_share
-                            if f.path:
-                                link.Path = f.Path
+                        strings['Title'] = r.title,
+                        strings['UserName'] = r.login,
+                        strings['Password'] = r.password,
+                    else:
+                        for str_node in entry.findall('String'):
+                            if hasattr(str_node, 'Key'):
+                                key = str_node.Key
+                                if key in strings:
+                                    value = strings[key]
+                                    if value:
+                                        str_node.Value = value
+                                        strings.pop(key)
+                    if not fol is None:
+                        if fol.domain:
+                            keeper = entry.find('Keeper')
+                            if keeper:
+                                keeper.clear()
+                            else:
+                                keeper = objectify.Element('Keeper')
+                                entry.append(keeper)
 
-                for key in strings:
-                    value = strings[key]
-                    if value:
-                        s_node = objectify.Element('String')
-                        s_node.Key = key
-                        s_node.Value = value
-                        entry.append(s_node)
+                            keeper.CanEdit = fol.can_edit
+                            keeper.CanShare = fol.can_share
+                            for f in r.folders[1:]:
+                                link = objectify.Element('Link')
+                                keeper.append(link)
+                                if f.domain:
+                                    link.Domain = f.domain
+                                    link.CanEdit = f.can_edit
+                                    link.CanShare = f.can_share
+                                if f.path:
+                                    link.Path = f.Path
+
+                    for key in strings:
+                        value = strings[key]
+                        if value:
+                            s_node = objectify.Element('String')
+                            s_node.Key = key
+                            s_node.Value = value
+                            entry.append(s_node)
+                except Exception as e:
+                    pass
 
             objectify.deannotate(root, xsi_nil=True)
             etree.cleanup_namespaces(root)
