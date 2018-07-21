@@ -370,7 +370,7 @@ Notes:
 
 To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a master password.
 
-* ```device_token_expiration``` can be set to ```true``` to expire 2FA device tokens after 30 days.
+* ```device_token_expiration``` can be set to ```true``` to expire 2FA device tokens after 30 days. By default, the 2FA device token will never expire.
 
 ### Targeted Password Rotations & Plugins 
 
