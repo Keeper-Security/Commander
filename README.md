@@ -51,6 +51,10 @@ Important: Restart your terminal session after installation
 $ pip3 install keepercommander
 ```
 
+### Install Keepass library
+
+[Commander support for Keepass files](keepercommander/importer/keepass/README.md)
+
 ### Upgrading to Latest Code
 
 ```bash

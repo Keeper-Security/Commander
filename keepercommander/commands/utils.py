@@ -48,6 +48,7 @@ rotate_parser.exit = suppress_exit
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from local file to Keeper')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
+import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('filename', type=str, help='file name')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -145,8 +146,9 @@ class RecordImportCommand(ImporterCommand):
     def execute(self, params, **kwargs):
         format = kwargs['format'] if 'format' in kwargs else None
         filename = kwargs['filename'] if 'filename' in kwargs else None
+        shared = kwargs.get('shared') or False
         if format and filename:
-            imp_exp._import(params, format, filename)
+            imp_exp._import(params, format, filename, shared=shared)
         else:
             print('Missing argument')
 

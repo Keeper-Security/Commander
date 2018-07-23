@@ -9,9 +9,33 @@
 # Contact: ops@keepersecurity.com
 #
 
+keepass_instructions = """
+libkeepass is not installed
+
+Please see \'Install Keepass library\' section of README.md file for detailed instructions
+
+pip3 install libkeepass
+
+if above-mentioned command fails installing lxml package then install pre-compiled binary version of lxml
+
+Download appropriate package from PyPI [https://pypi.org/project/lxml/#description]
+or for Windows platform, from Unofficial Windows Binaries [https://www.lfd.uci.edu/~gohlke/pythonlibs/#lxml]
+
+For example: Python 3.5.0 for Windows 64 bit 
+the library file name is going to be similar to \'lxml-4.2.3-cp35-cp35m-win-amd64.whl\'  
+
+Install the downloaded package:
+pip3 install lxml-4.2.3-cp35-cp35m-win-amd64.whl
+pip3 install libkeepass
+"""
+
+try:
+    import libkeepass
+except:
+    raise Exception(keepass_instructions)
+
 import os
 import base64
-import libkeepass
 import getpass
 from lxml import objectify, etree
 
@@ -176,10 +200,11 @@ class KeepassExporter(BaseExporter):
                         node.append(sub_node)
                     if i == len(comps) - 1:  # store Keeper specific info
                         keeper = sub_node.find('Keeper')
-                        if keeper:
-                            keeper.clear()
-                        else:
+                        if keeper is None:
                             keeper = objectify.Element('Keeper')
+                            sub_node.append(keeper)
+                        else:
+                            keeper.clear()
                         keeper.IsShared = True
                         keeper.ManageUsers = sf.manage_users
                         keeper.ManageRecords = sf.manage_records
@@ -194,7 +219,6 @@ class KeepassExporter(BaseExporter):
                                 permission.ManageUsers = perm.manage_users
                                 permission.ManageRecords = perm.manage_records
                                 keeper.append(permission)
-                        sub_node.append(keeper)
                     node = sub_node
 
             for r in rs:
@@ -214,7 +238,7 @@ class KeepassExporter(BaseExporter):
                                         sub_node = objectify.Element('Group')
                                         sub_node.UUID = base64.b64encode(os.urandom(16)).decode()
                                         sub_node.Name = comp
-                                    node.append(sub_node)
+                                        node.append(sub_node)
                                     node = sub_node
                     entry = None
                     entries = node.findall('Entry')
@@ -269,11 +293,11 @@ class KeepassExporter(BaseExporter):
                     if not fol is None:
                         if fol.domain:
                             keeper = entry.find('Keeper')
-                            if keeper:
-                                keeper.clear()
-                            else:
+                            if keeper is None:
                                 keeper = objectify.Element('Keeper')
                                 entry.append(keeper)
+                            else:
+                                keeper.clear()
 
                             keeper.CanEdit = fol.can_edit
                             keeper.CanShare = fol.can_share
