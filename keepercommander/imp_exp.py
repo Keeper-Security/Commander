@@ -28,17 +28,12 @@ def get_import_folder(params, folder_uid, record_uid):
     folder = ImportFolder()
 
     uid = folder_uid
+    is_path = True
     while uid in params.folder_cache:
         f = params.folder_cache[uid]
-        name = f.name.replace(PathDelimiter, 2*PathDelimiter)
-        if folder.path:
-            folder.path = name + PathDelimiter + folder.path
-        else:
-            folder.path = name
 
         if f.type == 'shared_folder':
-            folder.domain = folder.path
-            folder.path = None
+            is_path = False
             if f.uid in params.shared_folder_cache:
                 sf = params.shared_folder_cache[f.uid]
                 if 'records' in sf:
@@ -47,6 +42,18 @@ def get_import_folder(params, folder_uid, record_uid):
                             folder.can_share = sfr['can_share']
                             folder.can_edit = sfr['can_edit']
                             break
+
+        name = f.name.replace(PathDelimiter, 2*PathDelimiter)
+        if is_path:
+            if folder.path:
+                folder.path = name + PathDelimiter + folder.path
+            else:
+                folder.path = name
+        else:
+            if folder.domain:
+                folder.domain = name + PathDelimiter + folder.domain
+            else:
+                folder.domain = name
 
         uid = f.parent_uid
         if not uid:
@@ -140,8 +147,10 @@ def export(params, file_format, filename):
         print('{0} records exported'.format(rec_count))
 
 
-def _import(params, file_format, filename):
+def _import(params, file_format, filename, **kwargs):
     api.sync_down(params)
+
+    shared = kwargs.get('shared') or False
 
     importer = importer_for_format(file_format)()
     """:type : BaseImporter"""
@@ -152,8 +161,23 @@ def _import(params, file_format, filename):
     records = []  # type: [ImportRecord]
     for x in importer.execute(filename):
         if type(x) is ImportRecord:
+            if shared:
+                if x.folders:
+                    for f in x.folders:
+                        d_comps = list(path_components(f.domain)) if f.domain else []
+                        p_comps = list(path_components(f.path)) if f.path else []
+                        if len(d_comps) > 0:
+                            f.domain = d_comps[0]
+                            p_comps[0:0] = d_comps[1:]
+                        elif len(p_comps) > 0:
+                            f.domain = p_comps[0]
+                            p_comps = p_comps[1:]
+                        f.path = PathDelimiter.join([x.replace(PathDelimiter, 2*PathDelimiter) for x in p_comps])
+
             records.append(x)
         elif type(x) is ImportSharedFolder:
+            if shared:
+                continue
             folders.append(x)
 
     if folders:
@@ -278,10 +302,10 @@ def prepare_shared_folder_add(params, folders):
                 'pt': 'Commander',
                 'shared_folder_uid': parent_uid,
                 'force_update': True,
-                'manage_users': fol.manage_users,
-                'manage_records': fol.manage_records,
-                'can_edit': fol.can_edit,
-                'can_share': fol.can_share
+                'default_manage_users': fol.manage_users,
+                'default_manage_records': fol.manage_records,
+                'default_can_edit': fol.can_edit,
+                'default_can_share': fol.can_share
             }
             if fol.permissions:
                 for perm in fol.permissions:

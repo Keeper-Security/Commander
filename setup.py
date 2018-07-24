@@ -24,8 +24,7 @@ install_requires = [
     'requests',
     'tabulate',
     'prompt_toolkit',
-    'asciitree',
-    'libkeepass'
+    'asciitree'
 ]
 
 setup(name='keepercommander',
