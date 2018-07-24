@@ -249,10 +249,19 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 ### Importing Records into Keeper
 
-To import records into your vault, use the ```import``` command.  you can import from JSON, csv-delimited file or an encrypted keepass file.
-If using a JSON file, make sure it's an a valid JSON array.  For example, here's a JSON import file with 2 records. The first record is added to a folder called "My Servers".  The second record is added to "My Servers" and also added to a shared folder called "Shared Servers".
+To import records into your vault, use the ```import``` command.  Supported import formats:
+
+* JSON
+* CSV 
+* Keepass
+
+JSON import files can contain records, folders, subfolders, shared folders, default folder permissions  and user/team permissions.
+CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
+Keepass files will transfer records, folders and subfolders. Option exists to make all folders as shared folders.
 
 **JSON Record Import**
+
+Below is a JSON import file with 2 records. The first record is added to a folder called "My Servers". The second record is added to "My Servers" and also added to a shared folder called "Shared Servers". 
 
 ```bash
 [{
@@ -294,12 +303,21 @@ The format must be strict JSON or it will fail parsing. To import this file:
 $ keeper import --format=json import.json
 ```
 
+A more complex example that supports shared folders, folder permissions, user permissions and team permissions is located in the sample_data/ folder. To import the sample JSON file into your vault, type this command:
+
+```bash
+$ keeper import --format=json sample_data/import.json.txt
+```
+
+The sample file contains "permissions" objects that contain email address or team names.  If the email or team name exists in your Keeper enterprise account, they will be added to the shared folder, otherwise the information is ignored. 
+
+
 **CSV Record Import**
 
 Keeper supports .csv text file import using comma delimited fields.
 
 File Format:
-Folder, Title, Login, Password, Login URL, Notes, Shared Folder, Custom Fields
+Folder,Title,Login,Password,Website Address,Notes,Shared Folder,Custom Fields
 
 * To specify subfolders, use backslash "\\" between folder names
 * To set shared folder permission on the record, use the #edit or #reshare tags as seen below 
@@ -331,7 +349,17 @@ Keeper supports importing the record and folder structure directly from an encry
 
 ```bash
 $ keeper import --format=keepass test.kdbx
-...  Password: <type keepass file password> 
+```
+
+You can optionally make all top level folders as shared folder object with default permissions.
+
+```bash
+$ keeper import --format=keepass --shared --permissions=URES test.kdbx
+```
+
+For more options, see the help screen:
+```bash
+$ keeper import -h
 ```
 
 ### Advanced Configuration File

@@ -47,6 +47,7 @@ rotate_parser.exit = suppress_exit
 
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from local file to Keeper')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
+import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',  help='display Keeper JSON import instructions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
@@ -62,7 +63,6 @@ import_sf_parser.exit = suppress_exit
 
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
-export_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 export_parser.add_argument('filename', type=str, help='file name')
 export_parser.error = raise_parse_exception
@@ -118,24 +118,42 @@ class RecordRotateCommand(Command):
                     display.print_record(params, r.record_uid)
 
 
-csv_instructions = '''File Format
-Folder, Title, Login, Password, Login URL, Notes, Shared Folder, Custom Fields
+csv_instructions = '''CSV Import Instructions
 
-- To specify subfolders, use backslash "\\" between folder names
-- To make a shared folder specify the name or path to it in the 6th field
+File Format:
+Folder,Title,Login,Password,Website Address,Notes,Custom Fields
+
+• To specify subfolders, use backslash "\\" between folder names
+• To make a shared folder specify the name or path to it in the 7th field
 
 Example 1: Create a regular folder at the root level with 2 custom fields
-My Business Stuff, Twitter, marketing@company.com, 123456, https://twitter.com, These are some notes,, API Key, 5555, Date Created, 2018-04-02
+My Business Stuff,Twitter,marketing@company.com,123456,https://twitter.com,These are some notes,,API Key,5555,Date Created, 2018-04-02
 
 Example 2: Create a shared subfolder inside another folder with edit and re-share permission
-Personal, Twitter, craig@gmail.com, 123456, https://twitter.com,, Social Media#edit#reshare
+Personal,Twitter,craig@gmail.com,123456,https://twitter.com,,Social Media#edit#reshare
+
+To load the sample data:
+import --format=csv sample_data/import.csv
 '''
 
+json_instructions = '''JSON Import Instructions
+
+Example JSON import file can be found in sample_data/import.json.txt.
+
+The JSON file supports creating records, folders and shared folders.
+
+Within shared folders, you can also automatically assign user or team permissions.
+
+To load the sample file into your vault, run this command:
+import --format=json sample_data/import.json.txt
+'''
 
 class ImporterCommand(Command):
     def execute_args(self, params, args, **kwargs):
         if args.find('--display-csv') >= 0 or args.find('-dc') >= 0:
             print(csv_instructions)
+        elif args.find('--display-json') >= 0 or args.find('-dj') >= 0:
+            print(json_instructions)
         else:
             Command.execute_args(self, params, args, **kwargs)
 

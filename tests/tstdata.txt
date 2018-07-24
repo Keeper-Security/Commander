@@ -1,5 +1,0 @@
-Databases	MySQL Dev	root	@n23p4gGQ6pC			Server	dev.production.mycompany.com	Port	3306
-Databases	MySQL Prod	root	UpTk!aA2q$Ts			Server	prod.production.mycompany.com	Port	3306
-Databases	MySQL Prod 2	root	kRTV5tokf2H#			Server	prod2.production.mycompany.com	Port	3306
-Databases	MySQL Replica	root	%Rsx@auB15fw			Server	replica.production.mycompany.com	Port	3306
-Databases	MySQL Staging	root	oeyVMPMC6!hp			Server	staging.production.mycompany.com	Port	3306

@@ -1,0 +1,113 @@
+{
+  "shared_folders": [
+    {
+      "path": "Social Media\\Customer1",
+      "manage_users": false,
+      "manage_records": false,
+      "can_edit": false,
+      "can_share": false,
+      "permissions": [
+        {
+          "name": "customer1@gmail.com",
+          "manage_users": true,
+          "manage_records": true
+        }
+      ]
+    },
+    {
+      "path": "Social Media\\Customer2",
+      "manage_users": false,
+      "manage_records": false,
+      "can_edit": false,
+      "can_share": false,
+      "permissions": [
+        {
+          "name": "another_user@gmail.com",
+          "manage_users": true,
+          "manage_records": true
+        }
+      ]
+    },
+    {
+      "path": "Shared Accounts",
+      "manage_users": false,
+      "manage_records": false,
+      "can_edit": false,
+      "can_share": false,
+      "permissions": [
+        {
+          "name": "craig@gmail.com",
+          "manage_users": true,
+          "manage_records": true
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "title": "Facebook",
+      "login": "craig@gmail.com",
+      "password": "TycWyx1133uKErX9VFxj8F8",
+      "login_url": "https://facebook.com",
+      "notes": "",
+      "custom_fields": {},
+      "folders": [
+        {
+          "shared_folder": "Social Media\\Customer2",
+          "folder": "Subfolder2",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    },
+    {
+      "title": "Google Dev Account",
+      "login": "mydevaccount@gmail.com",
+      "password": "8123,9fKJRefa$!@#4912fkk!--3",
+      "login_url": "https://accounts.google.com",
+      "notes": "Google Cloud ID 448812771239122\nAccount Number 449128\nThis is multi-line",
+      "custom_fields": {
+        "2FA Phone Number": "+19165551212"
+      },
+      "folders": [
+        {
+          "shared_folder": "Shared Accounts",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    },
+    {
+      "title": "Twitter",
+      "login": "marketing@company.com",
+      "password": "a bad password",
+      "login_url": "https://twitter.com",
+      "notes": "Some interesting notes!",
+      "custom_fields": {
+        "API Key": "131939-AAAEKJLE-491231$##%!",
+        "Date Created": "2018-04-02"
+      },
+      "folders": [
+        {
+          "folder": "Business"
+        }
+      ]
+    },
+    {
+      "title": "Twitter",
+      "login": "craig@gmail.com",
+      "password": "xwVnk0hfJmd2M$2l4shGF#p",
+      "login_url": "https://twitter.com",
+      "notes": "",
+      "custom_fields": {},
+      "folders": [
+        {
+          "shared_folder": "Social Media\\Customer1",
+          "folder": "Subfolder1",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    }
+  ]
+}
