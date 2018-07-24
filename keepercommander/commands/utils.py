@@ -49,6 +49,7 @@ import_parser = argparse.ArgumentParser(prog='import', description='Import data 
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
+import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('filename', type=str, help='file name')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -147,8 +148,35 @@ class RecordImportCommand(ImporterCommand):
         format = kwargs['format'] if 'format' in kwargs else None
         filename = kwargs['filename'] if 'filename' in kwargs else None
         shared = kwargs.get('shared') or False
+        manage_users = False
+        manage_records = False
+        can_edit = False
+        can_share = False
         if format and filename:
-            imp_exp._import(params, format, filename, shared=shared)
+            permissions = kwargs.get('permissions')
+            if shared and not permissions:
+                permissions = user_choice('Default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one', 'uresan', show_choice=False, multi_choice=True)
+            if permissions:
+                chars = set()
+                chars.update([x for x in permissions.lower()])
+                if 'a' in chars:
+                    manage_users = True
+                    manage_records = True
+                    can_edit = True
+                    can_share = True
+                else:
+                    if 'u' in chars:
+                        manage_users = True
+                    if 'r' in chars:
+                        manage_records = True
+                    if 'e' in chars:
+                        can_edit = True
+                    if 's' in chars:
+                        can_share = True
+
+            imp_exp._import(params, format, filename, shared=shared,
+                            manage_users=manage_users, manage_records=manage_records,
+                            can_edit=can_edit, can_share=can_share)
         else:
             print('Missing argument')
 

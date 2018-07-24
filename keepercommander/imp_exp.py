@@ -180,6 +180,27 @@ def _import(params, file_format, filename, **kwargs):
                 continue
             folders.append(x)
 
+    if shared:
+        manage_users = kwargs.get('manage_users') or False
+        manage_records = kwargs.get('manage_records') or False
+        can_edit = kwargs.get('can_edit') or False
+        can_share = kwargs.get('can_share') or False
+
+        sfol = set()
+        for r in records:
+            if r.folders:
+                for f in r.folders:
+                    if f.domain:
+                        sfol.add(f.domain)
+        for x in sfol:
+            sf = ImportSharedFolder()
+            sf.path = x
+            sf.manage_users = manage_users
+            sf.manage_records = manage_records
+            sf.can_edit = can_edit
+            sf.can_share = can_share
+            folders.append(sf)
+
     if folders:
         shared_folder_add = prepare_shared_folder_add(params, folders)
         execute_batch(params, shared_folder_add)
@@ -585,6 +606,9 @@ def prepare_record_permission(params, records):
         if rec.folders and rec.uid:
             if rec.uid in params.record_cache:
                 for fol in rec.folders:
+                    if fol.can_edit is None and fol.can_share is None:
+                        continue
+
                     if fol.uid and fol.uid in params.folder_cache:
                         folder = params.folder_cache[fol.uid]
                         if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
@@ -604,8 +628,8 @@ def prepare_record_permission(params, records):
                                                     'update_records': [{
                                                         'record_uid': rec.uid,
                                                         'shared_folder_uid': sf_uid,
-                                                        'can_edit': fol.can_edit,
-                                                        'can_share': fol.can_share
+                                                        'can_edit': fol.can_edit or False,
+                                                        'can_share': fol.can_share or False
                                                     }]
                                                 }
                                                 shared_update.append(req)

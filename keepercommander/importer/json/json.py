@@ -59,8 +59,8 @@ class KeeperJsonImporter(BaseImporter):
                             folder = Folder()
                             folder.domain = f.get('shared_folder')
                             folder.path = f.get('folder')
-                            folder.can_edit = f.get('can_edit') or False
-                            folder.can_share = f.get('can_share') or False
+                            folder.can_edit = f.get('can_edit')
+                            folder.can_share = f.get('can_share')
                             record.folders.append(folder)
 
                     yield record
