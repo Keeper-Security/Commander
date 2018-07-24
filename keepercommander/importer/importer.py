@@ -95,8 +95,8 @@ class Folder:
         self.uid = None
         self.domain = None # type: str
         self.path = None # type: str
-        self.can_edit = False
-        self.can_share = False
+        self.can_edit = None
+        self.can_share = None
 
 
 class Record:
