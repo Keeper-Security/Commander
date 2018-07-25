@@ -95,7 +95,7 @@ See the [custom](https://github.com/Keeper-Security/Commander/tree/master/keeper
 
 Commander's command-line interface and interactive shell is a powerful and convenient way to access and control your Keeper vault and perform many administrative operations. To see all available commands, just type:
 
-```bash
+```
 $ keeper
 
 usage: keeper [--server SERVER] [--user USER] [--password PASSWORD]
@@ -121,7 +121,7 @@ optional arguments:
 ### Interactive shell
 To run a series of commands and stay logged in, you will enjoy using Commander's interactive shell.
 
-```bash
+```
 $ keeper shell
 
   _  __
