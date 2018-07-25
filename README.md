@@ -57,7 +57,7 @@ $ pip3 install keepercommander
 
 ### Install Keepass library
 
-[Commander support for Keepass files](keepercommander/importer/keepass/README.md)
+If you plan to use the Keepass import or export features of Keeper Commander, please follow [these instructions](keepercommander/importer/keepass/README.md).
 
 ### Upgrading to Latest Code
 
@@ -349,7 +349,7 @@ The resulting vault will look like [this image](https://raw.githubusercontent.co
 
 **Keepass Import**
 
-Keeper supports importing the record and folder structure directly from an encrypted Keepass file.
+Keeper supports importing the record and folder structure directly from an encrypted Keepass file. Make sure to first follow [these instructions](keepercommander/importer/keepass/README.md) to install the necessary keepass modules.
 
 ```bash
 $ keeper import --format=keepass test.kdbx
