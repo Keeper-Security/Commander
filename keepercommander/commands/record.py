@@ -355,6 +355,7 @@ class RecordGetUidCommand(Command):
             f = params.folder_cache[uid]
             f.display(params=params)
         else:
+            api.get_record_shares(params, [uid])
             r = api.get_record(params, uid)
             if r:
                 r.display(params=params)
@@ -398,8 +399,8 @@ class RecordAppendNotesCommand(Command):
         record = api.get_record(params, record_uid)
 
         record.notes += notes
-        api.update_record(params, record)
         params.sync_data = True
+        api.update_record(params, record)
 
 
 class RecordDownloadAttachmentCommand(Command):

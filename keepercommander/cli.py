@@ -148,6 +148,8 @@ def prompt_for_credentials(params):
 
 
 def loop(params):
+    global prompt_session
+
     display.welcome()
 
     try:
@@ -206,6 +208,7 @@ def loop(params):
 
     except KeyboardInterrupt:
         goodbye()
+
 
 
 def get_prompt(params):

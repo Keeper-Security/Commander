@@ -13,14 +13,20 @@ import os
 import json
 import hashlib
 import base64
+import requests
+import io
 
+from contextlib import contextmanager
 from email.utils import parseaddr
 from Cryptodome.PublicKey import RSA
+from Cryptodome.Cipher import AES
 
 from . import api
+
 from .shared_folder import SharedFolder
 from .importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
-    Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder, Permission as ImportPermission
+    Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder, Permission as ImportPermission,\
+    Attachment as ImportAttachment
 from .subfolder import BaseFolderNode, find_folders
 
 
@@ -139,6 +145,17 @@ def export(params, file_format, filename):
                 if rec.folders is None:
                     rec.folders = []
                 rec.folders.append(folder)
+        if exporter.has_attachments() and r.attachments:
+            rec.attachments = []
+            for a in r.attachments:
+                atta = KeeperAttachment(params, rec.uid)
+                atta.file_id = a['id']
+                atta.name = a['name']
+                atta.size = a['size']
+                atta.key = base64.urlsafe_b64decode(a['key'] + '==')
+                atta.mime = a['type']
+                rec.attachments.append(atta)
+
         to_export.append(rec)
     rec_count = len(to_export) - sf_count
 
@@ -222,9 +239,147 @@ def _import(params, file_format, filename, **kwargs):
         shared_update = prepare_record_permission(params, records)
         execute_batch(params, shared_update)
 
+        # upload attachments
+        atts = []
+        for r in records:
+            if r.attachments:
+                r_uid = r.uid
+                for a in r.attachments:
+                    atts.append((r_uid, a))
+        if len(atts) > 0:
+            upload_attachment(params, atts)
+
     records_after = len(params.record_cache)
     if records_after > records_before:
         print("{0} records imported successfully".format(records_after - records_before))
+
+
+def upload_attachment(params, attachments):
+    '''
+    :param attachments:
+    :type attachments: [(str, ImportAttachment)]
+    '''
+
+    if len(attachments) > 0:
+        print('Uploading attachments:')
+        uploads = None
+
+        file_no = 0
+        file_size = 0
+        for _, att in attachments:
+            file_no += 1
+            file_size += att.size or 0
+
+        #TODO check storage subscription
+        rq = {
+            'command': 'request_upload',
+            'file_count': 1
+        }
+        try:
+            rs = api.communicate(params, rq)
+            if rs['result'] == 'success':
+                uploads = rs['file_uploads']
+        except Exception as e:
+            print(e)
+            return
+
+        uploaded = {}
+        for record_id, atta in attachments:
+            if not uploads:
+                break
+
+            try:
+                upload = uploads.pop()
+                buffer = io.BytesIO()
+                cipher = None
+                key = atta.key
+                if not key:
+                    key = os.urandom(32)
+                    iv = os.urandom(16)
+                    cipher = AES.new(key, AES.MODE_CBC, iv)
+                    buffer.write(iv)
+                with atta.open() as s:
+                    finished = False
+                    while not finished:
+                        chunk = s.read(10240)
+                        if len(chunk) > 0:
+                            if cipher is not None:
+                                chunk = cipher.encrypt(chunk)
+                            buffer.write(chunk)
+                        else:
+                            finished = True
+                size = buffer.tell() - 16
+                if size > 0:
+                    buffer.seek(0, io.SEEK_SET)
+                    files = {
+                        upload['file_parameter']: (atta.name, buffer, 'application/octet-stream')
+                    }
+                    print('{0} ... '.format(atta.name), end='', flush=True)
+                    response = requests.post(upload['url'], files=files, data=upload['parameters'])
+                    if response.status_code == upload['success_status_code']:
+                        if record_id not in uploaded:
+                            uploaded[record_id] = []
+                        uploaded[record_id].append({
+                            'key': base64.urlsafe_b64encode(key).decode().rstrip('='),
+                            'name': atta.name,
+                            'file_id': upload['file_id'],
+                            'size': size
+                        })
+                        print('Done')
+                    else:
+                        print('Failed')
+
+            except Exception as e:
+                pass
+
+        if len(uploaded) > 0:
+            rq = {
+                'command': 'record_update',
+                'pt': 'Commander',
+                'device_id': 'Commander',
+                'client_time': api.current_milli_time(),
+                'update_records': []
+            }
+            for record_id in uploaded:
+                if record_id in params.record_cache:
+                    rec = params.record_cache[record_id]
+                    extra = json.loads(rec['extra'].decode('utf-8')) if 'extra' in rec else {}
+                    files = extra.get('files')
+                    if files is None:
+                        files = []
+                        extra['files'] = files
+                    udata = rec['udata'] if 'udata' in rec else {}
+                    file_ids = udata.get('file_ids')
+                    if file_ids is None:
+                        file_ids = []
+                        udata['file_ids'] = file_ids
+                    for atta in uploaded[record_id]:
+                        file_ids.append(atta['file_id'])
+                        files.append({
+                            'id': atta['file_id'],
+                            'name': atta['name'],
+                            'size': atta['size'],
+                            'key': atta['key']
+                        })
+
+                    ru = {
+                        'record_uid': record_id,
+                        'version': 2,
+                        'client_modified_time': api.current_milli_time(),
+                        'data': api.encrypt_aes(rec['data'], rec['record_key_unencrypted']),
+                        'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), rec['record_key_unencrypted']),
+                        'udata': udata,
+                        'revision': rec['revision']
+                    }
+                    api.resolve_record_access_path(params, record_id, path=ru)
+                    rq['update_records'].append(ru)
+            try:
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    api.sync_down(params)
+
+            except:
+                pass
 
 
 def prepare_shared_folder_add(params, folders):
@@ -750,4 +905,24 @@ def delete_all(params):
         print("{0} records failed to delete".format(len(failures)))
 
 
+class KeeperAttachment(ImportAttachment):
+    def __init__(self, params, record_uid,):
+        ImportAttachment.__init__(self)
+        self.params = params
+        self.record_uid = record_uid
+
+    @contextmanager
+    def open(self):
+        rq = {
+            'command': 'request_download',
+            'file_ids': [self.file_id],
+        }
+        api.resolve_record_access_path(self.params, self.record_uid, path=rq)
+
+        rs = api.communicate(self.params, rq)
+        if rs['result'] == 'success':
+            dl = rs['downloads'][0]
+            if 'url' in dl:
+                with requests.get(dl['url'], stream=True) as rq_http:
+                    yield rq_http.raw
 

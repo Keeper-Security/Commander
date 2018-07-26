@@ -1974,3 +1974,41 @@ def resolve_record_access_path(params, record_uid, path=None, for_writing=False)
                         path['shared_folder_uid'] = sf_uid
                         break
     return path
+
+
+def get_record_shares(params, record_uids):
+
+    def need_share_info(record_uid):
+        if record_uid in params.record_cache:
+            rec = params.record_cache[record_uid]
+            return rec.get('shared') and 'shares' not in rec
+        return False
+
+    uids = [x for x in record_uids if need_share_info(x)]
+    if len(uids) > 0:
+        records = []
+        rq = {
+            'command': 'get_records',
+            'include': ['shares'],
+            'records': records,
+            'client_time': current_milli_time()
+        }
+        for uid in uids:
+            params.record_cache[uid]['shares'] = {}
+            ro = resolve_record_access_path(params, uid)
+            records.append(ro)
+        try:
+            rs = communicate(params, rq)
+            if 'records' in rs:
+                for r in rs['records']:
+                    record_uid = r['record_uid']
+                    rec = params.record_cache[record_uid]
+                    if 'user_permissions' in r:
+                        rec['shares']['user_permissions'] = r['user_permissions']
+                    if 'shared_folder_permissions' in r:
+                        rec['shares']['shared_folder_permissions'] = r['shared_folder_permissions']
+
+        except Exception as e:
+            print(e)
+
+

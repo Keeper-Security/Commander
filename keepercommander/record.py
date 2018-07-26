@@ -8,7 +8,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from keepercommander.subfolder import get_folder_path, find_folders
+from keepercommander.subfolder import get_folder_path, find_folders, BaseFolderNode
 
 class Record:
     """Defines a user-friendly Keeper Record for display purposes"""
@@ -24,7 +24,7 @@ class Record:
         self.notes = notes 
         self.custom_fields = custom_fields
         self.attachments = None
-        self.revision = revision 
+        self.revision = revision
 
     def load(self, data, **kwargs):
 
@@ -71,7 +71,7 @@ class Record:
     def display(self, **kwargs):
         print('') 
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
-
+        params = None
         if 'params' in kwargs:
             params = kwargs['params']
             folders = [get_folder_path(params, x) for x in find_folders(params, self.record_uid)]
@@ -111,6 +111,53 @@ class Record:
                         scale = 'Gb'
                 sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
                 print('{0:>20s}: {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments' if i == 0 else '', atta.get('name'), sz, scale, 'ID', atta.get('id')))
+
+        if params is not None:
+            if self.record_uid in params.record_cache:
+                rec = params.record_cache[self.record_uid]
+                if 'shares' in rec:
+                    no = 0
+                    if 'user_permissions' in rec['shares']:
+                        for uo in rec['shares']['user_permissions']:
+                            flags = ''
+                            if uo.get('owner'):
+                                flags = 'Owner'
+                            elif uo.get('awaiting_approval'):
+                                flags = 'Awaiting Approval'
+                            else:
+                                if uo.get('editable'):
+                                    flags = 'Edit'
+                                if uo.get('sharable'):
+                                    if flags:
+                                        flags = flags + ', '
+                                    flags = flags + 'Share'
+                            if not flags:
+                                flags = 'View'
+
+                            print('{0:>20s}: {1} ({2})'.format('Shared Users' if no == 0 else '', uo['username'], flags))
+                            no = no + 1
+                    no = 0
+                    if 'shared_folder_permissions' in rec['shares']:
+                        for sfo in rec['shares']['shared_folder_permissions']:
+                            flags = ''
+                            if sfo.get('editable'):
+                                flags = 'Edit'
+                            if sfo.get('reshareable'):
+                                if flags:
+                                    flags = flags + ', '
+                                flags = flags + 'Share'
+                            if not flags:
+                                flags = 'View'
+                            sf_uid = sfo['shared_folder_uid']
+                            for f_uid in find_folders(params, self.record_uid):
+                                if f_uid in params.subfolder_cache:
+                                    fol = params.folder_cache[f_uid]
+                                    if fol.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                                        sfid = fol.uid if fol.type == BaseFolderNode.SharedFolderType else fol.shared_folder_uid
+                                        if sf_uid == sfid:
+                                            print('{0:>20s}: {1:<20s}'.format('Shared Folders' if no == 0 else '', fol.name))
+                                            no = no + 1
+
         print('')
 
     def to_string(self):

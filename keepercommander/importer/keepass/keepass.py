@@ -37,10 +37,17 @@ except:
 import os
 import base64
 import getpass
+import gzip
+import io
+
+from contextlib import contextmanager
+
 from lxml import objectify, etree
 
-from ..importer import path_components, PathDelimiter, BaseImporter, BaseExporter, Record, Folder, SharedFolder, Permission
+from Cryptodome.Cipher import AES
 
+from ..importer import path_components, PathDelimiter, BaseImporter, BaseExporter, \
+    Record, Folder, SharedFolder, Permission, Attachment
 
 class KeepassImporter(BaseImporter):
 
@@ -163,6 +170,22 @@ class KeepassImporter(BaseImporter):
                                     record.notes = value
                                 else:
                                     record.custom_fields[key] = value
+
+                            if hasattr(kdb.obj_root.Meta, 'Binaries'):
+                                for bin in entry.findall('Binary'):
+                                    try:
+                                        ref = bin.Value.get('Ref')
+                                        if ref:
+                                            binary = kdb.obj_root.Meta.Binaries.find('Binary[@ID="{0}"]'.format(ref))
+                                            if binary:
+                                                if record.attachments is None:
+                                                    record.attachments = []
+                                                atta = KeepassAttachment(binary)
+                                                atta.name = bin.Key.text
+                                                record.attachments.append(atta)
+                                    except:
+                                        pass
+
 
                             yield record
 
@@ -318,6 +341,39 @@ class KeepassExporter(BaseExporter):
                             s_node.Key = key
                             s_node.Value = value
                             entry.append(s_node)
+
+                    if r.attachments:
+                        for atta in r.attachments:
+                            max_size = 1024 * 1024
+                            if atta.size < max_size:
+                                bins = None
+                                bId = 0
+                                if hasattr(kdb.obj_root.Meta, 'Binaries'):
+                                    bins = kdb.obj_root.Meta.Binaries
+                                    elems = bins.findall('Binary')
+                                    bId = len(elems)
+                                else:
+                                    bins = objectify.Element('Binaries')
+                                    kdb.obj_root.Meta.append(bins)
+                                    bId = 0
+                                with atta.open() as s:
+                                    buffer = s.read(max_size)
+                                    if len(buffer) >= 32:
+                                        iv = buffer[:16]
+                                        cipher = AES.new(atta.key, AES.MODE_CBC, iv)
+                                        buffer = cipher.decrypt(buffer[16:])
+                                        if len(buffer) > 0:
+                                            out = io.BytesIO()
+                                            with gzip.GzipFile(fileobj=out, mode='w') as gz:
+                                                gz.write(buffer)
+                                            bin = objectify.E.Binary(base64.b64encode(out.getvalue()).decode(), Compressed=str(True), ID=str(bId))
+                                            bins.append(bin)
+
+                                            bin = objectify.Element('Binary')
+                                            bin.Key=atta.name
+                                            bin.Value = objectify.Element('Value', Ref=str(bId))
+                                            entry.append(bin)
+
                 except Exception as e:
                     pass
 
@@ -332,9 +388,31 @@ class KeepassExporter(BaseExporter):
     def has_shared_folders(self):
         return True
 
+    def has_attachments(self):
+        return True
+
     def extension(self):
         return 'kdbx'
 
+
+class KeepassAttachment(Attachment):
+    def __init__(self, binary):
+        Attachment.__init__(self)
+        self.binary = binary
+
+    @contextmanager
+    def open(self):
+        data = base64.b64decode(self.binary.text)
+        if self.binary.get('Compressed'):
+            out = io.BytesIO()
+            out.write(data)
+            out.seek(0)
+            with gzip.GzipFile(fileobj=out, mode='rb') as gz:
+                data = gz.read()
+        out = io.BytesIO()
+        out.write(data)
+        out.seek(0)
+        yield out
 
 
 
