@@ -90,6 +90,17 @@ class SharedFolder:
         self.permissions = None  # type: [Permission]
 
 
+class Attachment:
+    def __init__(self):
+        self.file_id = None
+        self.name = None
+        self.size = None
+        self.key = None
+        self.mime = None
+
+    def open(self):
+        raise NotImplemented
+
 class Folder:
     def __init__(self):
         self.uid = None
@@ -109,6 +120,7 @@ class Record:
         self.notes = None
         self.custom_fields = {}
         self.folders = None     # type: [Folder]
+        self.attachments = None # type: [Attachment]
 
 
 class BaseImporter:

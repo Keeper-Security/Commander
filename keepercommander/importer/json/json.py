@@ -129,5 +129,8 @@ class KeeperJsonExporter(BaseExporter):
     def has_shared_folders(self):
         return True
 
+    def has_attachments(self):
+        return False
+
     def extension(self):
         return 'json'

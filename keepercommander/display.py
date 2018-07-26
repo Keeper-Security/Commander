@@ -14,7 +14,7 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
-
+from . import api
 
 init()
 
@@ -44,14 +44,16 @@ def welcome():
 
 def formatted_records(records, **kwargs):
     """Display folders/titles/uids for the supplied shared folders"""
+    params = None
+    if 'params' in kwargs:
+        params = kwargs['params']
 
     # Sort by folder+title
     records.sort(key=lambda x: x.title.lower(), reverse=False)
 
     if len(records) > 0:
         shared_folder = None
-        if 'folder' in kwargs and 'params' in kwargs:
-            params = kwargs['params']
+        if 'folder' in kwargs and params is not None:
             fuid = kwargs['folder']
             if fuid in params.folder_cache:
                 folder = params.folder_cache[fuid]
@@ -83,6 +85,8 @@ def formatted_records(records, **kwargs):
     skip_details = kwargs.get('skip_details') or False
     # Under 5 recs, just display on the screen
     if len(records) < 5 and not skip_details:
+        if params is not None:
+            api.get_record_shares(params, [x.record_uid for x in records])
         for r in records:
             r.display(**kwargs)
 
