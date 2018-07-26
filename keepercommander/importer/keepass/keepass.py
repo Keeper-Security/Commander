@@ -373,6 +373,8 @@ class KeepassExporter(BaseExporter):
                                             bin.Key=atta.name
                                             bin.Value = objectify.Element('Value', Ref=str(bId))
                                             entry.append(bin)
+                            else:
+                                print('Warning: File \'{0}\' was skipped because it exceeds the 1MB Keepass filesize limit.'.format(atta.name))
 
                 except Exception as e:
                     pass
