@@ -273,7 +273,7 @@ def upload_attachment(params, attachments):
         #TODO check storage subscription
         rq = {
             'command': 'request_upload',
-            'file_count': 1
+            'file_count': file_no
         }
         try:
             rs = api.communicate(params, rq)
