@@ -203,8 +203,6 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```export``` Export data from Keeper to local file (JSON, CSV, Keepass)
 
-* ```export_all``` Export all data and attachments in .zip format (Coming Soon!)
-
 **Individual Sharing Commands (Coming Soon)**
 
 * ```shared_record_grant``` Grand access to an individual record to a user
@@ -261,7 +259,7 @@ To import records into your vault, use the ```import``` command.  Supported impo
 
 JSON import files can contain records, folders, subfolders, shared folders, default folder permissions  and user/team permissions.
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
-Keepass files will transfer records, folders and subfolders. Option exists to make all folders as shared folders.
+Keepass files will transfer records, file attachments, folders and subfolders. Option exists to make all folders as shared folders. File attachments are supported in both import and export with Keepass however they are limited to 1MB for each file based on keepass' structure.
 
 **JSON Record Import**
 
@@ -349,7 +347,7 @@ The resulting vault will look like [this image](https://raw.githubusercontent.co
 
 **Keepass Import**
 
-Keeper supports importing the record and folder structure directly from an encrypted Keepass file. Make sure to first follow [these instructions](keepercommander/importer/keepass/README.md) to install the necessary keepass modules.
+Keeper supports importing the record and folder structure directly from an encrypted Keepass file. File attachments are also supported (up to 1MB per file).  Make sure to first follow [these instructions](keepercommander/importer/keepass/README.md) to install the necessary keepass modules.
 
 ```bash
 $ keeper import --format=keepass test.kdbx
