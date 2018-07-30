@@ -45,6 +45,18 @@ class CommunicationError(Error):
         self.message = message
 
 
+class KeeperApiError(CommunicationError):
+    """Exception raised with failed Keeper API request
+    """
+
+    def __init__(self, result_code, message):
+        CommunicationError.__init__(self, message)
+        self.result_code = result_code
+
+    def __str__(self):
+        return self.message or self.result_code
+
+
 class CryptoError(Error):
     """Exception raised with cryptography issues
 

@@ -30,6 +30,9 @@ from ..subfolder import BaseFolderNode, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, Command
 
 
+EMAIL_PATTERN=r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
+
+
 def register_commands(commands, aliases, command_info):
     commands['share-record'] = ShareRecordCommand()
     commands['share-folder'] = ShareFolderCommand()
@@ -54,12 +57,12 @@ share_record_parser.exit = suppress_exit
 
 share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change shared folder permissions')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant', action='store', help='shared folder action. \'grant\' if omitted')
-share_folder_parser.add_argument('-e', '--email', dest='email', action='append', help='account email or \'*\' as default folder permission')
+share_folder_parser.add_argument('-u', '--user', dest='user', action='append', help='account email, team, or \'*\' as default folder permission')
 share_folder_parser.add_argument('-r', '--record', dest='record', action='append', help='record name, record UID, or \'*\' as default folder permission')
 share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true', help='account permission: can manage records.')
-share_folder_parser.add_argument('-u', '--manage-users', dest='manage_users', action='store_true', help='account permission: can manage users.')
+share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true', help='account permission: can manage users.')
 share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='record permission: can be shared')
-share_folder_parser.add_argument('-w', '--can-write', dest='can_edit', action='store_true', help='record permission: can be modified.')
+share_folder_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
 share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
@@ -259,11 +262,28 @@ class ShareFolderCommand(Command):
             action = kwargs.get('action') or 'grant'
 
             public_keys = {}
+            team_keys = {}
             default_account = False
-            if 'email' in kwargs:
-                emails = kwargs.get('email') or []
-                default_account = '*' in emails
-                emails = [x for x in emails if x != '*']
+            if 'user' in kwargs:
+                emails = []
+                teams = []
+                for u in (kwargs.get('user') or []):
+                    if u == '*':
+                        default_account = True
+                    else:
+                        em = re.match(EMAIL_PATTERN, u)
+                        if not em is None:
+                            emails.append(u)
+                        else:
+                            team_uid = None
+                            for tid in params.team_cache:
+                                if tid == u or params.team_cache[tid]['name'].lower() == u.lower():
+                                    team_uid = params.team_cache[tid]['team_uid']
+                                    break
+                            if team_uid:
+                                teams.append(team_uid)
+                            else:
+                                print('User {0} could not be resolved as email or team'.format(u))
                 if len(emails) > 0:
                     rq = {
                         'command': 'public_keys',
@@ -278,6 +298,23 @@ class ShareFolderCommand(Command):
                                     public_keys[email] = pk['public_key']
                             else:
                                 print('\'{0}\' is not a known Keeper account'.format(pk['key_owner']))
+
+                if len(teams) > 0:
+                    rq = {
+                        'command': 'team_get_keys',
+                        'teams': teams
+                    }
+                    rs = api.communicate(params, rq)
+                    if 'keys' in rs:
+                        for tk in rs['keys']:
+                            if 'key' in tk:
+                                team_uid = tk['team_uid']
+                                if tk['type'] == 1:
+                                    team_keys[team_uid] = api.decrypt_aes(tk['key'], params.data_key)
+                                elif tk['type'] == 2:
+                                    team_keys[team_uid] = api.decrypt_rsa(tk['key'], params.rsa_key)
+                                elif tk['type'] == 3:
+                                    team_keys[team_uid] = base64.urlsafe_b64decode(tk['key'] + '==')
 
             record_uids = []
             default_record = False
@@ -355,17 +392,57 @@ class ShareFolderCommand(Command):
                                 share_action = 'update_users'
                             else:
                                 share_action = 'remove_users'
-                    else:
-                        if not email in email_set:
-                            uo['manage_records'] = mr
-                            uo['manage_users'] = mu
-                            rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
-                            uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key'], rsa_key)
-                            share_action = 'add_users'
+                    elif action == 'grant':
+                        uo['manage_records'] = mr
+                        uo['manage_users'] = mu
+                        rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
+                        uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key'], rsa_key)
+                        share_action = 'add_users'
+
                     if share_action:
                         if not share_action in request:
                             request[share_action] = []
                         request[share_action].append(uo)
+
+            if len(team_keys) > 0:
+                team_set = set()
+                if 'teams' in sh_fol:
+                    for team in sh_fol['teams']:
+                        team_set.add(team['team_uid'])
+
+                mr = kwargs.get('manage_records')
+                mu = kwargs.get('manage_users')
+                for team_uid in team_keys:
+                    to = {
+                        'team_uid': team_uid
+                    }
+                    share_action = ''
+                    if team_uid in team_set:
+                        if action == 'grant':
+                            if mr:
+                                to['manage_records'] = True
+                            if mu:
+                                to['manage_users'] = True
+                            share_action = 'update_teams'
+                        else:
+                            if mr or mu:
+                                if mr:
+                                    to['manage_records'] = False
+                                if mu:
+                                    to['manage_users'] = False
+                                share_action = 'update_teams'
+                            else:
+                                share_action = 'remove_teams'
+                    elif action == 'grant':
+                        to['manage_records'] = mr
+                        to['manage_users'] = mu
+                        to['shared_folder_key'] = api.encrypt_aes(sh_fol['shared_folder_key'], team_keys[team_uid])
+                        share_action = 'add_teams'
+
+                    if share_action:
+                        if not share_action in request:
+                            request[share_action] = []
+                        request[share_action].append(to)
 
             if len(record_uids) > 0:
                 ruid_set = set()
@@ -421,6 +498,15 @@ class ShareFolderCommand(Command):
                         request[share_action].append(ro)
             response = api.communicate(params, request)
             api.sync_down(params)
+
+            for node in ['add_teams', 'update_teams', 'remove_teams']:
+                if node in response:
+                    for t in response[node]:
+                        team = api.get_team(params, t['team_uid'])
+                        if t['status'] == 'success':
+                            print('Team share \'{0}\' {1}'.format(team.name, 'added' if node =='add_teams' else 'updated' if node == 'update_teams' else 'removed'))
+                        else:
+                            print('Team share \'{0}\' failed'.format(team.name))
 
             for node in ['add_users', 'update_users', 'remove_users']:
                 if node in response:
