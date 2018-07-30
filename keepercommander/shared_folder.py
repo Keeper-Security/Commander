@@ -58,24 +58,22 @@ class SharedFolder:
         print('{0:>25s}: {1}'.format('Default Manage Users',self.default_manage_users))
         print('{0:>25s}: {1}'.format('Default Can Edit',self.default_can_edit))
         print('{0:>25s}: {1}'.format('Default Can Share',self.default_can_share))
-        print('')
-        print('{0:>25s}:'.format('Record Permissions'))
 
         if len(self.records) > 0:
+            print('')
+            print('{0:>25s}:'.format('Record Permissions'))
             for r in self.records:
                 print('{0:>25s}: {1}: {2}, {3}: {4}'.format(r['record_uid'],'Can Edit',r['can_edit'],'Can Share',r['can_share']))
 
-        print('')
-        print('{0:>25s}:'.format('User Permissions'))
-
         if len(self.users) > 0:
+            print('')
+            print('{0:>25s}:'.format('User Permissions'))
             for u in self.users:
                 print('{0:>25s}: {1}: {2}, {3}: {4}'.format(u['username'],'Can Manage Records',u['manage_records'],'Can Manage Users',u['manage_users']))
 
-        print('')
-        print('{0:>25s}:'.format('Team Permissions'))
-
         if len(self.teams) > 0:
+            print('')
+            print('{0:>25s}:'.format('Team Permissions'))
             for t in self.teams:
                 print('{0:>25s}: {1}: {2}, {3}: {4}'.format(t['name'],'Can Manage Records',t['manage_records'],'Can Manage Users',t['manage_users']))
 

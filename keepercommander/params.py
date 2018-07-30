@@ -54,6 +54,7 @@ class KeeperParams:
         self.timedelay = timedelay
         self.sync_data = True
         self.license = None
+        self.enterprise = None
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -84,3 +85,4 @@ class KeeperParams:
         self.current_folder = None
         self.sync_data = True
         self.license = None
+        self.enterprise = None

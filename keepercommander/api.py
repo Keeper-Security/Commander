@@ -18,13 +18,14 @@ import getpass
 import time
 import os
 import hashlib
+import concurrent.futures
 
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, RootFolderNode
 from . import generator, plugin_manager, params
 from .record import Record
 from .shared_folder import SharedFolder
 from .team import Team
-from .error import AuthenticationError, CommunicationError, CryptoError
+from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .commands.base import user_choice
 
 from Cryptodome import Random
@@ -211,6 +212,7 @@ def login(params, attempt=0):
                 params.license = response_json['license']
 
             params.sync_data = True
+            #query enterprise
             success = True
 
         elif ( response_json['result_code'] == 'need_totp' or
@@ -699,7 +701,7 @@ def sync_down(params):
                         }
 
                 if 'removed_shared_folders' in team:
-                    for sf_uid in team.removed_shared_folders:
+                    for sf_uid in team['removed_shared_folders']:
                         shared_folder = params.shared_folder_cache[sf_uid]
                         if not shared_folder:
                             continue
@@ -1707,8 +1709,7 @@ def communicate(params, request):
 
     if response_json['result'] != 'success':
         if response_json['result_code']:
-            raise CommunicationError('Unexpected problem: ' + \
-                response_json['result_code'])
+            raise KeeperApiError(response_json['result_code'], response_json['message'])
 
     return response_json
 
@@ -1970,3 +1971,38 @@ def get_record_shares(params, record_uids):
             print(e)
 
 
+def query_enterprise(params):
+    request = {
+        'command': 'get_enterprise_data',
+        'include': ['nodes', 'users', 'teams', 'team_users']
+    }
+    try:
+        response = communicate(params, request)
+        if response['result'] == 'success':
+            if 'key_type_id' in response:
+                tree_key = None
+                if response['key_type_id'] == 1:
+                    tree_key = decrypt_aes(response['tree_key'], params.data_key)
+                elif response['key_type_id'] == 2:
+                    tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
+                if not tree_key is None:
+                    response['unencrypted_tree_key'] = tree_key
+                    if 'nodes' in response:
+                        for node in response['nodes']:
+                            if 'encrypted_data' in node:
+                                try:
+                                    data = decrypt_aes(node['encrypted_data'], tree_key)
+                                    node['data'] = json.loads(data.decode('utf-8'))
+                                except:
+                                    pass
+                    if 'users' in response:
+                        for user in response['users']:
+                            if 'encrypted_data' in user:
+                                try:
+                                    data = decrypt_aes(user['encrypted_data'], tree_key)
+                                    user['data'] = json.loads(data.decode('utf-8'))
+                                except:
+                                    pass
+                    params.enterprise = response
+    except:
+        params.enterprise = None
