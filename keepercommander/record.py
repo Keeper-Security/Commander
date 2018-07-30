@@ -77,7 +77,7 @@ class Record:
             folders = [get_folder_path(params, x) for x in find_folders(params, self.record_uid)]
             for i in range(len(folders)):
                 folder = folders[i]
-                print('{0:>20s}: {1:<20s}'.format('Folder' if i == 0 else '', folders[i]))
+                print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
 
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title',self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
@@ -92,7 +92,9 @@ class Record:
                 print('{0:>20s}: {1:<s}'.format(c['name'], c['value']))
 
         if self.notes:
-            print('{0:>20s}: {1:<20s}'.format('Notes',self.notes))
+            lines = self.notes.split('\n')
+            for i in range(len(lines)):
+                print('{0:>21s} {1}'.format('Notes:' if i == 0 else '', lines[i].strip()))
 
         if self.attachments:
             for i in range(len(self.attachments)):
@@ -110,7 +112,7 @@ class Record:
                         size = size / 1024
                         scale = 'Gb'
                 sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
-                print('{0:>20s}: {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments' if i == 0 else '', atta.get('name'), sz, scale, 'ID', atta.get('id')))
+                print('{0:>21s} {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments:' if i == 0 else '', atta.get('name'), sz, scale, 'ID', atta.get('id')))
 
         if params is not None:
             if self.record_uid in params.record_cache:
@@ -118,7 +120,9 @@ class Record:
                 if 'shares' in rec:
                     no = 0
                     if 'user_permissions' in rec['shares']:
-                        for uo in rec['shares']['user_permissions']:
+                        perm = rec['shares']['user_permissions'].copy()
+                        perm.sort(key=lambda r: (' 1' if r.get('owner') else ' 2' if r.get('editable') else ' 3' if r.get('sharable') else '') + r.get('username'))
+                        for uo in perm:
                             flags = ''
                             if uo.get('owner'):
                                 flags = 'Owner'
@@ -134,7 +138,7 @@ class Record:
                             if not flags:
                                 flags = 'View'
 
-                            print('{0:>20s}: {1} ({2})'.format('Shared Users' if no == 0 else '', uo['username'], flags))
+                            print('{0:>21s} {1} ({2}) {3}'.format('Shared Users:' if no == 0 else '', uo['username'], flags, 'self' if uo['username'] == params.user else ''))
                             no = no + 1
                     no = 0
                     if 'shared_folder_permissions' in rec['shares']:
@@ -155,7 +159,7 @@ class Record:
                                     if fol.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                                         sfid = fol.uid if fol.type == BaseFolderNode.SharedFolderType else fol.shared_folder_uid
                                         if sf_uid == sfid:
-                                            print('{0:>20s}: {1:<20s}'.format('Shared Folders' if no == 0 else '', fol.name))
+                                            print('{0:>21s} {1:<20s}'.format('Shared Folders:' if no == 0 else '', fol.name))
                                             no = no + 1
 
         print('')

@@ -72,7 +72,7 @@ mkdir_parser.add_argument('-u', '--manage-users', dest='manage_users', action='s
 mkdir_parser.add_argument('-r', '--manage-records', dest='manage_records', action='store_true', help='anyone can manage records by default')
 mkdir_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='anyone can share records by default')
 mkdir_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records by default')
-mkdir_parser.add_argument('name', nargs='?', type=str, action='store', help='folder path')
+mkdir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path')
 mkdir_parser.error = raise_parse_exception
 mkdir_parser.exit = suppress_exit
 
@@ -247,7 +247,7 @@ class FolderMakeCommand(Command):
     def execute(self, params, **kwargs):
         base_folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
 
-        name = kwargs['name'] if 'name' in kwargs else None
+        name = kwargs['folder'] if 'folder' in kwargs else None
         if name:
             rs = try_resolve_path(params, name)
             if rs is not None:
@@ -655,3 +655,8 @@ class FolderLinkCommand(FolderMoveCommand):
 
     def get_parser(self):
         return ln_parser
+
+
+
+
+

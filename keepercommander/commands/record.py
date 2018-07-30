@@ -63,7 +63,7 @@ add_parser.exit = suppress_exit
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove record')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-rm_parser.add_argument('name', nargs='?', type=str, action='store', help='record path or UID')
+rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 rm_parser.error = raise_parse_exception
 rm_parser.exit = suppress_exit
 
@@ -88,14 +88,14 @@ get_info_parser.exit = suppress_exit
 
 append_parser = argparse.ArgumentParser(prog='append-note|an', description='Append notes to existing record')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-append_parser.add_argument('name', nargs='?', type=str, action='store', help='record path or UID')
+append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 append_parser.error = raise_parse_exception
 append_parser.exit = suppress_exit
 
 
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
 #download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted.')
-download_parser.add_argument('name', nargs='?', type=str, action='store', help='record path or UID')
+download_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 download_parser.error = raise_parse_exception
 download_parser.exit = suppress_exit
 
@@ -213,7 +213,7 @@ class RecordRemoveCommand(Command):
     def execute(self, params, **kwargs):
         folder = None
         name = None
-        record_path = kwargs['name'] if 'name' in kwargs else None
+        record_path = kwargs['record'] if 'record' in kwargs else None
         if record_path:
             rs = try_resolve_path(params, record_path)
             if rs is not None:
@@ -366,7 +366,7 @@ class RecordAppendNotesCommand(Command):
         return append_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['name'] if 'name' in kwargs else None
+        name = kwargs['record'] if 'record' in kwargs else None
 
         if not name:
             self.get_parser().print_help()
@@ -398,6 +398,8 @@ class RecordAppendNotesCommand(Command):
 
         record = api.get_record(params, record_uid)
 
+        if record.notes:
+            record.notes += '\n'
         record.notes += notes
         params.sync_data = True
         api.update_record(params, record)
@@ -408,7 +410,7 @@ class RecordDownloadAttachmentCommand(Command):
         return download_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['name'] if 'name' in kwargs else None
+        name = kwargs['record'] if 'record' in kwargs else None
 
         if not name:
             self.get_parser().print_help()
@@ -483,3 +485,4 @@ class RecordDownloadAttachmentCommand(Command):
                         print('File \'{0}\': Failed to file encryption key'.format(file_name))
                 else:
                     print('File \'{0}\' download error: {1}'.format(file_id, dl['message']))
+
