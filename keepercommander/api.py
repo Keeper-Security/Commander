@@ -799,6 +799,7 @@ def sync_down(params):
                         existing_sf['teams'] = merged_teams
 
                     existing_sf['name'] = shared_folder['name']
+                    existing_sf['revision'] = shared_folder['revision']
 
                 else: 
                     if params.debug: print('Shared folder does not exist in local cache') 
@@ -1468,7 +1469,7 @@ def search_teams(params, searchstring):
     return search_results
 
 
-def prepare_record(params, record, shared_folder_uid=''):
+def prepare_record(params, record):
     """ Prepares the Record() object to be sent to the Keeper Cloud API
         by serializing and encrypting it in the proper JSON format used for
         transmission.  If the record has no UID, one is generated and the
@@ -1476,18 +1477,41 @@ def prepare_record(params, record, shared_folder_uid=''):
         converted from RSA to AES we send the new record key. If the record
         is in a shared folder, must send shared folder UID for edit permission.
     """
-    needs_record_key = False
+
+    # build a record dict for upload
+    record_object = {
+        'version': 2,
+        'client_modified_time': current_milli_time()
+    }
+
     if not record.record_uid:
-        record.record_uid = generate_record_uid()
         if params.debug: print('Generated Record UID: ' + record.record_uid)
-        needs_record_key = True
+        record.record_uid = generate_record_uid()
 
-    if params.debug: print('Needs record key = ' + str(needs_record_key))
+    record_object['record_uid'] = record.record_uid
 
-    # initialize data and extra
     data = {}
     extra = {}
-    udata = []
+    udata = {}
+    unencrypted_key = None
+    if record.record_uid in params.record_cache:
+        rec = params.record_cache[record.record_uid]
+        data.update(json.loads(rec['data'].decode()))
+        if 'extra' in rec:
+            extra.update(json.loads(rec['extra'].decode()))
+        if 'udata' in rec:
+            udata.update(rec['udata'])
+        unencrypted_key = rec['record_key_unencrypted']
+        record_object['revision'] = rec['revision']
+        if rec.get('is_converted_record_type'):
+            if params.debug: print('Converted record sends record key')
+            record_object['record_key'] = encrypt_aes(params.data_key, unencrypted_key)
+        resolve_record_access_path(params, record.record_uid, path=record_object, for_writing=True)
+    else:
+        if params.debug: print('Generated record key')
+        unencrypted_key = os.urandom(32)
+        record_object['record_key'] = encrypt_aes(params.data_key, unencrypted_key)
+        record_object['revision'] = 0
 
     data['title'] = record.title
     data['folder'] = record.folder
@@ -1497,81 +1521,12 @@ def prepare_record(params, record, shared_folder_uid=''):
     data['notes'] = record.notes
     data['custom'] = record.custom_fields
 
-    # Convert the data and extra dictionary to string object
-    # with double quotes instead of single quotes
-    data_serialized = json.dumps(data)
-    extra_serialized = json.dumps(extra)
+    record_object['data'] = encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
+    record_object['extra'] = encrypt_aes(json.dumps(extra).encode('utf-8'), unencrypted_key)
+    record_object['udata'] = udata
 
-    if params.debug: print('Dictionary: ' + str(data))
-    if params.debug: print('Serialized: : ' + str(data_serialized))
+    return record_object
 
-    if needs_record_key:
-        unencrypted_key = os.urandom(32)
-        if params.debug: print('Generated a key=' + str(unencrypted_key))
-    else:
-        unencrypted_key = \
-            params.record_cache[record.record_uid]['record_key_unencrypted']
-
-    # Create encrypted record key
-    iv = os.urandom(16)
-    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-    type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
-    encoded_type1key = (base64.urlsafe_b64encode(
-        type1key).decode()).rstrip('=')
-    if params.debug: print('Encoded=' + str(encoded_type1key))
-
-    # Encrypt data with record key
-    iv = os.urandom(16)
-    cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
-    encrypted_data = iv + cipher.encrypt(pad_binary(data_serialized.encode()))
-
-    # Encrypt extra with record key
-    iv = os.urandom(16)
-    cipher = AES.new(unencrypted_key, AES.MODE_CBC, iv)
-    encrypted_extra = iv + cipher.encrypt(pad_binary(extra_serialized.encode()))
-
-    if params.debug: print('encrypted_data: ' + str(encrypted_data))
-    if params.debug: print('encrypted_extra: ' + str(encrypted_extra))
-
-    # note: decode() converts bytestream (b') to string
-    encoded_data = base64.urlsafe_b64encode(encrypted_data).decode().rstrip('=')
-    encoded_extra = base64.urlsafe_b64encode(encrypted_extra).decode().rstrip('=')
-
-    if params.debug: print('encoded_data: ' + str(encoded_data))
-    if params.debug: print('encoded_extra: ' + str(encoded_extra))
-
-    modified_time = int(round(time.time()))
-    modified_time_milli = modified_time * 1000
-
-    # build a record dict for upload
-    new_record = {}
-    new_record['record_uid'] = record.record_uid
-    new_record['version'] = 2
-    new_record['data'] = encoded_data
-    new_record['extra'] = encoded_extra
-    new_record['udata'] = udata
-    new_record['client_modified_time'] = modified_time_milli
-    new_record['revision'] = 0
-
-    shared_folder_uids = shared_folders_containing_record(params, record.record_uid)
-    if( len(shared_folder_uids) > 0 ):
-        new_record['shared_folder_uid'] = shared_folder_uids[0]
-
-    if record.record_uid in params.record_cache:
-        if 'revision' in params.record_cache[record.record_uid]:
-            new_record['revision'] = params.record_cache[record.record_uid]['revision']
-        if 'is_converted_record_type' in params.record_cache[record.record_uid]:
-            if params.debug: print('Converted record sends record key')
-            new_record['record_key'] = encoded_type1key
-
-    if needs_record_key:
-        new_record['record_key'] = encoded_type1key
-
-    if shared_folder_uid:
-        new_record['shared_folder_uid'] = shared_folder_uid
-
-    if params.debug: print('new_record: ' + str(new_record))
-    return new_record
 
 def prepare_shared_folder(params, shared_folder):
     """ Prepares the SharedFolder() object to be sent to the Keeper Cloud API
@@ -1700,6 +1655,7 @@ def make_request(params, command):
                'client_version':CLIENT_VERSION,
         }
 
+
 def communicate(params, request):
 
     def authorize_request():
@@ -1755,6 +1711,7 @@ def communicate(params, request):
                 response_json['result_code'])
 
     return response_json
+
 
 def update_record(params, record):
     """ Push a record update to the cloud. 
@@ -1959,17 +1916,18 @@ def resolve_record_access_path(params, record_uid, path=None, for_writing=False)
 
     #TODO respect for_writing
     path['record_uid'] = record_uid
-    if record_uid not in params.meta_data_cache: #shared through shared folder
+    if not record_uid in params.meta_data_cache: #shared through shared folder
         for sf_uid in params.shared_folder_cache:
             sf = params.shared_folder_cache[sf_uid]
             if 'records' in sf:
                 if any(sfr['record_uid'] == record_uid for sfr in sf['records']):
-                    if 'shared_folder_key' not in sf:
+                    if not 'key_type' in sf:
                         if 'teams' in sf:
                             for team in sf['teams']:
                                 path['shared_folder_uid'] = sf_uid
                                 path['team_uid'] = team['team_uid']
-                                break
+                                if for_writing and team.get('manage_records'):
+                                    break
                     else:
                         path['shared_folder_uid'] = sf_uid
                         break

@@ -15,6 +15,7 @@ import re
 import os
 import base64
 from urllib.parse import urlsplit, urlunsplit
+from email.utils import parseaddr
 
 from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
@@ -23,17 +24,45 @@ from Cryptodome.Math.Numbers import Integer
 
 from .. import api, generator
 from .record import RecordAddCommand
-from email.utils import parseaddr
 from ..params import KeeperParams
+from ..subfolder import BaseFolderNode, try_resolve_path
 
 from .base import raise_parse_exception, suppress_exit, Command
 
 
 def register_commands(commands, aliases, command_info):
-    commands['create_user'] = RegisterCommand()
-    aliases['cu'] = 'create_user'
-    for p in [register_parser]:
+    commands['share-record'] = ShareRecordCommand()
+    commands['share-folder'] = ShareFolderCommand()
+    commands['create-user'] = RegisterCommand()
+    aliases['sr'] = 'share-record'
+    aliases['sf'] = 'share-folder'
+    aliases['cu'] = 'create-user'
+
+    for p in [share_record_parser, share_folder_parser, register_parser]:
         command_info[p.prog] = p.description
+
+
+share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change record share permissions')
+share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
+share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner'], default='grant', action='store', help='user share action. \'grant\' if omitted')
+share_record_parser.add_argument('-s', '--share', dest='can_share', action='store_true', help='can re-share record')
+share_record_parser.add_argument('-w', '--write', dest='can_edit', action='store_true', help='can modify record')
+share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+share_record_parser.error = raise_parse_exception
+share_record_parser.exit = suppress_exit
+
+
+share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change shared folder permissions')
+share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant', action='store', help='shared folder action. \'grant\' if omitted')
+share_folder_parser.add_argument('-e', '--email', dest='email', action='append', help='account email or \'*\' as default folder permission')
+share_folder_parser.add_argument('-r', '--record', dest='record', action='append', help='record name, record UID, or \'*\' as default folder permission')
+share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true', help='account permission: can manage records.')
+share_folder_parser.add_argument('-u', '--manage-users', dest='manage_users', action='store_true', help='account permission: can manage users.')
+share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='record permission: can be shared')
+share_folder_parser.add_argument('-w', '--can-write', dest='can_edit', action='store_true', help='record permission: can be modified.')
+share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
+share_folder_parser.error = raise_parse_exception
+share_folder_parser.exit = suppress_exit
 
 
 register_parser = argparse.ArgumentParser(prog='create_user', description='Create Keeper User')
@@ -191,3 +220,368 @@ class RegisterCommand(Command):
                 print('Generated password: {0}'.format(password))
         else:
             print(rs['message'])
+
+
+
+class ShareFolderCommand(Command):
+    def get_parser(self):
+        return share_folder_parser
+
+    def execute(self, params, **kwargs):
+        folder = None
+        name = kwargs.get('folder')
+        if name:
+            if name in params.folder_cache:
+                folder = params.folder_cache[name]
+            else:
+                rs = try_resolve_path(params, name)
+                if rs is not None:
+                    folder, name = rs
+                    if len(name or '') > 0:
+                        folder = None
+                    elif folder.type == BaseFolderNode.RootFolderType:
+                        folder = None
+
+        if folder is None:
+            print('Enter name of the existing folder')
+            return
+
+        if folder.type not in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+            print('You can change permission of shared folders only')
+            return
+
+
+        shared_folder_uid = folder.shared_folder_uid if folder.type == BaseFolderNode.SharedFolderFolderType else folder.uid
+        if shared_folder_uid in params.shared_folder_cache:
+            sh_fol = params.shared_folder_cache[shared_folder_uid]
+            #TODO check permission to modify shared folder
+
+            action = kwargs.get('action') or 'grant'
+
+            public_keys = {}
+            default_account = False
+            if 'email' in kwargs:
+                emails = kwargs.get('email') or []
+                default_account = '*' in emails
+                emails = [x for x in emails if x != '*']
+                if len(emails) > 0:
+                    rq = {
+                        'command': 'public_keys',
+                        'key_owners': emails
+                    }
+                    rs = api.communicate(params, rq)
+                    if 'public_keys' in rs:
+                        for pk in rs['public_keys']:
+                            if 'public_key' in pk:
+                                email = pk['key_owner'].lower()
+                                if email != params.user.lower():
+                                    public_keys[email] = pk['public_key']
+                            else:
+                                print('\'{0}\' is not a known Keeper account'.format(pk['key_owner']))
+
+            record_uids = []
+            default_record = False
+            if 'record' in kwargs:
+                records = kwargs.get('record') or []
+                for r in records:
+                    if r == '*':
+                        default_record = True
+                    elif r in params.record_cache:
+                        record_uids.append(r)
+                    else:
+                        r_uid = None
+                        rs = try_resolve_path(params, r)
+                        if rs is not None:
+                            sf, name = rs
+                            if name:
+                                shared_folder_uid = sf.uid or ''
+                                if shared_folder_uid in params.subfolder_record_cache:
+                                    for uid in params.subfolder_record_cache[shared_folder_uid]:
+                                        r = params.record_cache[uid]
+                                        rec = api.get_record(params, uid)
+                                        if name in {rec.title, rec.record_uid}:
+                                            r_uid = rec.record_uid
+                                            break
+                        if r_uid:
+                            record_uids.append(r_uid)
+                        else:
+                            print('\'{0}\' is not an existing record title or UID'.format(r))
+
+            request = {
+                'command': 'shared_folder_update',
+                'pt': 'Commander',
+                'operation': 'update',
+                'shared_folder_uid': sh_fol['shared_folder_uid'],
+                'revision': sh_fol['revision']
+            }
+
+            if default_account:
+                if kwargs.get('manage_records'):
+                    request['default_manage_records'] = action == 'grant'
+                if kwargs.get('manage_users'):
+                    request['default_manage_users'] = action == 'grant'
+
+            if default_record:
+                if kwargs.get('can_edit'):
+                    request['default_can_edit'] = action == 'grant'
+                if kwargs.get('can_share'):
+                    request['default_can_share'] = action == 'grant'
+
+            if len(public_keys) > 0:
+                email_set = set()
+                if 'users' in sh_fol:
+                    for user in sh_fol['users']:
+                        email_set.add(user['username'])
+                mr = kwargs.get('manage_records')
+                mu = kwargs.get('manage_users')
+                for email in public_keys:
+                    uo = {
+                        'username': email
+                    }
+                    share_action = ''
+                    if email in email_set:
+                        if action == 'grant':
+                            if mr:
+                                uo['manage_records'] = True
+                            if mu:
+                                uo['manage_users'] = True
+                            share_action = 'update_users'
+                        else:
+                            if mr or mu:
+                                if mr:
+                                    uo['manage_records'] = False
+                                if mu:
+                                    uo['manage_users'] = False
+                                share_action = 'update_users'
+                            else:
+                                share_action = 'remove_users'
+                    else:
+                        if not email in email_set:
+                            uo['manage_records'] = mr
+                            uo['manage_users'] = mu
+                            rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
+                            uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key'], rsa_key)
+                            share_action = 'add_users'
+                    if share_action:
+                        if not share_action in request:
+                            request[share_action] = []
+                        request[share_action].append(uo)
+
+            if len(record_uids) > 0:
+                ruid_set = set()
+                if 'records' in sh_fol:
+                    for r in sh_fol['records']:
+                        ruid_set.add(r['record_uid'])
+                team_uid = ''
+                if not 'key_type' in sh_fol:
+                    if 'teams' in sh_fol:
+                        for team in sh_fol['teams']:
+                            team_uid = team['team_uid']
+                            if team.get('manage_records'):
+                                break
+
+                for record_uid in record_uids:
+                    ro = {
+                        'record_uid': record_uid
+                    }
+                    if team_uid:
+                        ro['team_uid'] = team_uid
+                        ro['shared_folder_uid'] = sh_fol['shared_folder_uid']
+
+                    share_action = ''
+                    ce = kwargs.get('can_edit')
+                    cs = kwargs.get('can_share')
+                    if record_uid in ruid_set:
+                        if action == 'grant':
+                            if ce:
+                                ro['can_edit'] = True
+                            if cs:
+                                ro['can_share'] = True
+                            share_action = 'update_records'
+                        else:
+                            if ce or cs:
+                                if ce:
+                                    ro['can_edit'] = False
+                                if cs:
+                                    ro['can_share'] = False
+                                share_action = 'update_records'
+                            else:
+                                share_action = 'remove_records'
+                    else:
+                        if action == 'grant':
+                            ro['can_edit'] = ce
+                            ro['can_share'] = cs
+                            rec = params.record_cache[record_uid]
+                            ro['record_key'] = api.encrypt_aes(rec['record_key_unencrypted'], sh_fol['shared_folder_key'])
+                            share_action = 'add_records'
+
+                    if share_action:
+                        if not share_action in request:
+                            request[share_action] = []
+                        request[share_action].append(ro)
+            response = api.communicate(params, request)
+            api.sync_down(params)
+
+            for node in ['add_users', 'update_users', 'remove_users']:
+                if node in response:
+                    for s in response[node]:
+                        if s['status'] == 'success':
+                            print('User share \'{0}\' {1}'.format(s['username'], 'added' if node =='add_users' else 'updated' if node == 'update_users' else 'removed'))
+                        elif s['status'] == 'invited':
+                            print('User \'{0}\' invited'.format(s['username']))
+                        else:
+                            print('User share \'{0}\' failed'.format(s['username']))
+
+            for node in ['add_records', 'update_records', 'remove_records']:
+                if node in response:
+                    for r in response[node]:
+                        rec = api.get_record(params, r['record_uid'])
+                        if r['status'] == 'success':
+                            print('Record share \'{0}\' {1}'.format(rec.title, 'added' if node =='add_records' else 'updated' if node == 'update_records' else 'removed'))
+                        else:
+                            print('Record share \'{0}\' failed'.format(rec.title))
+
+
+class ShareRecordCommand(Command):
+    def get_parser(self):
+        return share_record_parser
+
+    def execute(self, params, **kwargs):
+        name = kwargs['record'] if 'record' in kwargs else None
+
+        if not name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            print('Enter name or uid of existing record')
+            return
+
+        emails = kwargs.get('email') or []
+        if not emails:
+            print('\'email\' parameter is missing')
+            return
+
+        public_keys = {}
+        rq = {
+            'command': 'public_keys',
+            'key_owners': emails
+        }
+        rs = api.communicate(params, rq)
+        if 'public_keys' in rs:
+            for pk in rs['public_keys']:
+                if 'public_key' in pk:
+                    email = pk['key_owner'].lower()
+                    if email != params.user.lower():
+                        public_keys[email] = pk['public_key']
+                else:
+                    print('\'{0}\' is not a known Keeper account'.format(pk['key_owner']))
+        if len(public_keys) == 0:
+            print('No existing Keeper accounts provided.')
+            return
+
+        record_path = api.resolve_record_access_path(params, record_uid)
+        rq = {
+            'command': 'get_records',
+            'include': ['shares'],
+            'records': [record_path],
+            'client_time': api.current_milli_time()
+        }
+        rs = api.communicate(params, rq)
+        existing_shares = {}
+        if 'records' in rs:
+            if 'user_permissions' in rs['records'][0]:
+                for po in rs['records'][0]['user_permissions']:
+                    existing_shares[po['username'].lower()] = po
+
+        can_edit = kwargs.get('can_edit') or False
+        can_share= kwargs.get('can_share') or False
+
+        record_key = params.record_cache[record_uid]['record_key_unencrypted']
+
+        rq = {
+            'command': 'record_share_update',
+            'pt': 'Commander'
+        }
+        action = kwargs.get('action') or 'grant'
+        if action == 'owner':
+            if len(public_keys) > 1:
+                print('TYou can transfer ownership to a single account only')
+                return
+
+        for email in public_keys:
+            current = existing_shares.get(email)
+            ro = {
+                'to_username': email
+            }
+            ro.update(record_path)
+            share_action = ''
+            if action == 'grant':
+                if current is None:
+                    rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
+                    ro['record_key'] = api.encrypt_rsa(record_key, rsa_key)
+                    ro['editable'] = can_edit,
+                    ro['shareable'] = can_share
+                else:
+                    ro['editable'] = True if can_edit else current['editable']
+                    ro['shareable'] = True if can_share else current['shareable']
+
+                share_action = 'add_shares' if current is None else 'update_shares'
+            elif action == 'revoke':
+                if not current is None:
+                    if can_share or can_edit:
+                        ro['editable'] = False if can_edit else current['editable']
+                        ro['shareable'] =  False if can_share else current['shareable']
+                        share_action = 'update_shares'
+                    else:
+                        share_action = 'remove_shares'
+            elif action == 'owner':
+                if record_uid in params.meta_data_cache and params.meta_data_cache[record_uid].get('owner'):
+                    ro['transfer'] = True
+                    if current is None:
+                        rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
+                        ro['record_key'] = api.encrypt_rsa(record_key, rsa_key)
+                        share_action = 'add_shares'
+                    else:
+                        share_action = 'update_shares'
+                else:
+                    print('You should be a record owner to be able to transfer ownership')
+                    return
+            else:
+                pass
+
+            if share_action:
+                if not share_action in rq:
+                    rq[share_action] = []
+                    rq[share_action].append(ro)
+
+        rs = api.communicate(params, rq)
+
+        if 'add_statuses' in rs:
+            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] == 'success']
+            if emails:
+                print('Record is successfully shared with: {0}'.format(', '.join(emails)))
+            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] != 'success']
+            if emails:
+                print('Failed to share record with: {0}'.format(', '.join(emails)))
+
+        if 'remove_statuses' in rs:
+            emails = [x['to_username'] for x in rs['remove_statuses'] if x['status'] == 'success']
+            if emails:
+                print('Stopped sharing record with: {0}'.format(', '.join(emails)))

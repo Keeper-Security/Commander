@@ -203,33 +203,11 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```export``` Export data from Keeper to local file (JSON, CSV, Keepass)
 
-**Individual Sharing Commands (Coming Soon)**
+**Folder and Record Sharing Commands**
 
-* ```shared_record_grant``` Grand access to an individual record to a user
+* ```share-record``` or ```sr``` Grant or revoke record's user access
 
-* ```shared_record_revoke``` Revoke access to a shared record 
-
-* ```shared_record_update``` Change permission of a shared record 
-
-* ```shared_record_transfer``` Transfer individual record ownership 
-
-**Shared Folder Management Commands (Coming Soon)**
-
-* ```shared_folder_settings``` Set default folder settings of a shared folder
-
-* ```shared_folder_add_user``` Add a user to a shared folder
-
-* ```shared_folder_grant_team``` Grant team access to a shared folder
-
-* ```shared_folder_grant_user``` Grant user access to a shared folder
-
-* ```shared_folder_revoke_team``` Revoke a team from a shared folder
-
-* ```shared_folder_revoke_user``` Revoke a user from a shared folder
-
-* ```shared_folder_update_user``` Update user permission on shared folder
-
-* ```shared_folder_update_team``` Update team permission on shared folder
+* ```share-folder``` or ```sf``` Grant or revoke shared folder's user access or record permission
 
 **Enterprise Console Management Commands (Coming Soon)**
 

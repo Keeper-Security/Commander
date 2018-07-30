@@ -22,11 +22,11 @@ def register_commands(commands, aliases, command_info):
     from .folder import register_commands as folder_commands
     folder_commands(commands, aliases, command_info)
 
-    from .utils import register_commands as misc_commands
-    misc_commands(commands, aliases, command_info)
-
     from .register import register_commands as register_commands
     register_commands(commands, aliases, command_info)
+
+    from .utils import register_commands as misc_commands
+    misc_commands(commands, aliases, command_info)
 
     command_info['shell'] = 'Use Keeper interactive shell'
     command_info['c'] = 'Clear the screen'

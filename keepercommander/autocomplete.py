@@ -9,13 +9,39 @@
 # Contact: ops@keepersecurity.com
 #
 
+import argparse
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
-from .commands.folder import ls_parser, cd_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser
-from .commands.record import rm_parser, append_parser, download_parser
+from .commands.folder import ls_parser, mv_parser
 from . import api
 from . import cli
+
+
+def no_parse_exception(m):
+    pass
+
+
+def no_exit():
+    pass
+
+
+record_parser = argparse.ArgumentParser()
+record_parser.add_argument('-e', '--email', dest='email', action='append')
+record_parser.add_argument('-a', '--action', dest='action', action='store')
+record_parser.add_argument('--notes', dest='notes', action='store')
+record_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+record_parser.error = no_parse_exception
+record_parser.exit = no_exit
+
+folder_parser = argparse.ArgumentParser()
+folder_parser.add_argument('-e', '--email', dest='email', action='append')
+folder_parser.add_argument('-a', '--action', dest='action', action='store')
+folder_parser.add_argument('-r', '--record', dest='record', action='append')
+folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='record path or UID')
+folder_parser.error = no_parse_exception
+folder_parser.exit = no_exit
+
 
 def try_resolve_path(params, path):
     if type(path) is str:
@@ -121,55 +147,20 @@ class CommandCompleter(Completer):
                             opts, _ = ls_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.pattern or ''
                             context = 'folder'
-                    elif cmd == 'cd':
+                    elif cmd in {'download-attachment', 'share-record', 'append-notes', 'rm'} :
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
-                            opts, _ = cd_parser.parse_known_args(shlex.split(args))
+                            opts, _ = record_parser.parse_known_args(shlex.split(args))
+                            extra['prefix'] = opts.record or ''
+                            context = 'path'
+                    elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd'}:
+                        args = CommandCompleter.fix_input(raw_input)
+                        if args is not None:
+                            extra['escape_space'] = args == raw_input
+                            opts, _ = folder_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.folder or ''
                             context = 'folder'
-                    elif cmd == 'tree':
-                        args = CommandCompleter.fix_input(raw_input)
-                        if args is not None:
-                            extra['escape_space'] = args == raw_input
-                            opts, _ = tree_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.folder or ''
-                            context = 'folder'
-                    elif cmd == 'mkdir':
-                        args = CommandCompleter.fix_input(raw_input)
-                        if args is not None:
-                            extra['escape_space'] = args == raw_input
-                            opts, _ = mkdir_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.name or ''
-                            context = 'folder'
-                    elif cmd == 'rmdir':
-                        args = CommandCompleter.fix_input(raw_input)
-                        if args is not None:
-                            extra['escape_space'] = args == raw_input
-                            opts, _ = rmdir_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.folder or ''
-                            context = 'folder'
-                    elif cmd == 'rm':
-                        args = CommandCompleter.fix_input(raw_input)
-                        if args is not None:
-                            extra['escape_space'] = args == raw_input
-                            opts, _ = rm_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.name or ''
-                            context = 'path'
-                    elif cmd == 'append-notes':
-                        args = CommandCompleter.fix_input(raw_input)
-                        if args is not None:
-                            extra['escape_space'] = args == raw_input
-                            opts, _ = append_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.name or ''
-                            context = 'path'
-                    elif cmd == 'download-attachment':
-                        args = CommandCompleter.fix_input(raw_input)
-                        if args is not None:
-                            extra['escape_space'] = args == raw_input
-                            opts, _ = download_parser.parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.name or ''
-                            context = 'path'
                     elif cmd in {'mv', 'ln'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
