@@ -219,52 +219,43 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```enterprise-info``` or ```ei```   Display enterprise information
 
-sub-commands:
-
-```--nodes``` Show node structure in a tree form
-```--users``` Show users in a list view
-```--roles``` Show all roles in a list view
-```--teams``` Show all teams in a list view
-
-Notes:
-Specify ```--node NODE``` to limit the display to one node.
+    - ```--nodes``` Show node structure in a tree form
+    - ```--users``` Show users in a list view
+    - ```--roles``` Show all roles in a list view
+    - ```--teams``` Show all teams in a list view
+    - ```--node``` Specify a single node to limit view
+    - ```--v``` Verbose mode 
 
 * ```enterprise-user``` or ```eu```   Enterprise user management
 
-sub-commands:
-
-```--expire``` Expire the master password for the user
-```--lock``` Unlock the user account
-```--unlock``` Lock the user account 
-```--add``` Invite a new user to join the enterprise
-```--delete``` Delete the user and all stored vault records (use with caution)
-```--name``` Rename a user's display name
-```--node``` Move user into a node 
-```--add-role``` Add a user to a role
-```--remove-role``` Remove a user from a role
-```--add-team``` Add a user to a team
-```--remove-team``` Remove a user from a team
+    - ```--expire``` Expire the master password for the user
+    - ```--lock``` Unlock the user account
+    - ```--unlock``` Lock the user account 
+    - ```--add``` Invite a new user to join the enterprise
+    - ```--delete``` Delete the user and all stored vault records (use with caution)
+    - ```--name``` Rename a user's display name
+    - ```--node``` Move user into a node 
+    - ```--add-role``` Add a user to a role
+    - ```--remove-role``` Remove a user from a role
+    - ```--add-team``` Add a user to a team
+    - ```--remove-team``` Remove a user from a team
 
 * ```enterprise-role``` or ```er```   Enterprise role management
 
-sub-commands:
-
-```--add-user``` Add a user to a specified role
-```--remove-user``` Remove a user from a specified role
+    - ```--add-user``` Add a user to a specified role
+    - ```--remove-user``` Remove a user from a specified role
 
 * ```enterprise-team``` or ```et```   Enterprise team management
 
-sub-commands:
-
-```--add``` Create a new team in the root node
-```--node``` Move a team into the specified node
-```--add-user``` Add a user to a team
-```--remove-user``` Remove a user from a team
-```--name``` Change the Team name
-```--delete``` Delete a team
-```--restrict-edit``` Restrict record edit on the team
-```--restrict-share``` Restrict record re-sharing on the team
-```--restrict-view``` Restrict record viewing on the team 
+    - ```--add``` Create a new team in the root node
+    - ```--node``` Move a team into the specified node
+    - ```--add-user``` Add a user to a team
+    - ```--remove-user``` Remove a user from a team
+    - ```--name``` Change the Team name
+    - ```--delete``` Delete a team
+    - ```--restrict-edit``` Restrict record edit on the team
+    - ```--restrict-share``` Restrict record re-sharing on the team
+    - ```--restrict-view``` Restrict record viewing on the team 
 
 ### Importing Records into Keeper
 
