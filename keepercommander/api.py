@@ -212,7 +212,8 @@ def login(params, attempt=0):
                 params.license = response_json['license']
 
             params.sync_data = True
-            #query enterprise
+            query_enterprise(params)
+            params.prepare_commands = True
             success = True
 
         elif ( response_json['result_code'] == 'need_totp' or
@@ -1854,6 +1855,10 @@ def generate_record_uid():
         os.urandom(16)).decode().rstrip('=')
 
 
+def generate_aes_key():
+    return os.urandom(32)
+
+
 def prepare_folder_tree(params):
     '''
     :type params: KeeperParams
@@ -1972,9 +1977,16 @@ def get_record_shares(params, record_uids):
 
 
 def query_enterprise(params):
+    def fix_data(data):
+        idx = data.rfind(b'}')
+        if idx < len(data) - 1:
+            data = data[:idx+1]
+        return data
+
     request = {
         'command': 'get_enterprise_data',
-        'include': ['nodes', 'users', 'teams', 'team_users']
+        'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
+                    'role_users', 'managed_nodes', 'role_keys']
     }
     try:
         response = communicate(params, request)
@@ -1986,23 +1998,36 @@ def query_enterprise(params):
                 elif response['key_type_id'] == 2:
                     tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
                 if not tree_key is None:
+                    tree_key = tree_key[:32]
                     response['unencrypted_tree_key'] = tree_key
                     if 'nodes' in response:
                         for node in response['nodes']:
                             if 'encrypted_data' in node:
                                 try:
                                     data = decrypt_aes(node['encrypted_data'], tree_key)
+                                    data = fix_data(data)
                                     node['data'] = json.loads(data.decode('utf-8'))
-                                except:
+                                except Exception as e:
                                     pass
                     if 'users' in response:
                         for user in response['users']:
                             if 'encrypted_data' in user:
                                 try:
                                     data = decrypt_aes(user['encrypted_data'], tree_key)
+                                    data = fix_data(data)
                                     user['data'] = json.loads(data.decode('utf-8'))
-                                except:
+                                except Exception as e:
                                     pass
+                    if 'roles' in response:
+                        for role in response['roles']:
+                            if 'encrypted_data' in role:
+                                try:
+                                    data = decrypt_aes(role['encrypted_data'], tree_key)
+                                    data = fix_data(data)
+                                    role['data'] = json.loads(data.decode('utf-8'))
+                                except Exception as e:
+                                    pass
+
                     params.enterprise = response
     except:
         params.enterprise = None

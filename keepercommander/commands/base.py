@@ -34,6 +34,16 @@ def register_commands(commands, aliases, command_info):
     command_info['q'] = 'Quit'
 
 
+def register_enterprise_commands(commands, aliases, command_info):
+    from .enterprise import register_commands as enterprise_commands
+    enterprise_commands(commands, aliases, command_info)
+
+
+def unregister_enterprise_commands(commands, aliases, command_info):
+    from .enterprise import unregister_commands as remove_enterprise_commands
+    remove_enterprise_commands(commands, aliases, command_info)
+
+
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
     choices = [ch.lower() if ch.upper() == default.upper() else ch.lower()  for ch in choice]
 

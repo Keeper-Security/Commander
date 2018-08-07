@@ -55,6 +55,7 @@ class KeeperParams:
         self.sync_data = True
         self.license = None
         self.enterprise = None
+        self.prepare_commands = False
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -86,3 +87,4 @@ class KeeperParams:
         self.sync_data = True
         self.license = None
         self.enterprise = None
+        self.prepare_commands = True

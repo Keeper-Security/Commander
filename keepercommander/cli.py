@@ -24,7 +24,7 @@ from . import display, api
 from .error import AuthenticationError, CommunicationError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
-from .commands import register_commands
+from .commands import register_commands, register_enterprise_commands, unregister_enterprise_commands
 
 
 stack = []
@@ -181,6 +181,13 @@ def loop(params):
 
             if not params.command:
                 try:
+                    if params.prepare_commands:
+                        if params.enterprise:
+                            register_enterprise_commands(commands, aliases, command_info)
+                        else:
+                            unregister_enterprise_commands(commands, aliases, command_info)
+                        params.prepare_commands = False
+
                     if prompt_session is not None:
                         params.command = prompt_session.prompt(get_prompt(params)+ '> ')
                     else:
