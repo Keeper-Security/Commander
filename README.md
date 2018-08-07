@@ -6,18 +6,21 @@ Jump to:
 * [Overview](#password-management-sdk-for-it-admins--developers)
 * [Use Cases](#use-cases)
 * [Installation](#installation---linux-and-mac)
-* [Developer Setup](#installation---developer-mode)
+* [Developer Setup](#developer-setup)
+* [Command-line Usage](#command-line-Usage)
+* [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
 * [Importing Data](#importing-records-into-keeper)
 * [Advanced](#advanced-configuration-file)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
+* [Enterprise Resources](#enterprise-resources)
 
 ### Password Management SDK for IT Admins & Developers
 
-Keeper Security develops the world's most downloaded password manager and encrypted digital vault with millions of individual customers and thousands of enterprise customers worldwide.  Keeper offers a zero-knowledge, cloud-based solution to consumers, families and businesses to protect and secure their most sensitive and private information. Keeper Password Manager is available on every mobile and desktop device. <a href="#about-keeper">Read more</a> about Keeper or visit the [Keeper Security](https://keepersecurity.com) website.
+Keeper Security develops the world's most downloaded password manager and encrypted digital vault with millions of individual customers and thousands of enterprise customers worldwide.  Keeper is a zero-knowledge, native and cloud-based solution available on every mobile and desktop device platform. <a href="#about-keeper">Read more</a> about Keeper or visit the [Keeper Security](https://keepersecurity.com) website.
 
-Keeper Commander is a command-line, interactive shell and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, rotate passwords and perform Keeper Enterprise administrative functions related to user onboarding and provisioning of vault records.
+Keeper Commander is a command-line, interactive shell and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, rotate passwords and perform Keeper Enterprise administrative functions related to user onboarding and provisioning of vault records. Most features available in the Keeper Admin Console are available through Commander's interactive shell and SDK interface.
 
 In addition to vault and administrative functionality, Commander can be used to perform targeted password rotations, integrate password management into your backend systems and eliminate the use of hardcoded passwords. Using our connector [plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins), Commander can execute a password rotation directly to any common system or service account such as Unix systems, SQL Databases, Active Directory, Amazon AWS, local Administator accounts, network devices, etc...
 
@@ -25,14 +28,15 @@ Keeper Commander is an open source project written in Python, and it is under co
 
 ### Use Cases
 
-* Access your Keeper vault through a command-line interface 
+* Access your Keeper vault through a command-line interface
 * Perform bulk import and export of vault records 
 * Manage records, folders and shared folders
-* Customize integration into your backend systems 
+* Customize integration into your backend systems
 * Provision new Enterprise user accounts and shared folders
+* Manage nodes, roles, teams and users
 * Rotate passwords on service accounts or other targets
-* Integrate Keeper into your existing backend systems 
-* Schedule and automate commands 
+* Integrate Keeper into your existing backend systems
+* Schedule and automate commands
 
 ### Installation - Linux and Mac
 
@@ -67,7 +71,7 @@ $ pip3 install --upgrade keepercommander
 
 Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
 
-### Developer Environment Setup
+### Developer Setup
 
 This type of installation assumes you want to view/modify the Python source code (Compatible with Python 3.4+).
 
@@ -118,7 +122,7 @@ optional arguments:
   --debug               Turn on debug mode
 ```
 
-### Interactive shell
+### Interactive Shell
 To run a series of commands and stay logged in, you will enjoy using Commander's interactive shell.
 
 ```
@@ -158,6 +162,8 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 * ```sync-down``` or ```d``` Download, sync and decrypt vault
 
 * ```list``` or ```l``` List all records or search with a regular expression.
+
+* ```search``` or ```s``` Search all records with a regular expression.
 
 * ```ls``` List folder contents (try ```ls -l``` as well)
 
@@ -213,11 +219,52 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```enterprise-info``` or ```ei```   Display enterprise information
 
+sub-commands:
+
+```--nodes``` Show node structure in a tree form
+```--users``` Show users in a list view
+```--roles``` Show all roles in a list view
+```--teams``` Show all teams in a list view
+
+Notes:
+Specify ```--node NODE``` to limit the display to one node.
+
 * ```enterprise-user``` or ```eu```   Enterprise user management
+
+sub-commands:
+
+```--expire``` Expire the master password for the user
+```--lock``` Unlock the user account
+```--unlock``` Lock the user account 
+```--add``` Invite a new user to join the enterprise
+```--delete``` Delete the user and all stored vault records (use with caution)
+```--name``` Rename a user's display name
+```--node``` Move user into a node 
+```--add-role``` Add a user to a role
+```--remove-role``` Remove a user from a role
+```--add-team``` Add a user to a team
+```--remove-team``` Remove a user from a team
 
 * ```enterprise-role``` or ```er```   Enterprise role management
 
+sub-commands:
+
+```--add-user``` Add a user to a specified role
+```--remove-user``` Remove a user from a specified role
+
 * ```enterprise-team``` or ```et```   Enterprise team management
+
+sub-commands:
+
+```--add``` Create a new team in the root node
+```--node``` Move a team into the specified node
+```--add-user``` Add a user to a team
+```--remove-user``` Remove a user from a team
+```--name``` Change the Team name
+```--delete``` Delete a team
+```--restrict-edit``` Restrict record edit on the team
+```--restrict-share``` Restrict record re-sharing on the team
+```--restrict-view``` Restrict record viewing on the team 
 
 ### Importing Records into Keeper
 
@@ -452,7 +499,7 @@ Keeper's Features &amp; Benefits
 [https://keepersecurity.com](https://keepersecurity.com)
 
 ### Pricing
-Keeper is free for local password management on your device.  Premium subscription provides cloud-based features and premium device-specific features including Sync, Backup & Restore, Secure Sharing, File Storage and multi-device usage.  More info about our consumer and enterprise pricing plans can be found [here](https://keepersecurity.com/pricing.html). 
+Keeper is free for local password management on your device.  Premium subscriptions provides cloud-based capabilites including multi-device sync, shared folders, teams, SSO integration and encrypted file storage. More info about our enterprise pricing plans can be found [here](https://keepersecurity.com/pricing.html?tab=business).
 
 ### Mobile Apps
 
@@ -494,6 +541,10 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Enterprise Admin Console](https://keepersecurity.com/console)
 
-### Support 
+### Sales & Support 
+
+[Enterprise Guide](https://keepersecurity.com/user-guides/enterprise-guide.html)
+[White Papers & Data Sheets](https://keepersecurity.com/enterprise-resources.html)
+[Contact Sales or Support](https://keepersecurity.com/contact.html)
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
