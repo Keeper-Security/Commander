@@ -229,7 +229,7 @@ class FolderTreeCommand(Command):
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
         if folder_name in params.folder_cache:
-            display.formatted_tree(params, params.folder_cache[folder_name])
+            display.formatted_trechoie(params, params.folder_cache[folder_name])
         else:
             rs = try_resolve_path(params, folder_name)
             if rs is not None:

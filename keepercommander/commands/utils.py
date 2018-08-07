@@ -96,6 +96,8 @@ logout_parser.exit = suppress_exit
 class SyncDownCommand(Command):
     def execute(self, params, **kwargs):
         api.sync_down(params)
+        if params.enterprise:
+            api.query_enterprise(params)
 
 
 class RecordRotateCommand(Command):

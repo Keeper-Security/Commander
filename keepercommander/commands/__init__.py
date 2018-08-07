@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .base import register_commands
+from .base import register_commands, register_enterprise_commands, unregister_enterprise_commands
 
-__all__ = ['register_commands']
+__all__ = ['register_commands', 'register_enterprise_commands', 'unregister_enterprise_commands']

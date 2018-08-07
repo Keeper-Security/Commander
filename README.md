@@ -209,23 +209,15 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```share-folder``` or ```sf``` Grant or revoke shared folder's user access or record permission
 
-**Enterprise Console Management Commands (Coming Soon)**
+**Enterprise Console Management Commands**
 
-* ```enterprise_user_add``` Invite a user to the Enterprise 
+* ```enterprise-info``` or ```ei```   Display enterprise information
 
-* ```enterprise_user_lock``` Lock user account 
+* ```enterprise-user``` or ```eu```   Enterprise user management
 
-* ```resend_enterprise_invite``` Resend enterprise invite
+* ```enterprise-role``` or ```er```   Enterprise role management
 
-* ```set_master_password_expire``` Expire a user's master password
-
-* ```role_user_add``` Add a user to a role
-
-* ```role_user_remove``` Remove a user from a role 
-
-* ```team_add``` Create a new team
-
-* ```team_enterprise_user_add``` Add a user to a team
+* ```enterprise-team``` or ```et```   Enterprise team management
 
 ### Importing Records into Keeper
 
