@@ -23,7 +23,7 @@ install_requires = [
     'libkeepass',
     'requests',
     'tabulate',
-    'prompt_toolkit',
+    'prompt_toolkit>=2.0.4',
     'asciitree'
 ]
 
