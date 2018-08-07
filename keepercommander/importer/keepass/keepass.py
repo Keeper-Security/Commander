@@ -71,7 +71,7 @@ class KeepassImporter(BaseImporter):
         return path
 
     def do_import(self, filename):
-        password = getpass.getpass(prompt='...' + 'Password'.rjust(16) + ': ', stream=None)
+        password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
 
         with libkeepass.open(filename, password=password) as kdb:
             root = kdb.obj_root.find('Root/Group')
@@ -196,7 +196,7 @@ class KeepassExporter(BaseExporter):
 
     def do_export(self, filename, records):
         print('Choose password for your Keepass file')
-        master_password = getpass.getpass(prompt='...' + 'Password'.rjust(16) + ': ', stream=None)
+        master_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
 
         sfs = []  # type: [SharedFolder]
         rs = []   # type: [Record]
