@@ -7,7 +7,7 @@ Jump to:
 * [Use Cases](#use-cases)
 * [Installation](#installation---linux-and-mac)
 * [Developer Setup](#developer-setup)
-* [Command-line Usage](#command-line-Usage)
+* [Command-line Usage](#command-line-usage)
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
 * [Importing Data](#importing-records-into-keeper)
@@ -449,7 +449,7 @@ When you login to Keeper on any device (or on Commander), your Master Password i
 
 When storing information to your vault, Keeper stores and synchronizes the encrypted data.
 
-We strongly recommend that you enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings screen.  When logging into Commander with Two-Factor Authentication turned on, you will be asked for a one-time passcode.  After successful authentication, Commander receives a device token that can be used for subsequent requests without another two-factor auth request.
+We strongly recommend that you enable Two-Factor Authentication on your Keeper account via the [web app](https://keepersecurity.com/vault) settings screen.  This can also be enforced at the Keeper Enterprise level. When logging into Commander with Two-Factor Authentication turned on, you will be asked for a one-time passcode.  After successful authentication, Commander receives a device token that can be used for subsequent requests without another two-factor auth request.
 
 For more details on Keeper's security architecture, certifications and implementation details, visit the [Security Disclosure](https://keepersecurity.com/security.html) page of our website. If you have any specific questions related to security, email security@keepersecurity.com.
 
@@ -535,7 +535,9 @@ Keeper is free for local password management on your device.  Premium subscripti
 ### Sales & Support 
 
 [Enterprise Guide](https://keepersecurity.com/user-guides/enterprise-guide.html)
+
 [White Papers & Data Sheets](https://keepersecurity.com/enterprise-resources.html)
+
 [Contact Sales or Support](https://keepersecurity.com/contact.html)
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
