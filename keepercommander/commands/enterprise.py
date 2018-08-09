@@ -12,6 +12,9 @@
 import argparse
 import json
 import base64
+import requests
+import logging
+import platform
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -21,6 +24,7 @@ from asciitree import LeftAligned
 from collections import OrderedDict as OD
 
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
+from .record import RecordAddCommand
 from .. import api
 from ..display import bcolors
 
@@ -30,22 +34,24 @@ def register_commands(commands, aliases, command_info):
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
+    commands['audit-log'] = AuditLogCommand()
 
     aliases['ei'] = 'enterprise-info'
     aliases['eu'] = 'enterprise-user'
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
+    aliases['al'] = 'audit-log'
 
-    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser]:
+    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, audit_log_parser]:
         command_info[p.prog] = p.description
 
 
 def unregister_commands(commands, aliases, command_info):
-    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team']:
+    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team', 'audit-log']:
         commands.pop(cmd, None)
-    for cmd in ['ei', 'eu', 'er', 'et']:
+    for cmd in ['ei', 'eu', 'er', 'et', 'al']:
         aliases.pop(cmd, None)
-    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser]:
+    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, audit_log_parser]:
         command_info.pop(p.prog, None)
 
 
@@ -104,6 +110,13 @@ enterprise_team_parser.add_argument('--node', dest='node', action='store', help=
 enterprise_team_parser.add_argument('team', type=str, action='store', help='team name or team UID (except --add command)')
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
+
+
+audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
+audit_log_parser.error = raise_parse_exception
+audit_log_parser.exit = suppress_exit
 
 
 def lock_text(lock):
@@ -938,3 +951,167 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                         print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if kwargs.get('verbose') else ''))
         else:
             print('Team not found')
+
+
+class AuditLogCommand(EnterpriseCommand):
+    def get_parser(self):
+        return audit_log_parser
+
+    def execute(self, params, **kwargs):
+        target = kwargs.get('target')
+        default_record_name = None
+        if target == 'splunk':
+            default_record_name = 'Audit Log: Splunk'
+        else:
+            print('Audit log export: unsupported target')
+            return
+
+        record = None
+        record_name = kwargs.get('record') or default_record_name
+        for r_uid in params.record_cache:
+            rec = api.get_record(params, r_uid)
+            if record_name in [rec.record_uid, rec.title]:
+                record = rec
+        if record is None:
+            answer = user_choice('Do you want to create a Keeper record to store audit log settings?', 'yn', 'n')
+            if answer.lower() == 'y':
+                record_title = input('Choose the title for audit log record [Default: {0}]: '.format(default_record_name)) or default_record_name
+                cmd = RecordAddCommand()
+                record_uid = cmd.execute(params, **{
+                    'title': record_title,
+                    'force': True
+                })
+                if record_uid:
+                    api.sync_down(params)
+                    record = api.get_record(params, record_uid)
+        if record is None:
+            return
+
+        props = {}
+        #setup record
+        store_record = False
+        if target == 'splunk':
+            try:
+                logging.captureWarnings(True)
+                url = record.login_url
+                if not url:
+                    print('Enter HTTP Event Collecton (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
+                    while not url:
+                        address = input('...' + 'Splunk HEC endpoint: '.rjust(32))
+                        if not address:
+                            return
+                        for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
+                            try:
+                                print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
+                                rs = requests.post(test_url, json='', verify=False)
+                                if rs.status_code == 401:
+                                    js = rs.json()
+                                    if 'code' in js:
+                                        if js['code'] == 2:
+                                            url = test_url
+                            except:
+                                pass
+                            if url:
+                                print('Found.')
+                                break
+                            else:
+                                print('Failed.')
+                    record.login_url = url
+                    store_record = True
+                props['hec_url'] = url
+
+                token = record.password
+                if not token:
+                    while not token:
+                        test_token = input('...' + 'Splunk Token: '.rjust(32))
+                        if not test_token:
+                            return
+                        try:
+                            auth={'Authorization': 'Splunk {0}'.format(test_token)}
+                            rs = requests.post(url, json='', headers=auth, verify=False)
+                            if rs.status_code == 400:
+                                js = rs.json()
+                                if 'code' in js:
+                                    if js['code'] == 6:
+                                        token = test_token
+                        except:
+                            pass
+                    record.password = token
+                    store_record = True
+                props['token'] = token
+                props['host'] = platform.node()
+            finally:
+                logging.captureWarnings(False)
+
+        #query data
+        last_event_id = 0
+        val = record.get('last_event_id')
+        if val:
+            try:
+                last_event_id = int(val)
+            except:
+                pass
+
+        events = []
+        finished = False
+        first_event_id = 0
+        current_event_id = 0
+        count = 0
+        while not finished:
+            finished = True
+            rq = {
+                'command': 'get_enterprise_audit_events',
+                'start_id': current_event_id if current_event_id > 1 else 0,
+                'report_type': 'day'
+            }
+            rs = api.communicate(params, rq)
+            if rs['result'] == 'success':
+                if 'audit_events' in rs:
+                    if len(rs['audit_events']) > 0:
+                        finished = False
+                        for event in rs['audit_events']:
+                            current_event_id = event['id']
+                            if current_event_id <= last_event_id:
+                                finished = True
+                                break
+
+                            if first_event_id == 0:
+                                first_event_id = current_event_id
+
+                            if target == 'splunk':
+                                evt = event.copy()
+                                fld = {
+                                    'id': evt.pop('id')
+                                }
+                                time = evt.pop('created')
+                                js = {
+                                    'time': time,
+                                    'host': props['host'],
+                                    'source': params.enterprise['enterprise_name'],
+                                    'sourcetype': '_json',
+                                    'event': evt
+                                }
+                                events.append(json.dumps(js))
+
+            if finished or len(events) >= 500:
+                if len(events) > 0:
+                    if target == 'splunk':
+                        auth = { 'Authorization': 'Splunk {0}'.format(props['token']) }
+                        try:
+                            logging.captureWarnings(True)
+                            rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth, verify=False)
+                        finally:
+                            logging.captureWarnings(False)
+
+                        if rs.status_code == 200:
+                            store_record = True
+                        else:
+                            finished = True
+                    count += len(events)
+                    events.clear()
+
+        if store_record:
+            print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
+            record.set_field('last_event_id', str(first_event_id))
+            params.sync_data = True
+            api.update_record(params, record, silent=True)

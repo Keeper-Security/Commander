@@ -1715,12 +1715,13 @@ def communicate(params, request):
     return response_json
 
 
-def update_record(params, record):
+def update_record(params, record, **kwargs):
     """ Push a record update to the cloud. 
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
-    print("Pushing update...")
+    if not kwargs.get('silent'):
+        print("Pushing update...")
     update_record = prepare_record(params, record)
     request = make_request(params, 'record_update')
     request['update_records'] = [update_record]
@@ -1743,10 +1744,9 @@ def update_record(params, record):
             print('Error: Revision did not change')
             return False
 
-        print('New record successful for record_uid=' + \
-            str(update_record['record_uid']) + ', revision=' + \
-            str(update_record['revision']), ', new_revision=' + \
-            str(new_revision))
+        if not kwargs.get('silent'):
+            print('New record successful for record_uid={0}, revision={1}, new_revision={2}'
+                  .format(update_record['record_uid'], update_record['revision'], new_revision))
 
         update_record['revision'] = new_revision
 
