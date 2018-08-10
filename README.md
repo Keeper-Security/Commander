@@ -377,7 +377,7 @@ $ keeper import -h
 
 ### Event Logging
 
-** Splunk **
+**Splunk HTTP Event Collector Push**
 Keeper can post event logs directly to your on-prem or cloud Splunk instance. Please follow the below steps:
 
 * Login to Splunk enterprise 
