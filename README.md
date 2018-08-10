@@ -393,7 +393,7 @@ $ keeper shell
 
 Next set up the Splunk integration with Commander. Commander will create a record in your vault that stores the provided token and Splunk HTTP Event Collector. This will be used to also track the last event captured so that subsequent execution will pick up where it left off.  Note that the default port for HEC is 8088.
 
-```bash
+```
 $ keeper audit-log --format=splunk
 
 Do you want to create a Keeper record to store audit log settings? [y/n]: y
@@ -407,7 +407,7 @@ Testing 'https://192.168.51.41:8088/services/collector' ...Found.
 ```
 You can find the record UID of the Splunk record for subsequent audit log exports:
 
-```bash
+```
 My Vault> search splunk
 
   #  Record UID              Title              Login    URL
