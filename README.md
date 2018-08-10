@@ -378,6 +378,7 @@ $ keeper import -h
 ### Event Logging
 
 **Splunk HTTP Event Collector Push**
+
 Keeper can post event logs directly to your on-prem or cloud Splunk instance. Please follow the below steps:
 
 * Login to Splunk enterprise 
@@ -390,10 +391,7 @@ Keeper can post event logs directly to your on-prem or cloud Splunk instance. Pl
 $ keeper shell
 ```
 
-Next set up the Splunk integration with Commander. Commander will create a record in your vault 
-that stores the provided token and Splunk HTTP Event Collector. This will be used to also track 
-the last event captured so that subsequent execution will pick up where it left off.  
-Note that the default port for HEC is 8088.
+Next set up the Splunk integration with Commander. Commander will create a record in your vault that stores the provided token and Splunk HTTP Event Collector. This will be used to also track the last event captured so that subsequent execution will pick up where it left off.  Note that the default port for HEC is 8088.
 
 ```bash
 $ keeper audit-log --format=splunk
@@ -410,7 +408,7 @@ Testing 'https://192.168.51.41:8088/services/collector' ...Found.
 You can find the record UID of the Splunk record for subsequent audit log exports:
 
 ```bash
-My Vault> s splunk
+My Vault> search splunk
 
   #  Record UID              Title              Login    URL
 ---  ----------------------  -----------------  -------  -----
