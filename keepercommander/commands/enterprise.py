@@ -995,7 +995,7 @@ class AuditLogCommand(EnterpriseCommand):
                 logging.captureWarnings(True)
                 url = record.login_url
                 if not url:
-                    print('Enter HTTP Event Collecton (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
+                    print('Enter HTTP Event Collector (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
                     while not url:
                         address = input('...' + 'Splunk HEC endpoint: '.rjust(32))
                         if not address:

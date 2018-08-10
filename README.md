@@ -257,6 +257,9 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
     - ```--restrict-share``` Restrict record re-sharing on the team
     - ```--restrict-view``` Restrict record viewing on the team 
 
+* ```audit-log``` Export audit and event logs
+    - ```--target=splunk``` Export events to Splunk HTTP Event Collector [See Details](#event-logging)
+
 ### Importing Records into Keeper
 
 To import records into your vault, use the ```import``` command.  Supported import formats:
@@ -370,6 +373,59 @@ $ keeper import --format=keepass --shared --permissions=URES test.kdbx
 For more options, see the help screen:
 ```bash
 $ keeper import -h
+```
+
+### Event Logging
+
+** Splunk **
+Keeper can post event logs directly to your on-prem or cloud Splunk instance. Please follow the below steps:
+
+* Login to Splunk enterprise 
+* Go to Settings -> Data Inputs -> HTTP Event Collector
+* Click on "New Token" then type in a name, select an index and finish.
+* At the last step, copy the "Token Value" and save it for the next step.
+* Login to Keeper Commander shell
+
+```bash
+$ keeper shell
+```
+
+Next set up the Splunk integration with Commander. Commander will create a record in your vault 
+that stores the provided token and Splunk HTTP Event Collector. This will be used to also track 
+the last event captured so that subsequent execution will pick up where it left off.  
+Note that the default port for HEC is 8088.
+
+```bash
+$ keeper audit-log --format=splunk
+
+Do you want to create a Keeper record to store audit log settings? [y/n]: y
+Choose the title for audit log record [Default: Audit Log: Splunk]: <enter> 
+
+Enter HTTP Event Collector (HEC) endpoint in format [host:port].
+Example: splunk.company.com:8088
+...           Splunk HEC endpoint: 192.168.51.41:8088
+Testing 'https://192.168.51.41:8088/services/collector' ...Found.
+...                  Splunk Token: e2449233-4hfe-4449-912c-4923kjf599de
+```
+You can find the record UID of the Splunk record for subsequent audit log exports:
+
+```bash
+My Vault> s splunk
+
+  #  Record UID              Title              Login    URL
+---  ----------------------  -----------------  -------  -----
+  1  schQd2fOWwNchuSsDEXfEg  Audit Log: Splunk
+```
+
+Each subsequent audit log export can be performed with this command:
+
+```bash
+$ keeper audit-log --format=splunk --record=<your record UID>
+```
+or from the shell:
+
+```bash
+My Vault> audit-log --target=splunk --record=<your record UID>
 ```
 
 ### Advanced Configuration File
