@@ -14,6 +14,7 @@ import getpass
 import re
 import os
 import base64
+import json
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
 
@@ -26,6 +27,7 @@ from .. import api, generator
 from .record import RecordAddCommand
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode, try_resolve_path
+from .enterprise import EnterpriseCommand
 
 from .base import raise_parse_exception, suppress_exit, Command
 
@@ -73,6 +75,8 @@ register_parser.add_argument('--store-record', dest='store', action='store_true'
 register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
 register_parser.add_argument('--pass', dest='password', action='store', help='user password')
 register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store', help='data center.')
+register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
+register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
 #register_parser.add_argument('--skip-backup', dest='skip', action='store_true', help='skip data key backup')
 #register_parser.add_argument('-q', '--question', dest='question', action='store', help='security question')
 #register_parser.add_argument('-a', '--answer', dest='answer', action='store', help='security answer')
@@ -109,6 +113,41 @@ class RegisterCommand(Command):
             else:
                 print(rs['message'])
             return
+
+        # check enterprise
+        verification_code = None
+        if params.enterprise:
+            node_id = None
+            if kwargs.get('node'):
+                for node in params.enterprise['nodes']:
+                    if kwargs['node'] in {str(node['node_id']), node['data'].get('displayname')}:
+                        node_id = node['node_id']
+                        break
+                    elif not node.get('parent_id') and kwargs['node'] == params.enterprise['enterprise_name']:
+                        node_id = node['node_id']
+                        break
+            if node_id is None:
+                for node in params.enterprise['nodes']:
+                    if not node.get('parent_id'):
+                        node_id = node['node_id']
+                        break
+            data = {}
+            if 'name' in kwargs:
+                data['displayname'] = kwargs['name']
+            rq = {
+                'command': 'enterprise_user_add',
+                'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
+                'enterprise_user_username': email,
+                'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                'node_id': node_id,
+                'suppress_email_invite': True
+            }
+            try:
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    verification_code = rs.get('verification_code')
+            except:
+                pass
 
         password = kwargs['password'] if 'password' in kwargs else None
         generate = kwargs['generate'] if 'generate' in kwargs else None
@@ -199,6 +238,8 @@ class RegisterCommand(Command):
             'security_answer_hash': api.auth_verifier('keeper', salt, 1000),
             'client_key': api.encrypt_aes(os.urandom(32), data_key)
         }
+        if verification_code:
+            rq['verification_code'] = verification_code
 
         rs = api.run_command(new_params, rq)
         if rs['result'] == 'success':
