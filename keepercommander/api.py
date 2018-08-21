@@ -27,6 +27,7 @@ from .shared_folder import SharedFolder
 from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .commands.base import user_choice
+from .params import KeeperParams
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -42,6 +43,21 @@ BS = 16
 pad_binary = lambda s: s + ((BS - len(s) % BS) * chr(BS - len(s) % BS)).encode()
 unpad_binary = lambda s : s[0:-s[-1]]
 unpad_char = lambda s : s[0:-ord(s[-1])]
+
+
+is_interactive_mode = False
+
+
+def print_info(info, end_line=True):
+    if is_interactive_mode:
+        if end_line:
+            print(info)
+        else:
+            print(info, end='', flush=True)
+
+
+def print_error(error):
+    print(error, file=sys.stderr)
 
 
 def run_command(params, request):
@@ -360,13 +376,13 @@ def encrypt_aes(data, key):
     iv = os.urandom(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     encrypted_data = iv + cipher.encrypt(pad_binary(data))
-    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('==')
+    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
 
 
 def encrypt_rsa(data, rsa_key):
     cipher = PKCS1_v1_5.new(rsa_key)
     encrypted_data = cipher.encrypt(data)
-    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('==')
+    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
 
 
 def decrypt_rsa(data, rsa_key):
@@ -428,7 +444,7 @@ def sync_down(params):
     params.sync_data = False
 
     if params.revision == 0:
-        print('Syncing...')
+        print_info('Syncing...')
 
     def make_json(params):
         return {
@@ -988,10 +1004,9 @@ def sync_down(params):
 
         if 'full_sync' in response_json:
             if len(params.record_cache) == 1:
-                print('Decrypted [1] Record')
+                print_info('Decrypted [1] Record')
             else:
-                print('Decrypted [' + \
-                    str(len(params.record_cache)) + '] Records')
+                print_info('Decrypted [{0}] Records'.format(len(params.record_cache)))
 
     else :
         if response_json['result_code'] == 'auth_failed':
@@ -1780,7 +1795,11 @@ def update_shared_folder(params, shared_folder):
 
 
 def add_record(params, record):
-    """ Create a new Keeper record """
+    """    Create a new Keeper record 
+    :type params: KeeperParams 
+    :type record: Record
+    :rtype: bool
+    """
 
     new_record = prepare_record(params, record)
     request = make_request(params, 'record_update')

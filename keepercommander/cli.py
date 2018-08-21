@@ -46,7 +46,7 @@ def display_command_help():
 
 
 def goodbye():
-    print('\nGoodbye.\n')
+    api.print_info('\nGoodbye.\n')
     sys.exit()
 
 
@@ -149,31 +149,32 @@ def prompt_for_credentials(params):
 
 def loop(params):
     global prompt_session
-
-    display.welcome()
-
     try:
         if params.debug: print('Params: ' + str(params))
 
         prompt_session = None
-        if os.isatty(0):
-            completer = CommandCompleter(params)
-            prompt_session = PromptSession(multiline=False,
-                                           editing_mode=EditingMode.VI,
-                                           completer=completer,
-                                           complete_style=CompleteStyle.MULTI_COLUMN,
-                                           complete_while_typing=False)
+        if not params.batch_mode:
+            if os.isatty(0) and os.isatty(1):
+                completer = CommandCompleter(params)
+                prompt_session = PromptSession(multiline=False,
+                                               editing_mode=EditingMode.VI,
+                                               completer=completer,
+                                               complete_style=CompleteStyle.MULTI_COLUMN,
+                                               complete_while_typing=False)
+
+        if len(params.commands) == 0:
+            api.is_interactive_mode = True
+            display.welcome()
 
         if params.user:
             if not params.password:
                 print('Enter password for {0}'.format(params.user))
                 params.password = getpass.getpass(prompt='Password: ', stream=None)
             if params.password:
-                print('Logging in...')
+                api.print_info('Logging in...')
                 api.login(params)
                 api.sync_down(params)
 
-        # go into interactive mode
         while True:
             if len(params.commands) > 0:
                 params.command = params.commands[0]

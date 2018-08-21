@@ -68,6 +68,9 @@ def get_params_from_config(config_filename):
                 if 'debug' in params.config:
                     params.debug = params.config['debug']
 
+                if 'batch_mode' in params.config:
+                    params.batch_mode = params.config['batch_mode'] == True
+
             except:
                 print('Error: Unable to parse JSON file ' + params.config_filename)
                 raise
@@ -97,6 +100,7 @@ parser.add_argument('--password', '-kp', dest='password', action='store', help='
 parser.add_argument('--version', dest='version', action='store_true', help='Display version')
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
+parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
@@ -110,6 +114,9 @@ def main():
 
     if opts.debug:
         params.debug = opts.debug
+
+    if opts.batch_mode:
+        params.batch_mode = True
 
     if opts.server:
         params.server = 'https://{0}/api/v2/'.format(opts.server)

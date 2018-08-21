@@ -56,6 +56,7 @@ class KeeperParams:
         self.license = None
         self.enterprise = None
         self.prepare_commands = False
+        self.batch_mode = False
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -88,3 +89,4 @@ class KeeperParams:
         self.license = None
         self.enterprise = None
         self.prepare_commands = True
+        self.batch_mode = False

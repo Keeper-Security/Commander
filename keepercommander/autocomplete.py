@@ -147,7 +147,7 @@ class CommandCompleter(Completer):
                             opts, _ = ls_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.pattern or ''
                             context = 'folder'
-                    elif cmd in {'download-attachment', 'share-record', 'append-notes', 'rm'} :
+                    elif cmd in {'download-attachment', 'upload-attachment', 'share-record', 'append-notes', 'rm'} :
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input

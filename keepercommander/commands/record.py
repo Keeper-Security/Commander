@@ -14,13 +14,14 @@ import argparse
 import json
 import requests
 import base64
+import tempfile
 
 from Cryptodome.Cipher import AES
 
 from .. import generator, api, display
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
-
+from ..record import Record
 
 def register_commands(commands, aliases, command_info):
     commands['add'] = RecordAddCommand()
@@ -32,6 +33,7 @@ def register_commands(commands, aliases, command_info):
     commands['get'] = RecordGetUidCommand()
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
+    commands['upload-attachment'] = RecordUploadAttachmentCommand()
     aliases['a'] = 'add'
     aliases['s'] = 'search'
     aliases['l'] = 'list'
@@ -40,8 +42,10 @@ def register_commands(commands, aliases, command_info):
     aliases['g'] = 'get'
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
+    aliases['ua'] = 'upload-attachment'
 
-    for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser, download_parser]:
+    for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser,
+              download_parser, upload_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -95,9 +99,16 @@ append_parser.exit = suppress_exit
 
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
 #download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted.')
-download_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+download_parser.add_argument('record', action='store', help='record path or UID')
 download_parser.error = raise_parse_exception
 download_parser.exit = suppress_exit
+
+
+upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
+upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload.')
+upload_parser.add_argument('record', action='store', help='record path or UID')
+upload_parser.error = raise_parse_exception
+upload_parser.exit = suppress_exit
 
 
 class RecordAddCommand(Command):
@@ -470,7 +481,7 @@ class RecordDownloadAttachmentCommand(Command):
                     if file_key:
                         rq_http = requests.get(dl['url'], stream=True)
                         with open(file_name, 'wb') as f:
-                            print('Downloading \'{0}\''.format(os.path.abspath(f.name)))
+                            api.print_info('Downloading \'{0}\''.format(os.path.abspath(f.name)))
                             iv = rq_http.raw.read(16)
                             cipher = AES.new(file_key, AES.MODE_CBC, iv)
                             finished = False
@@ -482,7 +493,152 @@ class RecordDownloadAttachmentCommand(Command):
                                 else:
                                     finished = True
                     else:
-                        print('File \'{0}\': Failed to file encryption key'.format(file_name))
+                        api.print_error('File \'{0}\': Failed to file encryption key'.format(file_name))
                 else:
-                    print('File \'{0}\' download error: {1}'.format(file_id, dl['message']))
+                    api.print_error('File \'{0}\' download error: {1}'.format(file_id, dl['message']))
 
+
+class RecordUploadAttachmentCommand(Command):
+    def get_parser(self):
+        return upload_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        files = []
+        if 'file' in kwargs:
+            for name in kwargs['file']:
+                file_name = os.path.abspath(os.path.expanduser(name))
+                if os.path.isfile(file_name):
+                    files.append(file_name)
+                else:
+                    api.print_error('File {0} does not exists'.format(name))
+        if len(files) == 0:
+            api.print_error('No files to upload')
+            return
+
+        rq = {
+            'command': 'request_upload',
+            'file_count': len(files),
+            'thumbnail_count': 0
+        }
+        rs = api.communicate(params, rq)
+
+        attachments = []
+        for file_path, uo in zip(files, rs['file_uploads']):
+            try:
+                file_size = os.path.getsize(file_path)
+                if 0 < file_size < uo['max_size']:
+                    a = {
+                        'key': api.generate_aes_key(),
+                        'file_id': uo['file_id'],
+                        'name': os.path.basename(file_path)
+                    }
+                    api.print_info('Uploading {0} ...'.format(a['name']), end_line=False)
+                    with tempfile.TemporaryFile(mode='w+b') as dst:
+                        with open(file_path, mode='r+b') as src:
+                            iv = os.urandom(16)
+                            cipher = AES.new(a['key'], AES.MODE_CBC, iv)
+                            dst.write(iv)
+                            finished = False
+                            while not finished:
+                                to_encrypt = src.read(10240)
+                                if len(to_encrypt) > 0:
+                                    if len(to_encrypt) % api.BS != 0:
+                                        to_encrypt = api.pad_binary(to_encrypt)
+                                    encrypted = cipher.encrypt(to_encrypt)
+                                    dst.write(encrypted)
+                                else:
+                                    finished = True
+                            a['size'] = src.tell()
+                        dst.seek(0)
+                        files = {
+                            uo['file_parameter']: (a['file_id'], dst, 'application/octet-stream')
+                        }
+                        response = requests.post(uo['url'], files=files, data=uo['parameters'])
+                        if response.status_code == uo['success_status_code']:
+                            attachments.append(a)
+                    api.print_info('Done')
+                else:
+                    api.print_error('{0}: file size exceeds file plan limits'.format(file_path))
+            except Exception as e:
+                api.print_error('{0} error: {1}'.format(file_path, e))
+
+        if len(attachments) == 0:
+            api.print_error('No files were successfully uploaded')
+            return
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+                    if record_uid is None:
+                        record_add = RecordAddCommand()
+                        record_uid = record_add.execute(params, title=record_name, folder=folder_uid, force=True)
+
+        record = None
+        if record_uid is None:
+            record = Record()
+            record.title = kwargs['record']
+            if api.add_record(params, record):
+                record_uid = record.record_uid
+            else:
+                return
+
+        if params.sync_data:
+            api.sync_down(params)
+
+        record = params.record_cache[record_uid]
+        extra = json.loads(record['extra'].decode('utf-8')) if 'extra' in record else {}
+        files = extra.get('files')
+        if files is None:
+            files = []
+            extra['files'] = files
+        udata = record['udata'] if 'udata' in record else {}
+        file_ids = udata.get('file_ids')
+        if file_ids is None:
+            file_ids = []
+            udata['file_ids'] = file_ids
+        for atta in attachments:
+            file_ids.append(atta['file_id'])
+            files.append({
+                'id': atta['file_id'],
+                'name': atta['name'],
+                'size': atta['size'],
+                'key': base64.urlsafe_b64encode(atta['key']).decode().rstrip('=')
+            })
+
+        ru = {
+            'record_uid': record_uid,
+            'version': 2,
+            'client_modified_time': api.current_milli_time(),
+            'data': api.encrypt_aes(record['data'], record['record_key_unencrypted']),
+            'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record['record_key_unencrypted']),
+            'udata': udata,
+            'revision': record['revision']
+        }
+        api.resolve_record_access_path(params, record_uid, path=ru)
+        rq = {
+            'command': 'record_update',
+            'pt': 'Commander',
+            'device_id': 'Commander',
+            'client_time': api.current_milli_time(),
+            'update_records': [ru]
+        }
+        api.communicate(params, rq)
+        params.sync_data = True

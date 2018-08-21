@@ -70,7 +70,7 @@ share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
 
 
-register_parser = argparse.ArgumentParser(prog='create_user', description='Create Keeper User')
+register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper User')
 register_parser.add_argument('--store-record', dest='store', action='store_true', help='store credentials into Keeper record (must be logged in)')
 register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
 register_parser.add_argument('--pass', dest='password', action='store', help='user password')
