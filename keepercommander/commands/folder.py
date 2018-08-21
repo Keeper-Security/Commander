@@ -159,7 +159,7 @@ class FolderListCommand(Command):
 
         if len(folders) == 0 and len(records) == 0:
             if pattern:
-                print("ls: {0}: No such folder or record".format(pattern))
+                api.print_error("ls: {0}: No such folder or record".format(pattern))
         else:
             if show_detail:
                 if len(folders) > 0:
@@ -185,7 +185,7 @@ class FolderListCommand(Command):
 
                 names.extend(rnames)
 
-                width, _ = shutil.get_terminal_size()
+                width, _ = shutil.get_terminal_size(fallback=(1, 1))
                 max_name = functools.reduce(lambda val, elem: len(elem) if len(elem) > val else val, names, 0)
                 max_name = max_name
                 cols = width // max_name
@@ -196,8 +196,7 @@ class FolderListCommand(Command):
                     max_name = max_name + 2
                     cols = width // max_name
 
-                tbl = FolderListCommand.chunk_list([x.ljust(max_name) for x in names], cols)
-                #print(tabulate(tbl, tablefmt='plain'))
+                tbl = FolderListCommand.chunk_list([x.ljust(max_name) if cols > 1 else x for x in names], cols)
 
                 rows = ['  '.join(x) for x in tbl]
                 print('\n'.join(rows))
@@ -229,7 +228,7 @@ class FolderTreeCommand(Command):
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
         if folder_name in params.folder_cache:
-            display.formatted_trechoie(params, params.folder_cache[folder_name])
+            display.formatted_tree(params, params.folder_cache[folder_name])
         else:
             rs = try_resolve_path(params, folder_name)
             if rs is not None:
