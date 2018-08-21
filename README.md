@@ -175,9 +175,11 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```download-attachment``` Download all file attachments in specified record
 
+* ```upload-attachment``` Upload file attachments to the specified record
+
 * ```list-sf``` or ```lsf``` Display all shared folders
 
-* ```create_user``` Create Keeper vault account (free user)
+* ```create-user``` Create Keeper vault account (free user)
 
 * ```list-team``` or ```lt``` Display all teams
 
@@ -457,7 +459,7 @@ Notes:
 * ```plugins``` parameter determines which password rotation plugin will be loaded. [Learn more](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) about password rotation plugins for Commander.
 
 * ```commands``` parameter is a comma-separated list of Keeper commands to run.  For example:
-```"commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]``` will sync your vault then rotate the password on the specified record UID.
+```"commands":["sync-down", "upload-attachment --file=\"/Users/craig/something.zip\" \"3PMqasi9hohmyLWJkgxCWg\"","share-record --email=\"somebody@gmail.com\" --write \"3PMqasi9hohmyLWJkgxCWg\""]``` will sync your vault, upload a file and then share the record with another user.
 
 * ```timedelay``` parameter can be used to automatically run the specified commands every X seconds. For example:
 ```"timedelay":600``` will run the commands every 10 minutes.
@@ -467,6 +469,21 @@ Notes:
 To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a master password.
 
 * ```device_token_expiration``` can be set to ```true``` to expire 2FA device tokens after 30 days. By default, the 2FA device token will never expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices.
+
+### Batch Mode 
+
+You can batch execute a series of commands and pipe the file to STDIN of Commander.  For example, create a text file called ```test.cmd``` with the following lines:
+
+```
+add --login=blah@gmail.com --pass=somemasterpass --url=https://google.com --force "Some Record Title"
+upload-attachment --file="/path/to/some/file.txt" "Some Record Title"
+share-record --email="user@company.com" --write "Some Record Title"
+```
+
+To run this file in a batch mode:
+```bash
+cat test.cmd | keeper --batch-mode shell
+```
 
 ### Targeted Password Rotations & Plugins 
 
