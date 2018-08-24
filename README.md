@@ -189,7 +189,7 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```rm``` Remove record
 
-* ```append-note``` Append notes to existing record
+* ```append-notes``` or ```an``` Append notes to existing record
 
 **Folder Management Commands**
 
