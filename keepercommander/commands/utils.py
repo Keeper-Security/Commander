@@ -194,11 +194,12 @@ class RecordImportCommand(ImporterCommand):
                     if 's' in chars:
                         can_share = True
 
+            api.print_info('Processing... please wait.')
             imp_exp._import(params, format, filename, shared=shared,
                             manage_users=manage_users, manage_records=manage_records,
                             can_edit=can_edit, can_share=can_share)
         else:
-            print('Missing argument')
+            api.print_error('Missing argument')
 
 
 class SharedFolderImportCommand(Command):
@@ -210,7 +211,7 @@ class SharedFolderImportCommand(Command):
         if format and filename:
             imp_exp.create_sf(params, filename)
         else:
-            print('Missing `filename` argument')
+            api.print_error('Missing `filename` argument')
 
 
 class RecordExportCommand(ImporterCommand):
@@ -221,9 +222,10 @@ class RecordExportCommand(ImporterCommand):
         format = kwargs['format'] if 'format' in kwargs else None
         filename = kwargs['filename'] if 'filename' in kwargs else None
         if format and filename:
+            api.print_info('Processing... please wait.')
             imp_exp.export(params, format, filename)
         else:
-            print('Missing argument')
+            api.print_error('Missing argument')
 
 
 class RecordDeleteAllCommand(Command):

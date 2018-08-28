@@ -623,7 +623,11 @@ class ShareRecordCommand(Command):
             print('No existing Keeper accounts provided.')
             return
 
-        record_path = api.resolve_record_access_path(params, record_uid)
+        record_path = api.resolve_record_share_path(params, record_uid)
+        if record_path is None:
+            api.print_error('You do not have permissions to share this record.')
+            return
+
         rq = {
             'command': 'get_records',
             'include': ['shares'],
@@ -701,10 +705,15 @@ class ShareRecordCommand(Command):
         rs = api.communicate(params, rq)
 
         if 'add_statuses' in rs:
-            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] == 'success']
+            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] in ['success']]
             if emails:
                 print('Record is successfully shared with: {0}'.format(', '.join(emails)))
-            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] != 'success']
+
+            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] in ['pending_accept']]
+            if emails:
+                print('Recipient must accept request to complete sharing. Invitation sent to {0}. '.format(', '.join(emails)))
+
+            emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] not in ['success', 'pending_accept']]
             if emails:
                 print('Failed to share record with: {0}'.format(', '.join(emails)))
 

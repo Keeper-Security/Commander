@@ -927,7 +927,9 @@ def sync_down(params):
             check_convert_to_folders = False
             for ufsf in response_json['user_folder_shared_folders']:
                 ufsf['type'] = 'shared_folder'
-                params.subfolder_cache[ufsf['shared_folder_uid']] = ufsf
+                sf_uid = ufsf['shared_folder_uid']
+                if sf_uid in params.shared_folder_cache:
+                    params.subfolder_cache[sf_uid] = ufsf
 
         if 'user_folder_records' in response_json:
             for ufr in response_json['user_folder_records']:
@@ -1513,6 +1515,13 @@ def prepare_record(params, record):
     udata = {}
     unencrypted_key = None
     if record.record_uid in params.record_cache:
+        path = resolve_record_write_path(params, record.record_uid)
+        if path:
+            record_object.update(path)
+        else:
+            print_error('You do not have edit permissions on this record')
+            return None
+
         rec = params.record_cache[record.record_uid]
         data.update(json.loads(rec['data'].decode()))
         if 'extra' in rec:
@@ -1524,7 +1533,6 @@ def prepare_record(params, record):
         if rec.get('is_converted_record_type'):
             if params.debug: print('Converted record sends record key')
             record_object['record_key'] = encrypt_aes(params.data_key, unencrypted_key)
-        resolve_record_access_path(params, record.record_uid, path=record_object, for_writing=True)
     else:
         if params.debug: print('Generated record key')
         unencrypted_key = os.urandom(32)
@@ -1735,9 +1743,10 @@ def update_record(params, record, **kwargs):
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
-    if not kwargs.get('silent'):
-        print("Pushing update...")
     update_record = prepare_record(params, record)
+    if update_record is None:
+        return
+
     request = make_request(params, 'record_update')
     request['update_records'] = [update_record]
 
@@ -1935,11 +1944,70 @@ def get_record_permissions(params, record_uids):
         }
 
 
-def resolve_record_access_path(params, record_uid, path=None, for_writing=False):
+def resolve_record_write_path(params, record_uid):
+    path = {
+        'record_uid': record_uid
+    }
+
+    if record_uid in params.meta_data_cache:
+        rmd = params.meta_data_cache[record_uid]
+        if rmd['can_edit']:
+            return path
+
+    #shared through shared folder
+    for sf in params.shared_folder_cache.values():
+        if 'records' in sf:
+            for ro in sf['records']:
+                if ro['record_uid'] == record_uid:
+                    if ro['can_edit']:
+                        if 'key_type' in sf:
+                            path['shared_folder_uid'] = sf['shared_folder_uid']
+                            return path
+                        elif 'teams' in sf: #check team
+                            for to in sf['teams']:
+                                if to['manage_records']:
+                                    team = params.team_cache[to['team_uid']]
+                                    if not team['restrict_edit']:
+                                        path['shared_folder_uid'] = sf['shared_folder_uid']
+                                        path['team_uid'] = team['team_uid']
+                                        return
+    return None
+
+
+def resolve_record_share_path(params, record_uid):
+    path = {
+        'record_uid': record_uid
+    }
+
+    if record_uid in params.meta_data_cache:
+        rmd = params.meta_data_cache[record_uid]
+        if rmd['can_share']:
+            return path
+
+    #shared through shared folder
+    for sf in params.shared_folder_cache.values():
+        if 'records' in sf:
+            for ro in sf['records']:
+                if ro['record_uid'] == record_uid:
+                    if ro['can_share']:
+                        if 'key_type' in sf:
+                            path['shared_folder_uid'] = sf['shared_folder_uid']
+                            return path
+                        elif 'teams' in sf: #check team
+                            for to in sf['teams']:
+                                if to['manage_records']:
+                                    team = params.team_cache[to['team_uid']]
+                                    if not team['restrict_share']:
+                                        path['shared_folder_uid'] = sf['shared_folder_uid']
+                                        path['team_uid'] = team['team_uid']
+                                        return
+    return None
+
+
+def resolve_record_access_path(params, record_uid, path=None):
     if path is None:
         path = {}
 
-    #TODO respect for_writing
     path['record_uid'] = record_uid
     if not record_uid in params.meta_data_cache: #shared through shared folder
         for sf_uid in params.shared_folder_cache:
@@ -1951,8 +2019,6 @@ def resolve_record_access_path(params, record_uid, path=None, for_writing=False)
                             for team in sf['teams']:
                                 path['shared_folder_uid'] = sf_uid
                                 path['team_uid'] = team['team_uid']
-                                if for_writing and team.get('manage_records'):
-                                    break
                     else:
                         path['shared_folder_uid'] = sf_uid
                         break
