@@ -70,11 +70,11 @@ def do_command(params):
             print('Debug ON')
 
     else:
-        cmd = params.command.strip()
+        cmd = params.command
         args = ''
         pos = cmd.find(' ')
         if pos > 0:
-            args = cmd[pos+1:].strip()
+            args = cmd[pos+1:]
             cmd = cmd[:pos]
 
         if len(cmd) > 0:

@@ -1044,45 +1044,42 @@ class AuditLogCommand(EnterpriseCommand):
                 logging.captureWarnings(False)
 
         #query data
-        last_event_id = 0
-        val = record.get('last_event_id')
+        last_event_time = 0
+        val = record.get('last_event_time')
         if val:
             try:
-                last_event_id = int(val)
+                last_event_time = int(val)
             except:
                 pass
 
         events = []
         finished = False
-        first_event_id = 0
-        current_event_id = 0
+        created_before = 0
         count = 0
         while not finished:
             finished = True
             rq = {
                 'command': 'get_enterprise_audit_events',
-                'start_id': current_event_id if current_event_id > 1 else 0,
-                'report_type': 'day'
+                'limit': 1000,
+                'report_type': 'month'
             }
+            if created_before > 0:
+                rq['created_before'] = created_before
+
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
                 if 'audit_events' in rs:
                     if len(rs['audit_events']) > 0:
                         finished = False
                         for event in rs['audit_events']:
-                            current_event_id = event['id']
-                            if current_event_id <= last_event_id:
+                            created_before = int(event['created'])
+                            if created_before < last_event_time:
                                 finished = True
                                 break
 
-                            if first_event_id == 0:
-                                first_event_id = current_event_id
-
                             if target == 'splunk':
                                 evt = event.copy()
-                                fld = {
-                                    'id': evt.pop('id')
-                                }
+                                evt.pop('id')  #skip id
                                 time = evt.pop('created')
                                 js = {
                                     'time': time,
@@ -1110,8 +1107,8 @@ class AuditLogCommand(EnterpriseCommand):
                     count += len(events)
                     events.clear()
 
-        if store_record:
+        if store_record and created_before > 0:
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
-            record.set_field('last_event_id', str(first_event_id))
+            record.set_field('last_event_time', str(created_before))
             params.sync_data = True
             api.update_record(params, record, silent=True)

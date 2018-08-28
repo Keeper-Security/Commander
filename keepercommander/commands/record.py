@@ -90,7 +90,7 @@ get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
 
 
-append_parser = argparse.ArgumentParser(prog='append-note|an', description='Append notes to existing record')
+append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to existing record')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 append_parser.error = raise_parse_exception
@@ -509,6 +509,41 @@ class RecordUploadAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+                    if record_uid is None:
+                        record_add = RecordAddCommand()
+                        record_uid = record_add.execute(params, title=record_name, folder=folder_uid, force=True)
+
+        record = None
+        if record_uid is None:
+            record = Record()
+            record.title = kwargs['record']
+            if api.add_record(params, record):
+                record_uid = record.record_uid
+            else:
+                return
+        if params.sync_data:
+            api.sync_down(params)
+
+        record_update = api.resolve_record_write_path(params, record_uid)
+        if record_update is None:
+            api.print_error('You do not have edit permissions on this record')
+            return
+
         files = []
         if 'file' in kwargs:
             for name in kwargs['file']:
@@ -572,37 +607,6 @@ class RecordUploadAttachmentCommand(Command):
             api.print_error('No files were successfully uploaded')
             return
 
-        record_uid = None
-        if record_name in params.record_cache:
-            record_uid = record_name
-        else:
-            rs = try_resolve_path(params, record_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder is not None and record_name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == record_name.lower():
-                                record_uid = uid
-                                break
-                    if record_uid is None:
-                        record_add = RecordAddCommand()
-                        record_uid = record_add.execute(params, title=record_name, folder=folder_uid, force=True)
-
-        record = None
-        if record_uid is None:
-            record = Record()
-            record.title = kwargs['record']
-            if api.add_record(params, record):
-                record_uid = record.record_uid
-            else:
-                return
-
-        if params.sync_data:
-            api.sync_down(params)
-
         record = params.record_cache[record_uid]
         extra = json.loads(record['extra'].decode('utf-8')) if 'extra' in record else {}
         files = extra.get('files')
@@ -623,22 +627,21 @@ class RecordUploadAttachmentCommand(Command):
                 'key': base64.urlsafe_b64encode(atta['key']).decode().rstrip('=')
             })
 
-        ru = {
-            'record_uid': record_uid,
+        record_update.update({
             'version': 2,
             'client_modified_time': api.current_milli_time(),
             'data': api.encrypt_aes(record['data'], record['record_key_unencrypted']),
             'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record['record_key_unencrypted']),
             'udata': udata,
             'revision': record['revision']
-        }
+        })
         api.resolve_record_access_path(params, record_uid, path=ru)
         rq = {
             'command': 'record_update',
             'pt': 'Commander',
             'device_id': 'Commander',
             'client_time': api.current_milli_time(),
-            'update_records': [ru]
+            'update_records': [record_update]
         }
         api.communicate(params, rq)
         params.sync_data = True
