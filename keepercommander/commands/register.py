@@ -114,6 +114,8 @@ class RegisterCommand(Command):
                 print(rs['message'])
             return
 
+        password_rules = rs['password_rules']
+
         # check enterprise
         verification_code = None
         if params.enterprise:
@@ -146,6 +148,14 @@ class RegisterCommand(Command):
                 rs = api.communicate(params, rq)
                 if rs['result'] == 'success':
                     verification_code = rs.get('verification_code')
+                    # re-read password rules
+                    rq = {
+                        'command': 'pre_register',
+                        'email': email
+                    }
+                    rs = api.run_command(params, rq)
+                    if 'password_rules' in rs:
+                        password_rules = rs['password_rules']
             except:
                 pass
 
@@ -157,7 +167,7 @@ class RegisterCommand(Command):
             while not password:
                 pwd = getpass.getpass(prompt='Password: ', stream=None)
                 failed_rules = []
-                for r in rs['password_rules']:
+                for r in password_rules:
                     m = re.match(r['pattern'], pwd)
                     if r['match']:
                         if m is None:
@@ -174,8 +184,8 @@ class RegisterCommand(Command):
 
         new_params = KeeperParams()
         new_params.server = params.server
-        if 'data_center' in kwargs:
-            data_center = kwargs['data_center']
+        data_center = kwargs.get('data_center')
+        if data_center:
             parts = list(urlsplit(new_params.server))
             host = parts[1]
             port = ''
