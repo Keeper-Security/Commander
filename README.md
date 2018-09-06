@@ -179,7 +179,8 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```list-sf``` or ```lsf``` Display all shared folders
 
-* ```create-user``` Create Keeper vault account (free user)
+* ```create-user``` Create Keeper vault account.
+Note: If executed by an admin, the user will be provisioned to the Enterprise license.
 
 * ```list-team``` or ```lt``` Display all teams
 
