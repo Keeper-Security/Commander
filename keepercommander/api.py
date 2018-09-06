@@ -2087,6 +2087,7 @@ def query_enterprise(params):
                     response['unencrypted_tree_key'] = tree_key
                     if 'nodes' in response:
                         for node in response['nodes']:
+                            node['data'] = {}
                             if 'encrypted_data' in node:
                                 try:
                                     data = decrypt_aes(node['encrypted_data'], tree_key)
@@ -2096,6 +2097,7 @@ def query_enterprise(params):
                                     pass
                     if 'users' in response:
                         for user in response['users']:
+                            user['data'] = {}
                             if 'encrypted_data' in user:
                                 try:
                                     data = decrypt_aes(user['encrypted_data'], tree_key)
@@ -2105,6 +2107,7 @@ def query_enterprise(params):
                                     pass
                     if 'roles' in response:
                         for role in response['roles']:
+                            role['data'] = {}
                             if 'encrypted_data' in role:
                                 try:
                                     data = decrypt_aes(role['encrypted_data'], tree_key)
