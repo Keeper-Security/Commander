@@ -272,6 +272,9 @@ class RegisterCommand(Command):
                     store = False
             if generate and not store:
                 print('Generated password: {0}'.format(password))
+
+            if params.enterprise:
+                params.sync_data = True
         else:
             print(rs['message'])
 
