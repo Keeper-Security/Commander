@@ -171,7 +171,7 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 * ```cd``` Change current folder
 
-* ```get``` Retrieve and display specified Keeper Record/Folder/Team
+* ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
 
 * ```download-attachment``` Download all file attachments in specified record
 
@@ -210,7 +210,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
 * ```import``` Import data from local file to Keeper (JSON, CSV, Keepass)
 
-* ```export``` Export data from Keeper to local file (JSON, CSV, Keepass)
+* ```export``` Export data from Keeper to local file or stdout (JSON, CSV, Keepass)
 
 **Folder and Record Sharing Commands**
 
