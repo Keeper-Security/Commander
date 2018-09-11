@@ -437,7 +437,7 @@ Below is a fully loaded config file.
 
 ```bash
 {
-    "server":"https://keepersecurity.com/api/v2",
+    "server":"https://keepersecurity.com/api/v2/",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
