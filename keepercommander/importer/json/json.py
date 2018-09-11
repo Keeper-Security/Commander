@@ -10,6 +10,7 @@
 #
 
 import json
+import sys
 
 from ..importer import BaseImporter, BaseExporter, Record, Folder, SharedFolder, Permission
 
@@ -123,8 +124,12 @@ class KeeperJsonExporter(BaseExporter):
                 sfs.append(sfo)
 
         jo = {'shared_folders': sfs, 'records': rs} if sfs else rs
-        with open(filename, mode="w", encoding='utf-8') as f:
-            json.dump(jo, f, indent=2, ensure_ascii=False)
+        if filename:
+            with open(filename, mode="w", encoding='utf-8') as f:
+                json.dump(jo, f, indent=2, ensure_ascii=False)
+        else:
+            json.dump(jo, sys.stdout, indent=2, ensure_ascii=False)
+            print('')
 
     def has_shared_folders(self):
         return True
@@ -134,3 +139,6 @@ class KeeperJsonExporter(BaseExporter):
 
     def extension(self):
         return 'json'
+
+    def supports_stdout(self):
+        return True

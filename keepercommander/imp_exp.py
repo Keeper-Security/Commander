@@ -161,7 +161,7 @@ def export(params, file_format, filename):
 
     if len(to_export) > 0:
         exporter.execute(filename, to_export)
-        print('{0} records exported'.format(rec_count))
+        api.print_info('{0} records exported'.format(rec_count))
 
 
 def _import(params, file_format, filename, **kwargs):
