@@ -457,6 +457,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
                         print('User {0} is deleted'.format(user['username']))
+                        api.query_enterprise(params)
             else:
                 print('No such user')
             return
@@ -479,19 +480,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
             }
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
-                user = {
-                    'enterprise_user_id': rq['enterprise_user_id'],
-                    'username': email,
-                    'node_id': rq['node_id'],
-                    'encrypted_data': rq['encrypted_data'],
-                    'data': dt,
-                    'status': 'invited',
-                    'lock': 0
-                }
-                if 'users' not in params.enterprise:
-                    params.enterprise['users'] = []
-                params.enterprise['users'].append(user)
                 print('User {0} is added'.format(user['username']))
+                api.query_enterprise(params)
             return
 
         if user:
@@ -747,6 +737,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
                         print('User {0} {1} role {2}'.format(user_email, 'added to' if is_add else 'removed from', role['data'].get('displayname') or ''))
+                api.query_enterprise(params)
+
         if role:
             if show_info:
                 role_id = role['role_id']

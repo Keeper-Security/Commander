@@ -12,6 +12,7 @@
 import os.path
 import importlib
 
+from .. import api
 
 PathDelimiter = '\\'
 
@@ -159,13 +160,17 @@ class BaseExporter:
         :rtype: None
         '''
 
-        path = os.path.expanduser(filename)
-        if path.find('.') < 0:
-            ext = self.extension()
-            if ext:
-                path = path + '.' + ext
+        if filename:
+            filename = os.path.expanduser(filename)
+            if filename.find('.') < 0:
+                ext = self.extension()
+                if ext:
+                    filename = filename + '.' + ext
+        elif not self.supports_stdout():
+            api.print_error("stdout is not supported for this file format")
+            return
 
-        self.do_export(path, records)
+        self.do_export(filename, records)
 
     def do_export(self, filename, records):
         '''
@@ -183,3 +188,6 @@ class BaseExporter:
 
     def extension(self):
         return ''
+
+    def supports_stdout(self):
+        return False

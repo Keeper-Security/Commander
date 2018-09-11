@@ -10,7 +10,9 @@
 #
 
 import csv
-from ..importer import strip_path_delimiter, path_components, PathDelimiter, BaseImporter, BaseExporter, Record, Folder
+import sys
+
+from ..importer import BaseImporter, BaseExporter, Record, Folder
 
 
 '''
@@ -72,28 +74,34 @@ class KeeperCsvImporter(BaseImporter):
 class KeeperCsvExporter(BaseExporter):
 
     def do_export(self, filename, records):
-        with open(filename, 'w', encoding='utf-8') as csvfile:
-            writer = csv.writer(csvfile)
-            for r in records:
-                if type(r) == Record:
-                    domain = ''
-                    path = ''
-                    if r.folders:
-                        for folder in r.folders:
-                            domain = folder.domain or ''
-                            path = folder.path or ''
-                            if domain:
-                                if folder.can_edit:
-                                    domain = domain + '#edit'
-                                if folder.can_share:
-                                    domain = domain + '#reshare'
-                            break
-                    row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
-                    if r.custom_fields:
-                        for cf in r.custom_fields:
-                            row.append(cf)
-                            row.append(r.custom_fields[cf])
-                    writer.writerow(row)
+        csvfile = open(filename, 'w', encoding='utf-8') if filename else sys.stdout
+        writer = csv.writer(csvfile)
+        for r in records:
+            if type(r) == Record:
+                domain = ''
+                path = ''
+                if r.folders:
+                    for folder in r.folders:
+                        domain = folder.domain or ''
+                        path = folder.path or ''
+                        if domain:
+                            if folder.can_edit:
+                                domain = domain + '#edit'
+                            if folder.can_share:
+                                domain = domain + '#reshare'
+                        break
+                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
+                if r.custom_fields:
+                    for cf in r.custom_fields:
+                        row.append(cf)
+                        row.append(r.custom_fields[cf])
+                writer.writerow(row)
+        if filename:
+            csvfile.flush()
+            csvfile.close()
 
     def extension(self):
         return 'csv'
+
+    def supports_stdout(self):
+        return True

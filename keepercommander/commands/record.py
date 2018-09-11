@@ -85,6 +85,7 @@ search_parser.exit = suppress_exit
 
 
 get_info_parser = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
+get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json'], default='detail', help='output format.')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
@@ -356,20 +357,106 @@ class RecordGetUidCommand(Command):
             print('UID parameter is required')
             return
 
+        format = kwargs.get('format') or 'detail'
+
         if api.is_shared_folder(params, uid):
             sf = api.get_shared_folder(params, uid)
-            sf.display()
+            if format == 'json':
+                sfo = {
+                    "shared_folder_uid": sf.shared_folder_uid,
+                    "name": sf.name,
+                    "manage_users": sf.default_manage_users,
+                    "manage_records": sf.default_manage_records,
+                    "can_edit": sf.default_can_edit,
+                    "can_share": sf.default_can_share
+                }
+                if sf.records:
+                    sfo['records'] = [{
+                        'record_uid': r['record_uid'],
+                        'can_edit': r['can_edit'],
+                        'can_share': r['can_share']
+                    } for r in sf.records]
+                if sf.users:
+                    sfo['users'] = [{
+                        'username': u['username'],
+                        'manage_records': u['manage_records'],
+                        'manage_users': u['manage_users']
+                    } for u in sf.users]
+                if sf.teams:
+                    sfo['teams'] = [{
+                        'name': t['name'],
+                        'manage_records': t['manage_records'],
+                        'manage_users': t['manage_users']
+                    } for t in sf.teams]
+
+                print(json.dumps(sfo, indent=2))
+            else:
+                sf.display()
         elif api.is_team(params, uid):
             team = api.get_team(params, uid)
-            team.display()
+            if format == 'json':
+                to = {
+                    'team_uid': team.team_uid,
+                    'name': team.name,
+                    'restrict_edit': team.restrict_edit,
+                    'restrict_view': team.restrict_view,
+                    'restrict_share': team.restrict_share
+                }
+                print(json.dumps(to, indent=2))
+            else:
+                team.display()
         elif uid in params.folder_cache:
             f = params.folder_cache[uid]
-            f.display(params=params)
+            if format == 'json':
+                fo = {
+                    'folder_uid': f.uid,
+                    'type': f.type,
+                    'name': f.name
+                }
+                print(json.dumps(fo, indent=2))
+            else:
+                f.display(params=params)
         else:
             api.get_record_shares(params, [uid])
             r = api.get_record(params, uid)
             if r:
-                r.display(params=params)
+                if format == 'json':
+                    ro = {
+                        'record_uid': r.record_uid,
+                        'title': r.title
+                    }
+                    if r.login:
+                        ro['login'] = r.login
+                    if r.password:
+                        ro['password'] = r.password
+                    if r.login_url:
+                        ro['login_url'] = r.login_url
+                    if r.notes:
+                        ro['notes'] = r.notes
+                    if r.custom_fields:
+                        ro['custom_fields'] = r.custom_fields
+                    if r.attachments:
+                        ro['attachments'] = [{
+                            'id': a.get('id'),
+                            'name': a.get('name'),
+                            'size': a.get('size')
+                        } for a in r.attachments]
+
+                    if r.record_uid in params.record_cache:
+                        rec = params.record_cache[r.record_uid]
+                        if 'shares' in rec:
+                            if 'user_permissions' in rec['shares']:
+                                permissions = rec['shares']['user_permissions']
+                                ro['shared_with'] = [{
+                                    'username': su['username'],
+                                    'owner': su.get('ownser') or False,
+                                    'editable': su.get('editable') or False,
+                                    'sharable': su.get('sharable') or False
+                                } for su in permissions]
+
+                    print(json.dumps(ro, indent=2))
+                else:
+                    r.display(params=params)
 
 
 class RecordAppendNotesCommand(Command):
