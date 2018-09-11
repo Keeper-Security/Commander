@@ -274,7 +274,7 @@ class RegisterCommand(Command):
                 print('Generated password: {0}'.format(password))
 
             if params.enterprise:
-                params.sync_data = True
+                api.query_enterprise(params)
         else:
             print(rs['message'])
 

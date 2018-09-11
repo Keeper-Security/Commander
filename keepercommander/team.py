@@ -12,15 +12,17 @@
 class Team:
     """Defines a Keeper Team """
 
-    def __init__(self, team_uid='', restrict_edit=False, restrict_view=False, name=''):
+    def __init__(self, team_uid='', restrict_edit=False, restrict_view=False, restrict_share=False, name=''):
         self.team_uid = team_uid 
         self.restrict_edit = restrict_edit 
-        self.restrict_view = restrict_view 
-        self.name = name 
+        self.restrict_view = restrict_view
+        self.restrict_share = restrict_share
+        self.name = name
 
     def load(self,team):
-        self.restrict_edit = team['restrict_edit']
-        self.restrict_view = team['restrict_view']
+        self.restrict_edit = team['restrict_edit'] or False
+        self.restrict_view = team['restrict_view'] or False
+        self.restrict_share = team['restrict_share'] or False
         self.name = team['name']
 
     def display(self):
@@ -29,6 +31,7 @@ class Team:
         print('{0:>20s}: {1}'.format('Name',self.name))
         print('{0:>20s}: {1}'.format('Restrict Edit',self.restrict_edit))
         print('{0:>20s}: {1}'.format('Restrict View',self.restrict_view))
+        print('{0:>20s}: {1}'.format('Restrict Share',self.restrict_share))
         print('')
 
     def to_string(self):
