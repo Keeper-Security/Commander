@@ -77,9 +77,8 @@ register_parser.add_argument('--pass', dest='password', action='store', help='us
 register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store', help='data center.')
 register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
 register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
-#register_parser.add_argument('--skip-backup', dest='skip', action='store_true', help='skip data key backup')
-#register_parser.add_argument('-q', '--question', dest='question', action='store', help='security question')
-#register_parser.add_argument('-a', '--answer', dest='answer', action='store', help='security answer')
+register_parser.add_argument('--question', dest='question', action='store', help='security question')
+register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
 register_parser.add_argument('email', action='store', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
@@ -245,7 +244,7 @@ class RegisterCommand(Command):
             'security_answer_iterations': 1000,
             'security_answer_salt': base64.urlsafe_b64encode(salt).rstrip(b'=').decode(),
             'security_question': 'What is your favorite password manager application?',
-            'security_answer_hash': api.auth_verifier('keeper', salt, 1000),
+            'security_answer_hash': api.auth_verifier_old('keeper', salt, 1000),
             'client_key': api.encrypt_aes(os.urandom(32), data_key)
         }
         if verification_code:
@@ -253,11 +252,38 @@ class RegisterCommand(Command):
 
         rs = api.run_command(new_params, rq)
         if rs['result'] == 'success':
-#                if not opts.skip:
-#                    while len(opts.question or '') == 0:
-#                        opts.question = input('... Security Question: ')
-#                    while len(opts.answer or '') == 0:
-#                        opts.answer =   input('...   Security Answer: ')
+            if kwargs.get('question'):
+                api.print_info("Account {0} created".format(email))
+                if not kwargs.get('answer'):
+                    api.print_info('...' + 'Security Question: '.rjust(24) + kwargs['question'])
+                    kwargs['answer'] = input('...' + 'Security Answer: '.rjust(24))
+                if kwargs.get('answer'):
+                    try:
+                        param1 = KeeperParams()
+                        param1.server = new_params.server
+                        param1.user = email
+                        param1.password = password
+                        api.login(param1)
+                        salt = os.urandom(16)
+                        iterations = 100000
+                        security_key = api.derive_key(kwargs['answer'], salt, iterations)
+                        iv = os.urandom(16)
+                        cipher = AES.new(security_key, AES.MODE_CBC, iv)
+                        encryption_params = b'\x01' + iterations.to_bytes(3, 'big') + salt
+                        data_key_backup = encryption_params + iv + cipher.encrypt(dk)
+                        rq = {
+                            'command': 'set_data_key_backup',
+                            'version': 2,
+                            'data_key_backup': base64.urlsafe_b64encode(data_key_backup).rstrip(b'=').decode(),
+                            'security_question': kwargs['question'],
+                            'security_answer_salt': base64.urlsafe_b64encode(salt).rstrip(b'=').decode(),
+                            'security_answer_iterations': iterations,
+                            'security_answer_hash': api.auth_verifier_old(kwargs['answer'], salt, iterations)
+                        }
+                        api.communicate(param1, rq)
+                        api.print_info('Master password backup is created.')
+                    except Exception as e:
+                        api.print_error('Failed to create master password backup.')
 
             store = kwargs['store'] if 'store' in kwargs else None
             if store:
@@ -267,7 +293,7 @@ class RegisterCommand(Command):
                         add_command.execute(params, title='Keeper credentials for {0}'.format(email), login=email, password=password, force=True)
                     except Exception:
                         store = False
-                        print('Failed to create record in Keeper')
+                        api.print_error('Failed to create record in Keeper')
                 else:
                     store = False
             if generate and not store:
@@ -276,8 +302,7 @@ class RegisterCommand(Command):
             if params.enterprise:
                 api.query_enterprise(params)
         else:
-            print(rs['message'])
-
+            api.print_error(rs['message'])
 
 
 class ShareFolderCommand(Command):

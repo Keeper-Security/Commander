@@ -81,6 +81,12 @@ def auth_verifier(password, salt, iterations):
     return au_ver.decode().rstrip('=')
 
 
+def auth_verifier_old(password, salt, iterations):
+    derived_key = derive_key(password, salt, iterations)
+    au_ver = base64.urlsafe_b64encode(derived_key)
+    return au_ver.decode().rstrip('=')
+
+
 def login(params, attempt=0):
     """Login to the server and get session token"""
     
