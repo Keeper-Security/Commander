@@ -1,0 +1,39 @@
+{
+  "records": [
+    {
+      "title": "Some Account 1",
+      "login": "testing",
+      "password": "12345",
+      "login_url": "https://testing.com",
+      "notes": "Some\nMulti-Line\nNotes.",
+      "custom_fields": {
+        "Account Number": "123123123"
+      },
+      "folders": [
+        {
+          "shared_folder": "My Shared Folder 1",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    },
+    {
+      "title": "Some Account 2",
+      "login": "anothertest",
+      "password": "22948FFFKEEj123",
+      "login_url": "https://google.com",
+      "notes": "",
+      "custom_fields": {},
+      "folders": [
+        {
+          "folder": "Some Private Folder"
+        },
+        {
+          "shared_folder": "My Shared Folder 1",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "shared_folders": [
+    {
+      "path": "My Shared Folder 1",
+      "manage_users": true,
+      "manage_records": true,
+      "can_edit": true,
+      "can_share": true,
+      "permissions": [
+        {
+          "uid": "kVM96KGEoGxhskZoSTd_jw",
+          "manage_users": true,
+          "manage_records": true
+        },
+        {
+          "name": "myusername@company.com",
+          "manage_users": true,
+          "manage_records": true
+        }
+      ]
+    },
+    {   
+      "path": "Customer1\\My Shared Folder 2", 
+      "manage_users": false,
+      "manage_records": false,
+      "can_edit": false,
+      "can_share": false,
+      "permissions": [
+        {   
+          "uid": "<TEAM UID HERE>",
+          "manage_users": false,
+          "manage_records": false
+        },  
+        {   
+          "name": "<receipient email here>",
+          "manage_users": true,
+          "manage_records": true
+        }   
+      ]   
+    },  
+    {
+      "path": "Customer2\\My Shared Folder 3",
+      "manage_users": true,
+      "manage_records": true,
+      "can_edit": true,
+      "can_share": true,
+      "permissions": [
+        {
+          "uid": "<TEAM UID HERE>",
+          "manage_users": true,
+          "manage_records": true
+        },
+        {
+          "name": "myusername@company.com",
+          "manage_users": true,
+          "manage_records": true
+        }
+      ]
+    }
+  ]
+}

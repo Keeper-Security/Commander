@@ -1,0 +1,40 @@
+{
+  "records": [
+    {
+      "title": "Dev Server 1",
+      "login": "root",
+      "password": "123123123",
+      "login_url": "https://myserver.com",
+      "notes": "These are some notes.",
+      "custom_fields": {
+        "Security Group": "Private"
+      },
+      "folders": [
+        {
+          "folder": "Private Folder 1"
+        }
+      ]
+    },
+    {
+      "title": "Prod Server 1",
+      "login": "root",
+      "password": "kj949234723jhfs4jf7h",
+      "login_url": "https://myprodserver.com",
+      "notes": "These are some notes.",
+      "custom_fields": {
+        "Security Group": "Public",
+        "IP Address": "12.45.67.8"
+      },
+      "folders": [
+        {
+          "folder": "Private Folder 2"
+        },
+        {
+          "shared_folder": "My Shared Folder 1",
+          "can_edit": true,
+          "can_share": true
+        }
+      ]
+    }
+  ]
+}
