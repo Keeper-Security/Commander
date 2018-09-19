@@ -409,11 +409,11 @@ $ keeper import --format=json import.json
 
 There are more complex import file examples that supports shared folders, folder permissions, user permissions and team permissions located in the sample_data/ folder. To import the sample JSON file into your vault, type this command:
 
-* Example 1: [import.json.txt](Commander/blob/master/sample_data/import.json.txt)
-* Example 2: [import_records_existing_folders.json.txt](Commander/blob/master/sample_data/import_records_existing_folders.json.txt)
-* Example 3: [import_records_into_folders.json.txt](Commander/blob/master/sample_data/import_records_into_folders.json.txt)
-* Example 4: [import_shared_folders.json.txt](Commander/blob/master/sample_data/import_shared_folders.json.txt)
-* Example 5: [import_shared_folders_and_records.json.txt](Commander/blob/master/sample_data/import_shared_folders_and_records.json.txt)
+* Example 1: [import.json.txt](sample_data/import.json.txt)
+* Example 2: [import_records_existing_folders.json.txt](sample_data/import_records_existing_folders.json.txt)
+* Example 3: [import_records_into_folders.json.txt](sample_data/import_records_into_folders.json.txt)
+* Example 4: [import_shared_folders.json.txt](sample_data/import_shared_folders.json.txt)
+* Example 5: [import_shared_folders_and_records.json.txt](sample_data/import_shared_folders_and_records.json.txt)
 
 ```bash
 $ keeper import --format=json sample_data/import.json.txt
