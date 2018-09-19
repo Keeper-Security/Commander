@@ -725,7 +725,7 @@ def sync_down(params):
 
                 if 'removed_shared_folders' in team:
                     for sf_uid in team['removed_shared_folders']:
-                        shared_folder = params.shared_folder_cache[sf_uid]
+                        shared_folder = params.shared_folder_cache.get(sf_uid)
                         if not shared_folder:
                             continue
                         if 'teams' not in shared_folder:
