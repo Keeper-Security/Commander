@@ -15,7 +15,6 @@ import shlex
 from prompt_toolkit.completion import Completion, Completer
 from .commands.folder import ls_parser, mv_parser
 from . import api
-from . import cli
 
 
 def no_parse_exception(m):
@@ -95,9 +94,10 @@ def try_resolve_path(params, path):
 
 
 class CommandCompleter(Completer):
-    def __init__(self, params):
-        Completer.__init__(self )
+    def __init__(self, params, commands):
+        Completer.__init__(self)
         self.params = params
+        self.commands = commands
 
     @staticmethod
     def fix_input(txt):
@@ -130,7 +130,7 @@ class CommandCompleter(Completer):
             if document.is_cursor_at_the_end:
                 pos = document.text.find(' ')
                 if pos == -1:
-                    cmds = [x for x in cli.commands if x.startswith(document.text)]
+                    cmds = [x for x in self.commands if x.startswith(document.text)]
                     if len(cmds) > 0:
                         cmds.sort()
                         for c in cmds:
