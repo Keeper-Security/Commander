@@ -398,7 +398,9 @@ class FolderRemoveCommand(Command):
                 np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
                 if np.lower() == 'y':
                     rs = api.communicate(params, rq)
-                    if rs['result'] != 'success':
+                    if rs['result'] == 'success':
+                        params.sync_data = True
+                    else:
                         print(rs['message'])
         else:
             del_obj = {

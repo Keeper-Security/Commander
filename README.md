@@ -147,10 +147,11 @@ Type ```h``` to display all commands and help information.
 
 ### Keeper Command Reference
 
-Whether using the interactive shell, CLI or JSON config file, Keeper supports the following features specified by ```command```.  Each command supports additional parameters and options.  To get help on a particular command, use the ```-h``` flag.
+Whether using the interactive shell, CLI or JSON config file, Keeper supports the following features specified by ```command```.  Each command supports additional parameters and options.  To get help on a particular command, use the ```-h``` flag. 
 
 **Basic Vault Commands**
 
+_Note:_ Some commands accept record or shared folder UID parameter. UID values may start with dash character (**-**) that is interpreted by command parser as an option. To pass a parameter starting with dash separate this parameter with two dashes (**--**). `rmdir -- -Gd9l4daPw-fMd`  
 * ```login``` Login to Keeper
 
 * ```whoami``` Information about logged in user

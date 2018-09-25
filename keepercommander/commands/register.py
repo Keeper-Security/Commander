@@ -133,8 +133,12 @@ class RegisterCommand(Command):
                         node_id = node['node_id']
                         break
             data = {}
-            if 'name' in kwargs:
-                data['displayname'] = kwargs['name']
+            name = kwargs.get('name')
+            if name:
+                data['displayname'] = name
+            else:
+                api.print_error('\'name\' parameter is required for enterprise users')
+                return
             rq = {
                 'command': 'enterprise_user_add',
                 'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
