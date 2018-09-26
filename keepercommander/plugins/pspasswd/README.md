@@ -43,8 +43,9 @@ Value: pspasswd
 Name: cmdr:host
 Value: <computer or computers where the local account exists>
 ```
+5. Store Windows account name into Login field of the record
 
-5. Commander will use the "Login" field, "cmdr:host" and "cmdr:rules" fields of your Keeper record to execute the password rotation.
+6. Commander will use the "Login" field, "cmdr:host" and "cmdr:rules" fields of your Keeper record to execute the password rotation.
 
 ### Optional custom fields
 
