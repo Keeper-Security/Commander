@@ -21,7 +21,7 @@ def rotate(record, newpassword):
     result = False
 
     # the characters below mess with windows command line
-    i = subprocess.call("pspasswd \\\\{0} {1} {2}".format(host, user, newpassword), shell = True)
+    i = subprocess.call('pspasswd \\\\{0} {1} "{2}"'.format(host, user, newpassword.replace('"', '""')), shell = True)
 
     if i == 0:
         print('Password changed successfully')
