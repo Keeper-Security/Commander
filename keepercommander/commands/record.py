@@ -147,8 +147,8 @@ class RecordAddCommand(Command):
                     idx = pair.find(':')
                     if idx > 0:
                         custom.append({
-                            'name': pair[:idx].trim(),
-                            'value': pair[idx+1:].trim()
+                            'name': pair[:idx].strip(),
+                            'value': pair[idx+1:].strip()
                         })
             elif type(custom_list) == list:
                 for c in custom_list:
