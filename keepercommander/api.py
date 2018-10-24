@@ -564,6 +564,7 @@ def sync_down(params):
         if 'removed_shared_folders' in response_json:
             if params.debug: print('Processing removed shared folders')
             for uid in response_json['removed_shared_folders']:
+                pending_shared_folder_remove.add(uid)
                 if uid in params.shared_folder_cache:
                     # mark records to unlink
                     shared_folder = params.shared_folder_cache[uid]
@@ -589,8 +590,6 @@ def sync_down(params):
                     # if 'teams' in shared_folder and len(shared_folder['teams']) > 0 and is_local_shared_folder(shared_folder):
                     #     del shared_folder['manage_records']
                     #     del shared_folder['manage_users']
-                else:
-                    pending_shared_folder_remove.add(uid)
 
         if 'user_folders_removed' in response_json:
             for ufr in response_json['user_folders_removed']:
@@ -829,6 +828,10 @@ def sync_down(params):
                 else: 
                     if params.debug: print('Shared folder does not exist in local cache') 
                     params.shared_folder_cache[shared_folder['shared_folder_uid']] = shared_folder
+
+        for sf_uid in pending_shared_folder_remove:
+            if sf_uid in params.shared_folder_cache:
+                del params.shared_folder_cache[sf_uid]
 
         # decrypt record keys
         if 'records' in response_json:
