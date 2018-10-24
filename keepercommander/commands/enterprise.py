@@ -1046,8 +1046,11 @@ class AuditLogCommand(EnterpriseCommand):
 
         events = []
         finished = False
+        new_event_time = None
+
         created_before = 0
         count = 0
+        logged_ids = set()
         while not finished:
             finished = True
             rq = {
@@ -1056,7 +1059,7 @@ class AuditLogCommand(EnterpriseCommand):
                 'report_type': 'month'
             }
             if created_before > 0:
-                rq['created_before'] = created_before
+                rq['created_before'] = created_before * 1000
 
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
@@ -1065,23 +1068,29 @@ class AuditLogCommand(EnterpriseCommand):
                         finished = False
                         for event in rs['audit_events']:
                             created_before = int(event['created'])
+                            if new_event_time is None:
+                                new_event_time = created_before
                             if created_before < last_event_time:
                                 finished = True
                                 break
 
                             if target == 'splunk':
                                 evt = event.copy()
-                                evt.pop('id')  #skip id
-                                time = evt.pop('created')
-                                js = {
-                                    'time': time,
-                                    'host': props['host'],
-                                    'source': params.enterprise['enterprise_name'],
-                                    'sourcetype': '_json',
-                                    'event': evt
-                                }
-                                events.append(json.dumps(js))
+                                event_id = evt.pop('id')  #skip id
+                                if event_id not in logged_ids:
+                                    logged_ids.add(event_id)
+                                    time = evt.pop('created')
+                                    js = {
+                                        'time': time,
+                                        'host': props['host'],
+                                        'source': params.enterprise['enterprise_name'],
+                                        'sourcetype': '_json',
+                                        'event': evt
+                                    }
+                                    events.append(json.dumps(js))
 
+            if len(events) == 0:
+                finished = True
             if finished or len(events) >= 500:
                 if len(events) > 0:
                     if target == 'splunk':
@@ -1099,8 +1108,9 @@ class AuditLogCommand(EnterpriseCommand):
                     count += len(events)
                     events.clear()
 
-        if store_record and created_before > 0:
+        if store_record:
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
-            record.set_field('last_event_time', str(created_before))
+            if new_event_time is not None:
+                record.set_field('last_event_time', str(new_event_time))
             params.sync_data = True
             api.update_record(params, record, silent=True)
