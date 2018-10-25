@@ -15,37 +15,29 @@ import shlex
 
 from ..params import KeeperParams
 
+
 def register_commands(commands, aliases, command_info):
     from .record import register_commands as record_commands, register_command_info as record_command_info
-    record_commands(commands, aliases)
-    record_command_info(command_info)
+    record_commands(commands)
+    record_command_info(aliases, command_info)
 
     from .folder import register_commands as folder_commands, register_command_info as folder_command_info
-    folder_commands(commands, aliases)
-    folder_command_info(command_info)
+    folder_commands(commands)
+    folder_command_info(aliases, command_info)
 
     from .register import register_commands as register_commands, register_command_info as register_command_info
-    register_commands(commands, aliases)
-    register_command_info(command_info)
+    register_commands(commands)
+    register_command_info(aliases, command_info)
 
     from .utils import register_commands as misc_commands, register_command_info as misc_command_info
-    misc_commands(commands, aliases)
-    misc_command_info(command_info)
+    misc_commands(commands)
+    misc_command_info(aliases, command_info)
 
 
-def register_enterprise_command_info(command_info):
-    from .enterprise import register_command_info as enterprise_command_info
-    enterprise_command_info(command_info)
-
-
-def register_enterprise_commands(commands, aliases):
-    from .enterprise import register_commands as enterprise_commands
-    enterprise_commands(commands, aliases)
-
-
-def unregister_enterprise_commands(commands, aliases):
-    from .enterprise import unregister_commands as remove_enterprise_commands
-    remove_enterprise_commands(commands, aliases)
+def register_enterprise_commands(commands, aliases, command_info):
+    from .enterprise import register_commands as enterprise_commands, register_command_info as enterprise_command_info
+    enterprise_commands(commands)
+    enterprise_command_info(aliases, command_info)
 
 
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):

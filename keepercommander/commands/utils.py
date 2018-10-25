@@ -18,7 +18,7 @@ from .. import api, display, imp_exp
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 
 
-def register_commands(commands, aliases):
+def register_commands(commands):
     commands['sync-down'] = SyncDownCommand()
     commands['rotate'] = RecordRotateCommand()
     commands['import'] = RecordImportCommand()
@@ -30,11 +30,12 @@ def register_commands(commands, aliases):
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
     commands['test'] = TestCommand()
+
+
+def register_command_info(aliases, command_info):
     aliases['r'] = 'rotate'
     aliases['d'] = 'sync-down'
 
-
-def register_command_info(command_info):
     for p in [rotate_parser, import_parser, export_parser, whoami_parser, login_parser, logout_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'

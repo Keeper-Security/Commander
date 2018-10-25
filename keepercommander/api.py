@@ -866,13 +866,15 @@ def sync_down(params):
                                 record['record_key'] = sf_rec_key
                                 unencrypted_key = decrypt_aes(sf_rec_key, shared_folder['shared_folder_key'])[:32]
 
+                if unencrypted_key and len(unencrypted_key) != 32:
+                    unencrypted_key = None
+
                 if unencrypted_key:
-                    if len(unencrypted_key) != 32:
-                        raise CryptoError('Invalid record key length')
                     # save the decrypted key in record_key_unencrypted
                     record['record_key_unencrypted'] = unencrypted_key
                 else:
-                    raise CryptoError('No record key found')
+                    print_error('Key for record UID \'{0}\' was not found. This is a potentially a data integrity issue.'.format(record_uid))
+                    continue
 
                 if params.debug: 
                     print('Got record key: ' + str(unencrypted_key))
@@ -945,7 +947,9 @@ def sync_down(params):
                 fuid = ufr.get('folder_uid') or ''
                 if fuid not in params.subfolder_record_cache:
                     params.subfolder_record_cache[fuid] = set()
-                params.subfolder_record_cache[fuid].add(ufr['record_uid'])
+                record_uid = ufr['record_uid']
+                if record_uid in params.record_cache:
+                    params.subfolder_record_cache[fuid].add(record_uid)
 
         if 'shared_folder_folder_records' in response_json:
             for sffr in response_json['shared_folder_folder_records']:
@@ -953,7 +957,8 @@ def sync_down(params):
                 if key not in params.subfolder_record_cache:
                     params.subfolder_record_cache[key] = set()
                 record_uid = sffr['record_uid']
-                params.subfolder_record_cache[key].add(record_uid)
+                if record_uid in params.record_cache:
+                    params.subfolder_record_cache[key].add(record_uid)
 
         if 'sharing_changes' in response_json:
             # Not doing anything with this yet

@@ -24,7 +24,7 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..record import Record
 
 
-def register_commands(commands, aliases):
+def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['rm'] = RecordRemoveCommand()
     commands['search'] = SearchCommand()
@@ -35,6 +35,9 @@ def register_commands(commands, aliases):
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
+
+
+def register_command_info(aliases, command_info):
     aliases['a'] = 'add'
     aliases['s'] = 'search'
     aliases['l'] = 'list'
@@ -45,8 +48,6 @@ def register_commands(commands, aliases):
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
 
-
-def register_command_info(command_info):
     for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser,
               download_parser, upload_parser]:
         command_info[p.prog] = p.description
