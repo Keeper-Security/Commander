@@ -161,9 +161,11 @@ def runcommands(params):
         if timedelay == 0:
             keep_running = False
         else:
-            print(datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S') + \
-                ' Waiting for ' + str(timedelay) + ' seconds')
-            time.sleep(timedelay)
+            print(datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S') + ' Waiting for ' + str(timedelay) + ' seconds')
+            try:
+                time.sleep(timedelay)
+            except KeyboardInterrupt:
+                keep_running = False
 
 
 def prompt_for_credentials(params):
