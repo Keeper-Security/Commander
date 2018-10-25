@@ -23,7 +23,8 @@ from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..record import Record
 
-def register_commands(commands, aliases, command_info):
+
+def register_commands(commands, aliases):
     commands['add'] = RecordAddCommand()
     commands['rm'] = RecordRemoveCommand()
     commands['search'] = SearchCommand()
@@ -44,6 +45,8 @@ def register_commands(commands, aliases, command_info):
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
 
+
+def register_command_info(command_info):
     for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser,
               download_parser, upload_parser]:
         command_info[p.prog] = p.description

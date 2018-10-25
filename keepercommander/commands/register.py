@@ -35,7 +35,7 @@ from .base import raise_parse_exception, suppress_exit, Command
 EMAIL_PATTERN=r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 
 
-def register_commands(commands, aliases, command_info):
+def register_commands(commands, aliases):
     commands['share-record'] = ShareRecordCommand()
     commands['share-folder'] = ShareFolderCommand()
     commands['create-user'] = RegisterCommand()
@@ -43,6 +43,8 @@ def register_commands(commands, aliases, command_info):
     aliases['sf'] = 'share-folder'
     aliases['cu'] = 'create-user'
 
+
+def register_command_info(command_info):
     for p in [share_record_parser, share_folder_parser, register_parser]:
         command_info[p.prog] = p.description
 

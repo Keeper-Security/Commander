@@ -89,7 +89,7 @@ def get_params_from_config(config_filename):
 def usage(m):
     print(m)
     parser.print_help()
-    cli.display_command_help()
+    cli.display_command_help(showEnterprise=True, showShell=True)
     exit(1)
 
 
@@ -135,16 +135,21 @@ def main():
         print('Keeper Commander, version {0}'.format(__version__))
         return
 
-    if (opts.command or '') in {'?', ''}:
-        usage('')
+    if flags and len(flags) > 0:
+        if flags[0] == '-h':
+            flags.clear()
+            opts.command = '?'
 
-    if opts.command == 'shell':
-        del cli.command_info['shell']
-    else:
-        flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
-        options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
-        command = ' '.join([opts.command, flags, options])
-        params.commands.append(command)
+    if (opts.command or '') in {'?', ''}:
+        if opts.command == '?' or not params.commands:
+            usage('')
+
+    if opts.command != 'shell':
+        if opts.command:
+            flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
+            options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
+            command = ' '.join([opts.command, flags, options])
+            params.commands.append(command)
         params.commands.append('q')
 
     cli.loop(params)
