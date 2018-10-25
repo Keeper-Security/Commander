@@ -24,7 +24,7 @@ from . import display, api
 from .error import AuthenticationError, CommunicationError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
-from .commands import register_commands, register_enterprise_commands, unregister_enterprise_commands
+from .commands import register_commands, register_enterprise_command_info, register_enterprise_commands, unregister_enterprise_commands
 
 
 stack = []
@@ -33,14 +33,32 @@ stack = []
 commands = {}
 aliases = {}
 command_info = collections.OrderedDict()
+enterprise_command_info = collections.OrderedDict()
 register_commands(commands, aliases, command_info)
+register_enterprise_command_info(enterprise_command_info)
 
 
-def display_command_help():
+def display_command_help(showEnterprise = False, showShell = False):
     max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info.keys(), 0)
+
+    if showEnterprise:
+        max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, enterprise_command_info.keys(), max_length)
+
     print('\nCommands:')
     for cmd in command_info:
         print('  ' + cmd.ljust(max_length + 2) + '... ' + command_info[cmd])
+
+    if showEnterprise:
+        for cmd in enterprise_command_info:
+            print('  ' + cmd.ljust(max_length + 2) + '... ' + enterprise_command_info[cmd])
+
+    if showShell:
+        print('  ' + 'shell'.ljust(max_length + 2) + '... ' + 'Use Keeper interactive shell')
+
+    print('  ' + 'c'.ljust(max_length + 2) + '... ' + 'Clear the screen')
+    print('  ' + 'h'.ljust(max_length + 2) + '... ' + 'Show command history')
+    print('  ' + 'q'.ljust(max_length + 2) + '... ' + 'Quit')
+
     print('')
     print('Type \'command -h\' to display help on command')
 
@@ -101,7 +119,7 @@ def do_command(params):
                     if params.sync_data:
                         api.sync_down(params)
             else:
-                display_command_help()
+                display_command_help(showEnterprise=(params.enterprise is not None))
                 return True
 
             if params.command:
@@ -178,9 +196,9 @@ def loop(params):
         while True:
             if params.prepare_commands:
                 if params.enterprise:
-                    register_enterprise_commands(commands, aliases, command_info)
+                    register_enterprise_commands(commands, aliases)
                 else:
-                    unregister_enterprise_commands(commands, aliases, command_info)
+                    unregister_enterprise_commands(commands, aliases)
                 params.prepare_commands = False
 
             if len(params.commands) > 0:
