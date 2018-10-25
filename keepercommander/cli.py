@@ -176,19 +176,19 @@ def loop(params):
                 api.sync_down(params)
 
         while True:
+            if params.prepare_commands:
+                if params.enterprise:
+                    register_enterprise_commands(commands, aliases, command_info)
+                else:
+                    unregister_enterprise_commands(commands, aliases, command_info)
+                params.prepare_commands = False
+
             if len(params.commands) > 0:
-                params.command = params.commands[0]
+                params.command = params.commands[0].strip()
                 params.commands = params.commands[1:]
 
             if not params.command:
                 try:
-                    if params.prepare_commands:
-                        if params.enterprise:
-                            register_enterprise_commands(commands, aliases, command_info)
-                        else:
-                            unregister_enterprise_commands(commands, aliases, command_info)
-                        params.prepare_commands = False
-
                     if prompt_session is not None:
                         params.command = prompt_session.prompt(get_prompt(params)+ '> ')
                     else:
