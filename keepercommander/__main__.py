@@ -144,15 +144,17 @@ def main():
         if opts.command == '?' or not params.commands:
             usage('')
 
-    if opts.command != 'shell':
-        if opts.command:
-            flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
-            options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
-            command = ' '.join([opts.command, flags, options])
-            params.commands.append(command)
-        params.commands.append('q')
-
-    cli.loop(params)
+    if params.timedelay >= 1 and params.commands:
+        cli.runcommands(params)
+    else:
+        if opts.command != 'shell':
+            if opts.command:
+                flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
+                options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
+                command = ' '.join([opts.command, flags, options])
+                params.commands.append(command)
+            params.commands.append('q')
+        cli.loop(params)
 
 
 if __name__ == '__main__':
