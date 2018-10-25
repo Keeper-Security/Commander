@@ -29,28 +29,26 @@ from .. import api
 from ..display import bcolors
 
 
-def register_commands(commands, aliases):
+def register_commands(commands):
     commands['enterprise-info'] = EnterpriseInfoCommand()
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
     commands['audit-log'] = AuditLogCommand()
 
+
+def unregister_commands(commands):
+    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team', 'audit-log']:
+        commands.pop(cmd, None)
+
+
+def register_command_info(aliases, command_info):
     aliases['ei'] = 'enterprise-info'
     aliases['eu'] = 'enterprise-user'
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
     aliases['al'] = 'audit-log'
 
-
-def unregister_commands(commands, aliases):
-    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team', 'audit-log']:
-        commands.pop(cmd, None)
-    for cmd in ['ei', 'eu', 'er', 'et', 'al']:
-        aliases.pop(cmd, None)
-
-
-def register_command_info(command_info):
     for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, audit_log_parser]:
         command_info[p.prog] = p.description
 

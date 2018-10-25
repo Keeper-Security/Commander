@@ -23,7 +23,7 @@ from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 
 
-def register_commands(commands, aliases):
+def register_commands(commands):
     commands['ls'] = FolderListCommand()
     commands['cd'] = FolderCdCommand()
     commands['tree'] = FolderTreeCommand()
@@ -33,7 +33,7 @@ def register_commands(commands, aliases):
     commands['ln'] = FolderLinkCommand()
 
 
-def register_command_info(command_info):
+def register_command_info(aliases, command_info):
     for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser, ln_parser]:
         command_info[p.prog] = p.description
 

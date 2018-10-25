@@ -24,18 +24,19 @@ from . import display, api
 from .error import AuthenticationError, CommunicationError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
-from .commands import register_commands, register_enterprise_command_info, register_enterprise_commands, unregister_enterprise_commands
+from .commands import register_commands, register_enterprise_commands
 
 
 stack = []
 
 
-commands = {}
 aliases = {}
+commands = {}
 command_info = collections.OrderedDict()
-enterprise_command_info = collections.OrderedDict()
 register_commands(commands, aliases, command_info)
-register_enterprise_command_info(enterprise_command_info)
+enterprise_commands = {}
+enterprise_command_info = collections.OrderedDict()
+register_enterprise_commands(enterprise_commands, aliases, enterprise_command_info)
 
 
 def display_command_help(showEnterprise = False, showShell = False):
@@ -97,20 +98,28 @@ def do_command(params):
 
         if len(cmd) > 0:
             orig_cmd = cmd
-            if cmd in aliases and cmd not in commands:
+            if cmd in aliases and cmd not in commands and cmd not in enterprise_commands:
                 cmd = aliases[cmd]
 
-            if cmd in commands:
-                command = commands[cmd]
+            if cmd in commands or cmd in enterprise_commands:
+                if cmd in commands:
+                    command = commands[cmd]
+                else:
+                    if params.enterprise:
+                        command = enterprise_commands[cmd]
+                    else:
+                        api.print_error('This command is restricted to Keeper Enterprise administrators.')
+                        return True
+
                 if command.is_authorised():
                     if not params.session_token:
                         try:
                             prompt_for_credentials(params)
-                            print('Logging in...')
+                            api.print_info('Logging in...')
                             api.login(params)
                             api.sync_down(params)
                         except KeyboardInterrupt as e:
-                            print('Canceled')
+                            api.print_info('Canceled')
                             return True
 
                 command.execute_args(params, args, command=orig_cmd)
@@ -194,13 +203,6 @@ def loop(params):
                 api.sync_down(params)
 
         while True:
-            if params.prepare_commands:
-                if params.enterprise:
-                    register_enterprise_commands(commands, aliases)
-                else:
-                    unregister_enterprise_commands(commands, aliases)
-                params.prepare_commands = False
-
             if len(params.commands) > 0:
                 params.command = params.commands[0].strip()
                 params.commands = params.commands[1:]
