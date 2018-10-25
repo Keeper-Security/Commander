@@ -524,6 +524,29 @@ or from the shell:
 My Vault> audit-log --target=splunk --record=<your record UID>
 ```
 
+To automate the push of Splunk events every 5 minutes, create a JSON configuration file such as this:
+
+```bash
+{
+    "server":"https://keepersecurity.com/api/v2/",
+    "user":"craig@company.com",
+    "password":"your_password_here",
+    "mfa_token":"filled_in_by_commander",
+    "mfa_type":"device_token",
+    "debug":false,
+    "plugins":[],
+    "commands":["sync-down","audit-log --target=splunk"],
+    "timedelay":600,
+}
+```
+
+Then run Commander using the config parameter. For example:
+
+```bash
+$ keeper --config=my_config_file.json
+```
+
+
 ### Advanced Configuration File
 
 By default, Keeper will look for a file called ```config.json``` in the current working directory and it will use this file for reading and writing session parameters. For example, if you login with two factor authentication, the device token is written to this file. The configuration file loaded can also be customized through the ```config``` parameter. The config file can also be used to automate and schedule commands.
