@@ -726,7 +726,7 @@ class RecordUploadAttachmentCommand(Command):
             'udata': udata,
             'revision': record['revision']
         })
-        api.resolve_record_access_path(params, record_uid, path=ru)
+        api.resolve_record_access_path(params, record_uid, path=record_update)
         rq = {
             'command': 'record_update',
             'pt': 'Commander',
