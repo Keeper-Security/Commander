@@ -223,6 +223,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
 * ```enterprise-info``` or ```ei```   Display enterprise information
 
+    Parameters:
     - ```--nodes``` Show node structure in a tree form
     - ```--users``` Show users in a list view
     - ```--roles``` Show all roles in a list view
@@ -230,8 +231,9 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--node``` Specify a single node to limit view
     - ```--v``` Verbose mode 
 
-* ```enterprise-user``` or ```eu```   Enterprise user management
+* ```enterprise-user <email>``` or ```eu <email>```   Enterprise user management
 
+    Parameters:
     - ```--expire``` Expire the master password for the user
     - ```--lock``` Unlock the user account
     - ```--unlock``` Lock the user account 
@@ -243,14 +245,18 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--remove-role``` Remove a user from a role
     - ```--add-team``` Add a user to a team
     - ```--remove-team``` Remove a user from a team
+    - If no parameters are provided, displays information about specified email
 
-* ```enterprise-role``` or ```er```   Enterprise role management
+* ```enterprise-role <Role ID>``` or ```er <Role ID>```   Enterprise role management
 
+    Parameters:
     - ```--add-user``` Add a user to a specified role
     - ```--remove-user``` Remove a user from a specified role
+    - If no parameters are provided, displays information about specified role
 
-* ```enterprise-team``` or ```et```   Enterprise team management
+* ```enterprise-team <Team ID>``` or ```et <Team ID>```   Enterprise team management
 
+    Parameters:
     - ```--add``` Create a new team in the root node
     - ```--node``` Move a team into the specified node
     - ```--add-user``` Add a user to a team
@@ -260,6 +266,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-edit``` Restrict record edit on the team
     - ```--restrict-share``` Restrict record re-sharing on the team
     - ```--restrict-view``` Restrict record viewing on the team 
+    - If no parameters are provided, displays information about specified team
 
 * ```audit-log``` Export audit and event logs
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector [See Details](#event-logging)
