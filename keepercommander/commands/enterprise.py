@@ -15,6 +15,7 @@ import base64
 import requests
 import logging
 import platform
+import datetime
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -384,7 +385,14 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 for u in users.values():
                     status = lock_text(u['lock'])
                     if not status:
-                        status = u['status'].capitalize()
+                        if 'account_share_expiration' in u:
+                            expire_at = datetime.datetime.fromtimestamp(u['account_share_expiration']/1000.0)
+                            if expire_at < datetime.datetime.now():
+                                status = 'Blocked'
+                            else:
+                                status = 'Transfer Acceptance'
+                        else:
+                            status = u['status'].capitalize()
                     rows.append([u['id'], u['username'], u['name'], status, node_path(u['node_id'])])
                 rows.sort(key=lambda x: x[1])
 
@@ -636,7 +644,14 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
                 status = lock_text(user['lock'])
                 if not status:
-                    status = user['status'].capitalize()
+                    if 'account_share_expiration' in user:
+                        expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
+                        if expire_at < datetime.datetime.now():
+                            status = 'Blocked'
+                        else:
+                            status = 'Transfer Acceptance'
+                    else:
+                        status = user['status'].capitalize()
                 print('{0:>16s}: {1}'.format('Status', status))
 
                 if 'team_users' in params.enterprise and 'teams' in params.enterprise:
