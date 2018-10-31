@@ -16,6 +16,8 @@ import requests
 import logging
 import platform
 import datetime
+import fnmatch
+import re
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -79,7 +81,7 @@ enterprise_user_parser.add_argument('--add-role', dest='add_role', action='appen
 enterprise_user_parser.add_argument('--remove-role', dest='remove_role', action='append', help='role name or role ID')
 enterprise_user_parser.add_argument('--add-team', dest='add_team', action='append', help='team name or team UID')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
-enterprise_user_parser.add_argument('email', type=str, action='store', help='user email or user ID')
+enterprise_user_parser.add_argument('email', type=str, action='store', help='user email or user ID or user search pattern')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
@@ -428,12 +430,20 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         user = None
+        matched_users = []
         email = kwargs['email']
         if 'users' in params.enterprise:
             for u in params.enterprise['users']:
                 if email in {str(u['enterprise_user_id']), u['username']}:
                     user = u
                     break
+
+        if not user:
+            regex = re.compile(fnmatch.translate(email)).match
+            if 'users' in params.enterprise:
+                for u in params.enterprise['users']:
+                    if regex(u['username']):
+                        matched_users.append(u)
 
         node_id = None
         if kwargs.get('node'):
@@ -641,43 +651,55 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
             else:
                 is_verbose = kwargs.get('verbose') or False
-                print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
-                print('{0:>16s}: {1}'.format('Email', user['username']))
-                print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
-                status = lock_text(user['lock'])
-                if not status:
-                    if 'account_share_expiration' in user:
-                        expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
-                        if expire_at < datetime.datetime.now():
-                            status = 'Blocked'
-                        else:
-                            status = 'Transfer Acceptance'
-                    else:
-                        status = user['status'].capitalize()
-                print('{0:>16s}: {1}'.format('Status', status))
-
-                if 'team_users' in params.enterprise and 'teams' in params.enterprise:
-                    team_nodes = {}
-                    for t in params.enterprise['teams']:
-                        team_nodes[t['team_uid']] = t
-                    user_id = user['enterprise_user_id']
-                    ts = [t['team_uid'] for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
-                    for i in range(len(ts)):
-                        team_node = team_nodes[ts[i]]
-                        print('{0:>16s}: {1:<22s} {2}'.format('Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
-
-                if 'role_users' in params.enterprise:
-                    role_ids = [x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == user['enterprise_user_id']]
-                    if len(role_ids) > 0:
-                        role_nodes = {}
-                        for r in params.enterprise['roles']:
-                            role_nodes[r['role_id']] = r
-                        for i in range(len(role_ids)):
-                            role_node = role_nodes[role_ids[i]]
-                            print('{0:>16s}: {1:<22s} {2}'.format('Role' if i == 0 else '', role_node['data']['displayname'], role_node['role_id'] if is_verbose else ''))
-
+                self.display_user(params, user, is_verbose)
         else:
-            print('No such user')
+            if len(matched_users) > 0:
+                is_verbose = kwargs.get('verbose') or False
+                skip = True
+                for user in matched_users:
+                    if skip:
+                        skip = False
+                    else:
+                        print('\n')
+                    self.display_user(params, user, is_verbose)
+            else:
+                print('No such user')
+
+    def display_user(self, params, user, is_verbose = False):
+        print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
+        print('{0:>16s}: {1}'.format('Email', user['username']))
+        print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
+        status = lock_text(user['lock'])
+        if not status:
+            if 'account_share_expiration' in user:
+                expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
+                if expire_at < datetime.datetime.now():
+                    status = 'Blocked'
+                else:
+                    status = 'Transfer Acceptance'
+            else:
+                status = user['status'].capitalize()
+        print('{0:>16s}: {1}'.format('Status', status))
+
+        if 'team_users' in params.enterprise and 'teams' in params.enterprise:
+            team_nodes = {}
+            for t in params.enterprise['teams']:
+                team_nodes[t['team_uid']] = t
+            user_id = user['enterprise_user_id']
+            ts = [t['team_uid'] for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
+            for i in range(len(ts)):
+                team_node = team_nodes[ts[i]]
+                print('{0:>16s}: {1:<22s} {2}'.format('Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
+
+        if 'role_users' in params.enterprise:
+            role_ids = [x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == user['enterprise_user_id']]
+            if len(role_ids) > 0:
+                role_nodes = {}
+                for r in params.enterprise['roles']:
+                    role_nodes[r['role_id']] = r
+                for i in range(len(role_ids)):
+                    role_node = role_nodes[role_ids[i]]
+                    print('{0:>16s}: {1:<22s} {2}'.format('Role' if i == 0 else '', role_node['data']['displayname'], role_node['role_id'] if is_verbose else ''))
 
 
 class EnterpriseRoleCommand(EnterpriseCommand):
