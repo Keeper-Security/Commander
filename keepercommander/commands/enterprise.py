@@ -265,6 +265,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'status': user['status'],
                     'lock': user['lock']
                 }
+                if 'account_share_expiration' in user:
+                    u['account_share_expiration'] = user['account_share_expiration']
                 users[user_id] = u
                 if node_id in nodes:
                     nodes[node_id]['users'].append(user_id)
