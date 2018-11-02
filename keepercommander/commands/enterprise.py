@@ -1128,22 +1128,21 @@ class AuditLogCommand(EnterpriseCommand):
 
             if len(events) == 0:
                 finished = True
-            if finished or len(events) >= 500:
-                if len(events) > 0:
-                    if target == 'splunk':
-                        auth = { 'Authorization': 'Splunk {0}'.format(props['token']) }
-                        try:
-                            logging.captureWarnings(True)
-                            rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth, verify=False)
-                        finally:
-                            logging.captureWarnings(False)
+            if len(events) > 0:
+                if target == 'splunk':
+                    auth = { 'Authorization': 'Splunk {0}'.format(props['token']) }
+                    try:
+                        logging.captureWarnings(True)
+                        rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth, verify=False)
+                    finally:
+                        logging.captureWarnings(False)
 
-                        if rs.status_code == 200:
-                            store_record = True
-                        else:
-                            finished = True
-                    count += len(events)
-                    events.clear()
+                    if rs.status_code == 200:
+                        store_record = True
+                    else:
+                        finished = True
+                count += len(events)
+                events.clear()
 
         if store_record:
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
