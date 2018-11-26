@@ -1700,8 +1700,9 @@ def communicate(params, request):
 
     def authorize_request():
         request['client_time'] = current_milli_time()
-        request['2fa_token'] = params.mfa_token
-        request['2fa_type'] = params.mfa_type
+        request['locale'] = 'en_US'
+        request['client_version'] = CLIENT_VERSION
+        request['device_id'] = 'Commander'
         request['session_token'] = params.session_token
         request['username'] = params.user
 
