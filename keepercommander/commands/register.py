@@ -396,7 +396,7 @@ class ShareFolderCommand(Command):
                             if 'key' in tk:
                                 team_uid = tk['team_uid']
                                 if tk['type'] == 1:
-                                    team_keys[team_uid] = api.decrypt_aes(tk['key'], params.data_key)
+                                    team_keys[team_uid] = api.decrypt_data(tk['key'], params.data_key)
                                 elif tk['type'] == 2:
                                     team_keys[team_uid] = api.decrypt_rsa(tk['key'], params.rsa_key)
                                 elif tk['type'] == 3:

@@ -864,7 +864,7 @@ def sync_down(params):
                             if 'record_uid' in sf_record and sf_record['record_uid'] == record_uid and 'record_key' in sf_record:
                                 sf_rec_key = sf_record['record_key']
                                 record['record_key'] = sf_rec_key
-                                unencrypted_key = decrypt_aes(sf_rec_key, shared_folder['shared_folder_key'])[:32]
+                                unencrypted_key = decrypt_data(sf_rec_key, shared_folder['shared_folder_key'])
 
                 if unencrypted_key and len(unencrypted_key) != 32:
                     unencrypted_key = None
@@ -1700,8 +1700,9 @@ def communicate(params, request):
 
     def authorize_request():
         request['client_time'] = current_milli_time()
-        request['2fa_token'] = params.mfa_token
-        request['2fa_type'] = params.mfa_type
+        request['locale'] = 'en_US'
+        request['client_version'] = CLIENT_VERSION
+        request['device_id'] = 'Commander'
         request['session_token'] = params.session_token
         request['username'] = params.user
 
@@ -2093,7 +2094,7 @@ def query_enterprise(params):
             if 'key_type_id' in response:
                 tree_key = None
                 if response['key_type_id'] == 1:
-                    tree_key = decrypt_aes(response['tree_key'], params.data_key)
+                    tree_key = decrypt_data(response['tree_key'], params.data_key)
                 elif response['key_type_id'] == 2:
                     tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
                 if not tree_key is None:
@@ -2104,7 +2105,7 @@ def query_enterprise(params):
                             node['data'] = {}
                             if 'encrypted_data' in node:
                                 try:
-                                    data = decrypt_aes(node['encrypted_data'], tree_key)
+                                    data = decrypt_data(node['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     node['data'] = json.loads(data.decode('utf-8'))
                                 except Exception as e:
@@ -2114,7 +2115,7 @@ def query_enterprise(params):
                             user['data'] = {}
                             if 'encrypted_data' in user:
                                 try:
-                                    data = decrypt_aes(user['encrypted_data'], tree_key)
+                                    data = decrypt_data(user['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     user['data'] = json.loads(data.decode('utf-8'))
                                 except Exception as e:
@@ -2124,7 +2125,7 @@ def query_enterprise(params):
                             role['data'] = {}
                             if 'encrypted_data' in role:
                                 try:
-                                    data = decrypt_aes(role['encrypted_data'], tree_key)
+                                    data = decrypt_data(role['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     role['data'] = json.loads(data.decode('utf-8'))
                                 except Exception as e:
