@@ -495,14 +495,14 @@ $ keeper shell
 To export all events and start tracking the last event time exported:
 
 ```
-My Vault> audit-log --target=syslog                                                                                                                    
+My Vault> audit-log --target=syslog
 Do you want to create a Keeper record to store audit log settings? [y/n]: y
 Choose the title for audit log record [Default: Audit Log: Syslog]: 
 Enter filename for syslog messages.
 ...              Syslog file name: all_events.log
 ...          Gzip messages? (y/N): n
 Exported 3952 audit events
-My Vault>                                                                                                                                              
+My Vault>
 ```
 
 This creates a record in your vault (titled "Audit Log: Syslog" in this example) which tracks the timestamp of the last exported event and the output filename.
