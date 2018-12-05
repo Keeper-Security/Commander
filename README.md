@@ -270,6 +270,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
 * ```audit-log``` Export audit and event logs
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector [See Details](#event-logging)
+    - ```--target=syslog``` Export events to a local file in syslog format [See Details](#event-logging)
 
 ### Importing Records into Keeper
 
@@ -481,6 +482,65 @@ $ keeper import -h
 ```
 
 ### Event Logging
+
+**Export of Event Logs in Syslog Format**
+
+Commander can export all event logs to a local file in syslog format, or export data in incremental files.  A Keeper record in your vault
+is used to store a reference to the last event  
+
+```bash
+$ keeper shell
+```
+
+To export all events and start tracking the last event time exported:
+
+```
+My Vault> audit-log --target=syslog                                                                                                                    
+Do you want to create a Keeper record to store audit log settings? [y/n]: y
+Choose the title for audit log record [Default: Audit Log: Syslog]: 
+Enter filename for syslog messages.
+...              Syslog file name: all_events.log
+...          Gzip messages? (y/N): n
+Exported 3952 audit events
+My Vault>                                                                                                                                              
+```
+
+This creates a record in your vault (titled "Audit Log: Syslog" in this example) which tracks the timestamp of the last exported event and the output filename.
+Then the event data is exported to the file in either text or gzip format.
+
+Each subsequent audit log export can be performed with this command:
+
+```bash
+$ keeper audit-log --format=syslog --record=<your record UID>
+```
+or from the shell:
+
+```bash
+My Vault> audit-log --target=syslog --record=<your record UID>
+```
+
+To automate the syslog event export every 5 minutes, create a JSON configuration file such as this:
+
+```bash
+{
+    "server":"https://keepersecurity.com/api/v2/",
+    "user":"craig@company.com",
+    "password":"your_password_here",
+    "mfa_token":"filled_in_by_commander",
+    "mfa_type":"device_token",
+    "debug":false,
+    "plugins":[],
+    "commands":["sync-down","audit-log --target=syslog"],
+    "timedelay":600,
+}
+```
+
+Then run Commander using the config parameter. For example:
+
+```bash
+$ keeper --config=my_config_file.json
+```
+
 
 **Splunk HTTP Event Collector Push**
 
