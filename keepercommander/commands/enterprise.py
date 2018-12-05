@@ -18,6 +18,7 @@ import platform
 import datetime
 import fnmatch
 import re
+import gzip
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -114,7 +115,7 @@ enterprise_team_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -982,21 +983,194 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             print('Team not found')
 
 
+class AuditLogBaseExport:
+    def __init__(self):
+        self.store_record = False
+        self.should_cancel = False
+
+    def chunk_size(self):
+        return 1000
+
+    def default_record_title(self):
+        raise NotImplemented()
+
+    def get_properties(self, record, props):
+        """
+        :type record: Record
+        :type props: dict
+        :rtype: None
+        """
+        raise NotImplemented()
+
+    def convert_event(self, props, event):
+        raise NotImplemented()
+
+    def export_events(self, props, events):
+        '''
+        :type props: dict
+        :type events: list
+        :rtype: None
+        '''
+        raise NotImplemented()
+
+
+class AuditLogSplunkExport(AuditLogBaseExport):
+    def __init__(self):
+        AuditLogBaseExport.__init__(self)
+
+    def default_record_title(self):
+        return 'Audit Log: Splunk'
+
+    def get_properties(self, record, props):
+        try:
+            logging.captureWarnings(True)
+            url = record.login_url
+            if not url:
+                api.print_info('Enter HTTP Event Collector (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
+                while not url:
+                    address = input('...' + 'Splunk HEC endpoint: '.rjust(32))
+                    if not address:
+                        return
+                    for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
+                        try:
+                            if api.is_interactive_mode:
+                                print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
+                            rs = requests.post(test_url, json='', verify=False)
+                            if rs.status_code == 401:
+                                js = rs.json()
+                                if 'code' in js:
+                                    if js['code'] == 2:
+                                        url = test_url
+                        except:
+                            pass
+                        if url:
+                            api.print_info('Found.')
+                            break
+                        else:
+                            api.print_info('Failed.')
+                record.login_url = url
+                self.store_record = True
+            props['hec_url'] = url
+
+            token = record.password
+            if not token:
+                while not token:
+                    test_token = input('...' + 'Splunk Token: '.rjust(32))
+                    if not test_token:
+                        return
+                    try:
+                        auth={'Authorization': 'Splunk {0}'.format(test_token)}
+                        rs = requests.post(url, json='', headers=auth, verify=False)
+                        if rs.status_code == 400:
+                            js = rs.json()
+                            if 'code' in js:
+                                if js['code'] == 6:
+                                    token = test_token
+                    except:
+                        pass
+                record.password = token
+                self.store_record = True
+            props['token'] = token
+            props['host'] = platform.node()
+        finally:
+            logging.captureWarnings(False)
+
+    def convert_event(self, props, event):
+        evt = event.copy()
+        evt.pop('id')
+        created = evt.pop('created')
+        js = {
+            'time': created,
+            'host': props['host'],
+            'source': props['enterprise_name'],
+            'sourcetype': '_json',
+            'event': evt
+        }
+        return json.dumps(js)
+
+    def export_events(self, props, events):
+        auth = { 'Authorization': 'Splunk {0}'.format(props['token']) }
+        try:
+            logging.captureWarnings(True)
+            rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth, verify=False)
+        finally:
+            logging.captureWarnings(False)
+
+        if rs.status_code == 200:
+            self.store_record = True
+        else:
+            self.should_cancel = True
+
+
+class AuditLogSyslogExport(AuditLogBaseExport):
+    def __init__(self):
+        AuditLogBaseExport.__init__(self)
+
+    def default_record_title(self):
+        return 'Audit Log: Syslog'
+
+    def get_properties(self, record, props):
+        filename = record.login
+        if not filename:
+            api.print_info('Enter filename for syslog messages.')
+            filename = input('...' + 'Syslog file name: '.rjust(32))
+            if not filename:
+                return
+            if not filename.endswith('.gz'):
+                gz = input('...' + 'Gzip messages? (y/N): '.rjust(32))
+                if gz.lower() == 'y':
+                    filename = filename + '.gz'
+            record.login = filename
+            self.store_record = True
+        props['filename'] = record.login
+
+    def convert_event(self, props, event):
+        pri = 13 * 8 + 6
+        dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
+        message = '<{0}>1 {1} {2} {3} - {4}'.format(pri, dt.strftime('%Y-%m-%dT%H:%M:%SZ'), event['ip_address'], 'Keeper', event['id'])
+
+        evt = event.copy()
+        evt.pop('id')
+        evt.pop('created')
+        evt.pop('ip_address')
+        structured = 'Keeper@Commander'
+        for key in evt:
+            structured += ' {0}="{1}"'.format(key, evt[key])
+        structured = '[' + structured + ']'
+        message = message + ' ' + structured
+
+        return message
+
+    def export_events(self, props, events):
+        is_gzipped = props['filename'].endswith('.gz')
+        logf = gzip.GzipFile(filename=props['filename'], mode='ab') if is_gzipped else open(props['filename'], mode='ab')
+        try:
+            for line in events:
+                logf.write(line.encode('utf-8'))
+                logf.write(b'\n')
+        finally:
+            logf.flush()
+            logf.close()
+
+
 class AuditLogCommand(EnterpriseCommand):
     def get_parser(self):
         return audit_log_parser
 
     def execute(self, params, **kwargs):
         target = kwargs.get('target')
-        default_record_name = None
+
+        log_export = None # type: AuditLogBaseExport
         if target == 'splunk':
-            default_record_name = 'Audit Log: Splunk'
+            log_export = AuditLogSplunkExport()
+        elif target == 'syslog':
+            log_export = AuditLogSyslogExport()
         else:
             print('Audit log export: unsupported target')
             return
 
         record = None
-        record_name = kwargs.get('record') or default_record_name
+        record_name = kwargs.get('record') or log_export.default_record_title()
         for r_uid in params.record_cache:
             rec = api.get_record(params, r_uid)
             if record_name in [rec.record_uid, rec.title]:
@@ -1004,7 +1178,7 @@ class AuditLogCommand(EnterpriseCommand):
         if record is None:
             answer = user_choice('Do you want to create a Keeper record to store audit log settings?', 'yn', 'n')
             if answer.lower() == 'y':
-                record_title = input('Choose the title for audit log record [Default: {0}]: '.format(default_record_name)) or default_record_name
+                record_title = input('Choose the title for audit log record [Default: {0}]: '.format(record_name)) or log_export.default_record_title()
                 cmd = RecordAddCommand()
                 record_uid = cmd.execute(params, **{
                     'title': record_title,
@@ -1017,60 +1191,9 @@ class AuditLogCommand(EnterpriseCommand):
             return
 
         props = {}
-        #setup record
-        store_record = False
-        if target == 'splunk':
-            try:
-                logging.captureWarnings(True)
-                url = record.login_url
-                if not url:
-                    print('Enter HTTP Event Collector (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
-                    while not url:
-                        address = input('...' + 'Splunk HEC endpoint: '.rjust(32))
-                        if not address:
-                            return
-                        for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
-                            try:
-                                print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
-                                rs = requests.post(test_url, json='', verify=False)
-                                if rs.status_code == 401:
-                                    js = rs.json()
-                                    if 'code' in js:
-                                        if js['code'] == 2:
-                                            url = test_url
-                            except:
-                                pass
-                            if url:
-                                print('Found.')
-                                break
-                            else:
-                                print('Failed.')
-                    record.login_url = url
-                    store_record = True
-                props['hec_url'] = url
-
-                token = record.password
-                if not token:
-                    while not token:
-                        test_token = input('...' + 'Splunk Token: '.rjust(32))
-                        if not test_token:
-                            return
-                        try:
-                            auth={'Authorization': 'Splunk {0}'.format(test_token)}
-                            rs = requests.post(url, json='', headers=auth, verify=False)
-                            if rs.status_code == 400:
-                                js = rs.json()
-                                if 'code' in js:
-                                    if js['code'] == 6:
-                                        token = test_token
-                        except:
-                            pass
-                    record.password = token
-                    store_record = True
-                props['token'] = token
-                props['host'] = platform.node()
-            finally:
-                logging.captureWarnings(False)
+        props['enterprise_name'] = params.enterprise['enterprise_name']
+        log_export.store_record = False
+        log_export.get_properties(record, props)
 
         #query data
         last_event_time = 0
@@ -1088,6 +1211,8 @@ class AuditLogCommand(EnterpriseCommand):
         created_before = 0
         count = 0
         logged_ids = set()
+        chunk_length = log_export.chunk_size()
+
         while not finished:
             finished = True
             rq = {
@@ -1111,40 +1236,26 @@ class AuditLogCommand(EnterpriseCommand):
                                 finished = True
                                 break
 
-                            if target == 'splunk':
-                                evt = event.copy()
-                                event_id = evt.pop('id')  #skip id
-                                if event_id not in logged_ids:
-                                    logged_ids.add(event_id)
-                                    time = evt.pop('created')
-                                    js = {
-                                        'time': time,
-                                        'host': props['host'],
-                                        'source': params.enterprise['enterprise_name'],
-                                        'sourcetype': '_json',
-                                        'event': evt
-                                    }
-                                    events.append(json.dumps(js))
+                            event_id = event['id']
+                            if event_id not in logged_ids:
+                                logged_ids.add(event_id)
+                                events.append(log_export.convert_event(props, event))
 
             if len(events) == 0:
                 finished = True
-            if len(events) > 0:
-                if target == 'splunk':
-                    auth = { 'Authorization': 'Splunk {0}'.format(props['token']) }
-                    try:
-                        logging.captureWarnings(True)
-                        rs = requests.post(props['hec_url'], data='\n'.join(events), headers=auth, verify=False)
-                    finally:
-                        logging.captureWarnings(False)
+            while len(events) > 0:
+                if finished or len(events) >= chunk_length:
+                    to_store = events[:chunk_length]
+                    events = events[chunk_length:]
+                    log_export.export_events(props, to_store)
+                    if log_export.should_cancel:
+                        finished = log_export.should_cancel
+                        break
+                    count += len(to_store)
+                else:
+                    break
 
-                    if rs.status_code == 200:
-                        store_record = True
-                    else:
-                        finished = True
-                count += len(events)
-                events.clear()
-
-        if store_record:
+        if log_export.store_record:
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
             if new_event_time is not None:
                 record.set_field('last_event_time', str(new_event_time))
