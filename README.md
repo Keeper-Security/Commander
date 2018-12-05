@@ -515,7 +515,7 @@ $ keeper audit-log --format=syslog --record=<your record UID>
 ```
 or from the shell:
 
-```bash
+```
 My Vault> audit-log --target=syslog --record=<your record UID>
 ```
 
@@ -587,7 +587,7 @@ $ keeper audit-log --format=splunk --record=<your record UID>
 ```
 or from the shell:
 
-```bash
+```
 My Vault> audit-log --target=splunk --record=<your record UID>
 ```
 
