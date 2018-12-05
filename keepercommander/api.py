@@ -1550,7 +1550,7 @@ def prepare_record(params, record):
     else:
         if params.debug: print('Generated record key')
         unencrypted_key = os.urandom(32)
-        record_object['record_key'] = encrypt_aes(params.data_key, unencrypted_key)
+        record_object['record_key'] = encrypt_aes(unencrypted_key, params.data_key)
         record_object['revision'] = 0
 
     data['title'] = record.title
