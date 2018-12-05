@@ -1148,9 +1148,14 @@ class AuditLogSyslogExport(AuditLogBaseExport):
             for line in events:
                 logf.write(line.encode('utf-8'))
                 logf.write(b'\n')
+            self.store_record = True
+        except:
+            self.should_cancel = True
         finally:
             logf.flush()
             logf.close()
+
+
 
 
 class AuditLogCommand(EnterpriseCommand):
@@ -1244,16 +1249,15 @@ class AuditLogCommand(EnterpriseCommand):
             if len(events) == 0:
                 finished = True
             while len(events) > 0:
-                if finished or len(events) >= chunk_length:
-                    to_store = events[:chunk_length]
-                    events = events[chunk_length:]
-                    log_export.export_events(props, to_store)
-                    if log_export.should_cancel:
-                        finished = log_export.should_cancel
-                        break
-                    count += len(to_store)
-                else:
+                to_store = events[:chunk_length]
+                events = events[chunk_length:]
+                log_export.export_events(props, to_store)
+                if log_export.should_cancel:
+                    finished = True
                     break
+                else:
+                    count += len(to_store)
+
 
         if log_export.store_record:
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
