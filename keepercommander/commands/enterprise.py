@@ -717,8 +717,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     break
 
         show_info = True
-
-        if kwargs.get('add_user') or kwargs.get('remove_user'):
+        if role and (kwargs.get('add_user') or kwargs.get('remove_user')):
             show_info = False
             users = {}
             for is_add in [False, True]:
