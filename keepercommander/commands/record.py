@@ -576,13 +576,19 @@ class RecordDownloadAttachmentCommand(Command):
                             iv = rq_http.raw.read(16)
                             cipher = AES.new(file_key, AES.MODE_CBC, iv)
                             finished = False
+                            decrypted = None
                             while not finished:
+                                if decrypted:
+                                    f.write(decrypted)
+                                    decrypted = None
+
                                 to_decrypt = rq_http.raw.read(10240)
+                                finished = len(to_decrypt) < 10240
                                 if len(to_decrypt) > 0:
                                     decrypted = cipher.decrypt(to_decrypt)
-                                    f.write(decrypted)
-                                else:
-                                    finished = True
+                            if decrypted:
+                                decrypted = api.unpad_binary(decrypted)
+                                f.write(decrypted)
                     else:
                         api.print_error('File \'{0}\': Failed to file encryption key'.format(file_name))
                 else:
@@ -674,8 +680,9 @@ class RecordUploadAttachmentCommand(Command):
                             while not finished:
                                 to_encrypt = src.read(10240)
                                 if len(to_encrypt) > 0:
-                                    if len(to_encrypt) % api.BS != 0:
+                                    if len(to_encrypt) < 10240:
                                         to_encrypt = api.pad_binary(to_encrypt)
+                                        finished = True
                                     encrypted = cipher.encrypt(to_encrypt)
                                     dst.write(encrypted)
                                 else:

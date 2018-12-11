@@ -49,6 +49,8 @@ from Cryptodome.Cipher import AES
 from ..importer import path_components, PathDelimiter, BaseImporter, BaseExporter, \
     Record, Folder, SharedFolder, Permission, Attachment
 
+from keepercommander.api import unpad_binary
+
 class KeepassImporter(BaseImporter):
 
     @staticmethod
@@ -363,6 +365,7 @@ class KeepassExporter(BaseExporter):
                                         cipher = AES.new(atta.key, AES.MODE_CBC, iv)
                                         buffer = cipher.decrypt(buffer[16:])
                                         if len(buffer) > 0:
+                                            buffer = unpad_binary(buffer)
                                             out = io.BytesIO()
                                             with gzip.GzipFile(fileobj=out, mode='w') as gz:
                                                 gz.write(buffer)

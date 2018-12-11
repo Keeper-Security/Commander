@@ -304,6 +304,9 @@ def upload_attachment(params, attachments):
                         chunk = s.read(10240)
                         if len(chunk) > 0:
                             if cipher is not None:
+                                if len(chunk) < 10240:
+                                    finished = True
+                                    chunk = api.pad_binary(chunk)
                                 chunk = cipher.encrypt(chunk)
                             buffer.write(chunk)
                         else:
