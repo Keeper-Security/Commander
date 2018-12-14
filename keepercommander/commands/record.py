@@ -18,6 +18,7 @@ import tempfile
 
 from Cryptodome.Cipher import AES
 
+from ..team import Team
 from .. import generator, api, display
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
@@ -346,9 +347,17 @@ class RecordListSfCommand(Command):
 
 class RecordListTeamCommand(Command):
     def execute(self, params, **kwargs):
-        results = api.search_teams(params, '')
-        if results:
-            display.formatted_teams(results)
+        rq = {
+            'command': 'get_available_teams'
+        }
+
+        rs = api.communicate(params, rq)
+        result = []
+        for team in rs['teams']:
+            team = Team(team_uid=team['team_uid'], name=team['team_name'])
+            result.append(team)
+
+        display.formatted_teams(result, skip_details=True)
 
 
 class RecordGetUidCommand(Command):

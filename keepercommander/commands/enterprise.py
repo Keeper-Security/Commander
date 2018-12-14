@@ -107,7 +107,6 @@ enterprise_team_parser.add_argument('--remove-user', dest='remove_user', action=
 enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
 enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
 enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
-enterprise_team_parser.add_argument('--name', dest='name', action='store', help='set team name')
 enterprise_team_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 enterprise_team_parser.add_argument('team', type=str, action='store', help='team name or team UID (except --add command)')
 enterprise_team_parser.error = raise_parse_exception
