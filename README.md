@@ -268,9 +268,10 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
-* ```audit-log``` Export audit and event logs
-    - ```--target=splunk``` Export events to Splunk HTTP Event Collector [See Details](#event-logging)
-    - ```--target=syslog``` Export events to a local file in syslog format [See Details](#event-logging)
+* ```audit-log``` Export audit and event logs [See Details](#event-logging)
+    - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
+    - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
+    - ```--target=syslog``` Export events to a local file in syslog format
 
 ### Importing Records into Keeper
 
@@ -613,6 +614,72 @@ Then run Commander using the config parameter. For example:
 $ keeper --config=my_config_file.json
 ```
 
+
+**Sumo Logic HTTP Event Collector Push**
+
+Keeper can post event logs directly to your Sumo Logic account. Please follow the below steps:
+
+* Login to Sumo Logic
+* Go to Manage Data -> Collection 
+* Click on Add Collector -> Hosted Collector then Add Source -> HTTP Logs & Metrics 
+* Name the collector and Save. Any other fields are default.
+* Note the HTTP Source Address which is the collector URL  
+* Login to Keeper Commander shell
+
+```bash
+$ keeper shell
+```
+
+Next set up the Sumo Logic integration with Commander. Commander will create a record in your vault that stores the HTTP Collector information. This will be used to also track the last event captured so that subsequent execution will pick up where it left off.
+
+```
+$ keeper audit-log --format=sumo
+
+When asked for “HTTP Collector URL:” paste the URL captured from the Sumo interface above.
+
+After this step, there will be a record in your vault used for tracking the event data integration.
+You can find the record UID of the Sumo record for subsequent audit log exports:
+
+```
+My Vault> search sumo
+
+  #  Record UID              Title              Login    URL
+---  ----------------------  -----------------  -------  -----
+  1  schQd2fOWwNchuSsDEXfEg  Audit Log: Sumo
+```
+
+Each subsequent audit log export can be performed with this command:
+
+```bash
+$ keeper audit-log --format=sumo --record=<your record UID>
+```
+or from the shell:
+
+```
+My Vault> audit-log --target=sumo --record=<your record UID>
+```
+
+To automate the push of Sumo Logic events every 5 minutes, create a JSON configuration file such as this:
+
+```bash
+{
+    "server":"https://keepersecurity.com/api/v2/",
+    "user":"craig@company.com",
+    "password":"your_password_here",
+    "mfa_token":"filled_in_by_commander",
+    "mfa_type":"device_token",
+    "debug":false,
+    "plugins":[],
+    "commands":["sync-down","audit-log --target=sumo"],
+    "timedelay":600,
+}
+```
+
+Then run Commander using the config parameter. For example:
+
+```bash
+$ keeper --config=my_config_file.json
+```
 
 ### Advanced Configuration File
 
