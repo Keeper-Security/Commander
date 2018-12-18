@@ -114,7 +114,7 @@ enterprise_team_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'sumo'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -1154,6 +1154,43 @@ class AuditLogSyslogExport(AuditLogBaseExport):
             logf.close()
 
 
+class AuditLogSumologicExport(AuditLogBaseExport):
+    def __init__(self):
+        AuditLogBaseExport.__init__(self)
+
+    def default_record_title(self):
+        return 'Audit Log: Sumologic'
+
+    def get_properties(self, record, props):
+        url = record.login_url
+        if not url:
+            api.print_info('Enter HTTP Logs Collector URL.')
+            url = input('...' + 'HTTP Collector URL: '.rjust(32))
+            if not url:
+                raise Exception('HTTP Collector URL is required.')
+            record.login_url = url
+            self.store_record = True
+        props['url'] = record.login_url
+
+    def convert_event(self, props, event):
+        evt = event.copy()
+        evt.pop('id')
+        dt = datetime.datetime.fromtimestamp(evt.pop('created'), tz=datetime.timezone.utc)
+        evt['timestamp'] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        return json.dumps(evt, separators=(',', ':'))
+
+    def export_events(self, props, events):
+        str = '\n'.join(events)
+
+        headers = {"Content-type": "application/text"}
+        rs = requests.post(props['url'], data=str.encode('utf-8'), headers=headers)
+        if rs.status_code == 200:
+            self.store_record = True
+        else:
+            self.should_cancel = True
+
+    def chunk_size(self):
+        return 250
 
 
 class AuditLogCommand(EnterpriseCommand):
@@ -1168,6 +1205,8 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogSplunkExport()
         elif target == 'syslog':
             log_export = AuditLogSyslogExport()
+        elif target == 'sumo':
+            log_export = AuditLogSumologicExport()
         else:
             print('Audit log export: unsupported target')
             return
