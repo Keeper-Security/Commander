@@ -634,6 +634,7 @@ Next set up the Sumo Logic integration with Commander. Commander will create a r
 
 ```
 $ keeper audit-log --format=sumo
+```
 
 When asked for “HTTP Collector URL:” paste the URL captured from the Sumo interface above.
 
