@@ -209,9 +209,9 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
 **Import and Export Commands**
 
-* ```import``` Import data from local file to Keeper (JSON, CSV, Keepass)
+* ```import``` Import data from local file to Keeper. JSON, CSV, Keepass formats accepted. Keepass import includes all file attachments.
 
-* ```export``` Export data from Keeper to local file or stdout (JSON, CSV, Keepass)
+* ```export``` Export data from Keeper to local file or stdout. JSON, CSV, Keepass file formats supported.  Keepass exports include all file attachments.
 
 **Folder and Record Sharing Commands**
 
