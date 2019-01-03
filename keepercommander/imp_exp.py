@@ -260,13 +260,16 @@ def upload_attachment(params, attachments):
     :type attachments: [(str, ImportAttachment)]
     '''
 
-    if len(attachments) > 0:
-        print('Uploading attachments:')
+    print('Uploading attachments:')
+    while len(attachments) > 0:
+        chunk = attachments[:90]
+        attachments = attachments[90:]
+
         uploads = None
 
         file_no = 0
         file_size = 0
-        for _, att in attachments:
+        for _, att in chunk:
             file_no += 1
             file_size += att.size or 0
 
@@ -284,7 +287,7 @@ def upload_attachment(params, attachments):
             return
 
         uploaded = {}
-        for record_id, atta in attachments:
+        for record_id, atta in chunk:
             if not uploads:
                 break
 
