@@ -418,10 +418,3 @@ class KeepassAttachment(Attachment):
         out.write(data)
         out.seek(0)
         yield out
-
-
-
-
-
-
-

@@ -23,7 +23,6 @@ from Cryptodome.Cipher import AES
 
 from . import api
 
-from .shared_folder import SharedFolder
 from .importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
     Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder, Permission as ImportPermission,\
     Attachment as ImportAttachment
@@ -153,7 +152,7 @@ def export(params, file_format, filename):
                 atta.name = a['name']
                 atta.size = a['size']
                 atta.key = base64.urlsafe_b64decode(a['key'] + '==')
-                atta.mime = a['type']
+                atta.mime = a.get('type') or ''
                 rec.attachments.append(atta)
 
         to_export.append(rec)
@@ -399,7 +398,7 @@ def prepare_shared_folder_add(params, folders):
         if fol.type in { BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
             sf_uid = fol.shared_folder_uid if fol.type == BaseFolderNode.SharedFolderFolderType else fol.uid
             if sf_uid in params.shared_folder_cache:
-                shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key']
+                shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key_unencrypted']
         folder_hash[h.hexdigest()] = f_uid, fol.type, shared_folder_key
 
     # public keys
@@ -555,7 +554,7 @@ def prepare_folder_add(params, records):
         if fol.type in { BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
             sf_uid = fol.shared_folder_uid if fol.type == BaseFolderNode.SharedFolderFolderType else fol.uid
             if sf_uid in params.shared_folder_cache:
-                shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key']
+                shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key_unencrypted']
         folder_hash[h.hexdigest()] = f_uid, fol.type, shared_folder_key
 
     folder_add = []
@@ -665,7 +664,7 @@ def prepare_record_add(params, records):
 
                         sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
                         sf = params.shared_folder_cache[sh_uid]
-                        req['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
+                        req['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
                         if 'key_type' not in sf:
                             if 'teams' in sf:
                                 for team in sf['teams']:
@@ -743,7 +742,7 @@ def prepare_record_link(params, records):
                                             dst_folder.shared_folder_uid
                                         if ssf_uid != dsf_uid:
                                             shf = params.shared_folder_cache[dsf_uid]
-                                            transition_key = api.encrypt_aes(record_key, shf['shared_folder_key'])
+                                            transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
                                     else:
                                         transition_key = api.encrypt_aes(record_key, params.data_key)
                                 else:
@@ -751,7 +750,7 @@ def prepare_record_link(params, records):
                                         dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
                                             dst_folder.shared_folder_uid
                                         shf = params.shared_folder_cache[dsf_uid]
-                                        transition_key = api.encrypt_aes(record_key, shf['shared_folder_key'])
+                                        transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
                                 if transition_key is not None:
                                     req['transition_keys'].append({
                                         'uid': rec.uid,
@@ -831,67 +830,6 @@ def execute_batch(params, requests):
             if params.debug:
                 print(e)
     api.sync_down(params)
-
-
-def parse_sf_json(json):
-    sf = SharedFolder()
-    sf.default_manage_records = json['default_manage_records']
-    sf.default_manage_users = json['default_manage_users']
-    sf.default_can_edit = json['default_can_edit']
-    sf.default_can_share = json['default_can_share']
-    sf.name = json['name']
-    sf.records = json['records'] if 'records' in json else []
-    sf.users = json['users'] if 'users' in json else []
-    sf.teams = json['teams'] if 'teams' in json else []
-    return sf
-
-
-def create_sf(params, filename):
-    api.sync_down(params)
-
-    def read_json():
-        with open(filename, mode="rt", encoding="utf8") as f:
-            return json.load(f)
-
-    print('Creating shared folder(s)...')
-    num_success = 0
-    add_records_success = []
-    user_success = []
-
-    for json_sf in read_json():
-        print('Preparing shared folder in read_json')
-        my_shared_folder = api.prepare_shared_folder(params, parse_sf_json(json_sf))
-        request = api.make_request(params, 'shared_folder_update')
-
-        request.update(my_shared_folder)
-
-        if params.debug: print('Sending request')
-        response_json = api.communicate(params, request)
-
-        if 'add_users' in response_json:
-            user_success = [info for info in response_json['add_users'] if info['status'] == 'success']
-            if len(user_success) > 0:
-                print("{0} users added successfully".format(len(user_success)))
-
-            user_failures = [info for info in response_json['add_users'] if info['status'] != 'success']
-            if len(user_failures) > 0:
-                print("{0} users failed to get added".format(len(user_failures)))
-
-        if 'add_records' in response_json:
-            add_records_success = [info for info in response_json['add_records'] if info['status'] == 'success']
-            if len(add_records_success) > 0:
-                print("{0} records added successfully".format(len(add_records_success)))
-
-            add_records_failures = [info for info in response_json['add_records'] if info['status'] != 'success']
-            if len(add_records_failures) > 0:
-                print("{0} records failed to get added".format(len(add_records_failures)))
-
-        if len(user_success)+len(add_records_success) > 0:
-            num_success += 1
-            print('Created shared folder ' + request['shared_folder_uid'] + 'with success')
-
-    if num_success > 0:
-        print('Successfully created ['+str(num_success)+'] shared folders')
 
 
 def delete_all(params):

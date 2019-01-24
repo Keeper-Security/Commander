@@ -66,21 +66,26 @@ def try_resolve_path(params, path):
                 if len(path_component) == 0:
                     break
 
-                folder_uid = ''
+                folder_uid = None
                 if path_component == '.':
                     folder_uid = folder.uid
                 elif path_component == '..':
-                    folder_uid = folder.parent_uid
+                    folder_uid = folder.parent_uid or ''
                 else:
                     for uid in folder.subfolders:
                         sf = params.folder_cache[uid]
                         if sf.name == path_component:
                             folder_uid = uid
 
-                if len(folder_uid) == 0:
+                if folder_uid is None:
                     break
 
-                folder = params.folder_cache[folder_uid]
+                if folder_uid == '':
+                    folder = params.root_folder
+                elif folder_uid in params.folder_cache:
+                    folder = params.folder_cache[folder_uid]
+                else:
+                    break
                 if idx < 0:
                     path = ''
                     break

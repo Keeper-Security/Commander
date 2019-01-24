@@ -193,7 +193,7 @@ class RecordAddCommand(Command):
 
             sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
             sf = params.shared_folder_cache[sh_uid]
-            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
+            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
             if 'key_type' not in sf:
                 if 'teams' in sf:
                     for team in sf['teams']:

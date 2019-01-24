@@ -18,10 +18,9 @@ import getpass
 import time
 import os
 import hashlib
-import concurrent.futures
 
-from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, RootFolderNode
-from . import generator, plugin_manager, params
+from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
+from . import generator, plugin_manager
 from .record import Record
 from .shared_folder import SharedFolder
 from .team import Team
@@ -330,11 +329,11 @@ def test_aes(params):
         print('AES-256 encryption test failed')
 
 
-def decrypt_record_key(encrypted_record_key, shared_folder_key):
+def decrypt_record_key(encrypted_record_key, encryption_key):
     decoded_key = base64.urlsafe_b64decode(encrypted_record_key + '==')
     iv = decoded_key[:16]
     ciphertext = decoded_key[16:]
-    cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
+    cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
     unencrypted_key = cipher.decrypt(ciphertext)[:32]
     return unencrypted_key
 
@@ -479,13 +478,7 @@ def sync_down(params):
             raise
             
     payload = make_json(params)
-    
-    try:
-        r = requests.post(params.server, json=payload)
-    except:
-        raise CommunicationError(sys.exc_info()[0])
-
-    response_json = r.json()
+    response_json = communicate(params, payload)
 
     if response_json['result_code'] == 'auth_failed':
         if params.debug: print('Re-authorizing.')
@@ -496,18 +489,39 @@ def sync_down(params):
             raise
 
         payload = make_json(params)
-
-        try:
-            r = requests.post(params.server, json=payload)
-        except:
-            print('Comm error after re-authorizing')
-            raise CommunicationError(sys.exc_info()[0])
-
-        response_json = r.json()
+        response_json = communicate(params, payload)
 
     if params.debug:
-        debug_response(params, payload, r)
+        debug_response(params, payload, response_json)
+
     check_convert_to_folders = False
+
+    def delete_record_key(params, record_uid):
+        if record_uid in params.record_cache:
+            if 'record_key_unencrypted' in params.record_cache[record_uid]:
+                del params.record_cache[record_uid]['record_key_unencrypted']
+
+    def delete_shared_folder_key(params, shared_folder_uid):
+        if shared_folder_uid in params.shared_folder_cache:
+            shared_folder = params.shared_folder_cache[shared_folder_uid]
+            if 'shared_folder_key_unencrypted' in shared_folder:
+                del shared_folder['shared_folder_key_unencrypted']
+                if 'records' in shared_folder:
+                    for sfr in shared_folder['records']:
+                        record_uid = sfr['record_uid']
+                        if record_uid not in params.meta_data_cache:
+                            delete_record_key(params, record_uid)
+
+    def delete_team_key(params, team_uid):
+        if team_uid in params.team_cache:
+            team = params.team_cache[team_uid]
+            if 'team_key_unencrypted' in team:
+                del team['team_key_unencrypted']
+                if 'shared_folder_keys' in team:
+                    for sfk in team['shared_folder_keys']:
+                        delete_shared_folder_key(params, sfk['shared_folder_uid'])
+
+
     if response_json['result'] == 'success':
 
         if 'full_sync' in response_json:
@@ -526,102 +540,77 @@ def sync_down(params):
             params.revision = response_json['revision']
             if params.debug: print('Getting revision ' + str(params.revision))
 
-        removed_record_uids = []
-
         if 'removed_records' in response_json:
-            if params.debug: print('Processing removed records')
-            for uid in response_json['removed_records']:
-                removed_record_uids.append(uid)
-                if uid in params.meta_data_cache:
-                    del params.meta_data_cache[uid]
-
-                for fuid in params.subfolder_record_cache:
-                    if fuid in params.folder_cache:
-                        if params.folder_cache[fuid].type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                            continue
-                    if uid in params.subfolder_record_cache[fuid]:
-                        params.subfolder_record_cache[fuid].remove(uid)
+            if params.debug: print_info('Processing removed records')
+            for record_uid in response_json['removed_records']:
+                # remove record metadata
+                if record_uid in params.meta_data_cache:
+                    del params.meta_data_cache[record_uid]
+                # delete record key
+                delete_record_key(params, record_uid)
+                # remove record from user folders
+                for folder_uid in params.subfolder_record_cache:
+                    if record_uid in params.subfolder_record_cache[folder_uid]:
+                        if folder_uid in params.subfolder_cache:
+                            folder = params.subfolder_cache[folder_uid]
+                            if folder.get('type') == 'user_folder':
+                                params.subfolder_record_cache[folder_uid].remove(record_uid)
+                        elif folder_uid == '':
+                            params.subfolder_record_cache[folder_uid].remove(record_uid)
 
         if 'removed_teams' in response_json:
-            if params.debug: print('Processing removed teams')
+            if params.debug: print_info('Processing removed teams')
             for team_uid in response_json['removed_teams']:
-                team = params.team_cache[team_uid]
-                if 'shared_folder_keys' not in team:
-                    continue
-                for sf_key in team['shared_folder_keys']:
-                    sf_uid = sf_key['shared_folder_uid']
-                    shared_folder = params.shared_folder_cache[sf_uid]
-                    if not shared_folder or 'teams' not in shared_folder:
-                        continue
-                    # some teams are left in the folder, do not delete
-                    if any([team['team_uid'] != team_uid for team in shared_folder['teams']]):
-                        continue
-                    delete_shared_folder(params, sf_uid)
+                delete_team_key(params, team_uid)
+                # remove team from shared folder
+                for shared_folder_uid in params.shared_folder_cache:
+                    shared_folder = params.shared_folder_cache[shared_folder_uid]
+                    if 'teams' in shared_folder:
+                        shared_folder['teams'] = [x for x in shared_folder['teams'] if x['team_uid'] != team_uid]
+                if team_uid in params.team_cache:
+                    del params.team_cache[team_uid]
 
-                del params.team_cache[team_uid]
-
-        pending_shared_folder_remove = set()
         if 'removed_shared_folders' in response_json:
-            if params.debug: print('Processing removed shared folders')
-            for uid in response_json['removed_shared_folders']:
-                pending_shared_folder_remove.add(uid)
-                if uid in params.shared_folder_cache:
-                    # mark records to unlink
-                    shared_folder = params.shared_folder_cache[uid]
-                    if 'records' in shared_folder:
-                        for sfr in shared_folder['records']:
-                            if 'record_uid' in sfr:
-                                removed_record_uids.append(sfr['record_uid'])
-
-                    # find shared folder folders
-                    sffs = [uid]
-                    for sf_uid in params.subfolder_cache:
-                        sf = params.subfolder_cache[sf_uid]
-                        if 'type' in sf:
-                            if sf['type'] == 'shared_folder_folder':
-                                if sf['shared_folder_uid'] == uid:
-                                    sffs.append(sf['folder_uid'])
-
-                    for f_uid in sffs:
-                        if f_uid in params.subfolder_cache:
-                            del params.subfolder_cache[f_uid]
-                        if f_uid in params.subfolder_record_cache:
-                            del params.subfolder_record_cache[f_uid]
-                    # if 'teams' in shared_folder and len(shared_folder['teams']) > 0 and is_local_shared_folder(shared_folder):
-                    #     del shared_folder['manage_records']
-                    #     del shared_folder['manage_users']
+            if params.debug: print_info('Processing removed shared folders')
+            for sf_uid in response_json['removed_shared_folders']:
+                if sf_uid in params.shared_folder_cache:
+                    delete_shared_folder_key(params, sf_uid)
+                    shared_folder = params.shared_folder_cache[sf_uid]
+                    if 'users' in shared_folder:
+                        shared_folder['users'] = [x for x in shared_folder['users'] if x.username != params.user]
 
         if 'user_folders_removed' in response_json:
             for ufr in response_json['user_folders_removed']:
-                key = ufr['folder_uid']
-                if key in params.subfolder_cache:
-                    del params.subfolder_cache[key]
-                if key in params.subfolder_record_cache:
-                    del params.subfolder_record_cache[key]
+                f_uid = ufr['folder_uid']
+                if f_uid in params.subfolder_cache:
+                    del params.subfolder_cache[f_uid]
+                if f_uid in params.subfolder_record_cache:
+                    del params.subfolder_record_cache[f_uid]
 
         if 'shared_folder_folder_removed' in response_json:
             for sffr in response_json['shared_folder_folder_removed']:
-                key = sffr['folder_uid'] if 'folder_uid' in sffr else sffr['shared_folder_uid']
-                if key in params.subfolder_cache:
-                    del params.subfolder_cache[key]
-                if key in params.subfolder_record_cache:
-                    del params.subfolder_record_cache[key]
+                f_uid = sffr['folder_uid'] if 'folder_uid' in sffr else sffr['shared_folder_uid']
+                if f_uid in params.subfolder_cache:
+                    del params.subfolder_cache[f_uid]
+                if f_uid in params.subfolder_record_cache:
+                    del params.subfolder_record_cache[f_uid]
 
         if 'user_folder_shared_folders_removed' in response_json:
             for ufsfr in response_json['user_folder_shared_folders_removed']:
-                if ufsfr['shared_folder_uid'] in params.subfolder_cache:
-                    del params.subfolder_cache[ufsfr['shared_folder_uid']]
-                if ufsfr['shared_folder_uid'] in params.subfolder_record_cache:
-                    del params.subfolder_record_cache[ufsfr['shared_folder_uid']]
+                f_uid = ufsfr['shared_folder_uid']
+                if f_uid in params.subfolder_cache:
+                    del params.subfolder_cache[f_uid]
+                if f_uid in params.subfolder_record_cache:
+                    del params.subfolder_record_cache[f_uid]
 
         if 'user_folders_removed_records' in response_json:
             for ufrr in response_json['user_folders_removed_records']:
-                fuid = ufrr.get('folder_uid') or ''
-                if fuid in params.subfolder_record_cache:
-                    rs = params.subfolder_record_cache[fuid]
-                    ruid = ufrr['record_uid']
-                    if ruid in rs:
-                        rs.remove(ruid)
+                f_uid = ufrr.get('folder_uid') or ''
+                if f_uid in params.subfolder_record_cache:
+                    rs = params.subfolder_record_cache[f_uid]
+                    r_uid = ufrr['record_uid']
+                    if r_uid in rs:
+                        rs.remove(r_uid)
 
         if 'shared_folder_folder_records_removed' in response_json:
             for sfrrr in response_json['shared_folder_folder_records_removed']:
@@ -632,67 +621,6 @@ def sync_down(params):
                     if r_uid in rs:
                         rs.remove(r_uid)
 
-        # convert record keys from RSA to AES-256
-        if 'record_meta_data' in response_json:
-            if params.debug: print('Processing record_meta_data')
-            for meta_data in response_json['record_meta_data']:
-                if params.debug: print('meta data: ' + str(meta_data))
-
-                if 'record_key' not in meta_data:
-                    # old record that doesn't have a record key so make one
-                    if params.debug: print('...no record key.  creating...')
-                    unencrypted_key = os.urandom(32)
-                    iv = os.urandom(16)
-                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-                    type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
-
-                    if params.debug: print('generated key=' + str(type1key))
-
-                    # store as b64 encoded string
-                    # note: decode() converts bytestream (b') to string
-                    # note2: remove == from the end 
-                    meta_data['record_key'] = \
-                        (base64.urlsafe_b64encode(
-                            type1key).decode()).rstrip('=')
-                    meta_data['record_key_type'] = 1
-
-                    # temporary flag for decryption routine below
-                    meta_data['old_record_flag'] = True 
-
-                if meta_data['record_key_type'] == 2:
-                    if params.debug: print('Converting RSA-encrypted key')
-                    # decrypt the type2 key using their RSA key
-                    unencrypted_key = decrypt_rsa(meta_data['record_key'], params.rsa_key)
-
-                    if len(unencrypted_key) != 32:
-                        raise CryptoError('Invalid record key length')
-
-                    if params.debug: 
-                        print('Before: ' + str(meta_data['record_key'])) 
-                        print('After: ' + str(unencrypted_key)) 
-
-                    # re-encrypt as type1 key with user's data key
-                    iv = os.urandom(16)
-                    cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-                    type1key = iv + cipher.encrypt(pad_binary(unencrypted_key))
-
-                    # store as b64 encoded string
-                    # note: decode() converts bytestream (b') to string
-                    # note2: remove == from the end 
-                    meta_data['record_key'] = \
-                        (base64.urlsafe_b64encode(
-                            type1key).decode()).rstrip('=')
-                    meta_data['record_key_type'] = 1 
-                    meta_data['is_converted_record_type'] = True 
-
-                    if params.debug: 
-                        print('encrypted record key: ' + str(type1key)) 
-                        print('base64: ' + str(meta_data['record_key'])) 
-
-                # add to local cache
-                if params.debug: print('Adding meta data to cache for ' + meta_data['record_uid'])
-                params.meta_data_cache[meta_data['record_uid']] = meta_data
-
         if 'non_shared_data' in response_json:
             for non_shared_data in response_json['non_shared_data']:
                 try:
@@ -702,225 +630,205 @@ def sync_down(params):
                     if params.debug:
                         print('Non-shared data for record ' + non_shared_data['record_uid'] + ' could not be decrypted')
 
+        # convert record keys from RSA to AES-256
+        if 'record_meta_data' in response_json:
+            if params.debug: print_info('Processing record_meta_data')
+            for meta_data in response_json['record_meta_data']:
+
+                if 'record_key' not in meta_data:
+                    # old record that doesn't have a record key so make one
+                    if params.debug: print_info('...no record key.  creating...')
+                    # store as b64 encoded string
+                    # note: decode() converts bytestream (b') to string
+                    # note2: remove == from the end 
+                    meta_data['record_key_unencrypted'] = os.urandom(32)
+                    meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
+                    meta_data['record_key_type'] = 1
+                    # temporary flag for decryption routine below
+                    meta_data['old_record_flag'] = True
+                    meta_data['is_converted_record_type'] = True
+
+                elif meta_data['record_key_type'] == 2:
+                    if params.debug: print_info('Converting RSA-encrypted key')
+                    # decrypt the type2 key using their RSA key
+                    unencrypted_key = decrypt_rsa(meta_data['record_key'], params.rsa_key)
+                    if len(unencrypted_key) == 32:
+                        meta_data['record_key_unencrypted'] = unencrypted_key
+                        meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
+                        meta_data['record_key_type'] = 1
+                        meta_data['is_converted_record_type'] = True
+
+                elif meta_data['record_key_type'] == 1:
+                    meta_data['record_key_unencrypted'] = decrypt_data(meta_data['record_key'], params.data_key)
+
+                # add to local cache
+                if 'record_key_unencrypted' in meta_data:
+                    if params.debug: print_info('Adding meta data to cache for ' + meta_data['record_uid'])
+                    params.meta_data_cache[meta_data['record_uid']] = meta_data
+                else:
+                    print_error('Could not decrypt meta data key: ' + meta_data['record_uid'])
+
         if 'teams' in response_json:
             for team in response_json['teams']:
                 if team['team_key_type'] == 2:
-                    team['team_key'] = decrypt_rsa(team['team_key'], params.rsa_key)
+                    team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
                 else:
-                    team['team_key'] = decrypt_data(team['team_key'], params.data_key)
-                decrypted_private_key, private_key, team['team_private_key'] = decrypt_rsa_key(team['team_private_key'], team['team_key'])
-                params.team_cache[team['team_uid']] = team
-
-                for sf_key in team['shared_folder_keys']:
-                    if sf_key['key_type'] == 2:
-                        sf_key['shared_folder_key'] = decrypt_rsa(sf_key['shared_folder_key'], team['team_private_key'])
-                    else:
-                        sf_key['shared_folder_key'] = decrypt_data(sf_key['shared_folder_key'], team['team_key'])
-
-                    if not sf_key['shared_folder_uid'] in params.shared_folder_cache:
-                        params.shared_folder_cache[sf_key['shared_folder_uid']] = {
-                            'shared_folder_key': sf_key['shared_folder_key']
-                        }
+                    team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
+                _, _, team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
 
                 if 'removed_shared_folders' in team:
                     for sf_uid in team['removed_shared_folders']:
-                        shared_folder = params.shared_folder_cache.get(sf_uid)
-                        if not shared_folder:
-                            continue
-                        if 'teams' not in shared_folder:
-                            del params.shared_folder_cache[sf_uid]
-                            continue
-                        # First delete the team from the Shared Folder
-                        shared_folder['teams'] = [sf_team for sf_team in shared_folder['teams'] if sf_team['team_uid'] != team['team_uid']]
-                        if is_local_shared_folder(shared_folder):
-                            continue
-                        in_team = any([sf_team for sf_team in shared_folder['teams'] if sf_team['team_uid'] in params.team_cache])
-                        if not in_team:
-                            del params.shared_folder_cache[sf_uid]
+                        delete_shared_folder_key(params, sf_uid)
+                params.team_cache[team['team_uid']] = team
 
         if 'shared_folders' in response_json:
-            if params.debug: print('Processing shared_folders')
-            if params.debug: print(str(response_json['shared_folders']))
-
+            if params.debug: print_info('Processing shared_folders')
             for shared_folder in response_json['shared_folders']:
-                if shared_folder['shared_folder_uid'] in pending_shared_folder_remove:
-                    pending_shared_folder_remove.remove(shared_folder['shared_folder_uid'])
-                    continue
+                shared_folder_uid = shared_folder['shared_folder_uid']
 
-                if 'shared_folder_key' in shared_folder:
-                    shared_folder_key = shared_folder['shared_folder_key']
-                    if shared_folder['key_type'] == 1:
-                        if params.debug: print('decrypt folder key with data_key')
-                        if params.debug: print(str(shared_folder_key))
-                        if params.debug: print(str(params.data_key))
-                        shared_folder['shared_folder_key'] = decrypt_data(shared_folder_key, params.data_key)
-                    if shared_folder['key_type'] == 2:
-                        if params.debug: print('decrypt folder key with RSA key')
-                        shared_folder['shared_folder_key'] = decrypt_rsa(shared_folder_key, params.rsa_key)
-                else:
-                    sf = params.shared_folder_cache[shared_folder['shared_folder_uid']]
-                    if sf and 'shared_folder_key' in sf:
-                        shared_folder['shared_folder_key'] = sf['shared_folder_key']
-                    else:
-                        # Fail case.  No Shared Folder key anywhere.
-                        continue
+                if shared_folder_uid in params.shared_folder_cache and shared_folder.get('full_sync'):
+                    if params.debug: print_info('Shared Folder full sync: ' + shared_folder_uid)
+                    del params.shared_folder_cache[shared_folder_uid]
 
-                if len(shared_folder['shared_folder_key']) != 32:
-                    raise CryptoError('Invalid folder key length')
-                    
-                # decrypt the folder name
-                shared_folder['name'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key']).decode('utf-8')
-                if params.debug: print('Folder name: ' + str(shared_folder['name']))
+                if shared_folder_uid in params.shared_folder_cache:
+                    delete_shared_folder_key(params, shared_folder_uid)
 
-                process_changes = False
-                if shared_folder['shared_folder_uid'] in params.shared_folder_cache:
-                    if params.debug: print('Shared folder exists in local cache') 
+                    # incremental shared folder upgrade
+                    existing_sf = params.shared_folder_cache[shared_folder_uid]
 
-                    if 'full_sync' in shared_folder:
-                        if shared_folder['full_sync'] == False:
-                            if params.debug: print('Process individual changes') 
-                            process_changes = True
-                    else:
-                        if params.debug: print('No full sync specified, so process individual changes') 
-                        process_changes = True
+                    if ('records_removed' in shared_folder) and ('records' in existing_sf):
+                        rrs = set(shared_folder['records_removed'])
+                        existing_sf['records'] = [record for record in existing_sf['records'] if record['record_uid'] not in rrs]
 
-                if process_changes:
-                    existing_sf = params.shared_folder_cache[shared_folder['shared_folder_uid']]
+                    if ('users_removed' in shared_folder) and ('users' in existing_sf):
+                        urs = set(shared_folder['users_removed'])
+                        existing_sf['users'] = [user for user in existing_sf['users'] if user['username'] not in urs]
 
-                    if 'records_removed' in shared_folder:
-                        existing_sf['records'] = [record for record in existing_sf['records']
-                                                if record['record_uid'] not in shared_folder['records_removed']]
-                        for record_uid in shared_folder['records_removed']:
-                            removed_record_uids.append(record_uid)
-                        del shared_folder['records_removed']
-
-                    if 'users_removed' in shared_folder:
-                        existing_sf['users'] = [user for user in existing_sf['users']
-                                                if user['username'] not in shared_folder['users_removed']]
-                        del shared_folder['users_removed']
-
-                    if 'teams_removed' in shared_folder:
-                        existing_sf['teams'] = [team for team in existing_sf['teams']
-                                                if team['team_uid'] not in shared_folder['teams_removed']]
-                        del shared_folder['teams_removed']
+                    if ('teams_removed' in shared_folder) and ('teams' in existing_sf):
+                        trs = set(shared_folder['teams_removed'])
+                        existing_sf['teams'] = [team for team in existing_sf['teams'] if team['team_uid'] not in trs]
 
                     if 'records' in shared_folder:
                         existing_records = existing_sf['records'] if 'records' in existing_sf else []
-                        merged_records = merge_lists_on_value(existing_records, shared_folder['records'], 'record_uid')
-                        if params.debug: print("merged_records = " + str(merged_records))
-                        existing_sf['records'] = merged_records
+                        existing_sf['records'] = merge_lists_on_value(existing_records, shared_folder['records'], 'record_uid')
 
                     if 'users' in shared_folder:
                         existing_users = existing_sf['users'] if 'users' in existing_sf else ''
-                        merged_users = merge_lists_on_value(existing_users, shared_folder['users'], 'username')
-                        if params.debug: print("merged_users = " + str(merged_users))
-                        existing_sf['users'] = merged_users
+                        existing_sf['users'] = merge_lists_on_value(existing_users, shared_folder['users'], 'username')
 
                     if 'teams' in shared_folder:
                         existing_teams = existing_sf['teams'] if 'teams' in existing_sf else ''
-                        merged_teams = merge_lists_on_value(existing_teams, shared_folder['teams'], 'team_uid')
-                        if params.debug: print("merged_teams = " + str(merged_teams))
-                        existing_sf['teams'] = merged_teams
+                        existing_sf['teams'] = merge_lists_on_value(existing_teams, shared_folder['teams'], 'team_uid')
 
-                    existing_sf['name'] = shared_folder['name']
                     existing_sf['revision'] = shared_folder['revision']
+                    if 'manage_records' in shared_folder:
+                        existing_sf['manage_records'] = shared_folder['manage_records']
+                    if 'manage_users' in shared_folder:
+                        existing_sf['manage_users'] = shared_folder['manage_users']
+                    if 'is_account_folder' in shared_folder:
+                        existing_sf['is_account_folder'] = shared_folder['is_account_folder']
+                    if 'name' in shared_folder:
+                        existing_sf['name'] = shared_folder['name']
+                else:
+                    params.shared_folder_cache[shared_folder_uid] = shared_folder
 
-                else: 
-                    if params.debug: print('Shared folder does not exist in local cache') 
-                    params.shared_folder_cache[shared_folder['shared_folder_uid']] = shared_folder
-
-        for sf_uid in pending_shared_folder_remove:
-            if sf_uid in params.shared_folder_cache:
-                del params.shared_folder_cache[sf_uid]
-
-        # decrypt record keys
         if 'records' in response_json:
-            if params.debug: print('Processing records')
+            if params.debug: print_info('Processing records')
             for record in response_json['records']:
-                record_uid = record['record_uid']
+                params.record_cache[record['record_uid']] = record
 
-                if params.debug: 
-                    print('Looking for record key on ' + str(record_uid))
+        # process team keys
+        for team_uid in params.team_cache:
+            team = params.team_cache[team_uid]
+            for sf_key in team['shared_folder_keys']:
+                if 'shared_folder_key_unencrypted' not in sf_key:
+                    if sf_key['key_type'] == 2:
+                        sf_key['shared_folder_key_unencrypted'] = decrypt_rsa(sf_key['shared_folder_key'], team['team_private_key_unencrypted'])
+                    else:
+                        sf_key['shared_folder_key_unencrypted'] = decrypt_data(sf_key['shared_folder_key'], team['team_key_unencrypted'])
 
+        # process shared folder keys
+        sf_to_delete = []
+        for shared_folder_uid in params.shared_folder_cache:
+            shared_folder = params.shared_folder_cache[shared_folder_uid]
+            if 'shared_folder_key_unencrypted' not in shared_folder:
+                if 'shared_folder_key' in shared_folder:
+                    if shared_folder['key_type'] == 2:
+                        shared_folder['shared_folder_key_unencrypted'] = decrypt_rsa(shared_folder['shared_folder_key'], params.rsa_key)
+                    else:
+                        shared_folder['shared_folder_key_unencrypted'] = decrypt_data(shared_folder['shared_folder_key'], params.data_key)
+                else:
+                    if 'teams' in shared_folder:
+                        teams_to_remove = set()
+                        for to in shared_folder['teams']:
+                            team_uid = to['team_uid']
+                            if team_uid in params.team_cache:
+                                team = params.team_cache[team_uid]
+                                if 'shared_folder_keys' in team:
+                                    sfk = [x for x in team['shared_folder_keys'] if x['shared_folder_uid'] == shared_folder_uid]
+                                    if len(sfk) > 0:
+                                        if 'shared_folder_key_unencrypted' in sfk[0]:
+                                            shared_folder['shared_folder_key_unencrypted'] = sfk[0]['shared_folder_key_unencrypted']
+                                            break
+                            else:
+                                teams_to_remove.add(team_uid)
+                            if len(teams_to_remove) > 0:
+                                shared_folder['teams'] = [x for x in shared_folder['teams'] if x['team_uid'] not in teams_to_remove]
+
+                if 'shared_folder_key_unencrypted' in shared_folder:
+                    shared_folder['name_unencrypted'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key_unencrypted']).decode('utf-8')
+                    if 'records' in shared_folder:
+                        for sfr in shared_folder['records']:
+                            if 'record_key_unencrypted' not in sfr:
+                                sfr['record_key_unencrypted'] = decrypt_data(sfr['record_key'], shared_folder['shared_folder_key_unencrypted'])
+                else:
+                    sf_to_delete.append(shared_folder_uid)
+
+        if len(sf_to_delete) > 0:
+            for shared_folder_uid in sf_to_delete:
+                if params.debug: print_info('Delete shared folder with unresolved key: ' + shared_folder_uid)
+                del params.shared_folder_cache[shared_folder_uid]
+                if shared_folder_uid in params.subfolder_cache:
+                    del params.subfolder_cache[shared_folder_uid]
+
+        # process record keys
+        records_to_delete = []
+        for record_uid in params.record_cache:
+            record = params.record_cache[record_uid]
+            record_key = record.get('record_key_unencrypted')
+            if not record_key:
                 if record_uid in params.meta_data_cache:
-                    # merge meta data into record
-                    record.update(params.meta_data_cache[record_uid])
-                   
-                unencrypted_key = ''
-                if 'record_key' in record:
-                    # decrypt record key with my data key
-                    if params.debug: print('Record: ' + str(record))
-                    unencrypted_key = decrypt_data(record['record_key'], params.data_key)[:32]
-                    if params.debug:
-                        print('...unencrypted_key=' + str(unencrypted_key))
-                else: 
-                    # If record has no record_key, look in a shared folder
+                    meta_data = params.meta_data_cache[record_uid]
+                    record_key = meta_data['record_key_unencrypted']
+                    record['record_key_unencrypted'] = record_key
+                    if meta_data.get('old_record_flag'):
+                        record_key = params.data_key
+
+                if 'record_key_unencrypted' not in record:
                     for shared_folder_uid in params.shared_folder_cache:
                         shared_folder = params.shared_folder_cache[shared_folder_uid]
-                        if 'records' not in shared_folder:
-                            continue
-                        sf_records = shared_folder['records']
-                        for sf_record in sf_records:
-                            if 'record_uid' in sf_record and sf_record['record_uid'] == record_uid and 'record_key' in sf_record:
-                                sf_rec_key = sf_record['record_key']
-                                record['record_key'] = sf_rec_key
-                                unencrypted_key = decrypt_data(sf_rec_key, shared_folder['shared_folder_key'])
+                        if 'records' in shared_folder:
+                            recs = [x['record_key_unencrypted'] for x in shared_folder['records'] if x['record_uid'] == record_uid and 'record_key_unencrypted' in x]
+                            if len(recs) > 0:
+                                record_key = recs[0]
+                                record['record_key_unencrypted'] = record_key
+                                break
 
-                if unencrypted_key and len(unencrypted_key) != 32:
-                    unencrypted_key = None
-
-                if unencrypted_key:
-                    # save the decrypted key in record_key_unencrypted
-                    record['record_key_unencrypted'] = unencrypted_key
+                if record_key:
+                    record['data_unencrypted'] = decrypt_data(record['data'], record_key) if 'data' in record else b'{}'
+                    record['extra_unencrypted'] = decrypt_data(record['extra'], record_key) if 'extra' in record else b'{}'
                 else:
-                    print_error('Key for record UID \'{0}\' was not found. This is a potentially a data integrity issue.'.format(record_uid))
-                    continue
-
-                if params.debug: 
-                    print('Got record key: ' + str(unencrypted_key))
-
-                ''' Decrypt the record data and extra... '''
-
-                if ('old_record_flag' in record) and record['old_record_flag']:
-                    # special case for super old records that are encrypted
-                    # with the data key. no extra exists for these.
-                    if params.debug: print('Old record type...')
-                    record['data'] = decrypt_data(record['data'], params.data_key)
-                    record['record_key_type'] = 1
-
-                elif 'data' in record:
-                    # encrypted with record key
-                    if params.debug: print('Got data')
-                    record['data'] = decrypt_data(record['data'], record['record_key_unencrypted'])
-                else:
-                    if params.debug: print('No data')
-                    record['data'] = b'{}' 
-    
-                if 'extra' in record:
-                    if params.debug: print('Got extra')
-                    record['extra'] = decrypt_data(record['extra'], record['record_key_unencrypted'])
-                else:
-                    if params.debug: print('No extra')
-                    record['extra'] = b'{}' 
-
-                # Store the record in the cache
-                if params.debug: 
-                    print('record is dict: ' + str(isinstance(record, dict)))
-                    print('params.record_cache is dict: ' + \
-                        str(isinstance(params.record_cache, dict)))
-                    print('record is ' + str(record))
-
-                params.record_cache[record_uid] = record
+                    records_to_delete.append(record_uid)
 
         # decrypt user folders
         if 'user_folders' in response_json:
             check_convert_to_folders = False
             for uf in response_json['user_folders']:
                 encrypted_key = uf['user_folder_key']
-                key_type = uf['key_type']
-
-                uf['folder_key_unencrypted'] = decrypt_data(encrypted_key, params.data_key) \
-                         if key_type != 2 else decrypt_rsa(encrypted_key, params.rsa_key)
+                if uf['key_type'] == 2:
+                    uf['folder_key_unencrypted'] = decrypt_rsa(encrypted_key, params.rsa_key)
+                else:
+                    uf['folder_key_unencrypted'] = decrypt_data(encrypted_key, params.data_key)
                 params.subfolder_cache[uf['folder_uid']] = uf
 
         # decrypt shared folder folders
@@ -931,7 +839,7 @@ def sync_down(params):
                 sf_uid = sff['shared_folder_uid']
                 if sf_uid in params.shared_folder_cache:
                     sf = params.shared_folder_cache[sf_uid]
-                    sff['folder_key_unencrypted'] = decrypt_data(encrypted_key, sf['shared_folder_key'])
+                    sff['folder_key_unencrypted'] = decrypt_data(encrypted_key, sf['shared_folder_key_unencrypted'])
                     params.subfolder_cache[sff['folder_uid']] = sff
 
         if 'user_folder_shared_folders' in response_json:
@@ -965,16 +873,6 @@ def sync_down(params):
             for sharing_change in response_json['sharing_changes']:
                 record_uid = sharing_change['record_uid']
 
-        # delete unlinked records
-        for r_uid in removed_record_uids:
-            if r_uid in params.record_cache:
-                found = False
-                for records in params.subfolder_record_cache.values():
-                    if r_uid in records:
-                        found = True
-                        break
-                if not found:
-                    del params.record_cache[r_uid]
 
         prepare_folder_tree(params)
 
@@ -1026,8 +924,7 @@ def sync_down(params):
 
     else :
         if response_json['result_code'] == 'auth_failed':
-            raise CommunicationError('Authentication Failed. ' + \
-                'Check email, password or Two-Factor code.')
+            raise CommunicationError('Authentication Failed: Check email, password or Two-Factor code.')
         else:            
             raise CommunicationError('Unknown comm problem')
 
@@ -1198,17 +1095,14 @@ def check_edit_permission(params, record_uid):
         if params.debug: print('Edit permissions found in record')
         can_edit = True
 
-    found_shared_folder_uid = ''
-    if can_edit == False:
+    if not can_edit:
         for shared_folder_uid in params.shared_folder_cache:
             shared_folder = params.shared_folder_cache[shared_folder_uid]
-            sf_key = shared_folder['shared_folder_key']
             if 'records' in shared_folder:
                 sf_records = shared_folder['records']
                 for sf_record in sf_records:
                     if 'record_uid' in sf_record:
                         if sf_record['record_uid'] == record_uid:
-                            found_shared_folder_uid = shared_folder_uid
                             if 'can_edit' in sf_record:
                                 can_edit = True
                                 if params.debug:
@@ -1241,11 +1135,11 @@ def get_record(params,record_uid):
     rec = Record()
 
     try:
-        data = json.loads(cached_rec['data'].decode('utf-8')) 
+        data = json.loads(cached_rec['data_unencrypted'].decode('utf-8'))
         rec = Record(record_uid)
         extra = None
-        if 'extra' in cached_rec:
-            extra = json.loads(cached_rec['extra'].decode('utf-8'))
+        if 'extra_unencrypted' in cached_rec:
+            extra = json.loads(cached_rec['extra_unencrypted'].decode('utf-8'))
         rec.load(data, revision=cached_rec['revision'], extra=extra)
     except:
         print('**** Error decrypting record ' + str(record_uid))
@@ -1537,16 +1431,16 @@ def prepare_record(params, record):
             return None
 
         rec = params.record_cache[record.record_uid]
-        data.update(json.loads(rec['data'].decode()))
+        data.update(json.loads(rec['data_unencrypted'].decode('utf-8')))
         if 'extra' in rec:
-            extra.update(json.loads(rec['extra'].decode()))
+            extra.update(json.loads(rec['extra_unencrypted'].decode('utf-8')))
         if 'udata' in rec:
             udata.update(rec['udata'])
         unencrypted_key = rec['record_key_unencrypted']
         record_object['revision'] = rec['revision']
-        if rec.get('is_converted_record_type'):
+        if record.record_uid in params.meta_data_cache and params.meta_data_cache[record.record_uid].get('is_converted_record_type'):
             if params.debug: print('Converted record sends record key')
-            record_object['record_key'] = encrypt_aes(params.data_key, unencrypted_key)
+            record_object['record_key'] = encrypt_aes(unencrypted_key, params.data_key)
     else:
         if params.debug: print('Generated record key')
         unencrypted_key = os.urandom(32)
@@ -1566,124 +1460,6 @@ def prepare_record(params, record):
     record_object['udata'] = udata
 
     return record_object
-
-
-def prepare_shared_folder(params, shared_folder):
-    """ Prepares the SharedFolder() object to be sent to the Keeper Cloud API
-        by serializing and encrypting it in the proper JSON format used for
-        transmission.  If the record has no UID, one is generated and the
-        encrypted record key is sent to the server.  If this record was
-        converted from RSA to AES we send the new record key. If the record
-        is in a shared folder, must send shared folder UID for edit permission.
-
-        shared_folder is a SharedFolder object. 
-    """
-    if params.debug: print('prepare_shared_folder')
-
-    needs_sf_key = False
-    if not shared_folder.shared_folder_uid:
-        shared_folder.shared_folder_uid = generate_record_uid()
-        if params.debug: print('Generated Shared Folder UID: ' + shared_folder.shared_folder_uid)
-        needs_sf_key = True
-
-    # build a shared folder dict for upload
-    new_sf = {}
-    new_sf['name'] = shared_folder.name 
-    new_sf['shared_folder_uid'] = shared_folder.shared_folder_uid 
-    new_sf['default_can_edit'] = shared_folder.default_can_edit 
-    new_sf['default_can_share'] = shared_folder.default_can_share 
-    new_sf['default_manage_records'] = shared_folder.default_manage_records 
-    new_sf['default_manage_users'] = shared_folder.default_manage_users 
-
-    if shared_folder.records:
-        new_sf['add_records'] = shared_folder.records 
-
-    if shared_folder.teams:
-        new_sf['add_teams'] = shared_folder.teams 
-
-    if shared_folder.users:
-        new_sf['add_users'] = shared_folder.users 
-
-    if needs_sf_key:
-        new_sf['operation'] = 'add' 
-        new_sf['revision'] = 0 
-        shared_folder_key = os.urandom(32)
-        if params.debug: print('Generated new SF key=' + str(shared_folder_key))
-    else:
-        new_sf['operation'] = 'update' 
-        if params.debug: print('Updating shared folder with revision=' + str(shared_folder.revision))
-        new_sf['revision'] = shared_folder.revision 
-        shared_folder_key = \
-                params.shared_folder_cache[shared_folder.shared_folder_uid]['shared_folder_key']
-
-    if 'add_teams' in new_sf:
-        for t in new_sf['add_teams']:
-            # encrypt shared folder key with team public key  
-            if params.debug: print('Getting encrypted SF key for Team UID=' + str(t['team_uid']))
-            encrypted_sf_key = get_encrypted_sf_key_from_team(params, t['team_uid'], shared_folder_key)
-            t['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=')
-            if params.debug: print('Encrypted shared folder key=' + str(t['shared_folder_key']))
-
-    if 'add_users' in new_sf:
-        for u in new_sf['add_users']:
-            has_self = False
-            if u['username'] == params.user:
-                # this is me, so encrypt shared folder key with data key
-                if params.debug: print('Encrypt SF key with data key')
-                iv = os.urandom(16)
-                cipher = AES.new(params.data_key, AES.MODE_CBC, iv)
-                encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
-                has_self = True
-            else:
-                # encrypt shared folder key with user's public key
-                if params.debug: print('Encrypt SF key with public key')
-                public_key = get_user_key(params, u['username'])
-                rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key))
-                cipher = PKCS1_v1_5.new(rsa_key)
-                encrypted_sf_key = cipher.encrypt(shared_folder_key)
-
-            u['shared_folder_key'] = base64.urlsafe_b64encode(encrypted_sf_key).decode().rstrip('=')
-            if params.debug: print('Encrypted shared folder key from user=' + str(u['shared_folder_key']))
-
-            if not has_self and needs_sf_key:
-                new_sf['add_users'].append(
-                    {
-                        'username': params.user,
-                        'manage_users': True,
-                        'manage_records': True,
-                        'shared_folder_key': encrypt_aes(shared_folder_key, params.data_key)
-                    })
-
-    if 'add_records' in new_sf:
-        for r in new_sf['add_records']:
-            if params.debug: print('encrypt record key with the shared folder key')
-            iv = os.urandom(16)
-            cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
-            record_uid = r['record_uid']
-    
-            if record_uid in params.record_cache:
-                if params.debug: print('Found record in cache: ' + str(params.record_cache[record_uid]))
-                record_key = params.record_cache[record_uid]['record_key_unencrypted'] 
-                type1key = iv + cipher.encrypt(pad_binary(record_key))
-                encoded_type1key = (base64.urlsafe_b64encode(
-                                       type1key).decode()).rstrip('=')
-                r['record_key'] = encoded_type1key
-                if params.debug: print('Encrypted record key=' + str(r['record_key']))
-            else:
-                print('Error: No record found in cache with UID='+record_uid)
-    
-    if params.debug: print('Encrypt folder name with shared folder key')
-    if params.debug: print('Encrypting SF name=' + str(shared_folder.name))
-    if params.debug: print('Encoded: ' + str(shared_folder.name.encode()))
-
-    iv = os.urandom(16)
-    cipher = AES.new(shared_folder_key, AES.MODE_CBC, iv)
-    encrypted_name = iv + cipher.encrypt(pad_binary(shared_folder.name.encode()))
-
-    if params.debug: print('encrypted shared folder name: ' + str(encrypted_name))
-    new_sf['name'] = base64.urlsafe_b64encode(encrypted_name).decode().rstrip('=') 
-
-    return new_sf
 
 
 def make_request(params, command):
@@ -1796,26 +1572,6 @@ def update_record(params, record, **kwargs):
     else:
         print('Record push failed')
         return False
-
-
-def update_shared_folder(params, shared_folder):
-    """ Push a shared folder update to the cloud. 
-        Takes a SharedFolder() object, converts to record JSON
-        and pushes to the Keeper cloud API
-    """
-    print("Pushing shared folder update...")
-    update_shared_folder = prepare_shared_folder(params, shared_folder) 
-    request = make_request(params, 'shared_folder_update')
-    request.update(update_shared_folder)
-
-    if params.debug: print('Sending request')
-    response_json = communicate(params, request)
-
-    if params.debug: print('Reponse: ' + str(response_json))
-
-    # sync down the data which updates the caches
-    sync_down(params)
-    return True
 
 
 def add_record(params, record):
@@ -1933,7 +1689,7 @@ def prepare_folder_tree(params):
             shf.parent_uid = sf.get('folder_uid')
             folder = params.shared_folder_cache.get(shf.uid)
             if folder is not None:
-                shf.name = folder['name']
+                shf.name = folder['name_unencrypted']
             params.folder_cache[shf.uid] = shf
 
     for f in params.folder_cache.values():

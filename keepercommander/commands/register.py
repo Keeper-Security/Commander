@@ -482,7 +482,7 @@ class ShareFolderCommand(Command):
                         uo['manage_records'] = mr
                         uo['manage_users'] = mu
                         rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
-                        uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key'], rsa_key)
+                        uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key_unencrypted'], rsa_key)
                         share_action = 'add_users'
 
                     if share_action:
@@ -522,7 +522,7 @@ class ShareFolderCommand(Command):
                     elif action == 'grant':
                         to['manage_records'] = mr
                         to['manage_users'] = mu
-                        to['shared_folder_key'] = api.encrypt_aes(sh_fol['shared_folder_key'], team_keys[team_uid])
+                        to['shared_folder_key'] = api.encrypt_aes(sh_fol['shared_folder_key_unencrypted'], team_keys[team_uid])
                         share_action = 'add_teams'
 
                     if share_action:
@@ -575,7 +575,7 @@ class ShareFolderCommand(Command):
                             ro['can_edit'] = ce
                             ro['can_share'] = cs
                             rec = params.record_cache[record_uid]
-                            ro['record_key'] = api.encrypt_aes(rec['record_key_unencrypted'], sh_fol['shared_folder_key'])
+                            ro['record_key'] = api.encrypt_aes(rec['record_key_unencrypted'], sh_fol['shared_folder_key_unencrypted'])
                             share_action = 'add_records'
 
                     if share_action:

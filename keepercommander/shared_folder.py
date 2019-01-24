@@ -31,7 +31,7 @@ class SharedFolder:
         self.default_manage_users = sf['default_manage_users']
         self.default_can_edit = sf['default_can_edit']
         self.default_can_share = sf['default_can_share']
-        self.name = sf['name']
+        self.name = sf['name_unencrypted']
 
         if 'records' in sf:
             self.records = sf['records']
@@ -90,7 +90,7 @@ class SharedFolder:
                 keywords.append(u['username'])
         if self.teams:
             for t in self.teams:
-                keywords.append(t['name'])
+                keywords.append(t['name_unencrypted'])
                 keywords.append(t['team_uid'])
         keywords = [x.lower() for x in keywords]
         return '\n'.join(keywords)
