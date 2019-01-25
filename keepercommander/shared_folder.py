@@ -14,7 +14,7 @@ class SharedFolder:
 
     def __init__(self,shared_folder_uid='',revision='',default_manage_records=False,
                  default_manage_users=False,default_can_edit=False,default_can_share=False,
-                 name='',records=[],users=[],teams=[]):
+                 name='',records=None,users=None,teams=None):
         self.shared_folder_uid = shared_folder_uid 
         self.revision = revision
         self.default_manage_records = default_manage_records 
@@ -22,9 +22,9 @@ class SharedFolder:
         self.default_can_edit = default_can_edit 
         self.default_can_share = default_can_share 
         self.name = name 
-        self.records = records 
-        self.users = users 
-        self.teams = teams 
+        self.records = records or []
+        self.users = users or []
+        self.teams = teams or []
 
     def load(self,sf,revision=''):
         self.default_manage_records = sf['default_manage_records']
@@ -90,7 +90,7 @@ class SharedFolder:
                 keywords.append(u['username'])
         if self.teams:
             for t in self.teams:
-                keywords.append(t['name_unencrypted'])
+                keywords.append(t['name'])
                 keywords.append(t['team_uid'])
         keywords = [x.lower() for x in keywords]
         return '\n'.join(keywords)

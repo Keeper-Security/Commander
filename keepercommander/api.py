@@ -576,8 +576,12 @@ def sync_down(params):
                 if sf_uid in params.shared_folder_cache:
                     delete_shared_folder_key(params, sf_uid)
                     shared_folder = params.shared_folder_cache[sf_uid]
+                    if 'shared_folder_key' in shared_folder:
+                        del shared_folder['shared_folder_key']
+                    if 'key_type' in shared_folder:
+                        del shared_folder['key_type']
                     if 'users' in shared_folder:
-                        shared_folder['users'] = [x for x in shared_folder['users'] if x.username != params.user]
+                        shared_folder['users'] = [x for x in shared_folder['users'] if x['username'] != params.user]
 
         if 'user_folders_removed' in response_json:
             for ufr in response_json['user_folders_removed']:
