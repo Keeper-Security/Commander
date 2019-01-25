@@ -40,8 +40,8 @@ current_milli_time = lambda: int(round(time.time() * 1000))
 # PKCS7 padding helpers 
 BS = 16
 pad_binary = lambda s: s + ((BS - len(s) % BS) * chr(BS - len(s) % BS)).encode()
-unpad_binary = lambda s : s[0:-s[-1]]
-unpad_char = lambda s : s[0:-ord(s[-1])]
+unpad_binary = lambda s: s[0:-s[-1]]
+unpad_char = lambda s: s[0:-ord(s[-1])]
 
 
 is_interactive_mode = False

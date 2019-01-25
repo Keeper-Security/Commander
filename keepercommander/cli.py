@@ -210,6 +210,8 @@ def loop(params):
                 params.commands = params.commands[1:]
 
             if not params.command:
+                if not api.is_interactive_mode:
+                    api.is_interactive_mode = True
                 try:
                     if prompt_session is not None:
                         params.command = prompt_session.prompt(get_prompt(params)+ '> ')
