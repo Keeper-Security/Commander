@@ -10,11 +10,11 @@
 
 from keepercommander.subfolder import get_folder_path, find_folders, BaseFolderNode
 
+
 class Record:
     """Defines a user-friendly Keeper Record for display purposes"""
 
-    def __init__(self,record_uid='',folder='',title='',login='',password='',
-                 login_url='',notes='',custom_fields=[],revision=''):
+    def __init__(self,record_uid='',folder='',title='',login='',password='', login_url='',notes='',custom_fields=None,revision=''):
         self.record_uid = record_uid 
         self.folder = folder 
         self.title = title 
@@ -22,7 +22,7 @@ class Record:
         self.password = password 
         self.login_url = login_url
         self.notes = notes 
-        self.custom_fields = custom_fields
+        self.custom_fields = custom_fields or []
         self.attachments = None
         self.revision = revision
 

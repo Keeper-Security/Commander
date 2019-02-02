@@ -19,6 +19,7 @@ import datetime
 import fnmatch
 import re
 import gzip
+import time
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -31,6 +32,7 @@ from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from .record import RecordAddCommand
 from .. import api
 from ..display import bcolors
+from ..record import Record
 
 
 def register_commands(commands):
@@ -39,10 +41,11 @@ def register_commands(commands):
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
     commands['audit-log'] = AuditLogCommand()
+    commands['audit-report'] = AuditReportCommand()
 
 
 def unregister_commands(commands):
-    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team', 'audit-log']:
+    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team', 'audit-log', 'audit-report']:
         commands.pop(cmd, None)
 
 
@@ -53,7 +56,7 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['al'] = 'audit-log'
 
-    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, audit_log_parser]:
+    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, audit_log_parser, audit_report_parser]:
         command_info[p.prog] = p.description
 
 
@@ -118,6 +121,25 @@ audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'sys
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
+
+
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run audit report')
+audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
+audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], action='store', help='report type')
+audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
+audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
+audit_report_parser.add_argument('--aggregate', dest='aggregate', action='append', choices=['occurrences', 'first_created', 'last_created'], help='aggregated value. Can be repeated. (ignored for raw reports)')
+audit_report_parser.add_argument('--timezone', dest='timezone', action='store', help='return results for specific timezone')
+audit_report_parser.add_argument('--limit', dest='limit', type=int, action='store', help='maximum number of returned rows')
+audit_report_parser.add_argument('--order', dest='order', action='store', choices=['desc', 'asc'], help='sort order')
+audit_report_parser.add_argument('--created', dest='created', action='store', help='Filter: Created date. Predefined filters: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year')
+audit_report_parser.add_argument('--event-type', dest='event_type', action='store', help='Filter: Audit Event Type')
+audit_report_parser.add_argument('--username', dest='username', action='store', help='Filter: Username of event originator')
+audit_report_parser.add_argument('--to-username', dest='to_username', action='store', help='Filter: Username of event target')
+audit_report_parser.add_argument('--record-uid', dest='record_uid', action='store', help='Filter: Record UID')
+audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='store', help='Filter: Shared Folder UID')
+audit_report_parser.error = raise_parse_exception
+audit_report_parser.exit = suppress_exit
 
 
 def lock_text(lock):
@@ -716,6 +738,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     break
 
         show_info = True
+
         if role and (kwargs.get('add_user') or kwargs.get('remove_user')):
             show_info = False
             users = {}
@@ -981,6 +1004,25 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             print('Team not found')
 
 
+syslog_templates = None
+
+
+def loadSyslogTemplates(params):
+    global syslog_templates
+    if syslog_templates is None:
+        syslog_templates = {}
+        rq = {
+            'command': 'get_audit_event_dimensions',
+            'columns': ['audit_event_type']
+        }
+        rs = api.communicate(params, rq)
+        for et in rs['dimensions']['audit_event_type']:
+            name = et.get('name')
+            syslog = et.get('syslog')
+            if name and syslog:
+                syslog_templates[name] = syslog
+
+
 class AuditLogBaseExport:
     def __init__(self):
         self.store_record = False
@@ -1010,6 +1052,27 @@ class AuditLogBaseExport:
         :rtype: None
         '''
         raise NotImplemented()
+
+    @staticmethod
+    def get_event_message(event):
+        message = ''
+        if event['audit_event_type'] in syslog_templates:
+            info = syslog_templates[event['audit_event_type']]
+            while True:
+                pattern = re.search('\$\{(\w+)\}', info)
+                if pattern:
+                    field = pattern[1]
+                    val = event.get(field)
+                    if val is None:
+                        api.print_error('Event value is missing: {0}'.format(pattern[1]))
+                        val = '<missing>'
+
+                    sp = pattern.span()
+                    info = info[:sp[0]] + str(val) + info[sp[1]:]
+                else:
+                    break
+            message = info
+        return message
 
 
 class AuditLogSplunkExport(AuditLogBaseExport):
@@ -1135,9 +1198,7 @@ class AuditLogSyslogExport(AuditLogBaseExport):
         for key in evt:
             structured += ' {0}="{1}"'.format(key, evt[key])
         structured = '[' + structured + ']'
-        message = message + ' ' + structured
-
-        return message
+        return message + ' ' + structured + ' ' + AuditLogBaseExport.get_event_message(evt)
 
     def export_events(self, props, events):
         is_gzipped = props['filename'].endswith('.gz')
@@ -1146,9 +1207,6 @@ class AuditLogSyslogExport(AuditLogBaseExport):
             for line in events:
                 logf.write(line.encode('utf-8'))
                 logf.write(b'\n')
-            self.store_record = True
-        except:
-            self.should_cancel = True
         finally:
             logf.flush()
             logf.close()
@@ -1177,6 +1235,7 @@ class AuditLogSumologicExport(AuditLogBaseExport):
         evt.pop('id')
         dt = datetime.datetime.fromtimestamp(evt.pop('created'), tz=datetime.timezone.utc)
         evt['timestamp'] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        evt['message'] = AuditLogBaseExport.get_event_message(evt)
         return json.dumps(evt, separators=(',', ':'))
 
     def export_events(self, props, events):
@@ -1198,6 +1257,8 @@ class AuditLogCommand(EnterpriseCommand):
         return audit_log_parser
 
     def execute(self, params, **kwargs):
+        loadSyslogTemplates(params)
+
         target = kwargs.get('target')
 
         log_export = None # type: AuditLogBaseExport
@@ -1248,9 +1309,6 @@ class AuditLogCommand(EnterpriseCommand):
 
         events = []
         finished = False
-        new_event_time = None
-
-        created_before = 0
         count = 0
         logged_ids = set()
         chunk_length = log_export.chunk_size()
@@ -1258,33 +1316,40 @@ class AuditLogCommand(EnterpriseCommand):
         while not finished:
             finished = True
             rq = {
-                'command': 'get_enterprise_audit_events',
+                'command': 'get_audit_event_reports',
+                'report_type': 'raw',
+                'scope': 'enterprise',
                 'limit': 1000,
-                'report_type': 'month'
+                'order': 'ascending'
             }
-            if created_before > 0:
-                rq['created_before'] = created_before * 1000
+
+            if last_event_time > 0:
+                rq['filter'] = {
+                    'created': {'min': last_event_time}
+                }
 
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
-                if 'audit_events' in rs:
-                    if len(rs['audit_events']) > 0:
-                        finished = False
-                        for event in rs['audit_events']:
-                            created_before = int(event['created'])
-                            if new_event_time is None:
-                                new_event_time = created_before
-                            if created_before < last_event_time:
-                                finished = True
+                finished = True
+                if 'audit_event_overview_report_rows' in rs:
+                    audit_events = rs['audit_event_overview_report_rows']
+                    if len(audit_events) > 1:
+                        # remove events from the tail for the last second
+                        last_event_time = int(audit_events[-1]['created'])
+                        while len(audit_events) > 0:
+                            event = audit_events[-1]
+                            if int(event['created']) < last_event_time:
                                 break
+                            audit_events = audit_events[:-1]
 
+                        for event in audit_events:
                             event_id = event['id']
                             if event_id not in logged_ids:
                                 logged_ids.add(event_id)
                                 events.append(log_export.convert_event(props, event))
 
-            if len(events) == 0:
-                finished = True
+                        finished = len(events) == 0
+
             while len(events) > 0:
                 to_store = events[:chunk_length]
                 events = events[chunk_length:]
@@ -1292,13 +1357,368 @@ class AuditLogCommand(EnterpriseCommand):
                 if log_export.should_cancel:
                     finished = True
                     break
-                else:
-                    count += len(to_store)
+                count += len(to_store)
 
-
-        if log_export.store_record:
+        if last_event_time > 0:
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
-            if new_event_time is not None:
-                record.set_field('last_event_time', str(new_event_time))
+            record.set_field('last_event_time', str(last_event_time))
             params.sync_data = True
             api.update_record(params, record, silent=True)
+
+
+audit_report_description = '''
+Audit Report Command Syntax Description:
+
+Event properties
+  id                event ID
+  created           event time
+  username          user that created audit event
+  to_username       user that is audit event target 
+  from_username     user that is audit event source 
+  ip_address        IP address 
+  geo_location      location
+  audit_event_type  audit event type
+  keeper_version    Keeper application
+  channel           2FA channel
+  status            Keeper API result_code
+  record_uid        Record UID 
+  shared_folder_uid Shared Folder UID
+  node_id           Node ID (enterprise events only)
+  team_uid          Team UID (enterprise events only)
+
+--report-type: 
+            raw     Returns individual events. All event properties are returned.
+                    Valid parameters: filters. Ignored parameters: columns, aggregates
+
+  span hour day	    Aggregates audit event by created date. Span drops date aggregation
+     week month     Valid parameters: filters, columns, aggregates
+
+            dim     Returns event property description (audit_event_type, keeper_version) or distinct values. 
+                    Valid parameters: columns. Ignored parameters: filters, aggregates
+
+--columns:          Defines break down report properties.
+                    can be any event property except: id, created
+
+--aggregates:       Defines the aggregate value: 
+     occurrences    number of events. COUNT(*)
+   first_created    starting date. MIN(created)
+    last_created    ending date. MAX(created)
+
+--limit:            Limits the number of returned records
+
+--order:            "desc" or "asc"
+                    raw report type: created
+                    aggregate reports: first aggregate
+
+Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Default '='
+--created           Predefined ranges: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
+                    Range 'BETWEEN <> AND <>'
+                    where value is UTC date or epoch time in seconds
+--event-type        Audit Event Type.  Value is event id or event name
+--username          Email
+--to-username
+--record-uid	    Record UID
+--shared-folder-uid Shared Folder UID
+'''
+
+in_pattern = re.compile(r"\s*in\s*\(\s*(.*)\s*\)", re.IGNORECASE)
+between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
+
+
+class AuditReportCommand(Command):
+    def __init__(self):
+        self.team_lookup = None
+        self.role_lookup = None
+        self.node_lookup = None
+
+    def get_value(self, params, field, event):
+        if field == 'message':
+            message = ''
+            if event['audit_event_type'] in syslog_templates:
+                info = syslog_templates[event['audit_event_type']]
+                while True:
+                    pattern = re.search('\$\{(\w+)\}', info)
+                    if pattern:
+                        token = pattern[1]
+                        val = self.get_value(params, token, event) if field != token else None
+                        if val is None:
+                            api.print_error('Event value is missing: {0}'.format(pattern[1]))
+                            val = '<missing>'
+
+                        sp = pattern.span()
+                        info = info[:sp[0]] + str(val) + info[sp[1]:]
+                    else:
+                        break
+                message = info
+            return message
+
+        elif field in event:
+            val = event.get(field)
+            if field == 'team_uid':
+                val = self.resolve_team_name(params, val)
+            elif field == 'role_id':
+                val = self.resolve_role_name(params, val)
+            elif field == 'node_id':
+                val = self.resolve_node_name(params, val)
+            return val
+        return ''
+
+    def resolve_team_name(self, params, team_uid):
+        if self.team_lookup is None:
+            self.team_lookup = {}
+            if params.enterprise:
+                if 'teams' in params.enterprise:
+                    for team in params.enterprise['teams']:
+                        if 'team_uid' in team and 'name' in team:
+                            self.team_lookup[team['team_uid']] = team['name']
+        if team_uid in self.team_lookup:
+            return '{0} ({1})'.format(self.team_lookup[team_uid], team_uid)
+        return team_uid
+
+    def resolve_role_name(self, params, role_id):
+        if self.role_lookup is None:
+            self.role_lookup = {}
+            if params.enterprise:
+                if 'roles' in params.enterprise:
+                    for role in params.enterprise['roles']:
+                        if 'role_id' in role:
+                            id = str(role['role_id'])
+                            name = role['data'].get('displayname')
+                            if name:
+                                self.role_lookup[id] = name
+        if role_id in self.role_lookup:
+            return '{0} ({1})'.format(self.role_lookup[role_id], role_id)
+        return role_id
+
+    def resolve_node_name(self, params, node_id):
+        if self.node_lookup is None:
+            self.node_lookup = {}
+            if params.enterprise:
+                if 'nodes' in params.enterprise:
+                    for node in params.enterprise['nodes']:
+                        if 'node_id' in node:
+                            id = str(node['node_id'])
+                            name = node['data'].get('displayname') or params.enterprise['enterprise_name']
+                            if name:
+                                self.node_lookup[id] = name
+        id = str(node_id)
+        if id in self.node_lookup:
+            return '{0} ({1})'.format(self.node_lookup[id], id)
+        return id
+
+    def get_parser(self):
+        return audit_report_parser
+
+    @staticmethod
+    def convert_value(field, value, **kwargs):
+        if not value:
+            return ''
+
+        if field == "created":
+            dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+            rt = kwargs.get('report_type') or ''
+            if rt in {'day', 'week'}:
+                dt = dt.date()
+            elif rt == 'month':
+                dt = dt.strftime('%B, %Y')
+            elif rt == 'hour':
+                dt = dt.strftime('%Y-%m-%d @%H:00')
+
+            return dt
+        elif field in {"first_created", "last_created"}:
+            return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+        else:
+            return value
+
+    def execute(self, params, **kwargs):
+        loadSyslogTemplates(params)
+
+        if kwargs['syntax_help']:
+            api.print_info(audit_report_description)
+            return
+        if not kwargs['report_type']:
+            api.print_error('report-type parameter is missing')
+            return
+        report_type = kwargs['report_type']
+        rq = {
+            'report_type': report_type,
+            'scope': 'enterprise' if params is not None else 'user'
+        }
+        if report_type == 'dim':
+            rq['command'] = 'get_audit_event_dimensions'
+        else:
+            rq['command'] = 'get_audit_event_reports' if params.enterprise else 'get_audit_event_reports'
+
+        if kwargs.get('timezone'):
+            rq['timezone'] = kwargs['timezone']
+        else:
+            tt = time.tzname
+            if tt:
+                if time.daylight < len(tt):
+                    rq['timezone'] = tt[time.daylight]
+                else:
+                    rq['timezone'] = tt[0]
+            else:
+                now = time.time()
+                utc_offset = datetime.datetime.fromtimestamp(now) - datetime.datetime.utcfromtimestamp(now)
+                hours = (utc_offset.days * 24) + int(utc_offset.seconds / 60 / 60)
+                rq['timezone'] = hours
+
+        columns = []
+        if report_type != 'raw' and kwargs.get('columns'):
+            columns = kwargs['columns']
+            rq['columns'] = columns
+
+        aggregates = []
+        if report_type not in {'raw', 'dim'} and kwargs.get('aggregate'):
+            if kwargs.get('aggregate'):
+                aggregates = kwargs['aggregate']
+                rq['aggregate'] = aggregates
+
+        if kwargs.get('limit'):
+            rq['limit'] = kwargs['limit']
+        else:
+            rq['limit'] = 50
+
+        if kwargs.get('order'):
+            rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'
+
+        filter = {}
+        if kwargs['created']:
+            if kwargs['created'] in ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']:
+                filter['created'] = kwargs['created']
+            else:
+                filter['created'] = self.get_filter(kwargs['created'], AuditReportCommand.convert_date)
+        if kwargs['event_type']:
+            filter['audit_event_type'] = self.get_filter(kwargs['event_type'], AuditReportCommand.convert_str_or_int)
+        if kwargs['username']:
+            filter['username'] = self.get_filter(kwargs['username'], AuditReportCommand.convert_str)
+        if kwargs['to_username']:
+            filter['to_username'] = self.get_filter(kwargs['to_username'], AuditReportCommand.convert_str)
+        if kwargs['record_uid']:
+            filter['record_uid'] = self.get_filter(kwargs['record_uid'], AuditReportCommand.convert_str)
+        if kwargs['shared_folder_uid']:
+            filter['shared_folder_uid'] = self.get_filter(kwargs['shared_folder_uid'], AuditReportCommand.convert_str)
+
+        if filter:
+            rq['filter'] = filter
+
+        rs = api.communicate(params, rq)
+        fields = []
+        table = []
+
+        if report_type == 'raw':
+            fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
+            misc_fields = ['node_id', 'to_username', 'from_username', 'record_uid', 'shared_folder_uid',
+                           'channel', 'status'] if kwargs.get('report_format') == 'fields' else ['message']
+
+            for event in rs['audit_event_overview_report_rows']:
+                if misc_fields:
+                    lenf = len(fields)
+                    for mf in misc_fields:
+                        if mf == 'message':
+                            fields.append(mf)
+                        elif mf in event:
+                            val = event.get(mf)
+                            if val:
+                                fields.append(mf)
+                    if len(fields) > lenf:
+                        for f in fields[lenf:]:
+                            misc_fields.remove(f)
+
+                row = []
+                for field in fields:
+                    value = self.get_value(params, field, event)
+                    row.append(self.convert_value(field, value))
+                table.append(row)
+            print(tabulate(table, headers=fields))
+
+        elif report_type == 'dim':
+            for dim in rs['dimensions']:
+                print('\n{0}\n'.format(dim))
+                if dim in {'audit_event_type', 'keeper_version', 'ip_address'}:
+                    if dim == 'audit_event_type':
+                        fields = ['id', 'name', 'category', 'syslog']
+                    elif dim == 'keeper_version':
+                        fields = ['version_id', 'type_id', 'type_name', 'type_category']
+                    elif dim == 'ip_address':
+                        fields = ['ip_address', 'city', 'region', 'country_code']
+                    table = []
+                    for row in rs['dimensions'][dim]:
+                        table.append([row.get(x) for x in fields])
+                    print(tabulate(table, headers=fields))
+                else:
+                    for row in rs['dimensions'][dim]:
+                        print(row)
+
+        else:
+            if aggregates:
+                fields.extend(aggregates)
+            else:
+                fields.append('occurrences')
+            if report_type != 'span':
+                fields.append('created')
+            if columns:
+                fields.extend(columns)
+            for event in rs['audit_event_overview_report_rows']:
+                row = []
+                for f in fields:
+                    row.append(self.convert_value(f, event.get(f), report_type=report_type))
+                table.append(row)
+            print(tabulate(table, headers=fields))
+
+    @staticmethod
+    def convert_date(value):
+        if not value.isdigit():
+            if len(value) <= 10:
+                value = datetime.datetime.strptime(value, '%Y-%m-%d')
+            else:
+                value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            value = value.timestamp()
+        return int(value)
+
+    @staticmethod
+    def convert_int(value):
+        return int(value)
+
+    @staticmethod
+    def convert_str(value):
+        return value
+
+    @staticmethod
+    def convert_str_or_int(value):
+        if value.isdigit():
+            return int(value)
+        else:
+            return value
+
+    def get_filter(self, filter, convert):
+        filter = filter.strip()
+        bet = between_pattern.match(filter)
+        if bet is not None:
+            dt1, dt2, *_ = bet.groups()
+            dt1 = convert(dt1)
+            dt2 = convert(dt2)
+            return {'min': dt1, 'max': dt2}
+
+        inp = in_pattern.match(filter)
+        if inp is not None:
+            arr = []
+            for v in inp.groups()[0].split(','):
+                arr.append(convert(v.strip()))
+            return arr
+
+        for prefix in ['>=', '<=', '>', '<', '=']:
+            if filter.startswith(prefix):
+                value = convert(filter[len(prefix):].strip())
+                if prefix == '>=':
+                    return {'min': value}
+                if prefix == '<=':
+                    return {'max': value}
+                if prefix == '>':
+                    return {'min': value, 'exclude_min': True}
+                if prefix == '<':
+                    return {'mzx': value, 'exclude_max': True}
+                return value
+
+        return convert(filter)

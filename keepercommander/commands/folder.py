@@ -171,7 +171,7 @@ class FolderListCommand(Command):
             else:
                 names = []
                 for f in folders:
-                    name = f.name
+                    name = f.name or f.uid
                     if len(name) > 40:
                         name = name[:25] + '...' + name[-12:]
                     names.append(name + '/')
@@ -319,7 +319,7 @@ class FolderMakeCommand(Command):
         if request['folder_type'] == 'shared_folder_folder':
             sf_uid = base_folder.shared_folder_uid if base_folder.type == BaseFolderNode.SharedFolderFolderType else base_folder.uid
             sf = params.shared_folder_cache[sf_uid]
-            encryption_key = sf['shared_folder_key']
+            encryption_key = sf['shared_folder_key_unencrypted']
             request['shared_folder_uid'] = sf_uid
 
         request['key'] = api.encrypt_aes(folder_key, encryption_key)
@@ -585,7 +585,7 @@ class FolderMoveCommand(Command):
                 if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                     shf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
                     shf = params.shared_folder_cache[shf_uid]
-                    FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, shf['shared_folder_key'])
+                    FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, shf['shared_folder_key_unencrypted'])
 
             elif src_folder.type == BaseFolderNode.SharedFolderFolderType:
                 if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
@@ -595,7 +595,7 @@ class FolderMoveCommand(Command):
                     ssf_uid = src_folder.shared_folder_uid
                     if ssf_uid != dsf_uid:
                         dsf = params.shared_folder_cache[dsf_uid]
-                        FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, dsf['shared_folder_key'])
+                        FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, dsf['shared_folder_key_unencrypted'])
                 else:
                     FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, params.data_key)
 
@@ -627,7 +627,7 @@ class FolderMoveCommand(Command):
                               dst_folder.shared_folder_uid
                     if ssf_uid != dsf_uid:
                         shf = params.shared_folder_cache[dsf_uid]
-                        transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key'])
+                        transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key_unencrypted'])
                 else:
                     transition_key = api.encrypt_aes(rec['record_key_unencrypted'], params.data_key)
             else:
@@ -635,7 +635,7 @@ class FolderMoveCommand(Command):
                     dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
                         dst_folder.shared_folder_uid
                     shf = params.shared_folder_cache[dsf_uid]
-                    transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key'])
+                    transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key_unencrypted'])
 
             transition_keys = []
             if transition_key is not None:

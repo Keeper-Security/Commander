@@ -61,7 +61,7 @@ add_parser.add_argument('--login', dest='login', action='store', help='login nam
 add_parser.add_argument('--pass', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-add_parser.add_argument('--custom', dest='custom', action='store', help='comma separated key-value pairs')
+add_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
 add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
@@ -178,6 +178,15 @@ class RecordAddCommand(Command):
         if folder is None:
             folder = params.folder_cache[params.current_folder] if params.current_folder else params.root_folder
 
+        if not force:
+            folder_uid = folder.uid or ''
+            if folder_uid in params.subfolder_record_cache:
+                for uid in params.subfolder_record_cache[folder_uid]:
+                    r = api.get_record(params, uid)
+                    if r.title == title:
+                        api.print_error('Record with title "{0}" already exists'.format(title))
+                        return
+
         record_key = os.urandom(32)
         record_uid = api.generate_record_uid()
         rq = {
@@ -193,7 +202,7 @@ class RecordAddCommand(Command):
 
             sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
             sf = params.shared_folder_cache[sh_uid]
-            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key'])
+            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
             if 'key_type' not in sf:
                 if 'teams' in sf:
                     for team in sf['teams']:
@@ -218,6 +227,7 @@ class RecordAddCommand(Command):
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
             params.sync_data = True
+            api.print_info('Record UID: {0}'.format(record_uid))
             return record_uid
         else:
             print(rs['message'])

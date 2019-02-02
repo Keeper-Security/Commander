@@ -23,7 +23,6 @@ def register_commands(commands):
     commands['rotate'] = RecordRotateCommand()
     commands['import'] = RecordImportCommand()
     commands['import'] = RecordImportCommand()
-    commands['import_sf'] = SharedFolderImportCommand()
     commands['export'] = RecordExportCommand()
     commands['delete_all'] = RecordDeleteAllCommand()
     commands['whoami'] = WhoamiCommand()
@@ -35,7 +34,6 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     aliases['r'] = 'rotate'
     aliases['d'] = 'sync-down'
-
     for p in [rotate_parser, import_parser, export_parser, whoami_parser, login_parser, logout_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
@@ -206,18 +204,6 @@ class RecordImportCommand(ImporterCommand):
             api.print_error('Missing argument')
 
 
-class SharedFolderImportCommand(Command):
-    def get_parser(self):
-        return import_sf_parser
-
-    def execute(self, params, **kwargs):
-        filename = kwargs['filename'] if 'filename' in kwargs else None
-        if format and filename:
-            imp_exp.create_sf(params, filename)
-        else:
-            api.print_error('Missing `filename` argument')
-
-
 class RecordExportCommand(ImporterCommand):
     def get_parser(self):
         return export_parser
@@ -346,4 +332,5 @@ class LogoutCommand(Command):
 
     def execute(self, params, **kwargs):
         params.clear_session()
+
 

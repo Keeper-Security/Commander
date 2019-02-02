@@ -14,7 +14,7 @@ class SharedFolder:
 
     def __init__(self,shared_folder_uid='',revision='',default_manage_records=False,
                  default_manage_users=False,default_can_edit=False,default_can_share=False,
-                 name='',records=[],users=[],teams=[]):
+                 name='',records=None,users=None,teams=None):
         self.shared_folder_uid = shared_folder_uid 
         self.revision = revision
         self.default_manage_records = default_manage_records 
@@ -22,16 +22,16 @@ class SharedFolder:
         self.default_can_edit = default_can_edit 
         self.default_can_share = default_can_share 
         self.name = name 
-        self.records = records 
-        self.users = users 
-        self.teams = teams 
+        self.records = records or []
+        self.users = users or []
+        self.teams = teams or []
 
     def load(self,sf,revision=''):
         self.default_manage_records = sf['default_manage_records']
         self.default_manage_users = sf['default_manage_users']
         self.default_can_edit = sf['default_can_edit']
         self.default_can_share = sf['default_can_share']
-        self.name = sf['name']
+        self.name = sf['name_unencrypted']
 
         if 'records' in sf:
             self.records = sf['records']
