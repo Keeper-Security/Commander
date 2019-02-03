@@ -268,12 +268,12 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
-* ```audit-log``` Export audit and event logs to SIEM [See Details](#event-logging)
+* ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
 
-* ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats. [See Details](#event-logging)
+* ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats - [See Details](#ad-hoc-event-reporting)
 
     Parameters:
     - ```--report-type``` {raw,dim,hour,day,week,month,span}
@@ -580,11 +580,13 @@ My Vault> audit-report --report-type=raw --record-uid cQxq0MZ1ZmB-s9JE8CZpdA
 
 There are hundreds of possible report variations. If you have any questions, please contact us at commander@keepersecurity.com. 
 
-### Event Logging
+### Event Logging to SIEM
 
-The list of over 100 event types is documented in our Enterprise Guide:
+Commander supports integration with popular SIEM solutions such as Splunk, Sumo and general Syslog format.  For more general reporting of events, we recommend using the ```audit-report``` command.  For pushes of event data into on-prem SIEM, the ```audit-log``` command is a good choice because it automatically tracks the last event exported and only sends incremental updates.  The list of over 100 event types is documented in our Enterprise Guide:
 
 [https://docs.keeper.io/enterprise-guide/event-reporting](https://docs.keeper.io/enterprise-guide/event-reporting)
+
+Using Commander for SIEM integration works well in an on-prem environment where the HTTP event collector is only available within your network.  The Keeper Admin Console versino 13.3+ is capable of integrating our backend event data into your SIEM solution but it requires that you are utilizing a cloud-based SIEM solution. If you need assistance in integrating Keeper into your SIEM solution without Commander, please contact our business support team at business.support@keepersecurity.com. 
 
 **Export of Event Logs in Syslog Format**
 
