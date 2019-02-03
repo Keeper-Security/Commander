@@ -24,7 +24,7 @@ Keeper Commander is a command-line, interactive shell and SDK interface to [Keep
 
 In addition to vault and administrative functionality, Commander can be used to perform targeted password rotations, integrate password management into your backend systems and eliminate the use of hardcoded passwords. Using our connector [plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins), Commander can execute a password rotation directly to any common system or service account such as Unix systems, SQL Databases, Active Directory, Amazon AWS, local Administator accounts, network devices, etc...
 
-Keeper Commander is an open source project written in Python, and it is under continuous development by the Keeper engineering team. As new features and capabilities are added to the Keeper platform, we add new commands and features to Commander.  If you need any assistance or require specific functionality, please contact ops@keepersecurity.com.
+Keeper Commander is an open source project written in Python, and it is under continuous development by the Keeper engineering team. As new features and capabilities are added to the Keeper platform, we add new commands and features to Commander.  If you need any assistance or require specific functionality, please contact commander@keepersecurity.com.
 
 ### Use Cases
 
@@ -268,12 +268,12 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
-* ```audit-log``` Export audit and event logs [See Details](#event-logging)
+* ```audit-log``` Export audit and event logs to SIEM [See Details](#event-logging)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
 
-* ```audit-report``` Generate customized audit event reports in raw and summarized formats.
+* ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats. [See Details](#event-logging)
 
     Parameters:
     - ```--report-type``` {raw,dim,hour,day,week,month,span}
@@ -499,9 +499,91 @@ For more options, see the help screen:
 $ keeper import -h
 ```
 
+### Ad-Hoc Event Reporting 
+
+Business customers can now generate advanced ad-hoc event reports with over 100 different event types and custom filters. For help with the syntax of the report, use the below command:
+
+```
+My Vault> audit-report --syntax-help                                                                                                                                                                        
+``` 
+
+The list of over 100 event types is documented in our Enterprise Guide:
+
+[https://docs.keeper.io/enterprise-guide/event-reporting](https://docs.keeper.io/enterprise-guide/event-reporting)
+
+```
+Audit Report Command Syntax Description:
+
+Event properties
+  id                event ID
+  created           event time
+  username          user that created audit event
+  to_username       user that is audit event target
+  from_username     user that is audit event source
+  ip_address        IP address
+  geo_location      location
+  audit_event_type  audit event type
+  keeper_version    Keeper application
+  channel           2FA channel
+  status            Keeper API result_code
+  record_uid        Record UID
+  shared_folder_uid Shared Folder UID
+  node_id           Node ID (enterprise events only)
+  team_uid          Team UID (enterprise events only)
+
+--report-type:
+            raw     Returns individual events. All event properties are returned.
+                    Valid parameters: filters. Ignored parameters: columns, aggregates
+
+  span hour day	    Aggregates audit event by created date. Span drops date aggregation
+     week month     Valid parameters: filters, columns, aggregates
+
+            dim     Returns event property description (audit_event_type, keeper_version) or distinct values.
+                    Valid parameters: columns. Ignored parameters: filters, aggregates
+
+--columns:          Defines break down report properties.
+                    can be any event property except: id, created
+
+--aggregates:       Defines the aggregate value:
+     occurrences    number of events. COUNT(*)
+   first_created    starting date. MIN(created)
+    last_created    ending date. MAX(created)
+
+--limit:            Limits the number of returned records
+
+--order:            "desc" or "asc"
+                    raw report type: created
+                    aggregate reports: first aggregate
+
+Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Default '='
+--created           Predefined ranges: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
+                    Range 'BETWEEN <> AND <>'
+                    where value is UTC date or epoch time in seconds
+--event-type        Audit Event Type.  Value is event id or event name
+--username          Email
+--to-username
+--record-uid	    Record UID
+--shared-folder-uid Shared Folder UID
+```
+
+For example, to see all record deletions that occurred in the last 7 days:
+
+```
+My Vault> audit-report --report-type=raw --event-type record_delete --created last_7_days
+```
+
+Another example, to see all event history for a particular record UID:
+
+```
+My Vault> audit-report --report-type=raw --record-uid cQxq0MZ1ZmB-s9JE8CZpdA
+```
+
+There are hundreds of possible report variations. If you have any questions, please contact us at commander@keepersecurity.com. 
+
 ### Event Logging
 
 The list of over 100 event types is documented in our Enterprise Guide:
+
 [https://docs.keeper.io/enterprise-guide/event-reporting](https://docs.keeper.io/enterprise-guide/event-reporting)
 
 **Export of Event Logs in Syslog Format**
@@ -778,7 +860,7 @@ Value: testing
 
 When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided (e.g. mysql.py) then it will use the values of the Keeper record to connect, rotate the password and save the resulting data.
 
-Check out the [plugins folder](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) for all of the available plugins.  Keeper's team adds new plugins on an ongoing basis. If you need a particular plugin created, send us an email to ops@keepersecurity.com.
+Check out the [plugins folder](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) for all of the available plugins.  Keeper's team adds new plugins on an ongoing basis. If you need a particular plugin created, send us an email to commander@keepersecurity.com.
 
 ### Deep linking to records (Web Vault Hyperlink)
 
@@ -885,4 +967,4 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Contact Sales or Support](https://keepersecurity.com/contact.html)
 
-We're here to help.  If you need help integrating Keeper into your environment, contact us at ops@keepersecurity.com.
+We're here to help.  If you need help integrating Keeper into your environment, contact us at commander@keepersecurity.com.
