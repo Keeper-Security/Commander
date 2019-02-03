@@ -273,6 +273,23 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
 
+* ```audit-report``` Generate customized audit event reports in raw and summarized formats.
+
+    Parameters:
+    - ```--report-type``` {raw,dim,hour,day,week,month,span}
+    - ```--report-format``` {message,fields} output format (raw reports only)
+    - ```--columns COLUMNS```     Can be repeated. (ignored for raw reports)
+    - ```--aggregate``` {occurrences,first_created,last_created} aggregated value. Can be repeated. (ignored for raw reports)
+    - ```--timezone TIMEZONE```   return results for specific timezone
+    - ```--limit LIMIT```         maximum number of returned rows
+    - ```--order``` {desc,asc}    sort order
+    - ```--created CREATED```  Filter: Created date. Predefined filters: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
+    - ```--event-type EVENT_TYPE``` Filter: Audit Event Type
+    - ```--username USERNAME``` Filter: Username of event originator
+    - ```--to-username TO_USERNAME``` Filter: Username of event target
+    - ```--record-uid RECORD_UID``` Filter: Record UID
+    - ```--shared-folder-uid SHARED_FOLDER_UID``` Filter: Shared Folder UID
+
 ### Importing Records into Keeper
 
 To import records into your vault, use the ```import``` command.  Supported import formats:
@@ -483,6 +500,9 @@ $ keeper import -h
 ```
 
 ### Event Logging
+
+The list of over 100 event types is documented in our Enterprise Guide:
+[https://docs.keeper.io/enterprise-guide/event-reporting](https://docs.keeper.io/enterprise-guide/event-reporting)
 
 **Export of Event Logs in Syslog Format**
 
