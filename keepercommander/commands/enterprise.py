@@ -1570,6 +1570,9 @@ class AuditReportCommand(Command):
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
             rq['columns'] = columns
+        if report_type == 'dim' and len(columns) == 0:
+            api.print_error("'columns' parameter is missing")
+            return
 
         aggregates = []
         if report_type not in {'raw', 'dim'} and kwargs.get('aggregate'):
