@@ -1064,7 +1064,7 @@ class AuditLogBaseExport:
                     field = pattern[1]
                     val = event.get(field)
                     if val is None:
-                        api.print_error('Event value is missing: {0}'.format(pattern[1]))
+                        #api.print_error('Event value is missing: {0}'.format(pattern[1]))
                         val = '<missing>'
 
                     sp = pattern.span()
@@ -1358,8 +1358,10 @@ class AuditLogCommand(EnterpriseCommand):
                     finished = True
                     break
                 count += len(to_store)
+                api.print_info('+', False)
 
         if last_event_time > 0:
+            print("")
             print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
             record.set_field('last_event_time', str(last_event_time))
             params.sync_data = True
@@ -1568,6 +1570,9 @@ class AuditReportCommand(Command):
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
             rq['columns'] = columns
+        if report_type == 'dim' and len(columns) == 0:
+            api.print_error("'columns' parameter is missing")
+            return
 
         aggregates = []
         if report_type not in {'raw', 'dim'} and kwargs.get('aggregate'):
