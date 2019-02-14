@@ -559,7 +559,7 @@ class RecordDownloadAttachmentCommand(Command):
 
         file_ids = []
         r = params.record_cache[record_uid]
-        extra = json.loads(r['extra'].decode())
+        extra = json.loads(r['extra_unencrypted'].decode())
         if 'files' in extra:
             for f_info in extra['files']:
                 file_ids.append(f_info['id'])
@@ -580,7 +580,6 @@ class RecordDownloadAttachmentCommand(Command):
                 if 'url' in dl:
                     file_key = None
                     file_name = None
-                    extra = json.loads(r['extra'].decode())
                     if 'files' in extra:
                         for f_info in extra['files']:
                             if f_info['id'] == file_id:
@@ -725,7 +724,7 @@ class RecordUploadAttachmentCommand(Command):
             return
 
         record = params.record_cache[record_uid]
-        extra = json.loads(record['extra'].decode('utf-8')) if 'extra' in record else {}
+        extra = json.loads(record['extra_unencrypted'].decode('utf-8')) if 'extra_unencrypted' in record else {}
         files = extra.get('files')
         if files is None:
             files = []
@@ -747,7 +746,7 @@ class RecordUploadAttachmentCommand(Command):
         record_update.update({
             'version': 2,
             'client_modified_time': api.current_milli_time(),
-            'data': api.encrypt_aes(record['data'], record['record_key_unencrypted']),
+            #'data': api.encrypt_aes(record['data'], record['record_key_unencrypted']),
             'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record['record_key_unencrypted']),
             'udata': udata,
             'revision': record['revision']
