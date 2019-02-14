@@ -491,9 +491,6 @@ def sync_down(params):
         payload = make_json(params)
         response_json = communicate(params, payload)
 
-    if params.debug:
-        debug_response(params, payload, response_json)
-
     check_convert_to_folders = False
 
     def delete_record_key(params, record_uid):
