@@ -58,5 +58,5 @@ In this example, we are telling Commander to first download and decrypt records,
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/record_uid.png)
 
-If you have any feature requests for this plugin, please contact us at ops@keepersecurity.com.
+If you have any feature requests for this plugin, please contact us at commander@keepersecurity.com.
 

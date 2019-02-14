@@ -65,4 +65,4 @@ See the [custom](https://github.com/Keeper-Security/Commander/tree/master/keeper
 
 ### Help
 
-If you need help, found a bug, or you're interested in contributing, email us at ops@keepersecurity.com.
+If you need help, found a bug, or you're interested in contributing, email us at commander@keepersecurity.com.

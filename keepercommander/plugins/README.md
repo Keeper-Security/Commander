@@ -39,7 +39,7 @@ At this point, to perform a rotation just use the *rotate* command.  For example
 r VEpovl5St-MPcnNrfJkyDg
 ```
 
-Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, email us at ops@keepersecurity.com.
+Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, email us at commander@keepersecurity.com.
 
 ### Auto-command execution
 
