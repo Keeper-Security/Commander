@@ -36,6 +36,7 @@ def register_commands(commands):
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
+    commands['delete-attachment'] = RecordDeleteAttachmentCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -50,7 +51,7 @@ def register_command_info(aliases, command_info):
     aliases['ua'] = 'upload-attachment'
 
     for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser,
-              download_parser, upload_parser]:
+              download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -115,6 +116,12 @@ upload_parser.add_argument('--file', dest='file', action='append', required=True
 upload_parser.add_argument('record', action='store', help='record path or UID')
 upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
+
+delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete attachment file')
+delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
+delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
+delete_attachment_parser.error = raise_parse_exception
+delete_attachment_parser.exit = suppress_exit
 
 
 class RecordAddCommand(Command):
@@ -747,6 +754,103 @@ class RecordUploadAttachmentCommand(Command):
             'version': 2,
             'client_modified_time': api.current_milli_time(),
             #'data': api.encrypt_aes(record['data'], record['record_key_unencrypted']),
+            'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record['record_key_unencrypted']),
+            'udata': udata,
+            'revision': record['revision']
+        })
+        api.resolve_record_access_path(params, record_uid, path=record_update)
+        rq = {
+            'command': 'record_update',
+            'pt': 'Commander',
+            'device_id': 'Commander',
+            'client_time': api.current_milli_time(),
+            'update_records': [record_update]
+        }
+        api.communicate(params, rq)
+        params.sync_data = True
+
+
+class RecordDeleteAttachmentCommand(Command):
+    def get_parser(self):
+        return delete_attachment_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            api.print_error('Enter name or uid of existing record')
+            return
+
+        names = kwargs['name'] if 'name' in kwargs else None
+        if names is None:
+            api.print_error('No file names')
+            return
+
+        record_update = api.resolve_record_write_path(params, record_uid)
+        if record_update is None:
+            api.print_error('You do not have edit permissions on this record')
+            return
+
+        record = params.record_cache[record_uid]
+        extra = json.loads(record['extra_unencrypted'].decode('utf-8')) if 'extra_unencrypted' in record else {}
+        files = extra.get('files')
+        if files is None:
+            files = []
+            extra['files'] = files
+        udata = record['udata'] if 'udata' in record else {}
+        file_ids = udata.get('file_ids')
+        if file_ids is None:
+            file_ids = []
+            udata['file_ids'] = file_ids
+
+        has_deleted = False
+        for name in names:
+            file_uid = None
+            thumb_uid = None
+            for file in files:
+                if name in [file.get('name'), file.get('title'), file.get('id')]:
+                    file_uid = file.get('id')
+                    if 'thumbs' in file:
+                        if type(file['thumbs']) == list:
+                            thumb_uid = file['thumbs'][0].get('id')
+                    break
+            if file_uid is not None:
+                has_deleted = True
+                files = [x for x in files if x['id'] != file_uid]
+                file_ids = [x for x in file_ids if x != file_uid]
+                if thumb_uid is not None:
+                    file_ids = [x for x in file_ids if x != thumb_uid]
+            else:
+                api.print_info('Attachment \'{0}\' is not found.'.format(name))
+
+        if not has_deleted:
+            return
+
+        extra['files'] = files
+        udata['file_ids'] = file_ids
+        record_update.update({
+            'version': 2,
+            'client_modified_time': api.current_milli_time(),
             'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record['record_key_unencrypted']),
             'udata': udata,
             'revision': record['revision']
