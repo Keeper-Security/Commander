@@ -180,6 +180,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```upload-attachment``` Upload file attachments to the specified record
 
+* ```delete-attachment``` Delete a file attachment from the specified record.  Specify Record UID and Filename (or Attachment ID)
+
 * ```list-sf``` or ```lsf``` Display all shared folders
 
 * ```create-user``` Create Keeper vault account.
