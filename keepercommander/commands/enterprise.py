@@ -1385,7 +1385,7 @@ Event properties
   status            Keeper API result_code
   record_uid        Record UID 
   shared_folder_uid Shared Folder UID
-  node_id           Node ID (enterprise events only)
+  node              Node ID (enterprise events only)
   team_uid          Team UID (enterprise events only)
 
 --report-type: 
@@ -1460,7 +1460,7 @@ class AuditReportCommand(Command):
                 val = self.resolve_team_name(params, val)
             elif field == 'role_id':
                 val = self.resolve_role_name(params, val)
-            elif field == 'node_id':
+            elif field == 'node':
                 val = self.resolve_node_name(params, val)
             return val
         return ''
@@ -1614,7 +1614,7 @@ class AuditReportCommand(Command):
 
         if report_type == 'raw':
             fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
-            misc_fields = ['node_id', 'to_username', 'from_username', 'record_uid', 'shared_folder_uid',
+            misc_fields = ['to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node',
                            'channel', 'status'] if kwargs.get('report_format') == 'fields' else ['message']
 
             for event in rs['audit_event_overview_report_rows']:
@@ -1723,7 +1723,7 @@ class AuditReportCommand(Command):
                 if prefix == '>':
                     return {'min': value, 'exclude_min': True}
                 if prefix == '<':
-                    return {'mzx': value, 'exclude_max': True}
+                    return {'max': value, 'exclude_max': True}
                 return value
 
         return convert(filter)
