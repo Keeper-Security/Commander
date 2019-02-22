@@ -10,8 +10,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-import pexpect
-from pexpect import pxssh
+from pexpect import pxssh, exceptions
 
 """Commander Plugin for SSH Command
    Dependencies: 
