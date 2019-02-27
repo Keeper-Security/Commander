@@ -276,6 +276,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
+    - ```--target=syslog-port``` Export events in syslog format to TCP port. Both plain and SSL connections are supported
 
 * ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats - [See Details](#ad-hoc-event-reporting)
 
