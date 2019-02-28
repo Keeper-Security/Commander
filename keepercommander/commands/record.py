@@ -668,12 +668,11 @@ class RecordUploadAttachmentCommand(Command):
 
         files = []
         if 'file' in kwargs:
-            for name in kwargs['file']:
-                file_name = os.path.abspath(os.path.expanduser(name))
-                if os.path.isfile(file_name):
-                    files.append(file_name)
-                else:
-                    api.print_error('File {0} does not exists'.format(name))
+            file_name = os.path.abspath(os.path.expanduser(kwargs['file']))
+            if os.path.isfile(file_name):
+                files.append(file_name)
+            else:
+                api.print_error('File {0} does not exists'.format(kwargs['file']))
         if len(files) == 0:
             api.print_error('No files to upload')
             return
