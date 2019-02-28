@@ -20,7 +20,10 @@ import fnmatch
 import re
 import gzip
 import time
+import socket
+import ssl
 
+from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
@@ -117,7 +120,7 @@ enterprise_team_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'sumo'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -1163,9 +1166,34 @@ class AuditLogSplunkExport(AuditLogBaseExport):
             self.should_cancel = True
 
 
-class AuditLogSyslogExport(AuditLogBaseExport):
+class AuditLogSyslogBaseExport(AuditLogBaseExport):
     def __init__(self):
         AuditLogBaseExport.__init__(self)
+
+    def convert_event(self, props, event):
+        pri = 13 * 8 + 6
+        dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
+        ip = "-"
+        if 'ip_address' in event:
+            ip = event['ip_address']
+
+        message = '<{0}>1 {1} {2} {3} - {4}'.format(pri, dt.strftime('%Y-%m-%dT%H:%M:%SZ'), ip, 'Keeper', event['id'])
+
+        evt = event.copy()
+        evt.pop('id')
+        evt.pop('created')
+        if 'ip_address' in evt:
+            evt.pop('ip_address')
+        structured = 'Keeper@Commander'
+        for key in evt:
+            structured += ' {0}="{1}"'.format(key, evt[key])
+        structured = '[' + structured + ']'
+        return message + ' ' + structured + ' ' + AuditLogBaseExport.get_event_message(evt)
+
+
+class AuditLogSyslogFileExport(AuditLogSyslogBaseExport):
+    def __init__(self):
+        AuditLogSyslogBaseExport.__init__(self)
 
     def default_record_title(self):
         return 'Audit Log: Syslog'
@@ -1185,21 +1213,6 @@ class AuditLogSyslogExport(AuditLogBaseExport):
             self.store_record = True
         props['filename'] = record.login
 
-    def convert_event(self, props, event):
-        pri = 13 * 8 + 6
-        dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
-        message = '<{0}>1 {1} {2} {3} - {4}'.format(pri, dt.strftime('%Y-%m-%dT%H:%M:%SZ'), event['ip_address'], 'Keeper', event['id'])
-
-        evt = event.copy()
-        evt.pop('id')
-        evt.pop('created')
-        evt.pop('ip_address')
-        structured = 'Keeper@Commander'
-        for key in evt:
-            structured += ' {0}="{1}"'.format(key, evt[key])
-        structured = '[' + structured + ']'
-        return message + ' ' + structured + ' ' + AuditLogBaseExport.get_event_message(evt)
-
     def export_events(self, props, events):
         is_gzipped = props['filename'].endswith('.gz')
         logf = gzip.GzipFile(filename=props['filename'], mode='ab') if is_gzipped else open(props['filename'], mode='ab')
@@ -1210,6 +1223,79 @@ class AuditLogSyslogExport(AuditLogBaseExport):
         finally:
             logf.flush()
             logf.close()
+
+
+class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
+    def __init__(self):
+        AuditLogSyslogBaseExport.__init__(self)
+
+    def default_record_title(self):
+        return 'Audit Log: Syslog Port'
+
+    def get_properties(self, record, props):
+        is_new_config = False
+
+        host = None
+        port = None
+        is_ssl = None
+        url = record.login_url
+        if url:
+            p = urlparse(url)
+            if p.scheme in ['syslog', 'syslogs']:
+                is_ssl = p.scheme == 'syslogs'
+                host = p.hostname
+                port = p.port
+
+        if not is_ssl or not host or not port:
+            api.print_info('Enter Syslog TCP connection parameters:')
+            host_name = input('...' + 'Syslog host name: '.rjust(32))
+            if not host_name:
+                raise Exception('Syslog host name is empty')
+            host = host_name
+
+            port_number = input('...' + 'Syslog port number: '.rjust(32))
+            if not port_number:
+                raise Exception('Syslog port is empty')
+            if not port_number.isdigit():
+                raise Exception('Syslog port is a numeric value')
+            port = int(port_number)
+
+            has_ssl = input('...' + 'Syslog port requires SSL/TLS (y/N): '.rjust(32))
+            is_ssl = has_ssl.lower() == 'y'
+
+            is_new_config = True
+
+        if is_new_config:
+            if api.is_interactive_mode:
+                print('Connecting to \'{0}:{1}\' ...'.format(host, port))
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                if is_ssl:
+                    s = ssl.wrap_socket(sock)
+                else:
+                    s = sock
+                s.connect((host, port))
+            record.login_url = 'syslog{0}://{1}:{2}'.format('s' if is_ssl else '', host, port)
+            self.store_record = True
+
+        props['is_ssl'] = is_ssl
+        props['host'] = host
+        props['port'] = port
+
+    def export_events(self, props, events):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                if props['is_ssl']:
+                    s = ssl.wrap_socket(sock)
+                else:
+                    s = sock
+                s.connect((props['host'], props['port']))
+                for line in events:
+                    s.send(line.encode('utf-8'))
+                    s.send(b'\n')
+        except:
+            self.should_cancel = True
 
 
 class AuditLogSumologicExport(AuditLogBaseExport):
@@ -1265,7 +1351,9 @@ class AuditLogCommand(EnterpriseCommand):
         if target == 'splunk':
             log_export = AuditLogSplunkExport()
         elif target == 'syslog':
-            log_export = AuditLogSyslogExport()
+            log_export = AuditLogSyslogFileExport()
+        elif target == 'syslog-port':
+            log_export = AuditLogSyslogPortExport()
         elif target == 'sumo':
             log_export = AuditLogSumologicExport()
         else:
