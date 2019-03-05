@@ -19,8 +19,7 @@ def rotate(record, newpassword):
 
     result = False
 
-    # the characters below mess with windows command line
-    i = subprocess.call("net user {0} {1}".format(user, newpassword), shell = True)
+    i = subprocess.call(["net", "user", user, newpassword], shell = True)
 
     if i == 0:
         print('Password changed successfully')
@@ -33,4 +32,5 @@ def rotate(record, newpassword):
 
 
 def adjust(newpassword):
+    # the characters below mess with windows command line
     return re.sub('[<>&|]', '', newpassword)
