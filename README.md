@@ -869,6 +869,14 @@ When a plugin is specified in a record, Commander will search in the plugins/ fo
 
 Check out the [plugins folder](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) for all of the available plugins.  Keeper's team adds new plugins on an ongoing basis. If you need a particular plugin created, send us an email to commander@keepersecurity.com.
 
+### Locating the Record UID and other Identifiers 
+
+The Record UID and Shared Folder UID can be found either through the "get", "list", "ls -l" or "search" commands, or through the Web Vault user interface.
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/record_uid.png)
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/shared_folder_uid.png)
+
 ### Deep linking to records (Web Vault Hyperlink)
 
 The Record UID that is displayed on password record output can be used for deep linking directly into the Keeper Web Vault only for privileged users. This Vault link can be stored and sent over unsecure channels because it only provides a reference to the record within your vault -- it does not provide access to the actual record content.  To access the content, you must still authenticate into the vault and decrypt the data.  The link is in the format `https://keepersecurity.com/vault#detail/XXXXXX` and you simply replace XXXXXX with the Record UID. Providing this link to another user does NOT initiate sharing.  To share a vault record, you must authenticate to your vault, open the record and click the "Share" feature.
