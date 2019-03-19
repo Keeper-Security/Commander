@@ -9,42 +9,82 @@
 #
 
 
+from urllib.parse import urlparse, urlunparse
+
+
+class RestApiContext:
+    def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US', device_id=None):
+        self.server_base = server
+        self.transmission_key = None
+        self.__server_key_id = 1
+        self.locale = locale
+        self.__device_id = device_id
+        self.__store_server_key = False
+
+    def __get_server_base(self):
+        return self.__server_base
+
+    def __set_server_base(self, value):
+        p = urlparse(value)
+        self.__server_base = urlunparse((p.scheme, p.netloc, '/api/rest/', None, None, None))
+
+    def __get_server_key_id(self):
+        return self.__server_key_id
+
+    def __set_server_key_id(self, key_id):
+        self.__server_key_id = key_id
+        self.__store_server_key = True
+
+    def __get_device_id(self):
+        return self.__device_id
+
+    def __set_device_id(self, device_id):
+        self.__device_id = device_id
+        self.__store_server_key = True
+
+    def __get_store_server_key(self):
+        return self.__store_server_key
+
+    server_base = property(__get_server_base, __set_server_base)
+    device_id = property(__get_device_id, __set_device_id)
+    server_key_id = property(__get_server_key_id, __set_server_key_id)
+    store_server_key = property(__get_store_server_key)
+
+
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self,config_filename='',config={}, server='https://keepersecurity.com/api/v2/',
+    def __init__(self,config_filename='',config=None, server='https://keepersecurity.com/api/v2/',
                  user='',password='',mfa_token='',
-                 mfa_type='device_token',command='',commands=[],plugins=[],
+                 mfa_type='device_token',commands=None,plugins=None,
                  session_token='',salt='',iterations='',
-                 encrypted_private_key='', encryption_params='',
+                 encrypted_private_key='',
                  data_key='',private_key='',
                  revision=0, rsa_key='', auth_verifier='',
-                 record_cache={}, meta_data_cache={}, shared_folder_cache={},
-                 team_cache = {}, subfolder_cache={}, debug=False, timedelay=0):
+                 record_cache=None, meta_data_cache=None, shared_folder_cache=None,
+                 team_cache=None, subfolder_cache=None, debug=False, timedelay=0):
         self.config_filename = config_filename
-        self.config = config
+        self.config = config or {}
         self.auth_verifier = auth_verifier 
-        self.server = server 
+        self.__server = server
         self.user = user
         self.password = password 
         self.mfa_token = mfa_token 
         self.mfa_type = mfa_type 
-        self.command = command 
-        self.commands = commands 
-        self.plugins = plugins 
+        self.commands = commands or []
+        self.plugins = plugins or []
         self.session_token = session_token 
         self.salt = salt 
         self.iterations = iterations 
         self.encrypted_private_key = encrypted_private_key
-        self.encryption_params = encryption_params
         self.data_key = data_key
         self.private_key = private_key
         self.revision = revision
-        self.record_cache = record_cache
-        self.meta_data_cache = meta_data_cache
-        self.shared_folder_cache = shared_folder_cache
-        self.team_cache = team_cache
-        self.subfolder_cache = subfolder_cache
+        self.record_cache = record_cache or {}
+        self.meta_data_cache = meta_data_cache or {}
+        self.shared_folder_cache = shared_folder_cache or {}
+        self.team_cache = team_cache or {}
+        self.subfolder_cache = subfolder_cache or {}
         self.subfolder_record_cache = {}
         self.root_folder = None
         self.current_folder = None
@@ -57,6 +97,8 @@ class KeeperParams:
         self.enterprise = None
         self.prepare_commands = False
         self.batch_mode = False
+        self.__rest_context = RestApiContext(server=server)
+        self.pending_share_requests = set()
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -64,13 +106,11 @@ class KeeperParams:
         self.password = ''
         self.mfa_type = 'device_token'
         self.mfa_token = ''
-        self.command = ''
         self.commands.clear()
         self.session_token = ''
         self.salt = ''
         self.iterations = 0
         self.encrypted_private_key = ''
-        self.encryption_params = ''
         self.data_key = b''
         self.private_key = ''
         self.revision = 0
@@ -90,3 +130,17 @@ class KeeperParams:
         self.enterprise = None
         self.prepare_commands = True
         self.batch_mode = False
+        self.pending_share_requests.clear()
+
+    def __get_rest_context(self):
+        return self.__rest_context
+
+    def __get_server(self):
+        return self.__server
+
+    def __set_server(self, value):
+        self.__server = value
+        self.__rest_context.server_base = value
+
+    server = property(__get_server, __set_server)
+    rest_context = property(__get_rest_context)

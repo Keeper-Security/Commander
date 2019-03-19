@@ -10,16 +10,21 @@
 # Contact: ops@keepersecurity.com
 #
 
+
 import re
 import sys
 import os
 import argparse
 import shlex
 import json
+import logging
+import base64
 
-from .params import KeeperParams
-from . import cli
 from . import __version__
+from .params import KeeperParams
+
+from . import cli
+
 
 def get_params_from_config(config_filename):
     params = KeeperParams()
@@ -71,6 +76,10 @@ def get_params_from_config(config_filename):
                 if 'batch_mode' in params.config:
                     params.batch_mode = params.config['batch_mode'] == True
 
+                if 'device_id' in params.config:
+                    device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
+                    params.rest_context.device_id = device_id
+
             except:
                 print('Error: Unable to parse JSON file ' + params.config_filename)
                 raise
@@ -89,9 +98,8 @@ def get_params_from_config(config_filename):
 def usage(m):
     print(m)
     parser.print_help()
-    cli.display_command_help(showEnterprise=True, showShell=True)
+    cli.display_command_help(show_enterprise=True, show_shell=True)
     exit(1)
-
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False)
 parser.add_argument('--server', '-ks', dest='server', action='store', help='Keeper Host address.')
@@ -107,6 +115,8 @@ parser.error = usage
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
     opts, flags = parser.parse_known_args(sys.argv[1:])

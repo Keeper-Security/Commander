@@ -16,6 +16,7 @@ import shutil
 import functools
 import os
 import json
+import logging
 
 from .. import api, display
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
@@ -161,7 +162,7 @@ class FolderListCommand(Command):
 
         if len(folders) == 0 and len(records) == 0:
             if pattern:
-                api.print_error("ls: {0}: No such folder or record".format(pattern))
+                logging.error("ls: %s: No such folder or record", pattern)
         else:
             if show_detail:
                 if len(folders) > 0:

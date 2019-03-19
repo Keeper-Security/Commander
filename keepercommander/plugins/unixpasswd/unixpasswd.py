@@ -10,7 +10,10 @@
 # Contact: ops@keepersecurity.com
 #
 
+
 import pexpect
+import logging
+
 
 """Commander Plugin for Unix Passwd Command
    Dependencies: 
@@ -23,13 +26,13 @@ def rotate(record, newpassword):
     prompt = '.*\$ '
 
     p = pexpect.spawn('bash', timeout=300)
-    i = p.expect(prompt) 
-    print('Connecting to super user %s'%(user))
+    i = p.expect(prompt)
+    logging.info('Connecting to super user %s', user)
     p.sendline('su - %s' % (user))
     i = p.expect('[Pp]assword')
     p.sendline(oldpassword)
     i = p.expect(prompt)
-    print('Changing password for %s'%(user))
+    logging.info('Changing password for %s', user)
     p.sendline('passwd')
     i = p.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
     l = p.before
@@ -43,16 +46,13 @@ def rotate(record, newpassword):
     i = p.expect(['.try again', '.authentication', '.failure', prompt])
 
     if i == 0:
-        print('Password change failed')
-        return False
+        logging.info('Password change failed')
     elif i == 1:
-        print('Current password is incorrect')
-        return False
+        logging.info('Current password is incorrect')
     elif i == 2:
-        print('General failure in password update')
-        return False
+        logging.info('General failure in password update')
     elif i == 3:
-        print('Password changed successfully')
+        logging.info('Password changed successfully')
         record.password = newpassword
         return True
 

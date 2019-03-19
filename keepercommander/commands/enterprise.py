@@ -159,7 +159,7 @@ class EnterpriseCommand(Command):
         if params.enterprise:
             Command.execute_args(self, params, args, **kwargs)
         else:
-            print('This command  is only available for Administrators of Keeper.')
+            logging.error('This command  is only available for Administrators of Keeper.')
 
     def get_public_key(self, params, email):
         public_key = self.public_keys.get(email.lower())
@@ -1067,7 +1067,6 @@ class AuditLogBaseExport:
                     field = pattern[1]
                     val = event.get(field)
                     if val is None:
-                        #api.print_error('Event value is missing: {0}'.format(pattern[1]))
                         val = '<missing>'
 
                     sp = pattern.span()
@@ -1090,15 +1089,14 @@ class AuditLogSplunkExport(AuditLogBaseExport):
             logging.captureWarnings(True)
             url = record.login_url
             if not url:
-                api.print_info('Enter HTTP Event Collector (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
+                print('Enter HTTP Event Collector (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
                 while not url:
                     address = input('...' + 'Splunk HEC endpoint: '.rjust(32))
                     if not address:
                         return
                     for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
                         try:
-                            if api.is_interactive_mode:
-                                print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
+                            print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
                             rs = requests.post(test_url, json='', verify=False)
                             if rs.status_code == 401:
                                 js = rs.json()
@@ -1108,10 +1106,10 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                         except:
                             pass
                         if url:
-                            api.print_info('Found.')
+                            print('Found.')
                             break
                         else:
-                            api.print_info('Failed.')
+                            print('Failed.')
                 record.login_url = url
                 self.store_record = True
             props['hec_url'] = url
@@ -1201,7 +1199,7 @@ class AuditLogSyslogFileExport(AuditLogSyslogBaseExport):
     def get_properties(self, record, props):
         filename = record.login
         if not filename:
-            api.print_info('Enter filename for syslog messages.')
+            print('Enter filename for syslog messages.')
             filename = input('...' + 'Syslog file name: '.rjust(32))
             if not filename:
                 return
@@ -1308,7 +1306,7 @@ class AuditLogSumologicExport(AuditLogBaseExport):
     def get_properties(self, record, props):
         url = record.login_url
         if not url:
-            api.print_info('Enter HTTP Logs Collector URL.')
+            print('Enter HTTP Logs Collector URL.')
             url = input('...' + 'HTTP Collector URL: '.rjust(32))
             if not url:
                 raise Exception('HTTP Collector URL is required.')
@@ -1446,7 +1444,7 @@ class AuditLogCommand(EnterpriseCommand):
                     finished = True
                     break
                 count += len(to_store)
-                api.print_info('+', False)
+                print('+', end='', flush=True)
 
         if last_event_time > 0:
             print("")
@@ -1532,7 +1530,7 @@ class AuditReportCommand(Command):
                         token = pattern[1]
                         val = self.get_value(params, token, event) if field != token else None
                         if val is None:
-                            api.print_error('Event value is missing: {0}'.format(pattern[1]))
+                            logging.error('Event value is missing: %s', pattern[1])
                             val = '<missing>'
 
                         sp = pattern.span()
@@ -1624,10 +1622,10 @@ class AuditReportCommand(Command):
         loadSyslogTemplates(params)
 
         if kwargs['syntax_help']:
-            api.print_info(audit_report_description)
+            logging.info(audit_report_description)
             return
         if not kwargs['report_type']:
-            api.print_error('report-type parameter is missing')
+            logging.error('report-type parameter is missing')
             return
         report_type = kwargs['report_type']
         rq = {
@@ -1659,7 +1657,7 @@ class AuditReportCommand(Command):
             columns = kwargs['columns']
             rq['columns'] = columns
         if report_type == 'dim' and len(columns) == 0:
-            api.print_error("'columns' parameter is missing")
+            logging.error("'columns' parameter is missing")
             return
 
         aggregates = []

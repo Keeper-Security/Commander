@@ -33,6 +33,14 @@ def register_commands(commands, aliases, command_info):
     misc_commands(commands)
     misc_command_info(aliases, command_info)
 
+    from .. import importer
+    importer.register_commands(commands)
+    importer.register_command_info(aliases, command_info)
+
+    from .. import plugins
+    plugins.register_commands(commands)
+    plugins.register_command_info(aliases, command_info)
+
 
 def register_enterprise_commands(commands, aliases, command_info):
     from .enterprise import register_commands as enterprise_commands, register_command_info as enterprise_command_info
@@ -41,7 +49,7 @@ def register_enterprise_commands(commands, aliases, command_info):
 
 
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
-    choices = [ch.lower() if ch.upper() == default.upper() else ch.lower()  for ch in choice]
+    choices = [ch.lower() if ch.upper() == default.upper() else ch.lower() for ch in choice]
 
     result = ''
     while True:

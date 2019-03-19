@@ -15,11 +15,12 @@ import json
 import requests
 import base64
 import tempfile
+import logging
 
 from Cryptodome.Cipher import AES
 
 from ..team import Team
-from .. import generator, api, display
+from .. import api, display, generator
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..record import Record
@@ -191,7 +192,7 @@ class RecordAddCommand(Command):
                 for uid in params.subfolder_record_cache[folder_uid]:
                     r = api.get_record(params, uid)
                     if r.title == title:
-                        api.print_error('Record with title "{0}" already exists'.format(title))
+                        logging.error('Record with title "%s" already exists', title)
                         return
 
         record_key = os.urandom(32)
@@ -234,7 +235,7 @@ class RecordAddCommand(Command):
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
             params.sync_data = True
-            api.print_info('Record UID: {0}'.format(record_uid))
+            logging.info('Record UID: %s', record_uid)
             return record_uid
         else:
             print(rs['message'])
@@ -597,7 +598,7 @@ class RecordDownloadAttachmentCommand(Command):
                     if file_key:
                         rq_http = requests.get(dl['url'], stream=True)
                         with open(file_name, 'wb') as f:
-                            api.print_info('Downloading \'{0}\''.format(os.path.abspath(f.name)))
+                            logging.info('Downloading \'%s\'', os.path.abspath(f.name))
                             iv = rq_http.raw.read(16)
                             cipher = AES.new(file_key, AES.MODE_CBC, iv)
                             finished = False
@@ -615,9 +616,9 @@ class RecordDownloadAttachmentCommand(Command):
                                 decrypted = api.unpad_binary(decrypted)
                                 f.write(decrypted)
                     else:
-                        api.print_error('File \'{0}\': Failed to file encryption key'.format(file_name))
+                        logging.error('File \'%s\': Failed to file encryption key', file_name)
                 else:
-                    api.print_error('File \'{0}\' download error: {1}'.format(file_id, dl['message']))
+                    logging.error('File \'%s\' download error: %s', file_id, dl['message'])
 
 
 class RecordUploadAttachmentCommand(Command):
@@ -663,7 +664,7 @@ class RecordUploadAttachmentCommand(Command):
 
         record_update = api.resolve_record_write_path(params, record_uid)
         if record_update is None:
-            api.print_error('You do not have edit permissions on this record')
+            logging.error('You do not have edit permissions on this record')
             return
 
         files = []
@@ -673,9 +674,9 @@ class RecordUploadAttachmentCommand(Command):
                 if os.path.isfile(file_name):
                     files.append(file_name)
                 else:
-                    api.print_error('File {0} does not exists'.format(name))
+                    logging.error('File %s does not exists', name)
         if len(files) == 0:
-            api.print_error('No files to upload')
+            logging.error('No files to upload')
             return
 
         rq = {
@@ -695,7 +696,7 @@ class RecordUploadAttachmentCommand(Command):
                         'file_id': uo['file_id'],
                         'name': os.path.basename(file_path)
                     }
-                    api.print_info('Uploading {0} ...'.format(a['name']), end_line=False)
+                    logging.info('Uploading %s ...', a['name'])
                     with tempfile.TemporaryFile(mode='w+b') as dst:
                         with open(file_path, mode='r+b') as src:
                             iv = os.urandom(16)
@@ -720,14 +721,13 @@ class RecordUploadAttachmentCommand(Command):
                         response = requests.post(uo['url'], files=files, data=uo['parameters'])
                         if response.status_code == uo['success_status_code']:
                             attachments.append(a)
-                    api.print_info('Done')
                 else:
-                    api.print_error('{0}: file size exceeds file plan limits'.format(file_path))
+                    logging.error('%s: file size exceeds file plan limits', file_path)
             except Exception as e:
-                api.print_error('{0} error: {1}'.format(file_path, e))
+                logging.error('%s error: %s', file_path, e)
 
         if len(attachments) == 0:
-            api.print_error('No files were successfully uploaded')
+            logging.error('No files were successfully uploaded')
             return
 
         record = params.record_cache[record_uid]
@@ -753,7 +753,6 @@ class RecordUploadAttachmentCommand(Command):
         record_update.update({
             'version': 2,
             'client_modified_time': api.current_milli_time(),
-            #'data': api.encrypt_aes(record['data'], record['record_key_unencrypted']),
             'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record['record_key_unencrypted']),
             'udata': udata,
             'revision': record['revision']
@@ -798,17 +797,17 @@ class RecordDeleteAttachmentCommand(Command):
                                 break
 
         if record_uid is None:
-            api.print_error('Enter name or uid of existing record')
+            logging.error('Enter name or uid of existing record')
             return
 
         names = kwargs['name'] if 'name' in kwargs else None
         if names is None:
-            api.print_error('No file names')
+            logging.error('No file names')
             return
 
         record_update = api.resolve_record_write_path(params, record_uid)
         if record_update is None:
-            api.print_error('You do not have edit permissions on this record')
+            logging.error('You do not have edit permissions on this record')
             return
 
         record = params.record_cache[record_uid]
@@ -841,7 +840,7 @@ class RecordDeleteAttachmentCommand(Command):
                 if thumb_uid is not None:
                     file_ids = [x for x in file_ids if x != thumb_uid]
             else:
-                api.print_info('Attachment \'{0}\' is not found.'.format(name))
+                logging.info('Attachment \'%s\' is not found.', name)
 
         if not has_deleted:
             return

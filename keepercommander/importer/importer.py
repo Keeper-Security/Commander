@@ -8,11 +8,11 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
 import os.path
 import importlib
+import logging
 
-from .. import api
+from typing import Iterable
 
 PathDelimiter = '\\'
 
@@ -47,10 +47,7 @@ def strip_path_delimiter(name, delimiter=PathDelimiter):
 
 
 def path_components(path, delimiter=PathDelimiter):
-    '''
-    :type path: str
-    :rtype: collections.Iterable[str]
-    '''
+    # type: (str, str) -> Iterable[str]
     p = path.strip()
     pos = 0
     while pos < len(p):
@@ -167,7 +164,7 @@ class BaseExporter:
                 if ext:
                     filename = filename + '.' + ext
         elif not self.supports_stdout():
-            api.print_error("stdout is not supported for this file format")
+            logging.error("stdout is not supported for this file format")
             return
 
         self.do_export(filename, records)
