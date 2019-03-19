@@ -24,7 +24,8 @@ install_requires = [
     'requests',
     'tabulate',
     'prompt_toolkit>=2.0.4',
-    'asciitree'
+    'asciitree',
+    'protobuf'
 ]
 
 setup(name='keepercommander',

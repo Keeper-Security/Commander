@@ -16,7 +16,9 @@ from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
 from . import api
 
+
 init()
+
 
 class bcolors:
     HEADER = '\033[95m'

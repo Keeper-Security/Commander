@@ -10,25 +10,23 @@
 # Contact: ops@keepersecurity.com
 #
 
-import subprocess, re
+import logging
+import subprocess
+import re
 
 
 def rotate(record, newpassword):
     """ Grab any required fields from the record """
-    user = record.login
 
-    result = False
-
-    i = subprocess.call(["net", "user", user, newpassword], shell = True)
+    i = subprocess.call(["net", "user", record.login, newpassword], shell=True)
 
     if i == 0:
-        print('Password changed successfully')
+        logging.info('Password changed successfully')
         record.password = newpassword
-        result = True
-    else:
-        print('Password change failed')
+        return True
 
-    return result
+    logging.error('Password change failed')
+    return True
 
 
 def adjust(newpassword):

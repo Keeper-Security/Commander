@@ -15,6 +15,8 @@ import re
 import os
 import base64
 import json
+import logging
+
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
 
@@ -100,7 +102,7 @@ class RegisterCommand(Command):
         if email:
             _, email = parseaddr(email)
         if not email:
-            print('A valid email address is expected.')
+            logging.error('A valid email address is expected.')
             return
 
         rq = {
@@ -111,9 +113,9 @@ class RegisterCommand(Command):
         rs = api.run_command(params, rq)
         if rs['result_code'] != 'Failed_to_find_user':
             if rs['result'] == 'success':
-                print('User \'{0}\' already exists in Keeper'.format(email))
+                logging.warning('User \'%s\' already exists in Keeper', email)
             else:
-                print(rs['message'])
+                logging.error(rs['message'])
             return
 
         password_rules = rs['password_rules']
@@ -140,7 +142,7 @@ class RegisterCommand(Command):
             if name:
                 data['displayname'] = name
             else:
-                api.print_error('\'name\' parameter is required for enterprise users')
+                logging.error('\'name\' parameter is required for enterprise users')
                 return
             rq = {
                 'command': 'enterprise_user_add',
@@ -184,9 +186,9 @@ class RegisterCommand(Command):
                 if len(failed_rules) == 0:
                     password = pwd
                 else:
-                    print(rs['password_rules_intro'])
+                    logging.error(rs['password_rules_intro'])
                     for fr in failed_rules:
-                        print(fr)
+                        logging.error(fr)
 
         new_params = KeeperParams()
         new_params.server = params.server
@@ -259,10 +261,10 @@ class RegisterCommand(Command):
 
         rs = api.run_command(new_params, rq)
         if rs['result'] == 'success':
+            logging.info("Created account: %s ", email)
             if kwargs.get('question'):
-                api.print_info("Account {0} created".format(email))
                 if not kwargs.get('answer'):
-                    api.print_info('...' + 'Security Question: '.rjust(24) + kwargs['question'])
+                    print('...' + 'Security Question: '.rjust(24) + kwargs['question'])
                     kwargs['answer'] = input('...' + 'Security Answer: '.rjust(24))
                 if kwargs.get('answer'):
                     try:
@@ -288,9 +290,9 @@ class RegisterCommand(Command):
                             'security_answer_hash': api.auth_verifier_old(kwargs['answer'], salt, iterations)
                         }
                         api.communicate(param1, rq)
-                        api.print_info('Master password backup is created.')
+                        logging.info('Master password backup is created.')
                     except Exception as e:
-                        api.print_error('Failed to create master password backup.')
+                        logging.error('Failed to create master password backup.')
 
             store = kwargs['store'] if 'store' in kwargs else None
             if store:
@@ -300,16 +302,16 @@ class RegisterCommand(Command):
                         add_command.execute(params, title='Keeper credentials for {0}'.format(email), login=email, password=password, force=True)
                     except Exception:
                         store = False
-                        api.print_error('Failed to create record in Keeper')
+                        logging.error('Failed to create record in Keeper')
                 else:
                     store = False
             if generate and not store:
-                print('Generated password: {0}'.format(password))
+                logging.warning('Generated password: %s', password)
 
             if params.enterprise:
                 api.query_enterprise(params)
         else:
-            api.print_error(rs['message'])
+            logging.error(rs['message'])
 
 
 class ShareFolderCommand(Command):
@@ -332,11 +334,11 @@ class ShareFolderCommand(Command):
                         folder = None
 
         if folder is None:
-            print('Enter name of the existing folder')
+            logging.error('Enter name of the existing folder')
             return
 
         if folder.type not in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-            print('You can change permission of shared folders only')
+            logging.error('You can change permission of shared folders only')
             return
 
 
@@ -369,7 +371,7 @@ class ShareFolderCommand(Command):
                             if team_uid:
                                 teams.append(team_uid)
                             else:
-                                print('User {0} could not be resolved as email or team'.format(u))
+                                logging.warning('User %s could not be resolved as email or team', u)
                 if len(emails) > 0:
                     rq = {
                         'command': 'public_keys',
@@ -383,7 +385,7 @@ class ShareFolderCommand(Command):
                                 if email != params.user.lower():
                                     public_keys[email] = pk['public_key']
                             else:
-                                print('\'{0}\' is not a known Keeper account'.format(pk['key_owner']))
+                                logging.warning('\'%s\' is not a known Keeper account', pk['key_owner'])
 
                 if len(teams) > 0:
                     rq = {
@@ -428,7 +430,7 @@ class ShareFolderCommand(Command):
                         if r_uid:
                             record_uids.append(r_uid)
                         else:
-                            print('\'{0}\' is not an existing record title or UID'.format(r))
+                            logging.error('\'%s\' is not an existing record title or UID', r)
 
             request = {
                 'command': 'shared_folder_update',
@@ -590,28 +592,28 @@ class ShareFolderCommand(Command):
                     for t in response[node]:
                         team = api.get_team(params, t['team_uid'])
                         if t['status'] == 'success':
-                            print('Team share \'{0}\' {1}'.format(team.name, 'added' if node =='add_teams' else 'updated' if node == 'update_teams' else 'removed'))
+                            logging.warning('Team share \'%s\' %s', team.name, 'added' if node =='add_teams' else 'updated' if node == 'update_teams' else 'removed')
                         else:
-                            print('Team share \'{0}\' failed'.format(team.name))
+                            logging.error('Team share \'%s\' failed', team.name)
 
             for node in ['add_users', 'update_users', 'remove_users']:
                 if node in response:
                     for s in response[node]:
                         if s['status'] == 'success':
-                            print('User share \'{0}\' {1}'.format(s['username'], 'added' if node =='add_users' else 'updated' if node == 'update_users' else 'removed'))
+                            logging.warning('User share \'%s\' %s', s['username'], 'added' if node =='add_users' else 'updated' if node == 'update_users' else 'removed')
                         elif s['status'] == 'invited':
-                            print('User \'{0}\' invited'.format(s['username']))
+                            logging.warning('User \'%s\' invited', s['username'])
                         else:
-                            print('User share \'{0}\' failed'.format(s['username']))
+                            logging.error('User share \'%s\' failed', s['username'])
 
             for node in ['add_records', 'update_records', 'remove_records']:
                 if node in response:
                     for r in response[node]:
                         rec = api.get_record(params, r['record_uid'])
                         if r['status'] == 'success':
-                            print('Record share \'{0}\' {1}'.format(rec.title, 'added' if node =='add_records' else 'updated' if node == 'update_records' else 'removed'))
+                            logging.warning('Record share \'%s\' %s', rec.title, 'added' if node =='add_records' else 'updated' if node == 'update_records' else 'removed')
                         else:
-                            print('Record share \'{0}\' failed'.format(rec.title))
+                            logging.error('Record share \'%s\' failed', rec.title)
 
 
 class ShareRecordCommand(Command):
@@ -642,12 +644,12 @@ class ShareRecordCommand(Command):
                                 break
 
         if record_uid is None:
-            print('Enter name or uid of existing record')
+            logging.error('Enter name or uid of existing record')
             return
 
         emails = kwargs.get('email') or []
         if not emails:
-            print('\'email\' parameter is missing')
+            logging.error('\'email\' parameter is missing')
             return
 
         public_keys = {}
@@ -663,14 +665,14 @@ class ShareRecordCommand(Command):
                     if email != params.user.lower():
                         public_keys[email] = pk['public_key']
                 else:
-                    print('\'{0}\' is not a known Keeper account'.format(pk['key_owner']))
+                    logging.error('\'%s\' is not a known Keeper account', pk['key_owner'])
         if len(public_keys) == 0:
-            print('No existing Keeper accounts provided.')
+            logging.error('No existing Keeper accounts provided.')
             return
 
         record_path = api.resolve_record_share_path(params, record_uid)
         if record_path is None:
-            api.print_error('You do not have permissions to share this record.')
+            logging.error('You do not have permissions to share this record.')
             return
 
         rq = {
@@ -698,7 +700,7 @@ class ShareRecordCommand(Command):
         action = kwargs.get('action') or 'grant'
         if action == 'owner':
             if len(public_keys) > 1:
-                print('TYou can transfer ownership to a single account only')
+                logging.error('You can transfer ownership to a single account only')
                 return
 
         for email in public_keys:
@@ -737,13 +739,13 @@ class ShareRecordCommand(Command):
                     else:
                         share_action = 'update_shares'
                 else:
-                    print('You should be a record owner to be able to transfer ownership')
+                    logging.error('You should be a record owner to be able to transfer ownership')
                     return
             else:
                 pass
 
             if share_action:
-                if not share_action in rq:
+                if share_action not in rq:
                     rq[share_action] = []
                     rq[share_action].append(ro)
 
@@ -752,17 +754,17 @@ class ShareRecordCommand(Command):
         if 'add_statuses' in rs:
             emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] in ['success']]
             if emails:
-                print('Record is successfully shared with: {0}'.format(', '.join(emails)))
+                logging.info('Record is successfully shared with: %s', ', '.join(emails))
 
             emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] in ['pending_accept']]
             if emails:
-                print('Recipient must accept request to complete sharing. Invitation sent to {0}. '.format(', '.join(emails)))
+                logging.info('Recipient must accept request to complete sharing. Invitation sent to %s. ', ', '.join(emails))
 
             emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] not in ['success', 'pending_accept']]
             if emails:
-                print('Failed to share record with: {0}'.format(', '.join(emails)))
+                logging.info('Failed to share record with: %s', ', '.join(emails))
 
         if 'remove_statuses' in rs:
             emails = [x['to_username'] for x in rs['remove_statuses'] if x['status'] == 'success']
             if emails:
-                print('Stopped sharing record with: {0}'.format(', '.join(emails)))
+                logging.info('Stopped sharing record with: %s', ', '.join(emails))

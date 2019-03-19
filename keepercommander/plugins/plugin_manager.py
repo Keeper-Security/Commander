@@ -9,7 +9,8 @@
 #
 
 import importlib
-import sys
+import logging
+
 
 imported_plugins = {}
 
@@ -18,17 +19,16 @@ def load_plugin(module_name):
     """Load plugin based on name"""
     full_name = 'keepercommander.plugins.' + module_name
     try:
-        print('Importing ' + str(full_name))
-        imported_plugins[module_name] = \
-            importlib.import_module(full_name)
+        logging.info('Importing %s', str(full_name))
+        imported_plugins[module_name] = importlib.import_module(full_name)
     except Exception as e:
-        print(e.args[0])
-        print('Unable to load module ' + full_name)
+        logging.error(e.args[0])
+        logging.error('Unable to load module %s', full_name)
 
 
 def get_plugin(module_name):
     """Return the specified plugin"""
-    if not module_name in imported_plugins:
+    if module_name not in imported_plugins:
         """Load the specified plugin dynamically"""
         load_plugin(module_name)
 

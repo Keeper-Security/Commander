@@ -10,6 +10,8 @@
 # Contact: ops@keepersecurity.com
 #
 
+import logging
+
 from pexpect import pxssh, exceptions
 
 """Commander Plugin for SSH Command
@@ -42,17 +44,16 @@ def rotate(record, newpassword):
         pass_result = s.before
 
         if "success" in str(pass_result):
-            print('Password changed successfully')
+            logging.info("Password changed successfully")
             record.password = newpassword
             result = True
         else:
-            print('Password change failed:')
-            print(pass_result)
+            logging.error("Password change failed: ", pass_result)
 
         s.logout()
     except exceptions.TIMEOUT as t:
-        print("Timed out waiting for response.")
+        logging.error("Timed out waiting for response.")
     except pxssh.ExceptionPxssh as e:
-        print("Failed to login with ssh.")
+        logging.error("Failed to login with ssh.")
 
     return result

@@ -51,6 +51,7 @@ from ..importer import path_components, PathDelimiter, BaseImporter, BaseExporte
 
 from keepercommander.api import unpad_binary
 
+
 class KeepassImporter(BaseImporter):
 
     @staticmethod

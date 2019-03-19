@@ -15,12 +15,15 @@ import datetime
 import time
 import collections
 import functools
+import logging
+
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
-from . import display, api
+from . import display
+from .api import sync_down, login
 from .error import AuthenticationError, CommunicationError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
@@ -28,8 +31,6 @@ from .commands import register_commands, register_enterprise_commands
 
 
 stack = []
-
-
 aliases = {}
 commands = {}
 command_info = collections.OrderedDict()
@@ -39,21 +40,21 @@ enterprise_command_info = collections.OrderedDict()
 register_enterprise_commands(enterprise_commands, aliases, enterprise_command_info)
 
 
-def display_command_help(showEnterprise = False, showShell = False):
+def display_command_help(show_enterprise = False, show_shell = False):
     max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info.keys(), 0)
 
-    if showEnterprise:
+    if show_enterprise:
         max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, enterprise_command_info.keys(), max_length)
 
     print('\nCommands:')
     for cmd in command_info:
         print('  ' + cmd.ljust(max_length + 2) + '... ' + command_info[cmd])
 
-    if showEnterprise:
+    if show_enterprise:
         for cmd in enterprise_command_info:
             print('  ' + cmd.ljust(max_length + 2) + '... ' + enterprise_command_info[cmd])
 
-    if showShell:
+    if show_shell:
         print('  ' + 'shell'.ljust(max_length + 2) + '... ' + 'Use Keeper interactive shell')
 
     print('  ' + 'c'.ljust(max_length + 2) + '... ' + 'Clear the screen')
@@ -65,38 +66,35 @@ def display_command_help(showEnterprise = False, showShell = False):
 
 
 def goodbye():
-    api.print_info('\nGoodbye.\n')
+    logging.info('\nGoodbye.\n')
     sys.exit()
 
 
-def do_command(params):
+def do_command(params, command_line):
 
-    if params.command == 'q':
+    if command_line == 'q':
         return False
 
-    elif params.command == 'h':
+    elif command_line == 'h':
         display.formatted_history(stack)
 
-    elif params.command == 'c':
+    elif command_line == 'c':
         print(chr(27) + "[2J")
 
-    elif params.command == 'debug':
-        if params.debug:
-            params.debug = False
-            print('Debug OFF')
-        else:
-            params.debug = True
-            print('Debug ON')
-
+    elif command_line == 'debug':
+        is_debug = logging.getLogger().level <= logging.DEBUG
+        logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
+        logging.info('Debug %s', 'OFF' if is_debug else 'ON')
     else:
-        cmd = params.command
         args = ''
-        pos = cmd.find(' ')
+        pos = command_line.find(' ')
         if pos > 0:
-            args = cmd[pos+1:]
-            cmd = cmd[:pos]
+            cmd = command_line[:pos]
+            args = command_line[pos+1:].strip()
+        else:
+            cmd = command_line
 
-        if len(cmd) > 0:
+        if cmd:
             orig_cmd = cmd
             if cmd in aliases and cmd not in commands and cmd not in enterprise_commands:
                 cmd = aliases[cmd]
@@ -108,32 +106,31 @@ def do_command(params):
                     if params.enterprise:
                         command = enterprise_commands[cmd]
                     else:
-                        api.print_error('This command is restricted to Keeper Enterprise administrators.')
+                        logging.error('This command is restricted to Keeper Enterprise administrators.')
                         return True
 
                 if command.is_authorised():
                     if not params.session_token:
                         try:
                             prompt_for_credentials(params)
-                            api.print_info('Logging in...')
-                            api.login(params)
-                            api.sync_down(params)
+                            logging.info('Logging in...')
+                            login(params)
+                            sync_down(params)
                         except KeyboardInterrupt as e:
-                            api.print_info('Canceled')
+                            logging.info('Canceled')
                             return True
 
                 command.execute_args(params, args, command=orig_cmd)
 
                 if params.session_token:
                     if params.sync_data:
-                        api.sync_down(params)
+                        sync_down(params)
             else:
-                display_command_help(showEnterprise=(params.enterprise is not None))
+                display_command_help(show_enterprise=(params.enterprise is not None))
                 return True
 
-            if params.command:
-                if len(stack) == 0 or stack[0] != params.command:
-                    stack.insert(0, params.command)
+            if len(stack) == 0 or stack[0] != command_line:
+                stack.insert(0, command_line)
 
     return True
 
@@ -143,25 +140,22 @@ def runcommands(params):
     timedelay = params.timedelay
 
     while keep_running:
-        for c in params.commands:
-            params.command = c
-            print('Executing [' + params.command + ']...')
+        for command in params.commands:
+            logging.info('Executing [%s]...', command)
             try:
-                if not do_command(params):
-                    print('Command ' + params.command + ' failed.')
+                if not do_command(params, command):
+                    logging.warning('Command %s failed.', command)
             except CommunicationError as e:
-                print("Communication Error:" + str(e.message))
+                logging.error("Communication Error: %s", e.message)
             except AuthenticationError as e:
-                print("AuthenticationError Error: " + str(e.message))
+                logging.error("AuthenticationError Error: %s", e.message)
             except:
-                print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
-
-            params.command = ''
+                logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
 
         if timedelay == 0:
             keep_running = False
         else:
-            print(datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S') + ' Waiting for ' + str(timedelay) + ' seconds')
+            logging.info("%s Waiting for %d seconds", datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S'), timedelay)
             try:
                 time.sleep(timedelay)
             except KeyboardInterrupt:
@@ -171,7 +165,6 @@ def runcommands(params):
 def prompt_for_credentials(params):
         while not params.user:
             params.user = getpass.getpass(prompt='User(Email): ', stream=None)
-
         while not params.password:
             params.password = getpass.getpass(prompt='Password: ', stream=None)
 
@@ -179,7 +172,7 @@ def prompt_for_credentials(params):
 def loop(params):
     global prompt_session
     try:
-        if params.debug: print('Params: ' + str(params))
+        logging.debug('Params: %s', params)
 
         prompt_session = None
         if not params.batch_mode:
@@ -192,7 +185,7 @@ def loop(params):
                                                complete_while_typing=False)
 
         if len(params.commands) == 0:
-            api.is_interactive_mode = True
+            params.batch_mode = False
             display.welcome()
 
         if params.user:
@@ -200,23 +193,26 @@ def loop(params):
                 print('Enter password for {0}'.format(params.user))
                 params.password = getpass.getpass(prompt='Password: ', stream=None)
             if params.password:
-                api.print_info('Logging in...')
-                api.login(params)
-                api.sync_down(params)
+                logging.info('Logging in...')
+                try:
+                    login(params)
+                    do_command(params, 'sync-down')
+                except AuthenticationError as e:
+                    logging.error(e)
 
         while True:
+            command = ''
             if len(params.commands) > 0:
-                params.command = params.commands[0].strip()
+                command = params.commands[0].strip()
                 params.commands = params.commands[1:]
 
-            if not params.command:
-                if not api.is_interactive_mode:
-                    api.is_interactive_mode = True
+            if not command:
+                params.batch_mode = False
                 try:
                     if prompt_session is not None:
-                        params.command = prompt_session.prompt(get_prompt(params)+ '> ')
+                        command = prompt_session.prompt(get_prompt(params)+ '> ')
                     else:
-                        params.command = input(get_prompt(params) + '> ')
+                        command = input(get_prompt(params) + '> ')
 
                 except KeyboardInterrupt:
                     print('')
@@ -224,23 +220,20 @@ def loop(params):
                     raise KeyboardInterrupt
 
             try:
-                if not do_command(params):
+                if not do_command(params, command):
                     raise KeyboardInterrupt
             except CommunicationError as e:
-                print("Communication Error:" + str(e.message))
+                logging.error("Communication Error: %s", e.message)
             except AuthenticationError as e:
-                print("AuthenticationError Error: " + str(e.message))
-            except KeyboardInterrupt as e:
+                logging.error("AuthenticationError Error: %s", e.message)
+            except KeyboardInterrupt:
                 raise
             except:
-                print('An unexpected error occurred: ' + str(sys.exc_info()[0]))
+                logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
                 raise
-
-            params.command = ''
 
     except KeyboardInterrupt:
         goodbye()
-
 
 
 def get_prompt(params):

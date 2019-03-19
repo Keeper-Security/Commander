@@ -15,18 +15,19 @@ import hashlib
 import base64
 import requests
 import io
+import logging
 
 from contextlib import contextmanager
 from email.utils import parseaddr
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
 
-from . import api
+from keepercommander import api
 
-from .importer.importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
+from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
     Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder, Permission as ImportPermission,\
     Attachment as ImportAttachment
-from .subfolder import BaseFolderNode, find_folders
+from ..subfolder import BaseFolderNode, find_folders
 
 
 def get_import_folder(params, folder_uid, record_uid):
@@ -160,7 +161,7 @@ def export(params, file_format, filename):
 
     if len(to_export) > 0:
         exporter.execute(filename, to_export)
-        api.print_info('{0} records exported'.format(rec_count))
+        logging.info('%d records exported', rec_count)
 
 
 def _import(params, file_format, filename, **kwargs):
@@ -830,23 +831,6 @@ def execute_batch(params, requests):
             if params.debug:
                 print(e)
     api.sync_down(params)
-
-
-def delete_all(params):
-    api.sync_down(params)
-    if len(params.record_cache) == 0:
-        print('No records to delete')
-        return
-    request = api.make_request(params, 'record_update')
-    print('removing {0} records from Keeper'.format(len(params.record_cache)))
-    request['delete_records'] = [key for key in params.record_cache.keys()]
-    response_json = api.communicate(params, request)
-    success = [info for info in response_json['delete_records'] if info['status'] == 'success']
-    if len(success) > 0:
-        print("{0} records deleted successfully".format(len(success)))
-    failures = [info for info in response_json['delete_records'] if info['status'] != 'success']
-    if len(failures) > 0:
-        print("{0} records failed to delete".format(len(failures)))
 
 
 class KeeperAttachment(ImportAttachment):

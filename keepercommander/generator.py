@@ -11,6 +11,7 @@
 import random
 import string
 
+
 def randomSample(sampleLength=0, sampleString=''):
     sample = ''
 
@@ -18,6 +19,7 @@ def randomSample(sampleLength=0, sampleString=''):
         sample += sampleString[random.randint(0,len(sampleString)-1)]
 
     return sample
+
 
 def rules(uppercase=0, lowercase=0, digits=0, special_characters=0):
     """ Generate a password of specified length with specified number of """
@@ -36,6 +38,7 @@ def rules(uppercase=0, lowercase=0, digits=0, special_characters=0):
     
     newpass = ''.join(random.sample(password,len(password)))
     return newpass
+
 
 def generateFromRules(rulestring):
     """ Generate based on rules from a string similar to "4,5,2,5" """
@@ -56,6 +59,7 @@ def generateFromRules(rulestring):
         rulecount += 1
 
     return rules(uppercase, lowercase, digits, special)
+
 
 def generate(length=64):
     """ Generate password of specified len """
