@@ -68,7 +68,6 @@ def auth_verifier_old(password, salt, iterations):
 def login(params):
     # type: (KeeperParams) -> None
 
-    first_login = True
     success = False
     while not success:
         if not params.auth_verifier:
@@ -88,12 +87,10 @@ def login(params):
                     params.password = ''
                     raise AuthenticationError('User account [{0}] not found.'.format(email))
                 raise
-        else:
-            first_login = False
 
         rq = {
             'command': 'login',
-            'include': ['keys', 'license', 'enforcements', 'is_enterprise_admin'] if first_login else [],
+            'include': ['keys', 'license', 'enforcements', 'is_enterprise_admin'],
             'version': 2,
             'auth_response': params.auth_verifier,
             'client_version': rest_api.CLIENT_VERSION,
