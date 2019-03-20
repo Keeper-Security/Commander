@@ -499,7 +499,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     }
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
-                        print('User {0} is deleted'.format(user['username']))
+                        logging.info('User %s is deleted', user['username'])
                         api.query_enterprise(params)
             else:
                 print('No such user')
@@ -523,7 +523,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
             }
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
-                print('User {0} is added'.format(user['username']))
+                logging.info('User %s is added', email)
                 api.query_enterprise(params)
             return
 
@@ -541,7 +541,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 rs = api.communicate(params, rq)
                 if rs['result'] == 'success':
                     user['lock'] = 1 if to_lock else 0
-                    print('User {0} is {1}'.format(user['username'], 'locked' if to_lock else 'unlocked'))
+                    logging.info('User %s is %s', user['username'], 'locked' if to_lock else 'unlocked')
 
             elif kwargs.get('expire'):
                 answer = 'y' if  kwargs.get('force') else \
@@ -556,7 +556,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     }
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
-                        print('User {0} has master password expired'.format(user['username']))
+                        logging.info('User %s has master password expired', user['username'])
 
             elif kwargs.get('add_role') or kwargs.get('remove_role'):
                 roles = {}
@@ -573,7 +573,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             if role_node:
                                 roles[role_node['role_id']] = is_add, role_node['data'].get('displayname')
                             else:
-                                print('Role {0} cannot be resolved'.format(r))
+                                logging.warning('Role %s cannot be resolved', r)
                 if len(roles) > 0:
                     admin_confirmed = False
                     for role_id in roles:
@@ -590,7 +590,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     if mn['role_id'] == role_id:
                                         public_key = self.get_public_key(params, user['username'])
                                         if public_key is None:
-                                            print('Cannot get public key for user {0}'.format(user['username']))
+                                            logging.warning('Cannot get public key for user %s', user['username'])
                                             return
                                         rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
                                         need_confirm = True
@@ -600,7 +600,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     if rk['role_id'] == role_id:
                                         public_key = self.get_public_key(params, user['username'])
                                         if public_key is None:
-                                            print('Cannot get public key for user {0}'.format(user['username']))
+                                            logging.warning('Cannot get public key for user %s', user['username'])
                                             return
                                         role_key = None
                                         if rk['key_type'] == 'encrypted_by_data_key':
@@ -619,7 +619,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 return
                         rs = api.communicate(params, rq)
                         if rs['result'] == 'success':
-                            print('Role {0} {1} {2}'.format(role_name, 'added to' if is_add else 'removed from', user['username']))
+                            logging.info('Role %s %s %s', role_name, 'added to' if is_add else 'removed from', user['username'])
                     api.query_enterprise(params)
 
             elif kwargs.get('add_team') or kwargs.get('remove_team'):
@@ -638,7 +638,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 team_uid = team_node['team_uid']
                                 teams[team_uid] = is_add, team_node['name']
                             else:
-                                print('Team {0} could be resolved'.format(t))
+                                logging.warning('Team %s could be resolved', t)
                 if len(teams) > 0:
                     for team_uid in teams:
                         is_add, team_name = teams[team_uid]
@@ -655,7 +655,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 rq['user_type'] = 0
                         rs = api.communicate(params, rq)
                         if rs['result'] == 'success':
-                            print('Team {0} {1} {2}'.format(team_name, 'added to' if is_add else 'removed from', user['username']))
+                            logging.info('Team %s %s %s', team_name, 'added to' if is_add else 'removed from', user['username'])
                     api.query_enterprise(params)
 
             elif user_name or node_id:
@@ -671,7 +671,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 }
                 rs = api.communicate(params, rq)
                 if rs['result'] == 'success':
-                    print('User {0} is modified'.format(user['username']))
+                    logging.info('User %s is modified', user['username'])
                     api.query_enterprise(params)
 
             else:
@@ -688,7 +688,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         print('\n')
                     self.display_user(params, user, is_verbose)
             else:
-                print('No such user')
+                logging.warning('No such user')
 
     def display_user(self, params, user, is_verbose = False):
         print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
@@ -762,7 +762,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             user_id = user_node['enterprise_user_id']
                             users[user_id] = is_add, user_node['username']
                         else:
-                            print('User {0} could be resolved'.format(u))
+                            logging.warning('User %s could be resolved', u)
             if len(users) > 0:
                 has_managed_nodes = False
                 role_key = False
@@ -798,7 +798,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
-                        print('User {0} {1} role {2}'.format(user_email, 'added to' if is_add else 'removed from', role['data'].get('displayname') or ''))
+                        logging.info('User %s %s role %s', user_email, 'added to' if is_add else 'removed from', role['data'].get('displayname') or '')
                 api.query_enterprise(params)
 
         if role:
