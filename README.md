@@ -13,7 +13,9 @@ Jump to:
 * [Importing Data](#importing-records-into-keeper)
 * [Event Reporting](#ad-hoc-event-reporting)
 * [SIEM integration](#event-logging-to-siem)
-* [Advanced](#advanced-configuration-file)
+* [Advanced Configuration](#advanced-configuration-file)
+* [Batch Mode](#batch-mode)
+* [Enterprise SSO Login](#enterprise-sso-login)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
@@ -848,6 +850,12 @@ To run this file in a batch mode:
 cat test.cmd | keeper --batch-mode shell
 ```
 
+### Enterprise SSO Login
+
+Customers who normally login to their Keeper Vault using Enterprise SSO Login (SAML 2.0) can also login to Keeper Commander using a Master Password.  To make use of this capability, it must be enabled by the Keeper Administrator.  Instructions are located here:
+
+[https://docs.keeper.io/enterprise-guide/vault-offline-access](https://docs.keeper.io/enterprise-guide/vault-offline-access)
+
 ### Targeted Password Rotations & Plugins 
 
 Keeper Commander can communicate to internal and external systems for the purpose of rotating a password and synchronizing the change to your Keeper Vault.  We accomplish this by associating a Keeper record with a physical system through the use of custom fields.  For example, you might want to rotate your MySQL password, Active Directory password and local Administrator password automatically.  To support a plugin, simply add a set of **custom field** values to the Keeper record. The custom field values tell Commander which plugin to use, and what system to communicate with when rotating the password.  To modify your Keeper record to include custom fields, login to Keeper on the [Web Vault](https://keepersecurity.com/vault) or [Keeper Desktop](https://keepersecurity.com/download.html) app.  
@@ -976,7 +984,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 ### Sales & Support 
 
-[Enterprise Guide](https://keepersecurity.com/user-guides/enterprise-guide.html)
+[Enterprise Guide](https://docs.keeper.io/enterprise-guide/)
 
 [White Papers & Data Sheets](https://keepersecurity.com/enterprise-resources.html)
 
