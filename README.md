@@ -863,7 +863,7 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 
 4. Login to the End-User Vault using SSO at [https://keepersecurity.com/vault](https://keepersecurity.com/vault) 
 
-5. Visit the Settings > Security screen and setup a Master Password
+5. Visit the Settings > General screen and setup a Master Password
 
 After the Master Password is created, you are now able to login to Keeper Commander.
 
