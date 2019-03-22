@@ -852,9 +852,20 @@ cat test.cmd | keeper --batch-mode shell
 
 ### Enterprise SSO Login
 
-Customers who normally login to their Keeper Vault using Enterprise SSO Login (SAML 2.0) can also login to Keeper Commander using a Master Password.  To make use of this capability, it must be enabled by the Keeper Administrator.  Instructions are located here:
+Customers who normally login to their Keeper Vault using Enterprise SSO Login (SAML 2.0) can also login to Keeper Commander using a Master Password.  To make use of this capability, it must be enabled by the Keeper Administrator and then configured by the user.  The steps are below:
 
-[https://docs.keeper.io/enterprise-guide/vault-offline-access](https://docs.keeper.io/enterprise-guide/vault-offline-access)
+1. Login to the Admin Console
+[https://keepersecurity.com/console](https://keepersecurity.com/console)
+
+2. For the User/Role who will be accessing Keeper Commander, open the Role Enforcement Policy setting screen.
+
+3. Enable the option "Allow users who login with SSO to create a Master Password"
+
+4. Login to the End-User Vault using SSO at [https://keepersecurity.com/vault](https://keepersecurity.com/vault) 
+
+5. Visit the Settings > Security screen and setup a Master Password
+
+After the Master Password is created, you are now able to login to Keeper Commander.
 
 ### Targeted Password Rotations & Plugins 
 
