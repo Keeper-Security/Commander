@@ -1245,7 +1245,7 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
                 port = p.port
 
         if not is_ssl or not host or not port:
-            api.print_info('Enter Syslog TCP connection parameters:')
+            print('Enter Syslog TCP connection parameters:')
             host_name = input('...' + 'Syslog host name: '.rjust(32))
             if not host_name:
                 raise Exception('Syslog host name is empty')
@@ -1264,8 +1264,7 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
             is_new_config = True
 
         if is_new_config:
-            if api.is_interactive_mode:
-                print('Connecting to \'{0}:{1}\' ...'.format(host, port))
+            print('Connecting to \'{0}:{1}\' ...'.format(host, port))
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(1)
                 if is_ssl:
@@ -1447,8 +1446,7 @@ class AuditLogCommand(EnterpriseCommand):
                 print('+', end='', flush=True)
 
         if last_event_time > 0:
-            print("")
-            print('Exported {0} audit event{1}'.format(count, 's' if count != 1 else ''))
+            logging.info('Exported %d audit event(s)', count)
             record.set_field('last_event_time', str(last_event_time))
             params.sync_data = True
             api.update_record(params, record, silent=True)
