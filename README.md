@@ -1,4 +1,4 @@
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_250x100.png)
+﻿![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_250x100.png)
 
 ----
 
@@ -279,6 +279,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
     - ```--target=syslog-port``` Export events in syslog format to TCP port. Both plain and SSL connections are supported
+    - ```--target=log-analytics``` Export events to Azure Log Analytics to custom log named Keeper_CL
 
 * ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats - [See Details](#ad-hoc-event-reporting)
 
@@ -792,6 +793,73 @@ Then run Commander using the config parameter. For example:
 ```bash
 $ keeper --config=my_config_file.json
 ```
+
+**Azure Log Analytics**
+
+Keeper can post event logs directly to your Azure Log Analytics workspace. Please follow the below steps:
+
+* Login to Azure Portal and open Log Analytics workspace
+* Go to Settings -> Advanced settings
+* Note the Workspace ID and Primary or Secondary key
+* Login to Keeper Commander shell
+
+```bash
+$ keeper shell
+```
+
+Next set up the Log Analytics integration with Commander. Commander will create a record in your vault that stores the Log Analytics access information. This will be used to also track the last event captured so that subsequent execution will pick up where it left off.
+
+```
+$ keeper audit-log --format=log-analytics
+```
+
+When asked for “Workspace ID:” paste Workspace ID captured from the Advanced settings interface above.
+When asked for “Key:” paste Primary or Secondary key captured from the Advanced settings interface above.
+
+After this step, there will be a record in your vault used for tracking the event data integration.
+You can find the record UID of the Log Analytics record for subsequent audit log exports:
+
+```
+My Vault> search analytics
+
+  #  Record UID              Title                           Login                                 URL
+---  ----------------------  ------------------------------  ------------------------------------  -----
+  1  schQd2fOWwNchuSsDEXfEg  Audit Log: Azure Log Analytics  c66ce97c-3f36-4daa-9138-0fb85483acd3
+```
+
+Each subsequent audit log export can be performed with this command:
+
+```bash
+$ keeper audit-log --format=log-analytics --record=<your record UID>
+```
+or from the shell:
+
+```
+My Vault> audit-log --target=log-analytics --record=<your record UID>
+```
+
+To automate the push of events to Azure Log Analytics every 5 minutes, create a JSON configuration file such as this:
+
+```bash
+{
+    "server":"https://keepersecurity.com/api/v2/",
+    "user":"craig@company.com",
+    "password":"your_password_here",
+    "mfa_token":"filled_in_by_commander",
+    "mfa_type":"device_token",
+    "debug":false,
+    "plugins":[],
+    "commands":["sync-down","audit-log --target=log-analytics"],
+    "timedelay":600,
+}
+```
+
+Then run Commander using the config parameter. For example:
+
+```bash
+$ keeper --config=my_config_file.json
+```
+
 
 ### Advanced Configuration File
 
