@@ -810,7 +810,7 @@ $ keeper shell
 Next set up the Log Analytics integration with Commander. Commander will create a record in your vault that stores the Log Analytics access information. This will be used to also track the last event captured so that subsequent execution will pick up where it left off.
 
 ```
-$ keeper audit-log --format=log-analytics
+$ keeper audit-log --format=azure-la
 ```
 
 When asked for “Workspace ID:” paste Workspace ID captured from the Advanced settings interface above.
@@ -824,18 +824,18 @@ My Vault> search analytics
 
   #  Record UID              Title                           Login                                 URL
 ---  ----------------------  ------------------------------  ------------------------------------  -----
-  1  schQd2fOWwNchuSsDEXfEg  Audit Log: Azure Log Analytics  c66ce97c-3f36-4daa-9138-0fb85483acd3
+  1  schQd2fOWwNchuSsDEXfEg  Audit Log: Azure Log Analytics  <WORKSPACE GUID>
 ```
 
 Each subsequent audit log export can be performed with this command:
 
 ```bash
-$ keeper audit-log --format=log-analytics --record=<your record UID>
+$ keeper audit-log --format=azure-la --record=<your record UID>
 ```
 or from the shell:
 
 ```
-My Vault> audit-log --target=log-analytics --record=<your record UID>
+My Vault> audit-log --target=azure-la --record=<your record UID>
 ```
 
 To automate the push of events to Azure Log Analytics every 5 minutes, create a JSON configuration file such as this:
@@ -849,7 +849,7 @@ To automate the push of events to Azure Log Analytics every 5 minutes, create a 
     "mfa_type":"device_token",
     "debug":false,
     "plugins":[],
-    "commands":["sync-down","audit-log --target=log-analytics"],
+    "commands":["sync-down","audit-log --target=azure-la"],
     "timedelay":600,
 }
 ```
