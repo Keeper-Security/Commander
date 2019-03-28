@@ -155,14 +155,24 @@ class RecordAddCommand(Command):
         custom = []
         if custom_list:
             if type(custom_list) == str:
-                pairs = custom_list.split(',')
-                for pair in pairs:
-                    idx = pair.find(':')
-                    if idx > 0:
+                try:
+                    custom_json = json.loads(custom_list)
+                    for k,v in custom_json.items():
                         custom.append({
-                            'name': pair[:idx].strip(),
-                            'value': pair[idx+1:].strip()
+                            'name': k,
+                            'value': str(v)
                         })
+                except ValueError as e:
+                    pass
+                if len(custom) == 0:
+                    pairs = custom_list.split(',')
+                    for pair in pairs:
+                        idx = pair.find(':')
+                        if idx > 0:
+                            custom.append({
+                                'name': pair[:idx].strip(),
+                                'value': pair[idx+1:].strip()
+                            })
             elif type(custom_list) == list:
                 for c in custom_list:
                     if type(c) == dict:
@@ -230,15 +240,12 @@ class RecordAddCommand(Command):
             'notes': notes or '',
             'custom': custom
         }
-        rq['data'] =  api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
+        rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
-        rs = api.communicate(params, rq)
-        if rs['result'] == 'success':
-            params.sync_data = True
-            logging.info('Record UID: %s', record_uid)
-            return record_uid
-        else:
-            print(rs['message'])
+        api.communicate(params, rq)
+        params.sync_data = True
+        logging.info('Record UID: %s', record_uid)
+        return record_uid
 
 
 class RecordRemoveCommand(Command):
@@ -255,7 +262,7 @@ class RecordRemoveCommand(Command):
                 folder, name = rs
 
         if folder is None or name is None:
-            print('Enter name of existing record')
+            logging.warning('Enter name of existing record')
             return
 
         record_uid = None
@@ -275,7 +282,7 @@ class RecordRemoveCommand(Command):
                         break
 
         if record_uid is None:
-            print('Enter name of existing record')
+            logging.warning('Enter name of existing record')
             return
 
         del_obj = {
@@ -312,11 +319,8 @@ class RecordRemoveCommand(Command):
                     'command': 'delete',
                     'pre_delete_token': pdr['pre_delete_token']
                 }
-                rs = api.communicate(params, rq)
-                if rs['result'] == 'success':
-                    params.sync_data = True
-                else:
-                    print(rs['message'])
+                api.communicate(params, rq)
+                params.sync_data = True
 
 
 class SearchCommand(Command):
@@ -358,7 +362,8 @@ class RecordListCommand(Command):
 
 class RecordListSfCommand(Command):
     def execute(self, params, **kwargs):
-        results = api.search_shared_folders(params, '')
+        pattern = kwargs['pattern'] if 'pattern' in kwargs else None
+        results = api.search_shared_folders(params, pattern or '')
         if results:
             display.formatted_shared_folders(results)
 
@@ -388,11 +393,11 @@ class RecordGetUidCommand(Command):
             print('UID parameter is required')
             return
 
-        format = kwargs.get('format') or 'detail'
+        fmt = kwargs.get('format') or 'detail'
 
         if api.is_shared_folder(params, uid):
             sf = api.get_shared_folder(params, uid)
-            if format == 'json':
+            if fmt == 'json':
                 sfo = {
                     "shared_folder_uid": sf.shared_folder_uid,
                     "name": sf.name,
@@ -425,7 +430,7 @@ class RecordGetUidCommand(Command):
                 sf.display()
         elif api.is_team(params, uid):
             team = api.get_team(params, uid)
-            if format == 'json':
+            if fmt == 'json':
                 to = {
                     'team_uid': team.team_uid,
                     'name': team.name,
@@ -438,7 +443,7 @@ class RecordGetUidCommand(Command):
                 team.display()
         elif uid in params.folder_cache:
             f = params.folder_cache[uid]
-            if format == 'json':
+            if fmt == 'json':
                 fo = {
                     'folder_uid': f.uid,
                     'type': f.type,
@@ -451,7 +456,7 @@ class RecordGetUidCommand(Command):
             api.get_record_shares(params, [uid])
             r = api.get_record(params, uid)
             if r:
-                if format == 'json':
+                if fmt == 'json':
                     ro = {
                         'record_uid': r.record_uid,
                         'title': r.title
@@ -518,7 +523,7 @@ class RecordAppendNotesCommand(Command):
                                 break
 
         if record_uid is None:
-            print('Enter name or uid of existing record')
+            logging.warning('Enter name or uid of existing record')
             return
 
         notes = kwargs['notes'] if 'notes' in kwargs else None
@@ -562,7 +567,7 @@ class RecordDownloadAttachmentCommand(Command):
                                 break
 
         if record_uid is None:
-            print('Enter name or uid of existing record')
+            logging.warning('Enter name or uid of existing record')
             return
 
         file_ids = []
@@ -573,7 +578,7 @@ class RecordDownloadAttachmentCommand(Command):
                 file_ids.append(f_info['id'])
 
         if len(file_ids) == 0:
-            print('No attachments associated with the record')
+            logging.warning('No attachments associated with the record')
             return
 
         rq = {
@@ -616,9 +621,9 @@ class RecordDownloadAttachmentCommand(Command):
                                 decrypted = api.unpad_binary(decrypted)
                                 f.write(decrypted)
                     else:
-                        logging.error('File \'%s\': Failed to file encryption key', file_name)
+                        logging.error('File "%s": Failed to file encryption key', file_name)
                 else:
-                    logging.error('File \'%s\' download error: %s', file_id, dl['message'])
+                    logging.error('File "%s" download error: %s', file_id, dl['message'])
 
 
 class RecordUploadAttachmentCommand(Command):

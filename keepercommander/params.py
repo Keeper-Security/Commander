@@ -54,50 +54,40 @@ class RestApiContext:
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self,config_filename='',config=None, server='https://keepersecurity.com/api/v2/',
-                 user='',password='',mfa_token='',
-                 mfa_type='device_token',commands=None,plugins=None,
-                 session_token='',salt='',iterations='',
-                 encrypted_private_key='',
-                 data_key='',private_key='',
-                 revision=0, rsa_key='', auth_verifier='',
-                 record_cache=None, meta_data_cache=None, shared_folder_cache=None,
-                 team_cache=None, subfolder_cache=None, debug=False, timedelay=0):
+    def __init__(self, config_filename='', config=None, server='https://keepersecurity.com/api/v2/', device_id=None):
         self.config_filename = config_filename
         self.config = config or {}
-        self.auth_verifier = auth_verifier 
+        self.auth_verifier = None
         self.__server = server
-        self.user = user
-        self.password = password 
-        self.mfa_token = mfa_token 
-        self.mfa_type = mfa_type 
-        self.commands = commands or []
-        self.plugins = plugins or []
-        self.session_token = session_token 
-        self.salt = salt 
-        self.iterations = iterations 
-        self.encrypted_private_key = encrypted_private_key
-        self.data_key = data_key
-        self.private_key = private_key
-        self.revision = revision
-        self.record_cache = record_cache or {}
-        self.meta_data_cache = meta_data_cache or {}
-        self.shared_folder_cache = shared_folder_cache or {}
-        self.team_cache = team_cache or {}
-        self.subfolder_cache = subfolder_cache or {}
+        self.user = ''
+        self.password = ''
+        self.mfa_token = ''
+        self.mfa_type = 'device_token'
+        self.commands = []
+        self.plugins = []
+        self.session_token = None
+        self.salt = None
+        self.iterations = 0
+        self.data_key = None
+        self.rsa_key = None
+        self.revision = 0
+        self.record_cache = {}
+        self.meta_data_cache = {}
+        self.shared_folder_cache = {}
+        self.team_cache = {}
+        self.subfolder_cache = {}
         self.subfolder_record_cache = {}
         self.root_folder = None
         self.current_folder = None
         self.folder_cache = {}
-        self.rsa_key = rsa_key
-        self.debug = debug
-        self.timedelay = timedelay
+        self.debug = False
+        self.timedelay = 0
         self.sync_data = True
         self.license = None
         self.enterprise = None
         self.prepare_commands = False
         self.batch_mode = False
-        self.__rest_context = RestApiContext(server=server)
+        self.__rest_context = RestApiContext(server=server, device_id=device_id)
         self.pending_share_requests = set()
 
     def clear_session(self):
@@ -107,12 +97,11 @@ class KeeperParams:
         self.mfa_type = 'device_token'
         self.mfa_token = ''
         self.commands.clear()
-        self.session_token = ''
-        self.salt = ''
+        self.session_token = None
+        self.salt = None
         self.iterations = 0
-        self.encrypted_private_key = ''
-        self.data_key = b''
-        self.private_key = ''
+        self.data_key = None
+        self.rsa_key = None
         self.revision = 0
         self.record_cache.clear()
         self.meta_data_cache.clear()

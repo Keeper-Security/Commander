@@ -69,6 +69,7 @@ class KeeperJsonImporter(BaseImporter):
     def extension(self):
         return 'json'
 
+
 class KeeperJsonExporter(BaseExporter):
     def do_export(self, filename, records):
         sfs = []

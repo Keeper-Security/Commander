@@ -71,6 +71,7 @@ class KeeperCsvImporter(BaseImporter):
     def extension(self):
         return 'csv'
 
+
 class KeeperCsvExporter(BaseExporter):
 
     def do_export(self, filename, records):

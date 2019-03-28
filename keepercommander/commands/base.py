@@ -12,6 +12,7 @@
 
 import argparse
 import shlex
+import logging
 
 from ..params import KeeperParams
 
@@ -72,7 +73,7 @@ def user_choice(question, choice, default='', show_choice=True, multi_choice=Fal
         elif any(map(lambda x: x.upper() == result.upper(), choices)):
             return result
 
-        print('Error: invalid input')
+        logging.error('Error: invalid input')
 
 
 def raise_parse_exception(m):
@@ -101,7 +102,7 @@ class Command:
 
             self.execute(params, **d)
         except Exception as e:
-            print(e)
+            logging.error(e)
 
     def get_parser(self):
         '''

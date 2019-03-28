@@ -13,7 +13,6 @@
 # server.
 #
 
-import sys
 import getpass
 import string
 import random

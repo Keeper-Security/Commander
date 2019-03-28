@@ -12,7 +12,7 @@ import os.path
 import importlib
 import logging
 
-from typing import Iterable
+from typing import Iterable, Union
 
 PathDelimiter = '\\'
 
@@ -123,10 +123,8 @@ class Record:
 
 class BaseImporter:
     def execute(self, filename):
-        '''
-        :type filename: str
-        :rtype: collections.Iterable[Record]
-        '''
+        # type: (BaseImporter, str) -> Iterable[Union[Record, SharedFolder]]
+
         path = os.path.expanduser(filename)
         if not os.path.isfile(path):
             ext = self.extension()
@@ -139,10 +137,7 @@ class BaseImporter:
         yield from self.do_import(path)
 
     def do_import(self, filename):
-        '''
-        :type filename: str
-        :rtype: collections.Iterable[Record]
-        '''
+        # type: (BaseImporter, str) -> Iterable[Union[Record, SharedFolder]]
         raise NotImplemented()
 
     def extension(self):
@@ -151,11 +146,7 @@ class BaseImporter:
 
 class BaseExporter:
     def execute(self, filename, records):
-        '''
-        :type filename: str
-        :type records: collections.Iterable[SharedFolder or Record]
-        :rtype: None
-        '''
+        # type: (BaseExporter, str, [Union[Record, SharedFolder]]) -> None
 
         if filename:
             filename = os.path.expanduser(filename)
@@ -170,11 +161,7 @@ class BaseExporter:
         self.do_export(filename, records)
 
     def do_export(self, filename, records):
-        '''
-        :type filename: str
-        :type records: collections.Iterable[SharedFolder or Record]
-        :rtype: None
-        '''
+        # type: (BaseExporter, str, [Union[Record, SharedFolder]]) -> None
         raise NotImplemented()
 
     def has_shared_folders(self):

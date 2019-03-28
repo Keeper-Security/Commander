@@ -13,7 +13,6 @@
 # Usage:
 #    python search.py
 
-import sys
 import getpass
 
 from keepercommander.params import KeeperParams
