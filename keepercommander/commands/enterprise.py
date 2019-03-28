@@ -122,7 +122,7 @@ enterprise_team_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'log-analytics'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -1400,9 +1400,9 @@ class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
         string_to_hash += 'x-ms-date:{0}\n'.format(date_string)
         string_to_hash += '/api/logs'
 
-        bytes_to_hash = bytes(string_to_hash, encoding='utf8')
+        bytes_to_hash = string_to_hash.encode('utf-8')
         decoded_key = base64.b64decode(wskey)
-        encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode()
+        encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode('utf-8')
 
         return "{0}:{1}".format(wsid, encoded_hash)
 
@@ -1425,7 +1425,7 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogSyslogPortExport()
         elif target == 'sumo':
             log_export = AuditLogSumologicExport()
-        elif target == 'log-analytics':
+        elif target == 'azure-la':
             log_export = AuditLogAzureLogAnalyticsExport()
         else:
             print('Audit log export: unsupported target')
@@ -1520,6 +1520,7 @@ class AuditLogCommand(EnterpriseCommand):
                 print('+', end='', flush=True)
 
         if last_event_time > 0:
+            logging.info('')
             logging.info('Exported %d audit event(s)', count)
             record.set_field('last_event_time', str(last_event_time))
             params.sync_data = True
