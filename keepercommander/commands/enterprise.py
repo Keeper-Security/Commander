@@ -22,6 +22,8 @@ import gzip
 import time
 import socket
 import ssl
+import hashlib
+import hmac
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
@@ -120,7 +122,7 @@ enterprise_team_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'log-analytics'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -1335,6 +1337,76 @@ class AuditLogSumologicExport(AuditLogBaseExport):
         return 250
 
 
+class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
+    def __init__(self):
+        AuditLogBaseExport.__init__(self)
+
+    def default_record_title(self):
+        return 'Audit Log: Azure Log Analytics'
+
+    def get_properties(self, record, props):
+        wsid = record.login
+        if not wsid:
+            print('Enter Azure Log Analytics workspace ID.')
+            wsid = input('Workspace ID: ')
+            if not wsid:
+                raise Exception('Workspace ID is required.')
+            record.login = wsid
+            self.store_record = True
+        props['wsid'] = record.login
+
+        wskey = record.password
+        if not wskey:
+            print('Enter Azure Log Analytics primary or secondary key.')
+            wskey = input('Key: ')
+            if not wskey:
+                raise Exception('Key is required.')
+            record.password = wskey
+            self.store_record = True
+        props['wskey'] = record.password
+
+    def convert_event(self, props, event):
+        evt = event.copy()
+        evt.pop('id')
+        dt = datetime.datetime.fromtimestamp(evt.pop('created'), tz=datetime.timezone.utc)
+        evt['timestamp'] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        return evt
+
+    def export_events(self, props, events):
+        url = "https://{0}.ods.opinsights.azure.com/api/logs?api-version=2016-04-01".format(props['wsid'])
+        data = json.dumps(events)
+        dt = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
+        shared_key = self.build_shared_key(props['wsid'], props['wskey'], len(data), dt)
+        headers = {
+            "Authorization": "SharedKey {0}".format(shared_key),
+            "Content-type": "application/json",
+            "Log-Type": "Keeper",
+            "x-ms-date": dt
+        }
+        rs = requests.post(url, data=data.encode('utf-8'), headers=headers)
+        if rs.status_code == 200:
+            self.store_record = True
+        else:
+            print(rs.content)
+            self.should_cancel = True
+
+    def chunk_size(self):
+        return 250
+
+    def build_shared_key(self, wsid, wskey, content_length, date_string):
+        string_to_hash = 'POST\n'
+        string_to_hash += '{0}\n'.format(str(content_length))
+        string_to_hash += 'application/json\n'
+        string_to_hash += 'x-ms-date:{0}\n'.format(date_string)
+        string_to_hash += '/api/logs'
+
+        bytes_to_hash = bytes(string_to_hash, encoding='utf8')
+        decoded_key = base64.b64decode(wskey)
+        encoded_hash = base64.b64encode(hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()).decode()
+
+        return "{0}:{1}".format(wsid, encoded_hash)
+
+
 class AuditLogCommand(EnterpriseCommand):
     def get_parser(self):
         return audit_log_parser
@@ -1353,6 +1425,8 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogSyslogPortExport()
         elif target == 'sumo':
             log_export = AuditLogSumologicExport()
+        elif target == 'log-analytics':
+            log_export = AuditLogAzureLogAnalyticsExport()
         else:
             print('Audit log export: unsupported target')
             return
