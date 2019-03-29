@@ -93,52 +93,47 @@ def login(params):
             'include': ['keys', 'license', 'enforcements', 'is_enterprise_admin'],
             'version': 2,
             'auth_response': params.auth_verifier,
-            'client_version': rest_api.CLIENT_VERSION,
             'username': params.user
         }
 
         if params.mfa_token:
             rq['2fa_token'] = params.mfa_token
-            rq['2fa_type'] = params.mfa_type
+            rq['2fa_type'] = params.mfa_type or 'device_token'
             if params.mfa_type == 'one_time':
                 expire_token = params.config.get('device_token_expiration') or False
                 expire_days = 30 if expire_token else 9999
                 rq['device_token_expire_days'] = expire_days
 
-        response_json = rest_api.v2_execute(params.rest_context, rq)
+        response_json = run_command(params, rq)
 
         if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
             success = True
+            store_config = False
             logging.debug('Auth Success')
-
-            device_id = base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
-            store_config = params.config.get('device_id') != device_id
 
             params.session_token = response_json['session_token']
 
+            device_id = base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
+            if params.config.get('device_id') != device_id:
+                store_config = True
+                params.config['device_id'] = device_id
+
             if 'device_token' in response_json:
-                params.mfa_token = response_json['device_token']
-                params.config['mfa_type'] = 'device_token'
-                params.config['mfa_token'] = params.mfa_token
                 store_config = True
                 logging.debug('params.mfa_token=%s', params.mfa_token)
-
-            if params.mfa_token:
-                params.mfa_type = 'device_token'
-            else:
-                params.mfa_type = ''
+                params.mfa_token = response_json['device_token']
+                params.config['mfa_token'] = params.mfa_token
 
             if 'keys' in response_json:
                 keys = response_json['keys']
                 if 'encryption_params' in keys:
-                    decrypt_encryption_params(params, keys['encryption_params'])
+                    params.data_key = decrypt_encryption_params(keys['encryption_params'], params.password)
                 elif 'encrypted_data_key' in keys:
                     encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
                     key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
                     params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
 
-                params.encrypted_private_key = keys['encrypted_private_key']
-                decrypt_private_key(params)
+                params.rsa_key = decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
 
             if 'license' in response_json:
                 params.license = response_json['license']
@@ -171,6 +166,7 @@ def login(params):
                                 e_rs = communicate(params, e_rq)
                                 if e_rs['result'] == 'success':
                                     logging.info('%s enterprise invite', 'Accepted' if action == 'a' else 'Declined')
+                                    #TODO reload enterprise settings
                                 else:
                                     logging.error('Enterprise %s failure: ', 'accept' if action == 'a' else 'decline')
                             except:
@@ -181,7 +177,6 @@ def login(params):
 
             if store_config: # save token to config file if the file exists
                 params.config['user'] = params.user
-                params.config['device_id'] = device_id
                 try:
                     with open(params.config_filename, 'w') as f:
                         json.dump(params.config, f, ensure_ascii=False, indent=2)
@@ -214,52 +209,16 @@ def login(params):
             raise CommunicationError('Unknown problem')
 
 
-def decrypt_record_key(encrypted_record_key, encryption_key):
-    decoded_key = base64.urlsafe_b64decode(encrypted_record_key + '==')
-    iv = decoded_key[:16]
-    ciphertext = decoded_key[16:]
-    cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
-    unencrypted_key = cipher.decrypt(ciphertext)[:32]
-    return unencrypted_key
-
-
-def shared_folders_containing_record(params, record_uid):
-    def contains_record(shared_folder):
-        if not 'records' in shared_folder:
-            return False
-        if not shared_folder['records']:
-            return False
-        return any(record['record_uid'] == record_uid for record in shared_folder['records'])
-
-    shared_folder_uids = []
-    for shared_folder_uid in params.shared_folder_cache:
-        shared_folder = params.shared_folder_cache[shared_folder_uid]
-        if contains_record(shared_folder):
-           shared_folder_uids.append(shared_folder_uid)
-
-    return shared_folder_uids
-
-
-def delete_shared_folder(params, shared_folder_uid):
-    shared_folder = params.shared_folder_cache[shared_folder_uid]
-    if 'records' in shared_folder:
-        for record in shared_folder['records']:
-            record_uid = record['record_uid']
-            if not params.record_cache[record_uid]['owner'] and len(shared_folders_containing_record(params, record_uid)) == 1:
-                del params.record_cache[record_uid]
-    del params.shared_folder_cache[shared_folder_uid]
-
-
-def is_local_shared_folder(shared_folder):
-    return shared_folder['manage_records'] and shared_folder['manage_users']
-
-
 def decrypt_aes(data, key):
     decoded_data = base64.urlsafe_b64decode(data + '==')
     iv = decoded_data[:16]
     ciphertext = decoded_data[16:]
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return cipher.decrypt(ciphertext)
+
+
+def decrypt_data(data, key):
+    return unpad_binary(decrypt_aes(data, key))
 
 
 def encrypt_aes(data, key):
@@ -269,25 +228,21 @@ def encrypt_aes(data, key):
     return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
 
 
-def encrypt_rsa(data, rsa_key):
-    cipher = PKCS1_v1_5.new(rsa_key)
+def encrypt_rsa(data, rsa_public_key):
+    cipher = PKCS1_v1_5.new(rsa_public_key)
     encrypted_data = cipher.encrypt(data)
-    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
+    return (base64.urlsafe_b64encode(encrypted_data).decode('utf-8')).rstrip('=')
 
 
-def decrypt_rsa(data, rsa_key):
+def decrypt_rsa(data, rsa_private_key):
     decoded_key = base64.urlsafe_b64decode(data + '==')
     # some keys might come shorter due to stripping leading 0's
     if 250 < len(decoded_key) < 256:
         decoded_key = bytearray(256 - len(decoded_key)) + decoded_key
     dsize = SHA256.digest_size
     sentinel = Random.new().read(15 + dsize)
-    cipher = PKCS1_v1_5.new(rsa_key)
+    cipher = PKCS1_v1_5.new(rsa_private_key)
     return cipher.decrypt(decoded_key, sentinel)
-
-
-def decrypt_data(data, key):
-    return unpad_binary(decrypt_aes(data, key))
 
 
 def decrypt_rsa_key(encrypted_private_key, data_key):
@@ -306,14 +261,7 @@ def decrypt_rsa_key(encrypted_private_key, data_key):
           otherPrimeInfos   OtherPrimeInfos OPTIONAL
     }
     """
-    decoded_private_key = base64.urlsafe_b64decode(encrypted_private_key + '==')
-    iv = decoded_private_key[:16]
-    ciphertext = decoded_private_key[16:]
-    cipher = AES.new(data_key, AES.MODE_CBC, iv)
-    decrypted_private_key = cipher.decrypt(ciphertext)
-    private_key = unpad_binary(decrypted_private_key)
-    rsa_key = RSA.importKey(private_key)
-    return decrypted_private_key, private_key, rsa_key
+    return RSA.importKey(decrypt_data(encrypted_private_key, data_key))
 
 
 def merge_lists_on_value(list1, list2, field_name):
@@ -325,12 +273,6 @@ def merge_lists_on_value(list1, list2, field_name):
 def sync_down(params):
     """Sync full or partial data down to the client"""
 
-    if not params.server:
-        raise CommunicationError('No server provided')
-
-    if not params.user:
-        raise CommunicationError('No username provided')
-
     params.sync_data = False
 
     if params.revision == 0:
@@ -338,37 +280,42 @@ def sync_down(params):
 
     rq = {
         'command': 'sync_down',
-        'revision': params.revision,
+        'revision': params.revision or 0,
         'include': ['sfheaders', 'sfrecords', 'sfusers', 'teams', 'folders']
     }
     response_json = communicate(params, rq)
 
     check_convert_to_folders = False
 
-    def delete_record_key(params, record_uid):
-        if record_uid in params.record_cache:
-            if 'record_key_unencrypted' in params.record_cache[record_uid]:
-                del params.record_cache[record_uid]['record_key_unencrypted']
+    def delete_record_key(rec_uid):
+        if rec_uid in params.record_cache:
+            record = params.record_cache[rec_uid]
+            if 'record_key_unencrypted' in record:
+                del record['record_key_unencrypted']
+                if 'data_unencrypted' in record:
+                    del record['data_unencrypted']
+                if 'extra_unencrypted' in record:
+                    del record['extra_unencrypted']
 
-    def delete_shared_folder_key(params, shared_folder_uid):
-        if shared_folder_uid in params.shared_folder_cache:
-            shared_folder = params.shared_folder_cache[shared_folder_uid]
+    def delete_shared_folder_key(sf_uid):
+        if sf_uid in params.shared_folder_cache:
+            shared_folder = params.shared_folder_cache[sf_uid]
             if 'shared_folder_key_unencrypted' in shared_folder:
                 del shared_folder['shared_folder_key_unencrypted']
                 if 'records' in shared_folder:
                     for sfr in shared_folder['records']:
                         record_uid = sfr['record_uid']
                         if record_uid not in params.meta_data_cache:
-                            delete_record_key(params, record_uid)
+                            delete_record_key(record_uid)
 
-    def delete_team_key(params, team_uid):
+    def delete_team_key(team_uid):
         if team_uid in params.team_cache:
             team = params.team_cache[team_uid]
             if 'team_key_unencrypted' in team:
                 del team['team_key_unencrypted']
                 if 'shared_folder_keys' in team:
                     for sfk in team['shared_folder_keys']:
-                        delete_shared_folder_key(params, sfk['shared_folder_uid'])
+                        delete_shared_folder_key(sfk['shared_folder_uid'])
 
     if 'full_sync' in response_json:
         if response_json['full_sync']:
@@ -393,7 +340,7 @@ def sync_down(params):
             if record_uid in params.meta_data_cache:
                 del params.meta_data_cache[record_uid]
             # delete record key
-            delete_record_key(params, record_uid)
+            delete_record_key(record_uid)
             # remove record from user folders
             for folder_uid in params.subfolder_record_cache:
                 if record_uid in params.subfolder_record_cache[folder_uid]:
@@ -407,7 +354,7 @@ def sync_down(params):
     if 'removed_teams' in response_json:
         logging.debug('Processing removed teams')
         for team_uid in response_json['removed_teams']:
-            delete_team_key(params, team_uid)
+            delete_team_key(team_uid)
             # remove team from shared folder
             for shared_folder_uid in params.shared_folder_cache:
                 shared_folder = params.shared_folder_cache[shared_folder_uid]
@@ -420,7 +367,7 @@ def sync_down(params):
         logging.debug('Processing removed shared folders')
         for sf_uid in response_json['removed_shared_folders']:
             if sf_uid in params.shared_folder_cache:
-                delete_shared_folder_key(params, sf_uid)
+                delete_shared_folder_key(sf_uid)
                 shared_folder = params.shared_folder_cache[sf_uid]
                 if 'shared_folder_key' in shared_folder:
                     del shared_folder['shared_folder_key']
@@ -523,11 +470,11 @@ def sync_down(params):
                 team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
             else:
                 team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
-            _, _, team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
+            team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
 
             if 'removed_shared_folders' in team:
                 for sf_uid in team['removed_shared_folders']:
-                    delete_shared_folder_key(params, sf_uid)
+                    delete_shared_folder_key(sf_uid)
             params.team_cache[team['team_uid']] = team
 
     if 'shared_folders' in response_json:
@@ -540,7 +487,7 @@ def sync_down(params):
                 del params.shared_folder_cache[shared_folder_uid]
 
             if shared_folder_uid in params.shared_folder_cache:
-                delete_shared_folder_key(params, shared_folder_uid)
+                delete_shared_folder_key(shared_folder_uid)
 
                 # incremental shared folder upgrade
                 existing_sf = params.shared_folder_cache[shared_folder_uid]
@@ -669,6 +616,9 @@ def sync_down(params):
             else:
                 records_to_delete.append(record_uid)
 
+    for record_uid in records_to_delete:
+        params.record_cache.pop(record_uid)
+
     # decrypt user folders
     if 'user_folders' in response_json:
         check_convert_to_folders = False
@@ -793,7 +743,7 @@ def convert_to_folders(params):
     return False
 
 
-def decrypt_encryption_params(params, encryption_params):
+def decrypt_encryption_params(encryption_params, password):
     """ Decrypt the data key returned by the server 
     Format:
     1 byte: Version number (currently only 1)
@@ -816,24 +766,17 @@ def decrypt_encryption_params(params, encryption_params):
     if len(decoded_encryption_params) != 100:
         raise CryptoError('Invalid encryption params: bad params length')
 
-    version = int.from_bytes(decoded_encryption_params[0:1], 
-                              byteorder='big', signed=False)
-    iterations = int.from_bytes(decoded_encryption_params[1:4], 
-                                 byteorder='big', signed=False)
-    salt = decoded_encryption_params[4:20]
-    encrypted_data_key = decoded_encryption_params[20:100]
-    iv = encrypted_data_key[0:16]
-    ciphertext = encrypted_data_key[16:80]
-
+    version = int.from_bytes(decoded_encryption_params[0:1], byteorder='big', signed=False)
+    iterations = int.from_bytes(decoded_encryption_params[1:4], byteorder='big', signed=False)
     if iterations < 1000:
         raise CryptoError('Invalid encryption parameters: iterations too low')
 
-    # generate cipher key from master password and encryption params
-    key = derive_key(params.password, salt, iterations)
+    salt = decoded_encryption_params[4:20]
+    encrypted_data_key = decoded_encryption_params[20:100]
 
-    # decrypt the <encrypted data key>
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    decrypted_data_key = cipher.decrypt(ciphertext)
+    key = derive_key(password, salt, iterations)
+    cipher = AES.new(key, AES.MODE_CBC, encrypted_data_key[:16])
+    decrypted_data_key = cipher.decrypt(encrypted_data_key[16:])
 
     # validate the key is formatted correctly
     if len(decrypted_data_key) != 64:
@@ -845,43 +788,10 @@ def decrypt_encryption_params(params, encryption_params):
     logging.debug('Decrypted data key with success.')
 
     # save the encryption params 
-    params.data_key = decrypted_data_key[:32]
+    return decrypted_data_key[:32]
 
 
-def decrypt_private_key(params):
-    decrypted_private_key, params.private_key, params.rsa_key = decrypt_rsa_key(params.encrypted_private_key, params.data_key)
-    logging.debug('RSA key: %s', decrypted_private_key)
-    logging.debug('base64 RSA key: %s', params.private_key)
-
-
-def check_edit_permission(params, record_uid):
-    """Check record and shared folders for edit permission"""
-    cached_rec = params.record_cache[record_uid]
-
-    can_edit = False
-    if 'can_edit' in cached_rec:
-        logging.debug('Edit permissions found in record')
-        can_edit = True
-
-    if not can_edit:
-        for shared_folder_uid in params.shared_folder_cache:
-            shared_folder = params.shared_folder_cache[shared_folder_uid]
-            if 'records' in shared_folder:
-                sf_records = shared_folder['records']
-                for sf_record in sf_records:
-                    if 'record_uid' in sf_record:
-                        if sf_record['record_uid'] == record_uid:
-                            if 'can_edit' in sf_record:
-                                can_edit = True
-                                logging.debug('Edit permissions found in folder')
-                                break
-
-    if not can_edit:
-        logging.warning('You do not have permissions to edit this record.')
-        return False
-
-
-def get_record(params,record_uid):    
+def get_record(params,record_uid):
     """Return the referenced record cache"""
     record_uid = record_uid.strip()
 
@@ -997,93 +907,9 @@ def get_team(params,team_uid):
     return team
 
 
-def get_user_key(params, username):
-    ''' Return the public RSA key for the given username '''
-
-    logging.debug('Getting public key for user=%s', username)
-    request = {
-        'command': 'public_keys',
-        'key_owners': [username]
-    }
-    response_json = communicate(params, request)
-    returned_key = b''
-    for public_key in response_json['public_keys']:
-        if 'public_key' in public_key:
-            if public_key['key_owner'] == username:
-                returned_key = public_key['public_key']
-
-    if returned_key == b'':
-        logging.error('Error: unable to locate public key for %s', username)
-    else:
-        logging.debug('Retrieved public key for user: %s', str(returned_key))
-
-    returned_key = returned_key.rstrip(b'=')
-    returned_key = returned_key + b'='
-
-    return returned_key
-
-
-def get_encrypted_sf_key_from_team(params, team_uid, shared_folder_key):
-    ''' Return an encrypted shared folder key based on a team UID '''
-
-    logging.debug('Getting key object for Team UID=%s', team_uid)
-    
-    request = {
-        'command': 'team_get_keys',
-        'teams': [team_uid]
-    }
-    response_json = communicate(params, request)
-    encrypted_sf_key = b''
-    for key in response_json['keys']:
-        if 'result_code' in key:
-            if key['result_code'] == 'doesnt_exist':
-                if 'team_uid' in key:
-                    logging.error('Error: team UID %s does not exist', key['team_uid'])
-                    break 
-
-        if 'key' in key:
-            if key['team_uid'] == team_uid:
-                logging.debug('Found match for team key: %s', key['key'])
-
-                if key['type'] == 1:
-                    logging.debug('Team key encrypted with user data key')
-                    team_key = decrypt_data(key['key'], params.data_key)
-
-                    logging.debug('Encrypting SF key with Team Key')
-                    iv = os.urandom(16)
-                    cipher = AES.new(team_key, AES.MODE_CBC, iv)
-                    encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
-
-                elif key['type'] == 2:
-                    logging.debug('Key encrypted with RSA public key')
-                    team_key = decrypt_rsa(key['key'], params.rsa_key)
-
-                    logging.debug('Encrypting SF key with Team Key')
-                    iv = os.urandom(16)
-                    cipher = AES.new(team_key, AES.MODE_CBC, iv)
-                    encrypted_sf_key = iv + cipher.encrypt(pad_binary(shared_folder_key))
-
-                elif key['type'] == 3:
-                    logging.debug('Encrypting SF key with Public Key')
-                    rsa_key = RSA.importKey(base64.urlsafe_b64decode(key['key']))
-                    logging.debug('RSA Key: %s', rsa_key)
-                    cipher = PKCS1_v1_5.new(rsa_key)
-                    encrypted_sf_key = cipher.encrypt(shared_folder_key)
-
-                else:
-                    logging.debug('Invalid key type')
-
-    logging.debug('Encrypted shared folder key: %s', encrypted_sf_key)
-    return encrypted_sf_key 
-
-
 def search_records(params, searchstring):
     """Search for string in record contents 
        and return array of Record objects """
-
-    if not params.record_cache:
-        logging.warning('No record cache.  Sync down first.')
-        return
 
     logging.debug('Searching for %s', searchstring)
     p = re.compile(searchstring.lower())
@@ -1100,10 +926,6 @@ def search_records(params, searchstring):
 
 def search_shared_folders(params, searchstring):
     """Search shared folders """
-
-    if not params.shared_folder_cache:
-        logging.warning('No shared folder.  Sync down first.')
-        return
 
     logging.debug('Searching for %s', searchstring)
     p = re.compile(searchstring.lower())
@@ -1129,10 +951,6 @@ def search_shared_folders(params, searchstring):
 
 def search_teams(params, searchstring):
     """Search teams """
-
-    if not params.team_cache:
-        logging.warning('No teams.  Sync down first.')
-        return
 
     logging.debug('Searching for %s', searchstring)
     p = re.compile(searchstring.lower())
@@ -1227,7 +1045,6 @@ def communicate(params, request):
     def authorize_request(rq):
         rq['client_time'] = current_milli_time()
         rq['locale'] = 'en_US'
-        rq['client_version'] = rest_api.CLIENT_VERSION
         rq['device_id'] = 'Commander'
         rq['session_token'] = params.session_token
         rq['username'] = params.user
@@ -1238,13 +1055,13 @@ def communicate(params, request):
     authorize_request(request)
     logging.debug('payload: %s', request)
 
-    response_json = rest_api.v2_execute(params.rest_context, request)
+    response_json = run_command(params, request)
 
     if response_json['result_code'] == 'auth_failed':
         logging.debug('Re-authorizing.')
         login(params)
         authorize_request(request)
-        response_json = rest_api.v2_execute(params.rest_context, request)
+        response_json = run_command(params, request)
 
     if response_json['result'] != 'success':
         if response_json['result_code']:
@@ -1296,11 +1113,7 @@ def update_record(params, record, **kwargs):
 
 
 def add_record(params, record):
-    """    Create a new Keeper record 
-    :type params: KeeperParams 
-    :type record: Record
-    :rtype: bool
-    """
+    # type: (KeeperParams, Record) -> bool
 
     new_record = prepare_record(params, record)
     request = {
@@ -1350,20 +1163,6 @@ def delete_record(params, record_uid):
     return True
 
 
-def debug_response(params, payload, response):
-    logging.debug('')
-    logging.debug('>>> Request server:[%s]', params.server)
-    logging.debug('>>> Request JSON:[%s]', payload)
-    logging.debug('')
-    logging.debug('<<< Response Code:[%d]', response.status_code)
-    logging.debug('<<< Response Headers:[%s]', response.headers)
-    if response.text:
-        logging.debug('<<< Response content:[%s]', response.text)
-    logging.debug('<<< Response content:[%s]', response.json())
-    if params.session_token:
-        logging.debug('<<< Session Token:[%s]', params.session_token)
-
-
 def generate_record_uid():
     """ Generate url safe base 64 16 byte uid """
     return base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip('=')
@@ -1409,23 +1208,6 @@ def prepare_folder_tree(params):
         parent_folder = params.folder_cache.get(f.parent_uid) if f.parent_uid else params.root_folder
         if parent_folder:
             parent_folder.subfolders.append(f.uid)
-
-
-def get_record_permissions(params, record_uids):
-    to_get = []
-    for uid in record_uids:
-        if uid in params.record_cache:
-            r = params.record_cache[uid]
-            shared = r.get('shared')
-            if shared and 'permissions' not in r:
-                ro = resolve_record_access_path(params, uid)
-                to_get.append(ro)
-
-    if len(to_get) > 0:
-        rq = {
-            'command': 'get_records',
-            'records': to_get
-        }
 
 
 def resolve_record_write_path(params, record_uid):

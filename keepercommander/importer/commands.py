@@ -27,7 +27,8 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    pass
+    for p in [import_parser, export_parser]:
+        command_info[p.prog] = p.description
 
 
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from local file to Keeper')

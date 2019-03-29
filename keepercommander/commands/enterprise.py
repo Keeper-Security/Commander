@@ -504,7 +504,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         logging.info('User %s is deleted', user['username'])
                         api.query_enterprise(params)
             else:
-                print('No such user')
+                logging.warning('No such user')
             return
 
         elif kwargs.get('add'):
@@ -608,7 +608,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                         if rk['key_type'] == 'encrypted_by_data_key':
                                             role_key = api.decrypt_aes(rk['encrypted_key'], params.data_key)
                                         elif rk['key_type'] == 'encrypted_by_public_key':
-                                            role_key = api.decrypt_aes(rk['encrypted_key'], params.rsa_key)
+                                            role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
                                         if role_key:
                                             need_confirm = True
                                             rq['role_admin_key'] = api.encrypt_aes(role_key, public_key)
@@ -734,7 +734,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         return enterprise_role_parser
 
     def execute(self, params, **kwargs):
-        r_arg = kwargs['role']
+        r_arg = str(kwargs['role'])
         role = None
         if 'roles' in params.enterprise:
             for r in params.enterprise['roles']:
@@ -779,7 +779,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             if rk['key_type'] == 'encrypted_by_data_key':
                                 role_key = api.decrypt_aes(rk['encrypted_key'] , params.data_key)
                             elif rk['key_type'] == 'encrypted_by_public_key':
-                                role_key = api.decrypt_aes(rk['encrypted_key'] , params.rsa_key)
+                                role_key = api.decrypt_rsa(rk['encrypted_key'] , params.rsa_key)
                             break
                 for user_id in users:
                     is_add, user_email = users[user_id]
@@ -840,7 +840,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 if enforcements.get(p[1]) > 0:
                                     print('{0:>24s}: {1}'.format(p[0], enforcements.get(p[1])))
         else:
-            print('Role not found')
+            logging.warning('Role not found')
 
 
 class EnterpriseTeamCommand(EnterpriseCommand):
@@ -877,10 +877,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     }
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
-                        print('Team {0} deleted'.format(team['name']))
+                        logging.info('Team %s deleted', team['name'])
                         api.query_enterprise(params)
             else:
-                print('Team not found')
+                logging.warning('Team not found')
             return
 
         if kwargs.get('add'):
@@ -923,10 +923,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 }
                 rs = api.communicate(params, rq)
                 if rs['result'] == 'success':
-                    print('Team {0} created'.format(t_arg))
+                    logging.info('Team %s created', t_arg)
                     api.query_enterprise(params)
             else:
-                print('Team {0} already exists'.format(t_arg))
+                logging.warning('Team %s already exists', t_arg)
             return
 
         if team:
@@ -968,7 +968,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                 user_id = user_node['enterprise_user_id']
                                 users[user_id] = is_add, user_node['username']
                             else:
-                                print('User {0} could be resolved'.format(u))
+                                logging.warning('User %s could be resolved', u)
                 if len(users) > 0:
                     for user_id in users:
                         is_add, user_email = users[user_id]
@@ -986,7 +986,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                         rs = api.communicate(params, rq)
                         if rs['result'] == 'success':
                             api.query_enterprise(params)
-                            print('User {0} {1} team {2}'.format(user_email, 'added to' if is_add else 'removed from', team['name']))
+                            logging.info('User %s %s team %s', user_email, 'added to' if is_add else 'removed from', team['name'])
 
             if show_info:
                 team_uid = team['team_uid']
@@ -1006,7 +1006,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     for i in range(len(user_ids)):
                         print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if kwargs.get('verbose') else ''))
         else:
-            print('Team not found')
+            logging.warning('Team not found')
 
 
 syslog_templates = None
@@ -1856,16 +1856,17 @@ class AuditReportCommand(Command):
         else:
             return value
 
-    def get_filter(self, filter, convert):
-        filter = filter.strip()
-        bet = between_pattern.match(filter)
+    @staticmethod
+    def get_filter(filter_value, convert):
+        filter_value = filter_value.strip()
+        bet = between_pattern.match(filter_value)
         if bet is not None:
             dt1, dt2, *_ = bet.groups()
             dt1 = convert(dt1)
             dt2 = convert(dt2)
             return {'min': dt1, 'max': dt2}
 
-        inp = in_pattern.match(filter)
+        inp = in_pattern.match(filter_value)
         if inp is not None:
             arr = []
             for v in inp.groups()[0].split(','):
@@ -1873,8 +1874,8 @@ class AuditReportCommand(Command):
             return arr
 
         for prefix in ['>=', '<=', '>', '<', '=']:
-            if filter.startswith(prefix):
-                value = convert(filter[len(prefix):].strip())
+            if filter_value.startswith(prefix):
+                value = convert(filter_value[len(prefix):].strip())
                 if prefix == '>=':
                     return {'min': value}
                 if prefix == '<=':
@@ -1885,4 +1886,4 @@ class AuditReportCommand(Command):
                     return {'max': value, 'exclude_max': True}
                 return value
 
-        return convert(filter)
+        return convert(filter_value)

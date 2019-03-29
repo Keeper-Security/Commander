@@ -8,15 +8,16 @@
 # Copyright 2017 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
 import os
 import sys
 import getpass
 import datetime
 import time
-import collections
 import functools
 import logging
 
+from collections import OrderedDict
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
@@ -33,10 +34,10 @@ from .commands import register_commands, register_enterprise_commands
 stack = []
 aliases = {}
 commands = {}
-command_info = collections.OrderedDict()
+command_info = OrderedDict()
 register_commands(commands, aliases, command_info)
 enterprise_commands = {}
-enterprise_command_info = collections.OrderedDict()
+enterprise_command_info = OrderedDict()
 register_enterprise_commands(enterprise_commands, aliases, enterprise_command_info)
 
 

@@ -251,7 +251,7 @@ def _import(params, file_format, filename, **kwargs):
 
     records_after = len(params.record_cache)
     if records_after > records_before:
-        print("{0} records imported successfully".format(records_after - records_before))
+        logging.info("%d records imported successfully", records_after - records_before)
 
 
 def upload_attachment(params, attachments):
@@ -424,7 +424,7 @@ def prepare_shared_folder_add(params, folders):
                     if 'public_key' in pk:
                         emails[pk['key_owner']] = pk['public_key']
         except Exception as e:
-            if params.debug: print(e)
+            logging.debug(e)
 
     shared_folder_add = []
     for fol in folders:
@@ -823,13 +823,12 @@ def execute_batch(params, requests):
                             req = chunk[pos]
                             res = results[pos]
                             if res['result'] != 'success':
-                                print('execute failed: command {0}: {1})'.format(req.get('command'), res.get('message')))
+                                logging.debug('execute failed: command %s: %s)', req.get('command'), res.get('message'))
                         if len(results) < len(chunk):
                             queue = chunk[len(results):] + queue
 
         except Exception as e:
-            if params.debug:
-                print(e)
+            logging.debug(e)
     api.sync_down(params)
 
 

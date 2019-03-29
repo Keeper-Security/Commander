@@ -63,6 +63,15 @@ keeper shell
 
 See the [custom](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/custom) folder for examples on creating your own custom scripts to interface with Keeper from your own source code.
 
+### Unit Tests
+
+Commander uses ```unittest``` testing framework. To run unit tests, type
+```
+python3 -m unittest discover unit-tests
+```
+in ```Commander``` folder
+
 ### Help
 
 If you need help, found a bug, or you're interested in contributing, email us at commander@keepersecurity.com.
+

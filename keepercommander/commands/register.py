@@ -96,6 +96,10 @@ class RegisterCommand(Command):
     def get_parser(self):
         return register_parser
 
+    @staticmethod
+    def get_iterations():
+        return 100000
+
     def execute(self, params, **kwargs):
         email = kwargs['email'] if 'email' in kwargs else None
 
@@ -209,7 +213,7 @@ class RegisterCommand(Command):
             parts[1] = host+port
             new_params.server = urlunsplit(parts)
 
-        iterations = 100000
+        iterations = self.get_iterations()
         salt = os.urandom(16)
         auth_verifier = b''
         auth_verifier = auth_verifier + b'\x01' + iterations.to_bytes(3, 'big') + salt
@@ -272,6 +276,7 @@ class RegisterCommand(Command):
                         param1.server = new_params.server
                         param1.user = email
                         param1.password = password
+                        param1.rest_context.device_id = params.rest_context.device_id
                         api.login(param1)
                         salt = os.urandom(16)
                         iterations = 100000
@@ -585,7 +590,7 @@ class ShareFolderCommand(Command):
                             request[share_action] = []
                         request[share_action].append(ro)
             response = api.communicate(params, request)
-            api.sync_down(params)
+            params.sync_data = True
 
             for node in ['add_teams', 'update_teams', 'remove_teams']:
                 if node in response:
@@ -678,8 +683,7 @@ class ShareRecordCommand(Command):
         rq = {
             'command': 'get_records',
             'include': ['shares'],
-            'records': [record_path],
-            'client_time': api.current_milli_time()
+            'records': [record_path]
         }
         rs = api.communicate(params, rq)
         existing_shares = {}

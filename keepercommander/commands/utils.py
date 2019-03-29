@@ -12,7 +12,7 @@
 import argparse
 import logging
 
-from getpass import getpass
+import getpass
 from urllib.parse import urlsplit
 
 from .. import api
@@ -28,19 +28,11 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    aliases['r'] = 'rotate'
     aliases['d'] = 'sync-down'
-    for p in [rotate_parser, whoami_parser, login_parser, logout_parser]:
+    for p in [whoami_parser, login_parser, logout_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
-
-rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate Keeper record')
-rotate_parser.add_argument('--print', dest='print', action='store_true', help='display the record content after rotation')
-rotate_parser.add_argument('--match', dest='match', action='store', help='regular expression to select records for password rotation')
-rotate_parser.add_argument('uid', nargs='?', type=str, action='store', help='record UID')
-rotate_parser.error = raise_parse_exception
-rotate_parser.exit = suppress_exit
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Information about logged in user')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -87,7 +79,6 @@ class SyncDownCommand(Command):
                 params.sync_data = True
 
 
-
 class RecordDeleteAllCommand(Command):
     def execute(self, params, **kwargs):
         uc = user_choice('Are you sure you want to delete all Keeper records on the server?', 'yn', default='n')
@@ -110,6 +101,7 @@ class RecordDeleteAllCommand(Command):
             if len(failures) > 0:
                 logging.warning("%s records failed to delete", len(failures))
 
+            params.revision = 0
             params.sync_data = True
 
 
@@ -185,17 +177,17 @@ class LoginCommand(Command):
                 return
 
             if not password:
-                password = getpass(prompt='... {0:>16}: '.format('Password'), stream=None).strip()
+                password = getpass.getpass(prompt='... {0:>16}: '.format('Password'), stream=None).strip()
             if not password:
                 return
         except KeyboardInterrupt as e:
-            print('Canceled')
+            logging.info('Canceled')
             return
 
         params.user = user
         params.password = password
 
-        print('Logging in...')
+        logging.info('Logging in...')
         api.login(params)
 
 

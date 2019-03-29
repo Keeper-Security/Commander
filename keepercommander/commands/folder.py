@@ -221,7 +221,7 @@ class FolderCdCommand(Command):
                     if len(pattern) == 0:
                         params.current_folder = folder.uid
                     else:
-                        print('cd: Folder {0} not found'.format(folder_name))
+                        logging.warning('cd: Folder %s not found', folder_name)
 
 
 class FolderTreeCommand(Command):
@@ -239,7 +239,7 @@ class FolderTreeCommand(Command):
                 if len(pattern) == 0:
                     display.formatted_tree(params, folder)
                 else:
-                    print('cd: Folder {0} not found'.format(folder_name))
+                    logging.warning('cd: Folder %s not found', folder_name)
 
 
 class FolderMakeCommand(Command):
@@ -255,9 +255,8 @@ class FolderMakeCommand(Command):
             if rs is not None:
                 base_folder, name = rs
                 if len(name) == 0:
-                    print('Folder "{0}" already exists'.format(name))
+                    logging.warning('Folder "%s" already exists', name)
                     return
-
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
         user_folder = kwargs['user_folder'] if 'user_folder' in kwargs else None
@@ -271,7 +270,7 @@ class FolderMakeCommand(Command):
                     if grant or (flag in kwargs and kwargs[flag]):
                         request[flag] = True
             else:
-                print('Shared folders cannot be nested')
+                logging.error('Shared folders cannot be nested')
                 return
 
         elif user_folder:
@@ -334,12 +333,12 @@ class FolderMakeCommand(Command):
         name = name.strip()
 
         is_slash = False
-        for x in range(0, len(name) -2):
+        for x in range(0, len(name)-2):
             if name[x] == '/':
                 is_slash = not is_slash
             else:
                 if is_slash:
-                    print('Character "/" is reserved. Use "//" inside folder name')
+                    logging.warning('Character "/" is reserved. Use "//" inside folder name')
                     return
 
         name = name.replace('//', '/')
@@ -350,12 +349,8 @@ class FolderMakeCommand(Command):
         data = {'name': name}
         request['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
 
-        rs = api.communicate(params, request)
-        if rs is not None:
-            if rs['result'] == 'success':
-                params.sync_data = True
-            else:
-                print(rs['message'])
+        api.communicate(params, request)
+        params.sync_data = True
 
 
 class FolderRemoveCommand(Command):
@@ -378,7 +373,7 @@ class FolderRemoveCommand(Command):
                         folder = None
 
         if folder is None:
-            print('Enter name of the existing folder')
+            logging.warning('Enter name of the existing folder')
             return
 
         force = kwargs['force'] if 'force' in kwargs else None
@@ -400,11 +395,8 @@ class FolderRemoveCommand(Command):
 
                 np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
                 if np.lower() == 'y':
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        params.sync_data = True
-                    else:
-                        print(rs['message'])
+                    api.communicate(params, rq)
+                    params.sync_data = True
         else:
             del_obj = {
                 'delete_resolution': 'unlink',
@@ -439,13 +431,8 @@ class FolderRemoveCommand(Command):
                         'command': 'delete',
                         'pre_delete_token': pdr['pre_delete_token']
                     }
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        params.sync_data = True
-                    else:
-                        print(rs['message'])
-            else:
-                print(rs['message'])
+                    api.communicate(params, rq)
+                    params.sync_data = True
 
 
 class FolderMoveCommand(Command):
@@ -505,7 +492,7 @@ class FolderMoveCommand(Command):
         else:
             src = try_resolve_path(params, src_path)
             if src is None:
-                print('Source path should be existing record or folder')
+                logging.warning('Source path should be existing record or folder')
                 return
 
             src_folder, name = src
@@ -513,14 +500,13 @@ class FolderMoveCommand(Command):
                 src_folder_uid = src_folder.uid or ''
                 if src_folder_uid in params.subfolder_record_cache:
                     for uid in params.subfolder_record_cache[src_folder_uid]:
-                        r = params.record_cache[uid]
                         rec = api.get_record(params, uid)
                         if name in {rec.title, rec.record_uid}:
                             src_record_uid = rec.record_uid
                             break
 
                 if src_record_uid is None:
-                    print('Record "{0}" not found'.format(name))
+                    logging.warning('Record "%s" not found', name)
                     return
 
         dst_folder = None
@@ -529,11 +515,11 @@ class FolderMoveCommand(Command):
         else:
             dst = try_resolve_path(params, dst_path)
             if dst is None:
-                print('Destination path should be existing folder')
+                logging.warning('Destination path should be existing folder')
                 return
             dst_folder, name = dst
             if len(name) > 0:
-                print('Destination path should be existing folder')
+                logging.warning('Destination path should be existing folder')
                 return
 
         rq = {
@@ -545,27 +531,21 @@ class FolderMoveCommand(Command):
             rq['to_type'] = BaseFolderNode.UserFolderType
         else:
             rq['to_type'] = dst_folder.type
-            rq['to_uid'] =  dst_folder.uid
+            rq['to_uid'] = dst_folder.uid
 
         if src_record_uid is None:
             ''' folder '''
             if src_folder.type == BaseFolderNode.RootFolderType:
-                print('Root folder cannot be a source folder')
+                logging.warning('Root folder cannot be a source folder')
                 return
-            sp = set()
             dp = set()
-            f = src_folder
-            while f is not None:
-                if len(f.uid) > 0:
-                    sp.add(f.uid)
-                f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
             f = dst_folder
-            while f is not None and f.parent_uid is not None:
+            while f is not None:
                 if len(f.uid) > 0:
                     dp.add(f.uid)
                 f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
-            if sp <= dp:
-                print('Cannot move/link folder to self or a child')
+            if src_folder.uid in dp:
+                logging.warning('Cannot move/link folder to self or a child')
                 return
 
             parent_folder = params.folder_cache[src_folder.parent_uid] if src_folder.parent_uid is not None else None
@@ -578,7 +558,7 @@ class FolderMoveCommand(Command):
                 move['from_type'] = BaseFolderNode.UserFolderType
             else:
                 move['from_type'] = parent_folder.type
-                move['from_uid'] =  parent_folder.uid
+                move['from_uid'] = parent_folder.uid
 
             rq['move'].append(move)
             transition_keys = []
@@ -590,8 +570,7 @@ class FolderMoveCommand(Command):
 
             elif src_folder.type == BaseFolderNode.SharedFolderFolderType:
                 if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
-                              dst_folder.shared_folder_uid
+                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
 
                     ssf_uid = src_folder.shared_folder_uid
                     if ssf_uid != dsf_uid:
@@ -611,7 +590,7 @@ class FolderMoveCommand(Command):
                 move['from_type'] = BaseFolderNode.UserFolderType
             else:
                 move['from_type'] = src_folder.type
-                move['from_uid'] =  src_folder.uid
+                move['from_uid'] = src_folder.uid
             if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                 for flag in ['can_reshare', 'can_edit']:
                     if flag in kwargs and kwargs[flag]:
@@ -622,10 +601,8 @@ class FolderMoveCommand(Command):
             rec = params.record_cache[src_record_uid]
             if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                 if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else \
-                        src_folder.shared_folder_uid
-                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
-                              dst_folder.shared_folder_uid
+                    ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else src_folder.shared_folder_uid
+                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
                     if ssf_uid != dsf_uid:
                         shf = params.shared_folder_cache[dsf_uid]
                         transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key_unencrypted'])
@@ -646,11 +623,8 @@ class FolderMoveCommand(Command):
                 })
             rq['transition_keys'] = transition_keys
 
-        rs = api.communicate(params, rq)
-        if rs['result'] == 'success':
-            params.sync_data = True
-        else:
-            print(rs['message'])
+        api.communicate(params, rq)
+        params.sync_data = True
 
 
 class FolderLinkCommand(FolderMoveCommand):
@@ -659,8 +633,4 @@ class FolderLinkCommand(FolderMoveCommand):
 
     def get_parser(self):
         return ln_parser
-
-
-
-
 

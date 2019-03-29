@@ -11,6 +11,7 @@
 import importlib
 import logging
 
+from . import noop
 
 imported_plugins = {}
 
@@ -28,6 +29,9 @@ def load_plugin(module_name):
 
 def get_plugin(module_name):
     """Return the specified plugin"""
+    if module_name == 'noop':
+        return noop
+
     if module_name not in imported_plugins:
         """Load the specified plugin dynamically"""
         load_plugin(module_name)
