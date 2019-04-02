@@ -23,6 +23,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
+from .params import KeeperParams
 from . import display
 from .api import sync_down, login
 from .error import AuthenticationError, CommunicationError
@@ -171,10 +172,13 @@ def prompt_for_credentials(params):
 
 
 def loop(params):
+    # type: (KeeperParams) -> None
+
     global prompt_session
     try:
         logging.debug('Params: %s', params)
 
+        enforcement_checked = set()
         prompt_session = None
         if not params.batch_mode:
             if os.isatty(0) and os.isatty(1):
@@ -211,10 +215,13 @@ def loop(params):
                 params.batch_mode = False
                 try:
                     if prompt_session is not None:
+                        if params.enforcements and params.user not in enforcement_checked:
+                            enforcement_checked.add(params.user)
+                            do_command(params, 'check-enforcements')
+
                         command = prompt_session.prompt(get_prompt(params)+ '> ')
                     else:
                         command = input(get_prompt(params) + '> ')
-
                 except KeyboardInterrupt:
                     print('')
                 except EOFError:

@@ -80,7 +80,7 @@ _enc_iter = int.to_bytes(_USER_ITERATIONS, length=3, byteorder='big', signed=Fal
 _enc_iv = os.urandom(16)
 _cipher = AES.new(_V1_DERIVED_KEY, AES.MODE_CBC, _enc_iv)
 _enc_dk = b'\x01' + _enc_iter + _USER_SALT + _enc_iv + _cipher.encrypt(_USER_DATA_KEY + _USER_DATA_KEY)
-_ENCRYPTION_PARAMS = base64.urlsafe_b64encode(_enc_dk).decode('utf-8').strip()
+_ENCRYPTION_PARAMS = base64.urlsafe_b64encode(_enc_dk).decode('utf-8').strip('=')
 
 
 class VaultEnvironment:

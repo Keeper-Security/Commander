@@ -13,6 +13,7 @@ import json
 import base64
 import re
 import getpass
+import datetime
 import time
 import os
 import hashlib
@@ -49,6 +50,7 @@ def run_command(params, request):
 
 
 def derive_key(password, salt, iterations):
+    # type: (str, bytes, int) -> bytes
     return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations, 32)
 
 
@@ -69,8 +71,13 @@ def login(params):
     # type: (KeeperParams) -> None
 
     success = False
+    store_config = False
+
     while not success:
         if not params.auth_verifier:
+            if not params.user or not params.password:
+                return
+
             logging.debug('No auth verifier, sending pre-auth request')
             try:
                 pre_login_rs = rest_api.pre_login(params.rest_context, params.user)
@@ -90,7 +97,7 @@ def login(params):
 
         rq = {
             'command': 'login',
-            'include': ['keys', 'license', 'enforcements', 'is_enterprise_admin'],
+            'include': ['keys', 'license', 'settings', 'enforcements', 'is_enterprise_admin'],
             'version': 2,
             'auth_response': params.auth_verifier,
             'username': params.user
@@ -106,9 +113,28 @@ def login(params):
 
         response_json = run_command(params, rq)
 
+        if 'device_token' in response_json:
+            store_config = True
+            logging.debug('params.mfa_token=%s', params.mfa_token)
+            params.mfa_token = response_json['device_token']
+            params.config['mfa_token'] = params.mfa_token
+
+        if 'keys' in response_json:
+            keys = response_json['keys']
+            if 'encryption_params' in keys:
+                params.data_key = decrypt_encryption_params(keys['encryption_params'], params.password)
+            elif 'encrypted_data_key' in keys:
+                encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
+                key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
+                params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
+
+            params.rsa_key = decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
+
+        if 'session_token' in response_json:
+            params.session_token = response_json['session_token']
+
         if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
             success = True
-            store_config = False
             logging.debug('Auth Success')
 
             params.session_token = response_json['session_token']
@@ -118,62 +144,15 @@ def login(params):
                 store_config = True
                 params.config['device_id'] = device_id
 
-            if 'device_token' in response_json:
-                store_config = True
-                logging.debug('params.mfa_token=%s', params.mfa_token)
-                params.mfa_token = response_json['device_token']
-                params.config['mfa_token'] = params.mfa_token
-
-            if 'keys' in response_json:
-                keys = response_json['keys']
-                if 'encryption_params' in keys:
-                    params.data_key = decrypt_encryption_params(keys['encryption_params'], params.password)
-                elif 'encrypted_data_key' in keys:
-                    encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
-                    key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
-                    params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
-
-                params.rsa_key = decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
-
-            if 'license' in response_json:
-                params.license = response_json['license']
-
-            params.sync_data = True
-            params.prepare_commands = True
-
-            if 'enforcements' in response_json:
-                enforcements = response_json['enforcements']
-                if 'enterprise_invited' in enforcements:
-                    print('You\'ve been invited to join {0}.'.format(enforcements['enterprise_invited']))
-                    action = input('A(ccept)/D(ecline)/I(gnore)?: ')
-                    action = action.lower()
-                    if action == 'accept':
-                        action = 'a'
-                    elif action == 'decline':
-                        action = 'd'
-                    if action in ['a', 'd']:
-                        e_rq = {
-                            'command': 'accept_enterprise_invite' if action == 'a' else 'decline_enterprise_invite'
-                        }
-                        if action == 'a':
-                            verification_code = input('Please enter the verification code sent via email: ')
-                            if verification_code:
-                                e_rq['verification_code'] = verification_code
-                            else:
-                                e_rq = None
-                        if e_rq:
-                            try:
-                                e_rs = communicate(params, e_rq)
-                                if e_rs['result'] == 'success':
-                                    logging.info('%s enterprise invite', 'Accepted' if action == 'a' else 'Declined')
-                                    #TODO reload enterprise settings
-                                else:
-                                    logging.error('Enterprise %s failure: ', 'accept' if action == 'a' else 'decline')
-                            except:
-                                pass
+            params.license = response_json.get('license')
+            params.enforcements = response_json.get('enforcements')
+            params.settings = response_json.get('settings')
 
             if response_json.get('is_enterprise_admin'):
                 query_enterprise(params)
+
+            params.sync_data = True
+            params.prepare_commands = True
 
             if store_config: # save token to config file if the file exists
                 params.config['user'] = params.user
@@ -195,6 +174,25 @@ def login(params):
             except (EOFError, KeyboardInterrupt, SystemExit):
                 return
 
+        elif response_json['result_code'] == 'auth_expired':
+            try:
+                params.password = ''
+                params.auth_verifier = None
+                logging.warning(response_json['message'])
+                if not change_master_password(params):
+                    raise AuthenticationError('')
+            finally:
+                params.session_token = None
+
+        elif response_json['result_code'] == 'auth_expired_transfer':
+            share_account_to = response_json['settings']['share_account_to']
+            logging.warning(response_json['message'])
+            try:
+                if not accept_account_transfer_consent(params, share_account_to):
+                    raise AuthenticationError('')
+            finally:
+                params.session_token = None
+
         elif response_json['result_code'] == 'auth_failed':
             params.password = ''
             raise AuthenticationError('Authentication failed.')
@@ -207,6 +205,68 @@ def login(params):
 
         else:
             raise CommunicationError('Unknown problem')
+
+
+def change_master_password(params):
+    user_params = rest_api.get_new_user_params(params.rest_context, params.user)
+    try:
+        while True:
+            print('')
+            print('Please choose a new Master Password.')
+            password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'), stream=None).strip()
+            if not password:
+                raise KeyboardInterrupt()
+            password2 = getpass.getpass(prompt='... {0:>24}: '.format('Re-Enter Password'), stream=None).strip()
+
+            if password == password2:
+                failed_rules = []
+                for desc, regex in zip(user_params.passwordMatchDescription, user_params.passwordMatchRegex):
+                    pattern = re.compile(regex)
+                    if not re.match(pattern, password):
+                        failed_rules.append(desc)
+                if len(failed_rules) == 0:
+                    auth_salt = os.urandom(16)
+                    data_salt = os.urandom(16)
+                    rq = {
+                        'command': 'change_master_password',
+                        'auth_verifier': create_auth_verifier(password, auth_salt, params.iterations),
+                        'encryption_params': create_encryption_params(password, data_salt, params.iterations, params.data_key)
+                    }
+                    communicate(params, rq)
+                    params.password = password
+                    params.salt = auth_salt
+                    logging.info('Password changed')
+                    return True
+                else:
+                    for rule in failed_rules:
+                        logging.warning(rule)
+            else:
+                logging.warning('Passwords do not match.')
+    except KeyboardInterrupt:
+        logging.info('Canceled')
+
+    return False
+
+
+def accept_account_transfer_consent(params, share_account_to):
+    print('')
+    answer = input('Do you accept Account Transfer policy? Accept/C(ancel): ')
+    answer = answer.lower()
+    if answer.lower() == 'accept':
+        for role in share_account_to:
+            public_key = RSA.importKey(base64.urlsafe_b64decode(role['public_key'] + '=='))
+            transfer_key = encrypt_rsa(params.data_key, public_key)
+            request = {
+                'command': 'share_account',
+                'to_role_id': role['role_id'],
+                'transfer_key': transfer_key
+            }
+            communicate(params, request)
+        return True
+    else:
+        logging.info('Canceled')
+
+    return False
 
 
 def decrypt_aes(data, key):
@@ -741,6 +801,27 @@ def convert_to_folders(params):
         return rs['result'] == 'success'
 
     return False
+
+
+def create_auth_verifier(password, salt, iterations):
+    # type: (str, bytes, int) -> str
+
+    derived_key = derive_key(password, salt, iterations)
+    enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
+    auth_ver = b'\x01' + enc_iter + salt + derived_key
+    return base64.urlsafe_b64encode(auth_ver).decode().strip('=')
+
+
+def create_encryption_params(password, salt, iterations, data_key):
+    # type: (str, bytes, int, bytes) -> str
+
+    derived_key = derive_key(password, salt, iterations)
+    enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
+    enc_iv = os.urandom(16)
+    cipher = AES.new(derived_key, AES.MODE_CBC, enc_iv)
+    enc_data_key = cipher.encrypt(data_key + data_key)
+    enc_params = b'\x01' + enc_iter + salt + enc_iv + enc_data_key
+    return base64.urlsafe_b64encode(enc_params).decode().strip('=')
 
 
 def decrypt_encryption_params(encryption_params, password):
