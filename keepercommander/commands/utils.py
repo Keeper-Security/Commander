@@ -11,9 +11,13 @@
 
 import argparse
 import logging
+import base64
+import datetime
 
 import getpass
 from urllib.parse import urlsplit
+
+from Cryptodome.PublicKey import RSA
 
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
@@ -25,6 +29,7 @@ def register_commands(commands):
     commands['whoami'] = WhoamiCommand()
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
+    commands['check-enforcements'] = CheckEnforcementsCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -50,6 +55,11 @@ login_parser.exit = suppress_exit
 logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper')
 logout_parser.error = raise_parse_exception
 logout_parser.exit = suppress_exit
+
+
+check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements', description='Check enterprise enforcements')
+check_enforcements_parser.error = raise_parse_exception
+check_enforcements_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -191,6 +201,56 @@ class LoginCommand(Command):
         api.login(params)
 
 
+class CheckEnforcementsCommand(Command):
+    def get_parser(self):
+        return check_enforcements_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        if params.enforcements:
+            if 'enterprise_invited' in params.enforcements:
+                print('You\'ve been invited to join {0}.'.format(params.enforcements['enterprise_invited']))
+                action = user_choice('A(ccept)/D(ecline)/I(gnore)?: ', 'adi')
+                action = action.lower()
+                if action == 'a':
+                    action = 'accept'
+                elif action == 'd':
+                    action = 'decline'
+                if action in ['accept', 'decline']:
+                    e_rq = {
+                        'command': '{0}_enterprise_invite'.format(action)
+                    }
+                    if action == 'accept':
+                        verification_code = input('Please enter the verification code sent via email: ')
+                        if verification_code:
+                            e_rq['verification_code'] = verification_code
+                        else:
+                            e_rq = None
+                    if e_rq:
+                        try:
+                            api.communicate(params, e_rq)
+                            logging.info('%s enterprise invite', 'Accepted' if action == 'accept' else 'Declined')
+                            #TODO reload enterprise settings
+                        except Exception as e:
+                            logging.error('Enterprise %s failure: %s', action, e)
+
+        if params.settings:
+            if 'share_account_to' in params.settings:
+                dt = datetime.datetime.fromtimestamp(params.settings['must_perform_account_share_by'] // 1000)
+                print('Your Keeper administrator has enabled the ability to transfer your vault records\n'
+                      'in accordance with company operating procedures and policies.\n'
+                      'Please acknowledge this change in account settings by typing ''Accept''.')
+                print('If you do not accept this change by {0}, you will be locked out of your account.'.format(dt.strftime('%a, %d %b %Y')))
+
+                try:
+                    api.accept_account_transfer_consent(params, params.settings['share_account_to'])
+                finally:
+                    del params.settings['must_perform_account_share_by']
+                    del params.settings['share_account_to']
+
+
 class LogoutCommand(Command):
     def get_parser(self):
         return logout_parser
@@ -200,5 +260,3 @@ class LogoutCommand(Command):
 
     def execute(self, params, **kwargs):
         params.clear_session()
-
-

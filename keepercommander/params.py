@@ -84,6 +84,8 @@ class KeeperParams:
         self.timedelay = 0
         self.sync_data = True
         self.license = None
+        self.settings = None
+        self.enforcements = None
         self.enterprise = None
         self.prepare_commands = False
         self.batch_mode = False
@@ -116,6 +118,8 @@ class KeeperParams:
         self.current_folder = None
         self.sync_data = True
         self.license = None
+        self.settings = None
+        self.enforcements = None
         self.enterprise = None
         self.prepare_commands = True
         self.batch_mode = False

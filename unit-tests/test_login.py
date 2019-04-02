@@ -10,11 +10,10 @@ from data_vault import get_user_params, VaultEnvironment, get_connected_params
 
 vault_env = VaultEnvironment()
 
+
 class TestLogin(TestCase):
     has2fa = False
     dataKeyAsEncParam = False
-    enterpriseInvite = False
-    enterpriseInviteCode = '987654321'
 
     def setUp(self):
         self.pre_login_mock = mock.patch('keepercommander.rest_api.pre_login').start()
@@ -30,17 +29,8 @@ class TestLogin(TestCase):
         self.store_config_mock = mock.patch('builtins.open', mock.mock_open()).start()
         self.store_config_mock.side_effect = Exception()
 
-        self.input_mock = mock.patch('builtins.input').start()
-        self.input_mock.side_effect = Exception()
-
-        self.print_mock = mock.patch('builtins.print').start()
-
-        self.comm_mock = mock.patch('keepercommander.api.communicate').start()
-        self.input_mock.side_effect = Exception()
-
         TestLogin.has2fa = False
         TestLogin.dataKeyAsEncParam = False
-        TestLogin.enterpriseInvite = False
 
     def tearDown(self):
         mock.patch.stopall()
@@ -96,56 +86,79 @@ class TestLogin(TestCase):
             login(params)
 
     def test_login_invalid_user(self):
-        TestLogin.has2fa = False
         params = get_user_params()
         params.user = 'wrong.user@keepersecurity.com'
         with self.assertRaises(AuthenticationError):
             login(params)
 
-    def test_accept_invite(self):
-        TestLogin.enterpriseInvite = True
+    def test_login_auth_expired(self):
         params = get_user_params()
-        self.input_mock.side_effect = ['accept', TestLogin.enterpriseInviteCode, self.ctrl_c]
-        self.comm_mock.side_effect = TestLogin.process_invite
-        login(params)
-        self.assertEqual(self.comm_mock.call_count, 1)
-        self.assertEqual(self.input_mock.call_count, 2)
-        self.assertEqual(self.print_mock.call_count, 1)
-        self.assertEqual(params.session_token, vault_env.session_token)
-        self.assertEqual(params.data_key, vault_env.data_key)
 
-    def test_decline_invite(self):
-        TestLogin.enterpriseInvite = True
-        params = get_user_params()
-        self.input_mock.side_effect = ['decline', self.ctrl_c]
-        self.comm_mock.side_effect = TestLogin.process_invite
-        login(params)
-        self.assertEqual(self.comm_mock.call_count, 1)
-        self.assertEqual(self.input_mock.call_count, 1)
-        self.assertEqual(self.print_mock.call_count, 1)
-        self.assertEqual(params.session_token, vault_env.session_token)
-        self.assertEqual(params.data_key, vault_env.data_key)
-
-    def test_ignore_invite(self):
-        TestLogin.enterpriseInvite = True
-        params = get_user_params()
-        self.input_mock.side_effect = ['ignore', self.ctrl_c]
-        login(params)
-        self.assertEqual(self.input_mock.call_count, 1)
-        self.assertEqual(self.print_mock.call_count, 1)
-        self.assertEqual(params.session_token, vault_env.session_token)
-        self.assertEqual(params.data_key, vault_env.data_key)
-
-    @staticmethod
-    def process_invite(context, rq):
-        if rq['command'] == 'accept_enterprise_invite':
-            if rq['verification_code'] == TestLogin.enterpriseInviteCode:
-                return { 'result': 'success', 'result_code': ''}
+        call_no = 0
+        def return_auth_expired(context, rq):
+            nonlocal call_no
+            call_no += 1
+            rs = TestLogin.process_login_command(context, rq)
+            if call_no == 1:
+                rs['result'] = 'fail'
+                rs['result_code'] = 'auth_expired'
+                rs['message'] = 'Auth expired'
+            elif call_no == 2:
+                pass
             else:
-                return { 'result': 'fail', 'result_code': 'bad_input_verification_code'}
-        elif rq['command'] == 'decline_enterprise_invite':
-            return { 'result': 'success', 'result_code': ''}
-        return { 'result': 'fail', 'result_code': 'invalid_command'}
+                raise Exception()
+            return rs
+
+        self.v2_execute_mock.side_effect = return_auth_expired
+
+        with mock.patch('keepercommander.api.change_master_password') as m_passwd:
+            def password_changed(params):
+                params.password = vault_env.password
+                return True
+
+            m_passwd.side_effect = password_changed
+            with self.assertLogs():
+                login(params)
+            m_passwd.assert_called()
+
+        self.assertEqual(params.session_token, vault_env.session_token)
+        self.assertEqual(params.data_key, vault_env.data_key)
+
+    def test_account_transfer_expired(self):
+        params = get_user_params()
+
+        call_no = 0
+
+        def return_auth_expired(context, rq):
+            nonlocal call_no
+            call_no += 1
+            rs = TestLogin.process_login_command(context, rq)
+            if call_no == 1:
+                rs['result'] = 'fail'
+                rs['result_code'] = 'auth_expired_transfer'
+                rs['message'] = 'Auth Transfer expired'
+                rs['settings'] = {
+                    'share_account_to': [{
+                        'role_id': 123456789,
+                        'public_key': vault_env.encoded_public_key
+                    }]
+                }
+            elif call_no == 2:
+                pass
+            else:
+                raise Exception()
+            return rs
+
+        self.v2_execute_mock.side_effect = return_auth_expired
+
+        with mock.patch('keepercommander.api.accept_account_transfer_consent') as m_transfer:
+            m_transfer.return_value = True
+            with self.assertLogs():
+                login(params)
+            m_transfer.assert_called()
+
+        self.assertEqual(params.session_token, vault_env.session_token)
+        self.assertEqual(params.data_key, vault_env.data_key)
 
     @staticmethod
     def process_pre_login(context, user):
@@ -196,10 +209,6 @@ class TestLogin(TestCase):
                     'result_code': 'auth_success',
                     'session_token': vault_env.session_token
                 }
-                if TestLogin.enterpriseInvite:
-                    rs['enforcements'] = {
-                        'enterprise_invited': 'Test Enterprise'
-                    }
                 if TestLogin.has2fa and device_token:
                     rs['device_token'] = device_token
 

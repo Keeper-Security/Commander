@@ -19,8 +19,8 @@ import hmac
 import logging
 
 from .params import RestApiContext
-from .error import KeeperApiError, CommunicationError
-from .APIRequest_pb2 import PreLoginRequest, PreLoginResponse, AuthRequest, ApiRequest, ApiRequestPayload, LoginType, DeviceRequest, DeviceResponse, DeviceStatus
+from .error import KeeperApiError
+from . import APIRequest_pb2 as proto
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
@@ -114,14 +114,14 @@ def execute_rest(context, endpoint, payload):
     if not context.server_key_id:
         context.server_key_id = 1
 
-    api_request_payload = ApiRequestPayload()
+    api_request_payload = proto.ApiRequestPayload()
     api_request_payload.payload = payload
 
     run_request = True
     while run_request:
         run_request = False
 
-        api_request = ApiRequest()
+        api_request = proto.ApiRequest()
         api_request.encryptedTransmissionKey = encrypt_rsa(context.transmission_key, SERVER_PUBLIC_KEYS[context.server_key_id])
         api_request.publicKeyId = context.server_key_id
         api_request.locale = context.locale or 'en_US'
@@ -163,14 +163,14 @@ def get_device_token(context):
     # type: (RestApiContext) -> str
 
     if not context.device_id:
-        rq = DeviceRequest()
+        rq = proto.DeviceRequest()
         rq.clientVersion = CLIENT_VERSION
         rq.deviceName = ''
         rs = execute_rest(context, 'authentication/get_device_token', rq.SerializeToString())
         if type(rs) == bytes:
-            device_rs = DeviceResponse()
+            device_rs = proto.DeviceResponse()
             device_rs.ParseFromString(rs)
-            if DeviceStatus.Name(device_rs.status) == 'OK':
+            if proto.DeviceStatus.Name(device_rs.status) == 'OK':
                 context.device_id = device_rs.encryptedDeviceToken
         elif type(rs) == dict:
             raise KeeperApiError(rs['error'], rs['message'])
@@ -179,18 +179,18 @@ def get_device_token(context):
 
 
 def pre_login(context, username, two_factor_token=None, retry=False):
-    # type: (RestApiContext, str, Optional[bytes], bool) -> PreLoginResponse
-    rq = PreLoginRequest()
+    # type: (RestApiContext, str, Optional[bytes], bool) -> proto.PreLoginResponse
+    rq = proto.PreLoginRequest()
     rq.authRequest.clientVersion = CLIENT_VERSION
     rq.authRequest.username = username
     rq.authRequest.encryptedDeviceToken = get_device_token(context)
-    rq.loginType = LoginType.Value('NORMAL')
+    rq.loginType = proto.LoginType.Value('NORMAL')
     if two_factor_token:
         rq.twoFactorToken = two_factor_token
 
     rs = execute_rest(context, 'authentication/pre_login', rq.SerializeToString())
     if type(rs) == bytes:
-        pre_login_rs = PreLoginResponse()
+        pre_login_rs = proto.PreLoginResponse()
         pre_login_rs.ParseFromString(rs)
         return pre_login_rs
 
@@ -206,6 +206,23 @@ def pre_login(context, username, two_factor_token=None, retry=False):
                 return pre_login(context, username, two_factor_token, retry=True)
 
             raise KeeperApiError(rs['error'], rs['message'])
+
+
+def get_new_user_params(context, username):
+    # type: (RestApiContext, str) -> proto.NewUserMinimumParams
+    rq = proto.AuthRequest()
+    rq.clientVersion = CLIENT_VERSION
+    rq.username = username
+    rq.encryptedDeviceToken = get_device_token(context)
+
+    rs = execute_rest(context, 'authentication/get_new_user_params', rq.SerializeToString())
+    if type(rs) == bytes:
+        pre_login_rs = proto.NewUserMinimumParams()
+        pre_login_rs.ParseFromString(rs)
+        return pre_login_rs
+
+    if type(rs) == dict:
+        raise KeeperApiError(rs['error'], rs['message'])
 
 
 def v2_execute(context, rq):
