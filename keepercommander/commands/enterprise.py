@@ -1338,7 +1338,7 @@ class AuditLogSumologicExport(AuditLogBaseExport):
 class AuditLogJsonExport(AuditLogBaseExport):
     def __init__(self):
         AuditLogBaseExport.__init__(self)
-
+        
     def default_record_title(self):
         return 'Audit Log: JSON'
 
@@ -1352,6 +1352,9 @@ class AuditLogJsonExport(AuditLogBaseExport):
             self.store_record = True
         props['filename'] = record.login
 
+        with open(filename, mode='w') as logf:
+            json.dump([], logf)
+
     def convert_event(self, props, event):
         dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
         evt = event.copy()
@@ -1362,13 +1365,17 @@ class AuditLogJsonExport(AuditLogBaseExport):
 
     def export_events(self, props, events):
         filename = props['filename']
-        logf = open(filename, mode='w')
 
-        try:
-            json.dump(events, logf)
-        finally:
-            logf.flush()
-            logf.close()
+        with open(filename, mode='r') as logf:
+            try:
+                data = json.load(logf)
+                for record in events:
+                    data.append(record)
+            except ValueError:
+                data = events
+
+        with open(filename, mode='w') as logf:
+            json.dump(data, logf)
 
 
 class AuditLogCommand(EnterpriseCommand):
