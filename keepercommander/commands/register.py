@@ -29,7 +29,7 @@ from .. import api, generator
 from .record import RecordAddCommand
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode, try_resolve_path
-from .enterprise import EnterpriseCommand
+from .enterprise import EnterpriseCommand, EnterprisePushCommand
 
 from .base import raise_parse_exception, suppress_exit, Command
 
@@ -82,6 +82,8 @@ register_parser.add_argument('--pass', dest='password', action='store', help='us
 register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store', help='data center.')
 register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
 register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
+register_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password (enterprise only)')
+register_parser.add_argument('--records', dest='records', action='store', help='populate vault with default records (enterprise only)')
 register_parser.add_argument('--question', dest='question', action='store', help='security question')
 register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
 register_parser.add_argument('email', action='store', help='email')
@@ -213,22 +215,11 @@ class RegisterCommand(Command):
             parts[1] = host+port
             new_params.server = urlunsplit(parts)
 
-        iterations = self.get_iterations()
-        salt = os.urandom(16)
-        auth_verifier = b''
-        auth_verifier = auth_verifier + b'\x01' + iterations.to_bytes(3, 'big') + salt
-        derived_key = api.derive_key(password, salt, iterations)
-        auth_verifier = auth_verifier + derived_key
-
-        encryption_params=b''
-        salt = os.urandom(16)
-        encryption_params = encryption_params + b'\x01' + iterations.to_bytes(3, 'big') + salt
         data_key = os.urandom(32)
-        dk = data_key + data_key
-        encryption_key = api.derive_key(password, salt, iterations)
-        iv = os.urandom(16)
-        cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
-        encryption_params = encryption_params + iv + cipher.encrypt(dk)
+        iterations = self.get_iterations()
+        auth_salt = os.urandom(16)
+        enc_salt = os.urandom(16)
+        backup_salt = os.urandom(16)
 
         rsa_key = RSA.generate(2048)
         private_key = DerSequence([0,
@@ -250,14 +241,14 @@ class RegisterCommand(Command):
             'command': 'register',
             'version': 1,
             'email': email,
-            'auth_verifier': base64.urlsafe_b64encode(auth_verifier).rstrip(b'=').decode(),
-            'encryption_params': base64.urlsafe_b64encode(encryption_params).rstrip(b'=').decode(),
+            'auth_verifier': api.create_auth_verifier(password, auth_salt, iterations),
+            'encryption_params': api.create_encryption_params(password, enc_salt, iterations, data_key),
             'encrypted_private_key': api.encrypt_aes(private_key, data_key),
             'public_key': base64.urlsafe_b64encode(public_key).rstrip(b'=').decode(),
             'security_answer_iterations': 1000,
-            'security_answer_salt': base64.urlsafe_b64encode(salt).rstrip(b'=').decode(),
+            'security_answer_salt': base64.urlsafe_b64encode(backup_salt).rstrip(b'=').decode(),
             'security_question': 'What is your favorite password manager application?',
-            'security_answer_hash': api.auth_verifier_old('keeper', salt, 1000),
+            'security_answer_hash': api.auth_verifier_old('keeper', backup_salt, 1000),
             'client_key': api.encrypt_aes(os.urandom(32), data_key)
         }
         if verification_code:
@@ -266,6 +257,46 @@ class RegisterCommand(Command):
         rs = api.run_command(new_params, rq)
         if rs['result'] == 'success':
             logging.info("Created account: %s ", email)
+            if params.enterprise:
+                api.query_enterprise(params)
+                file_name = kwargs.get('records')
+                should_accept_share = False
+                if file_name:
+                    try:
+                        push = EnterprisePushCommand()
+                        push.execute(params, user=[email], file=file_name)
+                        should_accept_share = True
+                    except Exception as e:
+                        logging.info('Error accepting shares: %s', e)
+
+                # first accept shares from enterprise admin
+                if should_accept_share:
+                    try:
+                        param1 = KeeperParams()
+                        param1.server = new_params.server
+                        param1.user = email
+                        param1.password = password
+                        param1.rest_context.device_id = params.rest_context.device_id
+                        api.login(param1)
+                        rq = {
+                            'command': 'accept_share',
+                            'from_email': params.user
+                        }
+                        api.communicate(param1, rq)
+                    except Exception as e:
+                        logging.info('Error accepting shares: %s', e)
+
+                # last expire password
+                if kwargs.get('expire'):
+                    try:
+                        rq = {
+                            'command': 'set_master_password_expire',
+                            'email': email
+                        }
+                        api.communicate(params, rq)
+                    except Exception as e:
+                        logging.info('Error expiring master password: %s', e)
+
             if kwargs.get('question'):
                 if not kwargs.get('answer'):
                     print('...' + 'Security Question: '.rjust(24) + kwargs['question'])
@@ -278,26 +309,19 @@ class RegisterCommand(Command):
                         param1.password = password
                         param1.rest_context.device_id = params.rest_context.device_id
                         api.login(param1)
-                        salt = os.urandom(16)
-                        iterations = 100000
-                        security_key = api.derive_key(kwargs['answer'], salt, iterations)
-                        iv = os.urandom(16)
-                        cipher = AES.new(security_key, AES.MODE_CBC, iv)
-                        encryption_params = b'\x01' + iterations.to_bytes(3, 'big') + salt
-                        data_key_backup = encryption_params + iv + cipher.encrypt(dk)
                         rq = {
                             'command': 'set_data_key_backup',
                             'version': 2,
-                            'data_key_backup': base64.urlsafe_b64encode(data_key_backup).rstrip(b'=').decode(),
+                            'data_key_backup': api.create_encryption_params(kwargs['answer'].lower(), backup_salt, iterations, data_key),
                             'security_question': kwargs['question'],
-                            'security_answer_salt': base64.urlsafe_b64encode(salt).rstrip(b'=').decode(),
+                            'security_answer_salt': base64.urlsafe_b64encode(backup_salt).rstrip(b'=').decode(),
                             'security_answer_iterations': iterations,
-                            'security_answer_hash': api.auth_verifier_old(kwargs['answer'], salt, iterations)
+                            'security_answer_hash': api.auth_verifier_old(kwargs['answer'], backup_salt, iterations)
                         }
                         api.communicate(param1, rq)
                         logging.info('Master password backup is created.')
                     except Exception as e:
-                        logging.error('Failed to create master password backup.')
+                        logging.error('Failed to create master password backup. %s', e)
 
             store = kwargs['store'] if 'store' in kwargs else None
             if store:

@@ -485,7 +485,7 @@ class RecordGetUidCommand(Command):
                                 permissions = rec['shares']['user_permissions']
                                 ro['shared_with'] = [{
                                     'username': su['username'],
-                                    'owner': su.get('ownser') or False,
+                                    'owner': su.get('owner') or False,
                                     'editable': su.get('editable') or False,
                                     'sharable': su.get('sharable') or False
                                 } for su in permissions]

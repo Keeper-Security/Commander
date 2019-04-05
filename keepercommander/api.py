@@ -288,6 +288,13 @@ def encrypt_aes(data, key):
     return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
 
 
+def encrypt_aes_key(key_to_encrypt, encryption_key):
+    iv = os.urandom(16)
+    cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
+    encrypted_data = iv + cipher.encrypt(key_to_encrypt)
+    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
+
+
 def encrypt_rsa(data, rsa_public_key):
     cipher = PKCS1_v1_5.new(rsa_public_key)
     encrypted_data = cipher.encrypt(data)
@@ -1149,6 +1156,38 @@ def communicate(params, request):
             raise KeeperApiError(response_json['result_code'], response_json['message'])
 
     return response_json
+
+
+def execute_batch(params, requests):
+    if not requests:
+        return
+
+    chunk_size = 100
+    queue = requests.copy()
+    while len(queue) > 0:
+        chunk = queue[:chunk_size]
+        queue = queue[chunk_size:]
+
+        rq = {
+            'command': 'execute',
+            'requests': chunk
+        }
+        try:
+            rs = communicate(params, rq)
+            if 'results' in rs:
+                results = rs['results']
+                if len(results) > 0:
+                    if params.debug:
+                        pos = len(results) - 1
+                        req = chunk[pos]
+                        res = results[pos]
+                        if res['result'] != 'success':
+                            logging.info('execute failed: command %s: %s)', req.get('command'), res.get('message'))
+                    if len(results) < len(chunk):
+                        queue = chunk[len(results):] + queue
+
+        except Exception as e:
+            logging.error(e)
 
 
 def update_record(params, record, **kwargs):
