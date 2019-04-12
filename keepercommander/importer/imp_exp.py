@@ -220,24 +220,29 @@ def _import(params, file_format, filename, **kwargs):
 
     if folders:
         shared_folder_add = prepare_shared_folder_add(params, folders)
-        execute_batch(params, shared_folder_add)
+        api.execute_batch(params, shared_folder_add)
+        api.sync_down(params)
 
     if records:
         # create folders
         folder_add = prepare_folder_add(params, records)
-        execute_batch(params, folder_add)
+        api.execute_batch(params, folder_add)
+        api.sync_down(params)
 
         # create records
         record_adds = prepare_record_add(params, records)
-        execute_batch(params, record_adds)
+        api.execute_batch(params, record_adds)
+        api.sync_down(params)
 
         # ensure records are linked to folders
         record_links = prepare_record_link(params, records)
-        execute_batch(params, record_links)
+        api.execute_batch(params, record_links)
+        api.sync_down(params)
 
         # adjust shared folder permissions
         shared_update = prepare_record_permission(params, records)
-        execute_batch(params, shared_update)
+        api.execute_batch(params, shared_update)
+        api.sync_down(params)
 
         # upload attachments
         atts = []
@@ -796,40 +801,6 @@ def prepare_record_permission(params, records):
                                                 shared_update.append(req)
                                             break
     return shared_update
-
-
-def execute_batch(params, requests):
-    if not requests:
-        return
-
-    chunk_size = 100
-    queue = requests.copy()
-    while len(queue) > 0:
-        chunk = queue[:chunk_size]
-        queue = queue[chunk_size:]
-
-        rq = {
-            'command': 'execute',
-            'requests': chunk
-        }
-        try:
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                if 'results' in rs:
-                    results = rs['results']
-                    if len(results) > 0:
-                        if params.debug:
-                            pos = len(results) - 1
-                            req = chunk[pos]
-                            res = results[pos]
-                            if res['result'] != 'success':
-                                logging.debug('execute failed: command %s: %s)', req.get('command'), res.get('message'))
-                        if len(results) < len(chunk):
-                            queue = chunk[len(results):] + queue
-
-        except Exception as e:
-            logging.debug(e)
-    api.sync_down(params)
 
 
 class KeeperAttachment(ImportAttachment):

@@ -274,12 +274,20 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
+* ```enterprise-push <Record Template File Name>```   Populate users' vaults with default records
+
+    Parameters:
+    - ```--syntax-help``` Displays information of record template file format
+    - ```--team TEAM_NAME or TEAM UID``` Populate all team users' vaults
+    - ```--user USER_EMAIL``` Populate user's vault
+    - ```file``` JSON file name containing template records
+
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
     - ```--target=syslog-port``` Export events in syslog format to TCP port. Both plain and SSL connections are supported
-    - ```--target=log-analytics``` Export events to Azure Log Analytics to custom log named Keeper_CL
+    - ```--target=azure-la``` Export events to Azure Log Analytics to custom log named Keeper_CL
 
 * ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats - [See Details](#ad-hoc-event-reporting)
 

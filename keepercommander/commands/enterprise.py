@@ -9,6 +9,8 @@
 # Contact: ops@keepersecurity.com
 #
 
+from typing import Optional
+
 import argparse
 import json
 import base64
@@ -24,6 +26,9 @@ import socket
 import ssl
 import hashlib
 import hmac
+import copy
+import os
+import tempfile
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
@@ -35,9 +40,12 @@ from collections import OrderedDict as OD
 
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from .record import RecordAddCommand
+from ..subfolder import try_resolve_path, BaseFolderNode
 from .. import api
 from ..display import bcolors
 from ..record import Record
+from ..params import KeeperParams
+from ..generator import generate
 
 
 def register_commands(commands):
@@ -45,13 +53,9 @@ def register_commands(commands):
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
+    commands['enterprise-push'] = EnterprisePushCommand()
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
-
-
-def unregister_commands(commands):
-    for cmd in ['enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team', 'audit-log', 'audit-report']:
-        commands.pop(cmd, None)
 
 
 def register_command_info(aliases, command_info):
@@ -61,7 +65,8 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['al'] = 'audit-log'
 
-    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, audit_log_parser, audit_report_parser]:
+    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
+              audit_log_parser, audit_report_parser]:
         command_info[p.prog] = p.description
 
 
@@ -121,6 +126,15 @@ enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
 
+enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
+enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on file format and template parameters')
+enterprise_push_parser.add_argument('--team', dest='team', action='append', help='Team name or team UID. Records will be assigned to all users in the team.')
+enterprise_push_parser.add_argument('--user', dest='user', action='append', help='User email or User ID. Records will be assigned to the user.')
+enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='file name in JSON format that contains template records')
+enterprise_push_parser.error = raise_parse_exception
+enterprise_push_parser.exit = suppress_exit
+
+
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
 audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
@@ -163,19 +177,38 @@ class EnterpriseCommand(Command):
         else:
             logging.error('This command  is only available for Administrators of Keeper.')
 
+    def get_public_keys(self, params, emails):
+        # type: (EnterpriseCommand, KeeperParams, dict) -> None
+
+        for email in emails:
+            emails[email] = self.public_keys.get(email.lower())
+
+        email_list = [x[0] for x in emails.items() if x[1] is None]
+        if len(email_list) == 0:
+            return
+
+        rq = {
+            'command': 'public_keys',
+            'key_owners': email_list
+        }
+        rs = api.communicate(params, rq)
+        for pko in rs['public_keys']:
+            if 'public_key' in pko:
+                public_key = RSA.importKey(base64.urlsafe_b64decode(pko['public_key'] + '=='))
+                self.public_keys[pko['key_owner'].lower()] = public_key
+                emails[pko['key_owner']] = public_key
+
     def get_public_key(self, params, email):
+        # type: (EnterpriseCommand, KeeperParams, str) -> None
+
         public_key = self.public_keys.get(email.lower())
         if public_key is None:
-            rq = {
-                'command': 'public_keys',
-                'key_owners': [email]
+            emails = {
+                email: None
             }
-            rs = api.communicate(params, rq)
-            if 'public_keys' in rs:
-                pko = rs['public_keys'][0]
-                if 'public_key' in pko:
-                    public_key = RSA.importKey(base64.urlsafe_b64decode(pko['public_key'] + '=='))
-                    self.public_keys[email.lower()] = public_key
+            self.get_public_keys(params, emails)
+            public_key = emails[email]
+
         return public_key
 
     def get_team_key(self, params, team_uid):
@@ -1694,7 +1727,7 @@ class AuditReportCommand(Command):
     def execute(self, params, **kwargs):
         loadSyslogTemplates(params)
 
-        if kwargs['syntax_help']:
+        if kwargs.get('syntax_help'):
             logging.info(audit_report_description)
             return
         if not kwargs['report_type']:
@@ -1887,3 +1920,200 @@ class AuditReportCommand(Command):
                 return value
 
         return convert(filter_value)
+
+
+enterprise_push_description = '''
+Template record file example:
+
+[
+    {
+        "title": "Record For ${user_name}",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "",
+        "notes": "",
+        "custom_fields": {
+            "key1": "value1",
+            "key2": "value2"
+        }
+    }
+]
+
+
+Supported template parameters:
+
+    ${user_email}            User email address
+    ${generate_password}     Generate random password
+    ${user_name}             User name
+
+'''
+parameter_pattern = re.compile(r'\${(\w+)}')
+
+
+class EnterprisePushCommand(EnterpriseCommand):
+
+    def substitute_record_params(self, params, email, record_data):
+        # type: (EnterprisePushCommand, KeeperParams, str, dict) -> None
+        global parameter_pattern
+
+        user_password = None
+        user_name = None
+        for key in ['title', 'login', 'password']:
+            if key in record_data:
+                value = record_data[key]
+                while True:
+                    m = parameter_pattern.search(value)
+                    if not m:
+                        break
+                    pv = ''
+                    p = m.group(1)
+                    if p == 'user_email':
+                        pv = email
+                    elif p == 'generate_password':
+                        if user_password is None:
+                            user_password = generate(length=32)
+                        pv = user_password or ''
+                    elif p == 'user_name':
+                        if user_name is None:
+                            user_name = ''
+                            for u in params.enterprise['users']:
+                                if u['username'].lower() == email.lower():
+                                    user_name = u['data'].get('displayname') or ''
+                                    break
+                        pv = user_name or ''
+
+                    value = value[:m.start()] + pv + value[m.end():]
+                record_data[key] = value
+
+    def get_parser(self):
+        return enterprise_push_parser
+
+    def execute(self, params, **kwargs):
+        if kwargs.get('syntax_help'):
+            logging.info(enterprise_push_description)
+            return
+
+        name = kwargs.get('file') or ''
+        if not name:
+            logging.error('The template file name arguments are required')
+            return
+
+        template_records = None
+        file_name = os.path.abspath(os.path.expanduser(name))
+        if os.path.isfile(file_name):
+            with open(file_name, 'r') as f:
+                template_records = json.load(f)
+        else:
+            logging.error('File %s does not exists', name)
+            return
+
+        emails = {}
+        users = kwargs.get('user')
+        if type(users) is list:
+            for user in users:
+                user_email = None
+                for u in params.enterprise['users']:
+                    if user.lower() in [u['username'].lower(), (u['data'].get('displayname') or '').lower(), str(u['enterprise_user_id'])]:
+                        user_email = u['username']
+                        break
+                if user_email:
+                    if user_email.lower() != params.user.lower():
+                        emails[user_email] = None
+                else:
+                    logging.warning('Cannot find user %s', user)
+
+        teams = kwargs.get('team')
+        if type(teams) is list:
+            users_map = {}
+            for u in params.enterprise['users']:
+                users_map[u['enterprise_user_id']] = u['username']
+            users_in_team = {}
+            for tu in params.enterprise['team_users']:
+                team_uid = tu['team_uid']
+                if not team_uid in users_in_team:
+                    users_in_team[team_uid] = []
+                if tu['enterprise_user_id'] in users_map:
+                    users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
+
+            for team in teams:
+                team_uid = None
+                if team in params.enterprise['teams']:
+                    team_uid = team_uid
+                else:
+                    for t in params.enterprise['teams']:
+                        if t.lower() == t['name'].lower():
+                            team_uid = t['team_uid']
+                if team_uid:
+                    if team_uid in users_in_team:
+                        for user_email in users_in_team[team_uid]:
+                            if user_email.lower() != params.user.lower():
+                                emails[user_email] = None
+                else:
+                    logging.warning('Cannot find team %s', team)
+
+        if len(emails) == 0:
+            logging.warning('No users')
+            return
+
+        self.get_public_keys(params, emails)
+        commands = []
+        record_keys = {}
+        for email in emails:
+            if emails[email]:
+                record_keys[email] = {}
+                if template_records:
+                    for r in template_records:
+                        record = copy.deepcopy(r)
+                        self.substitute_record_params(params, email, record)
+                        record_uid = api.generate_record_uid()
+                        record_key = api.generate_aes_key()
+                        record_add_command = {
+                            'command': 'record_add',
+                            'record_uid': record_uid,
+                            'record_type': 'password',
+                            'record_key': api.encrypt_aes(record_key, params.data_key),
+                            'folder_type': 'user_folder',
+                            'how_long_ago': 0
+                        }
+
+                        data = {
+                            'title': record.get('title') or '',
+                            'secret1': record.get('login') or '',
+                            'secret2': record.get('password') or '',
+                            'link': record.get('login_url') or '',
+                            'notes': record.get('notes') or ''
+                        }
+                        if 'custom_fields' in record:
+                            data['custom'] = [{
+                                'name': x[0],
+                                'value': x[1]
+                            } for x in record['custom_fields'].items()]
+                        record_add_command['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
+                        commands.append(record_add_command)
+
+                        record_keys[email][record_uid] = api.encrypt_rsa(record_key, emails[email])
+            else:
+                logging.warning('User %s is not created yet', email)
+
+        transfers = []
+        for email in record_keys:
+            for record_uid, record_key in record_keys[email].items():
+                transfers.append({
+                    'to_username': email,
+                    'record_uid': record_uid,
+                    'record_key': record_key,
+                    'transfer': True
+                })
+
+        while transfers:
+            chunk = transfers[:90]
+            transfers = transfers[90:]
+            commands.append({
+                'command': 'record_share_update',
+                'pt': 'Commander',
+                'add_shares': chunk
+            })
+
+        api.execute_batch(params, commands)
+
+        params.sync_data = True

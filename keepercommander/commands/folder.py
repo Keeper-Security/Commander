@@ -239,7 +239,7 @@ class FolderTreeCommand(Command):
                 if len(pattern) == 0:
                     display.formatted_tree(params, folder)
                 else:
-                    logging.warning('cd: Folder %s not found', folder_name)
+                    logging.warning('Folder %s not found', folder_name)
 
 
 class FolderMakeCommand(Command):
