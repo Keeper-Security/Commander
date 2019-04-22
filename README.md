@@ -802,6 +802,64 @@ Then run Commander using the config parameter. For example:
 $ keeper --config=my_config_file.json
 ```
 
+
+**Export of Event Logs in JSON Format**
+
+Commander can export all event logs to a local file in JSON format. The local file is overwritten with every run of Commander. 
+This kind of export can be used with conjunction with other application that process the file. 
+A Keeper record in your vault is used to store a reference to the last event.
+
+```bash
+$ keeper shell
+```
+
+To export all events and start tracking the last event time exported:
+
+```
+My Vault> audit-log --target=json
+Do you want to create a Keeper record to store audit log settings? [y/n]: y
+Choose the title for audit log record [Default: Audit Log: JSON]:
+JSON file name: all_events.json
+Exported 3952 audit events
+My Vault>
+```
+
+This creates a record in your vault (titled "Audit Log: JSON" in this example) which tracks the timestamp of the last exported event and the output filename.
+Then the event data is exported to the file.
+
+Each subsequent audit log export can be performed with this command:
+
+```bash
+$ keeper audit-log --format=json --record=<your record UID>
+```
+or from the shell:
+
+```
+My Vault> audit-log --target=json --record=<your record UID>
+```
+
+To automate the JSON event export every 5 minutes, create a JSON configuration file such as this:
+
+```bash
+{
+    "server":"https://keepersecurity.com/api/v2/",
+    "user":"craig@company.com",
+    "password":"your_password_here",
+    "mfa_token":"filled_in_by_commander",
+    "mfa_type":"device_token",
+    "debug":false,
+    "plugins":[],
+    "commands":["sync-down","audit-log --target=json"],
+    "timedelay":600,
+}
+```
+
+Then run Commander using the config parameter. For example:
+
+```bash
+$ keeper --config=my_config_file.json
+```
+
 **Azure Log Analytics**
 
 Keeper can post event logs directly to your Azure Log Analytics workspace. Please follow the below steps:

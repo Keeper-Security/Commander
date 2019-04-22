@@ -132,7 +132,7 @@ enterprise_push_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -1366,6 +1366,49 @@ class AuditLogSumologicExport(AuditLogBaseExport):
         return 250
 
 
+class AuditLogJsonExport(AuditLogBaseExport):
+    def __init__(self):
+        AuditLogBaseExport.__init__(self)
+        
+    def default_record_title(self):
+        return 'Audit Log: JSON'
+
+    def get_properties(self, record, props):
+        filename = record.login
+        if not filename:
+            filename = input('JSON File name: ')
+            if not filename:
+                return
+            record.login = filename
+            self.store_record = True
+        props['filename'] = record.login
+
+        with open(filename, mode='w') as logf:
+            json.dump([], logf)
+
+    def convert_event(self, props, event):
+        dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
+        evt = event.copy()
+        evt.pop('id')
+        evt.pop('created')
+        evt['timestamp'] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        return evt
+
+    def export_events(self, props, events):
+        filename = props['filename']
+
+        with open(filename, mode='r') as logf:
+            try:
+                data = json.load(logf)
+                for record in events:
+                    data.append(record)
+            except ValueError:
+                data = events
+
+        with open(filename, mode='w') as logf:
+            json.dump(data, logf)
+
+
 class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
     def __init__(self):
         AuditLogBaseExport.__init__(self)
@@ -1445,7 +1488,7 @@ class AuditLogCommand(EnterpriseCommand):
 
         target = kwargs.get('target')
 
-        log_export = None # type: AuditLogBaseExport
+        log_export = None # type: Optional[AuditLogBaseExport]
         if target == 'splunk':
             log_export = AuditLogSplunkExport()
         elif target == 'syslog':
@@ -1454,6 +1497,8 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogSyslogPortExport()
         elif target == 'sumo':
             log_export = AuditLogSumologicExport()
+        elif target == 'json':
+            log_export = AuditLogJsonExport()
         elif target == 'azure-la':
             log_export = AuditLogAzureLogAnalyticsExport()
         else:
