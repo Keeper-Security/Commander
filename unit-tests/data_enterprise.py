@@ -151,6 +151,11 @@ def get_enterprise_data(params, rq):
                 'team_uid': _TEAM1_UID,
                 'enterprise_user_id': _USER1_ID,
                 'user_type': 1
+            },
+            {
+                'team_uid': _TEAM1_UID,
+                'enterprise_user_id': _USER2_ID,
+                'user_type': 1
             }
         ]
     return rs

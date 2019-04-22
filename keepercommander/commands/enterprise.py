@@ -9,8 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Optional
-
 import argparse
 import json
 import base64
@@ -28,7 +26,6 @@ import hashlib
 import hmac
 import copy
 import os
-import tempfile
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
@@ -40,7 +37,6 @@ from collections import OrderedDict as OD
 
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from .record import RecordAddCommand
-from ..subfolder import try_resolve_path, BaseFolderNode
 from .. import api
 from ..display import bcolors
 from ..record import Record
@@ -2028,12 +2024,14 @@ class EnterprisePushCommand(EnterpriseCommand):
             for u in params.enterprise['users']:
                 users_map[u['enterprise_user_id']] = u['username']
             users_in_team = {}
-            for tu in params.enterprise['team_users']:
-                team_uid = tu['team_uid']
-                if not team_uid in users_in_team:
-                    users_in_team[team_uid] = []
-                if tu['enterprise_user_id'] in users_map:
-                    users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
+
+            if 'team_users' in params.enterprise:
+                for tu in params.enterprise['team_users']:
+                    team_uid = tu['team_uid']
+                    if not team_uid in users_in_team:
+                        users_in_team[team_uid] = []
+                    if tu['enterprise_user_id'] in users_map:
+                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
 
             for team in teams:
                 team_uid = None
@@ -2041,7 +2039,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                     team_uid = team_uid
                 else:
                     for t in params.enterprise['teams']:
-                        if t.lower() == t['name'].lower():
+                        if team.lower() == t['name'].lower():
                             team_uid = t['team_uid']
                 if team_uid:
                     if team_uid in users_in_team:
