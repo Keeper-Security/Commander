@@ -244,11 +244,7 @@ class RegisterCommand(Command):
             'auth_verifier': api.create_auth_verifier(password, auth_salt, iterations),
             'encryption_params': api.create_encryption_params(password, enc_salt, iterations, data_key),
             'encrypted_private_key': api.encrypt_aes(private_key, data_key),
-            'public_key': base64.urlsafe_b64encode(public_key).rstrip(b'=').decode(),
-            'security_answer_iterations': 1000,
-            'security_answer_salt': base64.urlsafe_b64encode(backup_salt).rstrip(b'=').decode(),
-            'security_question': 'What is your favorite password manager application?',
-            'security_answer_hash': base64.urlsafe_b64encode(api.derive_key('keeper', backup_salt, 1000)).decode().rstrip('='),
+            'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
             'client_key': api.encrypt_aes(os.urandom(32), data_key)
         }
         if verification_code:
