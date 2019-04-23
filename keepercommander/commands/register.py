@@ -248,7 +248,7 @@ class RegisterCommand(Command):
             'security_answer_iterations': 1000,
             'security_answer_salt': base64.urlsafe_b64encode(backup_salt).rstrip(b'=').decode(),
             'security_question': 'What is your favorite password manager application?',
-            'security_answer_hash': api.auth_verifier_old('keeper', backup_salt, 1000),
+            'security_answer_hash': base64.urlsafe_b64encode(api.derive_key('keeper', backup_salt, 1000)).decode().rstrip('='),
             'client_key': api.encrypt_aes(os.urandom(32), data_key)
         }
         if verification_code:
@@ -257,6 +257,34 @@ class RegisterCommand(Command):
         rs = api.run_command(new_params, rq)
         if rs['result'] == 'success':
             logging.info("Created account: %s ", email)
+
+            if kwargs.get('question'):
+                if not kwargs.get('answer'):
+                    print('...' + 'Security Question: '.rjust(24) + kwargs['question'])
+                    kwargs['answer'] = input('...' + 'Security Answer: '.rjust(24))
+                if kwargs.get('answer'):
+                    try:
+                        param1 = KeeperParams()
+                        param1.server = new_params.server
+                        param1.user = email
+                        param1.password = password
+                        param1.rest_context.device_id = params.rest_context.device_id
+                        api.login(param1)
+                        answer = kwargs['answer'].lower().replace(' ', '')
+                        rq = {
+                            'command': 'set_data_key_backup',
+                            'version': 2,
+                            'data_key_backup': api.create_encryption_params(answer, backup_salt, iterations, data_key),
+                            'security_question': kwargs['question'],
+                            'security_answer_salt': base64.urlsafe_b64encode(backup_salt).decode().rstrip('='),
+                            'security_answer_iterations': iterations,
+                            'security_answer_hash': base64.urlsafe_b64encode(api.derive_key(answer, backup_salt, iterations)).decode().rstrip('=')
+                        }
+                        api.communicate(param1, rq)
+                        logging.info('Master password backup is created.')
+                    except Exception as e:
+                        logging.error('Failed to create master password backup. %s', e)
+
             if params.enterprise:
                 api.query_enterprise(params)
                 file_name = kwargs.get('records')
@@ -296,32 +324,6 @@ class RegisterCommand(Command):
                         api.communicate(params, rq)
                     except Exception as e:
                         logging.info('Error expiring master password: %s', e)
-
-            if kwargs.get('question'):
-                if not kwargs.get('answer'):
-                    print('...' + 'Security Question: '.rjust(24) + kwargs['question'])
-                    kwargs['answer'] = input('...' + 'Security Answer: '.rjust(24))
-                if kwargs.get('answer'):
-                    try:
-                        param1 = KeeperParams()
-                        param1.server = new_params.server
-                        param1.user = email
-                        param1.password = password
-                        param1.rest_context.device_id = params.rest_context.device_id
-                        api.login(param1)
-                        rq = {
-                            'command': 'set_data_key_backup',
-                            'version': 2,
-                            'data_key_backup': api.create_encryption_params(kwargs['answer'].lower(), backup_salt, iterations, data_key),
-                            'security_question': kwargs['question'],
-                            'security_answer_salt': base64.urlsafe_b64encode(backup_salt).rstrip(b'=').decode(),
-                            'security_answer_iterations': iterations,
-                            'security_answer_hash': api.auth_verifier_old(kwargs['answer'], backup_salt, iterations)
-                        }
-                        api.communicate(param1, rq)
-                        logging.info('Master password backup is created.')
-                    except Exception as e:
-                        logging.error('Failed to create master password backup. %s', e)
 
             store = kwargs['store'] if 'store' in kwargs else None
             if store:

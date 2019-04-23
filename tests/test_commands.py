@@ -1,5 +1,6 @@
 import tempfile
 import json
+import logging
 
 from unittest import TestCase, mock
 
@@ -198,27 +199,28 @@ class TestEnterpriseCommands(TestCase):
                 api.communicate(params, request)
 
         for user in params.enterprise['users']:
-            if user['status'] == 'invited':
+            if user['username'] in ['integration.enterprise@keepersecurity.com', 'integration.tests@keepersecurity.com']:
+                if user['lock'] != 0:
+                    request = {
+                        'command': 'enterprise_user_lock',
+                        'enterprise_user_id': user['enterprise_user_id'],
+                        'lock': 'unlocked'
+                    }
+                    api.communicate(params, request)
+            else:
                 request = {
                     'command': 'enterprise_user_delete',
                     'enterprise_user_id': user['enterprise_user_id']
                 }
                 api.communicate(params, request)
 
-            elif user['lock'] != 0:
+        if 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
                 request = {
-                    'command': 'enterprise_user_lock',
-                    'enterprise_user_id': user['enterprise_user_id'],
-                    'lock': 'unlocked'
+                    'command': 'team_delete',
+                    'team_uid': team['team_uid']
                 }
                 api.communicate(params, request)
-
-        for team in params.enterprise['teams']:
-            request = {
-                'command': 'team_delete',
-                'team_uid': team['team_uid']
-            }
-            api.communicate(params, request)
         api.query_enterprise(params)
 
     def test_vault_commands(self):
@@ -254,4 +256,32 @@ class TestEnterpriseCommands(TestCase):
             if role_id:
                 cli.do_command(params, 'enterprise-role --add-user="{0}" "{1}"'.format(new_user, role_id))
 
+    def test_add_enterprise_user(self):
+        params = TestEnterpriseCommands.params # type: KeeperParams
+        self.assertIsNotNone(params.enterprise)
 
+        template_body = '''
+[
+    {
+        "title": "Record For ${user_name}",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "https://keepersecurity.com",
+        "notes": "notes",
+        "custom_fields": {
+            "key1": "value1",
+            "key2": "value2"
+        }
+    },
+    {
+        "title": "Empty record"
+    }
+
+]'''
+
+        new_user = 'integration.new.user@keepersecurity.com'
+        with mock.patch('builtins.open', mock.mock_open(read_data=template_body)), mock.patch('os.path.abspath', return_value='template.json'), \
+             mock.patch('os.path.isfile', return_value=True):
+
+            with self.assertLogs(level=logging.WARNING):
+                cli.do_command(params, 'create-user --generate --name="New User" --expire --records="template.json" --question="This app name?" --answer="Commander" {0}'.format(new_user))

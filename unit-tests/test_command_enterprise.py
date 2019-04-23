@@ -275,6 +275,56 @@ class TestEnterprise(TestCase):
         arr.sort()
         self.assertListEqual(arr, [0,1,2,3,4,5,6,7])
 
+    def test_enterprise_push_command(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = enterprise.EnterprisePushCommand()
+
+        template_body = '''
+[
+    {
+        "title": "Record For ${user_name}",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "https://keepersecurity.com",
+        "notes": "notes",
+        "custom_fields": {
+            "key1": "value1",
+            "key2": "value2"
+        }
+    },
+    {
+        "title": "Empty record"
+    }
+
+]'''
+
+        with self.assertLogs(level=logging.WARNING):
+            cmd.execute(params, file='template.json')
+
+        with self.assertLogs(level=logging.WARNING):
+            cmd.execute(params, user=[ent_env.user2_email])
+
+        def get_public_keys(_params, emails):
+            for email in emails:
+                emails[email] = vault_env.public_key
+
+        with mock.patch('builtins.open', mock.mock_open(read_data=template_body)), \
+                mock.patch('os.path.abspath', return_value='template.json'), \
+                mock.patch('os.path.isfile', return_value=True), \
+                mock.patch('keepercommander.commands.enterprise.EnterpriseCommand.get_public_keys') as m_pk:
+
+            m_pk.side_effect = get_public_keys
+
+            TestEnterprise.expected_commands = ['execute']
+            cmd.execute(params, file='template.json', team=[ent_env.team1_name])
+            self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
+            TestEnterprise.expected_commands = ['execute']
+            cmd.execute(params, file='template.json', user=[ent_env.user2_email])
+            self.assertEqual(len(TestEnterprise.expected_commands), 0)
+
     @staticmethod
     def get_audit_event():
         return {

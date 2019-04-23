@@ -9,8 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Optional
-
 import argparse
 import json
 import base64
@@ -28,7 +26,6 @@ import hashlib
 import hmac
 import copy
 import os
-import tempfile
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
@@ -40,7 +37,6 @@ from collections import OrderedDict as OD
 
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from .record import RecordAddCommand
-from ..subfolder import try_resolve_path, BaseFolderNode
 from .. import api
 from ..display import bcolors
 from ..record import Record
@@ -136,7 +132,7 @@ enterprise_push_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
-audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la'], required=True, action='store', help='export target')
+audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
@@ -1370,6 +1366,49 @@ class AuditLogSumologicExport(AuditLogBaseExport):
         return 250
 
 
+class AuditLogJsonExport(AuditLogBaseExport):
+    def __init__(self):
+        AuditLogBaseExport.__init__(self)
+        
+    def default_record_title(self):
+        return 'Audit Log: JSON'
+
+    def get_properties(self, record, props):
+        filename = record.login
+        if not filename:
+            filename = input('JSON File name: ')
+            if not filename:
+                return
+            record.login = filename
+            self.store_record = True
+        props['filename'] = record.login
+
+        with open(filename, mode='w') as logf:
+            json.dump([], logf)
+
+    def convert_event(self, props, event):
+        dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
+        evt = event.copy()
+        evt.pop('id')
+        evt.pop('created')
+        evt['timestamp'] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        return evt
+
+    def export_events(self, props, events):
+        filename = props['filename']
+
+        with open(filename, mode='r') as logf:
+            try:
+                data = json.load(logf)
+                for record in events:
+                    data.append(record)
+            except ValueError:
+                data = events
+
+        with open(filename, mode='w') as logf:
+            json.dump(data, logf)
+
+
 class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
     def __init__(self):
         AuditLogBaseExport.__init__(self)
@@ -1449,7 +1488,7 @@ class AuditLogCommand(EnterpriseCommand):
 
         target = kwargs.get('target')
 
-        log_export = None # type: AuditLogBaseExport
+        log_export = None # type: Optional[AuditLogBaseExport]
         if target == 'splunk':
             log_export = AuditLogSplunkExport()
         elif target == 'syslog':
@@ -1458,6 +1497,8 @@ class AuditLogCommand(EnterpriseCommand):
             log_export = AuditLogSyslogPortExport()
         elif target == 'sumo':
             log_export = AuditLogSumologicExport()
+        elif target == 'json':
+            log_export = AuditLogJsonExport()
         elif target == 'azure-la':
             log_export = AuditLogAzureLogAnalyticsExport()
         else:
@@ -2028,12 +2069,14 @@ class EnterprisePushCommand(EnterpriseCommand):
             for u in params.enterprise['users']:
                 users_map[u['enterprise_user_id']] = u['username']
             users_in_team = {}
-            for tu in params.enterprise['team_users']:
-                team_uid = tu['team_uid']
-                if not team_uid in users_in_team:
-                    users_in_team[team_uid] = []
-                if tu['enterprise_user_id'] in users_map:
-                    users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
+
+            if 'team_users' in params.enterprise:
+                for tu in params.enterprise['team_users']:
+                    team_uid = tu['team_uid']
+                    if not team_uid in users_in_team:
+                        users_in_team[team_uid] = []
+                    if tu['enterprise_user_id'] in users_map:
+                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
 
             for team in teams:
                 team_uid = None
@@ -2041,7 +2084,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                     team_uid = team_uid
                 else:
                     for t in params.enterprise['teams']:
-                        if t.lower() == t['name'].lower():
+                        if team.lower() == t['name'].lower():
                             team_uid = t['team_uid']
                 if team_uid:
                     if team_uid in users_in_team:
