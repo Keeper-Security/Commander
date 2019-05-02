@@ -12,6 +12,7 @@
 import argparse
 import json
 import base64
+
 import requests
 import logging
 import platform
@@ -1993,38 +1994,64 @@ parameter_pattern = re.compile(r'\${(\w+)}')
 
 class EnterprisePushCommand(EnterpriseCommand):
 
-    def substitute_record_params(self, params, email, record_data):
-        # type: (EnterprisePushCommand, KeeperParams, str, dict) -> None
+    @staticmethod
+    def substitute_field_params(field, values):
+        # type: (str, dict) -> str
         global parameter_pattern
+        value = field
+        while True:
+            m = parameter_pattern.search(value)
+            if not m:
+                break
+            p = m.group(1)
+            pv = values.get(p) or p
+            value = value[:m.start()] + pv + value[m.end():]
+        return value
 
-        user_password = None
-        user_name = None
-        for key in ['title', 'login', 'password']:
-            if key in record_data:
-                value = record_data[key]
-                while True:
-                    m = parameter_pattern.search(value)
-                    if not m:
-                        break
-                    pv = ''
-                    p = m.group(1)
-                    if p == 'user_email':
-                        pv = email
-                    elif p == 'generate_password':
-                        if user_password is None:
-                            user_password = generate(length=32)
-                        pv = user_password or ''
-                    elif p == 'user_name':
-                        if user_name is None:
-                            user_name = ''
-                            for u in params.enterprise['users']:
-                                if u['username'].lower() == email.lower():
-                                    user_name = u['data'].get('displayname') or ''
-                                    break
-                        pv = user_name or ''
+    @staticmethod
+    def enumerate_and_substitute_list_values(container, values):
+        # type: (list, dict) -> list
+        result = []
+        for p in container:
+            if type(p) == str:
+                value = EnterprisePushCommand.substitute_field_params(p, values)
+                result.append(value)
+            elif type(p) == dict:
+                EnterprisePushCommand.enumerate_and_substitute_dict_fields(p, values)
+                result.append(p)
+            elif type(p) == list:
+                result.append(EnterprisePushCommand.enumerate_and_substitute_list_values(p, values))
+            else:
+                result.append(p)
+        return result
 
-                    value = value[:m.start()] + pv + value[m.end():]
-                record_data[key] = value
+    @staticmethod
+    def enumerate_and_substitute_dict_fields(container, values):
+        # type: (dict, dict) -> None
+        for p in container.items():
+            if type(p[1]) == str:
+                value = EnterprisePushCommand.substitute_field_params(p[1], values)
+                if p[1] != value:
+                    container[p[0]] = value
+            elif type(p[1]) == dict:
+                EnterprisePushCommand.enumerate_and_substitute_dict_fields(p[1], values)
+            elif type(p[1]) == list:
+                container[p[0]] = EnterprisePushCommand.enumerate_and_substitute_list_values(p[1], values)
+
+    @staticmethod
+    def substitute_record_params(params, email, record_data):
+        # type: (KeeperParams, str, dict) -> None
+
+        values = {
+            'user_email': email,
+            'generate_password': generate(length=32)
+        }
+        for u in params.enterprise['users']:
+            if u['username'].lower() == email.lower():
+                values['user_name'] = u['data'].get('displayname') or ''
+                break
+
+        EnterprisePushCommand.enumerate_and_substitute_dict_fields(record_data, values)
 
     def get_parser(self):
         return enterprise_push_parser
@@ -2107,7 +2134,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                 if template_records:
                     for r in template_records:
                         record = copy.deepcopy(r)
-                        self.substitute_record_params(params, email, record)
+                        EnterprisePushCommand.substitute_record_params(params, email, record)
                         record_uid = api.generate_record_uid()
                         record_key = api.generate_aes_key()
                         record_add_command = {
