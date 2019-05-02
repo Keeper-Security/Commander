@@ -1,4 +1,6 @@
 import logging
+import json
+
 from datetime import datetime, timedelta
 
 from unittest import TestCase, mock
@@ -291,7 +293,7 @@ class TestEnterprise(TestCase):
         "notes": "notes",
         "custom_fields": {
             "key1": "value1",
-            "key2": "value2"
+            "key2": "${user_email}"
         }
     },
     {
@@ -299,6 +301,18 @@ class TestEnterprise(TestCase):
     }
 
 ]'''
+        templates = json.loads(template_body)
+        values = {
+            'user_name': api.generate_record_uid(),
+            'generate_password': api.generate_record_uid(),
+            'user_email': api.generate_record_uid()
+        }
+        cmd.enumerate_and_substitute_dict_fields(templates[0], values)
+        cmd.enumerate_and_substitute_dict_fields(templates[1], values)
+        self.assertEqual(templates[0]['title'], 'Record For {0}'.format(values['user_name']))
+        self.assertEqual(templates[0]['password'], values['generate_password'])
+        self.assertEqual(templates[0]['custom_fields']['key2'], values['user_email'])
+        self.assertEqual(templates[1]['title'], 'Empty record')
 
         with self.assertLogs(level=logging.WARNING):
             cmd.execute(params, file='template.json')
