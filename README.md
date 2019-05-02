@@ -1042,13 +1042,13 @@ The "push.json" file is structured an an array of password objects.  For example
         }
     }
 ]
+```
 
 Supported template parameters:
 
-${user_email}            User email address
-${generate_password}     Generate random password
-${user_name}             User full name
-```
+${user_email} - User email address
+${generate_password} - Generate random password
+${user_name} - User full name
 
 ### Creating and Pre-Populating Vaults
 
@@ -1096,13 +1096,13 @@ The "push.json" file is structured an an array of password objects.  For example
         }
     }
 ]
+```
 
 Supported template parameters:
 
-${user_email}            User email address
-${generate_password}     Generate random password
-${user_name}             User full name
-```
+${user_email} - User email address
+${generate_password} - Generate random password
+${user_name} - User full name
 
 
 ### Targeted Password Rotations & Plugins 
