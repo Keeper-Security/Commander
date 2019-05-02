@@ -274,7 +274,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
-* ```enterprise-push <Record Template File Name>```   Populate users' vaults with default records
+* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records
 
     Parameters:
     - ```--syntax-help``` Displays information of record template file format
@@ -1000,6 +1000,67 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 5. Visit the Settings > General screen and setup a Master Password
 
 After the Master Password is created, you are now able to login to Keeper Commander.
+
+### Pushing Records to Users and Teams
+
+The Keeper Admin can push vault records automatically to any user or team vault in their organization using the "enterprise-push" command.
+
+Examples:
+
+```
+enterprise-push --team "Engineering Admins" push.json
+```
+
+```
+enterprise-push --user user@company.com push.json
+```
+
+The "push.json" file is structured an an array of password objects.  For example:
+
+```
+[
+    {
+        "title": "Google",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "https://google.com",
+        "notes": "",
+        "custom_fields": {
+            "Name 1": "Value 1"
+            "Name 2": "Value 2"
+        }
+    },
+    {
+        "title": "Admin Tool",
+        "login": "${user_email}",
+        "password": "",
+        "login_url": "https://192.168.1.1",
+        "notes": "",
+        "custom_fields": {
+        }
+    }
+]
+```
+
+### Creating and Pre-Populating Vaults
+
+A Keeper Admin can create a user vault and pre-populate it with records. This can all be accomplished with a single command.
+
+For example:
+
+```
+create-user --generate --name="Test User" --expire --records="template.json" user@company.com
+
+Created account: user@company.com
+Generated password: <displayed on the screen>
+```
+
+This command performs the following streamlined operations:
+1. Creates a new user account for "Test User" with the email address user@company.com
+2. The account is automatically provisioned to the Enterprise license and receives the default role policy
+3. The records stored in template.json are pushed to the user's vault
+
+After command completion, the "Generated Password" displayed to the admin is the temporary Master Password set for the user account. You can provide this Master Password to the user via a separate channel. Upon first logging in, the user will be prompted to set a new Master Password according to the password complexity requirements set by the role enforcement policy in the Keeper Admin Console.  If Two-Factor Authentication is required, the user will also be prompted to enable this security feature.
 
 ### Targeted Password Rotations & Plugins 
 
