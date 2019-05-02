@@ -16,6 +16,8 @@ Jump to:
 * [Advanced Configuration](#advanced-configuration-file)
 * [Batch Mode](#batch-mode)
 * [Enterprise SSO Login](#enterprise-sso-login)
+* [Pushing Records to Users and Teams](#pushing-records-to-users-and-teams)
+* [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
@@ -187,7 +189,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```list-sf``` or ```lsf``` Display all shared folders
 
 * ```create-user``` Create Keeper vault account.
-Note: If executed by an admin, the user will be provisioned to the Enterprise license.
+Note: If executed by an admin, the user will be provisioned to the Enterprise license. - [See Details](#creating-and-pre-populating-vaults)
 
 * ```list-team``` or ```lt``` Display all teams
 
@@ -274,7 +276,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
-* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records
+* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
 
     Parameters:
     - ```--syntax-help``` Displays information of record template file format
@@ -1040,6 +1042,12 @@ The "push.json" file is structured an an array of password objects.  For example
         }
     }
 ]
+
+Supported template parameters:
+
+${user_email}            User email address
+${generate_password}     Generate random password
+${user_name}             User full name
 ```
 
 ### Creating and Pre-Populating Vaults
@@ -1049,7 +1057,7 @@ A Keeper Admin can create a user vault and pre-populate it with records. This ca
 For example:
 
 ```
-create-user --generate --name="Test User" --expire --records="template.json" user@company.com
+create-user --generate --name="Test User" --expire --records="push.json" user@company.com
 
 Created account: user@company.com
 Generated password: <displayed on the screen>
@@ -1058,9 +1066,44 @@ Generated password: <displayed on the screen>
 This command performs the following streamlined operations:
 1. Creates a new user account for "Test User" with the email address user@company.com
 2. The account is automatically provisioned to the Enterprise license and receives the default role policy
-3. The records stored in template.json are pushed to the user's vault
+3. The records stored in push.json are pushed to the user's vault
 
-After command completion, the "Generated Password" displayed to the admin is the temporary Master Password set for the user account. You can provide this Master Password to the user via a separate channel. Upon first logging in, the user will be prompted to set a new Master Password according to the password complexity requirements set by the role enforcement policy in the Keeper Admin Console.  If Two-Factor Authentication is required, the user will also be prompted to enable this security feature.
+After command completion, the "Generated Password" displayed to the admin is the temporary Master Password set for the user account. You can provide this Master Password to the user via a separate channel. 
+
+Upon first logging in, the user will be prompted to set a new Master Password according to the password complexity requirements set by the role enforcement policy in the Keeper Admin Console.  If Two-Factor Authentication is required, the user will also be prompted to activate 2FA prior to accessing vault data.
+
+The "push.json" file is structured an an array of password objects.  For example:
+
+```
+[
+    {
+        "title": "Google For ${user_name}",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "https://google.com",
+        "notes": "",
+        "custom_fields": {
+            "2FA Phone": "916-555-1212"
+        }
+    },
+    {
+        "title": "Development Server",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "",
+        "notes": "Here are some\nMulti-line\nNotes",
+        "custom_fields": {
+        }
+    }
+]
+
+Supported template parameters:
+
+${user_email}            User email address
+${generate_password}     Generate random password
+${user_name}             User full name
+```
+
 
 ### Targeted Password Rotations & Plugins 
 
@@ -1139,7 +1182,7 @@ Keeper's Features &amp; Benefits
 * Instant syncing between devices
 * AES-256 encryption
 * Zero-Knowledge security architecture
-* TRUSTe and SOC-2 Certified
+* SOC-2 and ISO 27001 Certified
 * GDPR Compliant 
 
 ### Keeper Website
@@ -1182,7 +1225,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [KeeperFill for Firefox](https://addons.mozilla.org/en-US/firefox/addon/keeper-password-manager-digita/)
 
-[KeeperFill for Safari](https://safari-extensions.apple.com/details/?id=com.keepersecurity.safari.KeeperExtension-234QNB7GCA)
+[KeeperFill for Safari](https://keepersecurity.com/download.html)
 
 [KeeperFill for Edge](https://www.microsoft.com/en-us/store/p/keeper-password-manager-digital-vault/9n0mnnslfz1t)
 
