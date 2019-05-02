@@ -195,6 +195,7 @@ class KeepassImporter(BaseImporter):
     def extension(self):
         return 'kdbx'
 
+
 class KeepassExporter(BaseExporter):
 
     def do_export(self, filename, records):

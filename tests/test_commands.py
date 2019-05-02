@@ -1,6 +1,8 @@
 import tempfile
 import json
 import logging
+import os
+import warnings
 
 from unittest import TestCase, mock
 
@@ -70,7 +72,10 @@ class TestConnectedCommands(TestCase):
         params.revision = 0
         api.sync_down(params)
 
-    def test_vault_commands(self):
+    def setUp(self):
+        warnings.simplefilter('ignore', category=ImportWarning)
+
+    def test_commands(self):
         params = TestConnectedCommands.params # type: KeeperParams
         with mock.patch('builtins.input', side_effect = KeyboardInterrupt()), mock.patch('builtins.print'):
             cli.do_command(params, 'add  --login="user@keepersecurity.com" --pass=password --url="https://keepersecurity.com/" --custom="{\\"cmdr:plugin\\":\\"noop\\"}" "Record 1"')
@@ -123,6 +128,29 @@ class TestConnectedCommands(TestCase):
                 m_open.assert_called()
                 m_open.return_value.write.assert_called()
 
+            script_path = os.path.dirname(__file__)
+            cwd = os.getcwd()
+            if script_path.startswith(cwd):
+                script_path = script_path[len(cwd):]
+                if script_path.startswith(os.sep):
+                    script_path = script_path[1:]
+            file = 'keepass.kdbx'
+            if script_path:
+                file = os.path.join(script_path, file)
+            if os.path.isfile(file):
+                os.remove(file)
+
+            with mock.patch('getpass.getpass', return_value='password'):
+                cli.do_command(params, 'export --format=keepass "{0}"'.format(file))
+
+            TestConnectedCommands.wipe_out_data()
+            cli.do_command(params, 'sync-down')
+
+            with mock.patch('getpass.getpass', return_value='password'):
+                cli.do_command(params, 'import --format=keepass "{0}"'.format(file))
+            cli.do_command(params, 'sync-down')
+
+            record_uid = next(iter(params.record_cache.keys()))
             rec = api.get_record(params, record_uid)
             self.assertEqual(len(rec.attachments), 1)
             cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(rec.attachments[0]['id'], record_uid))
@@ -223,7 +251,7 @@ class TestEnterpriseCommands(TestCase):
                 api.communicate(params, request)
         api.query_enterprise(params)
 
-    def test_vault_commands(self):
+    def test_commands(self):
         params = TestEnterpriseCommands.params # type: KeeperParams
         self.assertIsNotNone(params.enterprise)
         test_user = params.config['user']

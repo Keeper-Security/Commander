@@ -377,7 +377,6 @@ def upload_attachment(params, attachments):
                         'record_uid': record_id,
                         'version': 2,
                         'client_modified_time': api.current_milli_time(),
-                        'data': api.encrypt_aes(rec['data'], rec['record_key_unencrypted']),
                         'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), rec['record_key_unencrypted']),
                         'udata': udata,
                         'revision': rec['revision']
