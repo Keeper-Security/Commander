@@ -13,7 +13,6 @@ import json
 import base64
 import re
 import getpass
-import datetime
 import time
 import os
 import hashlib
@@ -26,6 +25,7 @@ from .shared_folder import SharedFolder
 from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .params import KeeperParams
+from .display import bcolors
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -35,6 +35,7 @@ from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 
 current_milli_time = lambda: int(round(time.time() * 1000))
+
 
 # PKCS7 padding helpers
 BS = 16
@@ -61,8 +62,16 @@ def auth_verifier(password, salt, iterations):
     return au_ver.decode().rstrip('=')
 
 
+warned_on_fido_package = False
+install_fido_package_warning = 'You can use Security Key with Commander:\n' +\
+                               'Install fido2 package ' + bcolors.OKGREEN +\
+                               '\'pip install fido2\'' + bcolors.ENDC
+
 def login(params):
     # type: (KeeperParams) -> None
+    global should_cancel_u2f
+    global u2f_response
+    global warned_on_fido_package
 
     success = False
     store_config = False
@@ -108,10 +117,11 @@ def login(params):
         response_json = run_command(params, rq)
 
         if 'device_token' in response_json:
-            store_config = True
             logging.debug('params.mfa_token=%s', params.mfa_token)
             params.mfa_token = response_json['device_token']
-            params.config['mfa_token'] = params.mfa_token
+            if response_json.get('dt_scope') == 'expiration':
+                store_config = True
+                params.config['mfa_token'] = params.mfa_token
 
         if 'keys' in response_json:
             keys = response_json['keys']
@@ -162,8 +172,31 @@ def login(params):
                 params.mfa_token = ''
                 params.mfa_type = 'one_time'
 
+                if 'u2f_challenge' in response_json:
+                    try:
+                        from .yubikey import u2f_authenticate
+                        challenge = json.loads(response_json['u2f_challenge'])
+                        u2f_request = challenge['authenticateRequests']
+                        u2f_response = u2f_authenticate(u2f_request)
+                        if u2f_response:
+                            signature = json.dumps(u2f_response)
+                            params.mfa_token = signature
+                            params.mfa_type = 'u2f'
+                    except ImportError as e:
+                        logging.error(e)
+                        if not warned_on_fido_package:
+                            logging.warning(install_fido_package_warning)
+                            warned_on_fido_package = True
+                    except Exception as e:
+                        logging.error(e)
+
                 while not params.mfa_token:
-                    params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
+                    try:
+                        params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
+                    except KeyboardInterrupt as e:
+                        print('')
+                        params.password = None
+                        return
 
             except (EOFError, KeyboardInterrupt, SystemExit):
                 return

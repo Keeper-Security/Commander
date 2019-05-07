@@ -201,7 +201,8 @@ def loop(params):
                 logging.info('Logging in...')
                 try:
                     login(params)
-                    do_command(params, 'sync-down')
+                    if params.session_token:
+                        do_command(params, 'sync-down')
                 except AuthenticationError as e:
                     logging.error(e)
 

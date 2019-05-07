@@ -211,6 +211,7 @@ class TestLogin(TestCase):
                 }
                 if TestLogin.has2fa and device_token:
                     rs['device_token'] = device_token
+                    rs['dt_scope'] = 'expiration'
 
                 if 'include' in request:
                     include = request['include']
