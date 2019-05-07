@@ -168,7 +168,9 @@ class FolderListCommand(Command):
                 if len(folders) > 0:
                     display.formatted_folders(folders)
                 if len(records) > 0:
-                    display.formatted_records(records, params=params, folder=folder.uid)
+                    if len(records) < 5:
+                        api.get_record_shares(params, [x.record_uid for x in records])
+                    display.formatted_records(records, folder=folder.uid)
             else:
                 names = []
                 for f in folders:

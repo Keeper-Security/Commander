@@ -14,7 +14,6 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
-from . import api
 
 
 init()
@@ -87,8 +86,6 @@ def formatted_records(records, **kwargs):
     skip_details = kwargs.get('skip_details') or False
     # Under 5 recs, just display on the screen
     if len(records) < 5 and not skip_details:
-        if params is not None:
-            api.get_record_shares(params, [x.record_uid for x in records])
         for r in records:
             r.display(**kwargs)
 
