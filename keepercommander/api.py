@@ -17,6 +17,7 @@ import time
 import os
 import hashlib
 import logging
+import urllib.parse
 
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -147,6 +148,12 @@ def login(params):
             if params.config.get('device_id') != device_id:
                 store_config = True
                 params.config['device_id'] = device_id
+                url1 = urllib.parse.urlsplit(params.config['server'])
+                url2 = urllib.parse.urlsplit(params.rest_context.server_base)
+                if url1.netloc != url2.netloc:
+                    parts = list(url1)
+                    parts[1] = url2.netloc
+                    params.config['server'] = urllib.parse.urlunsplit(parts)
 
             params.license = response_json.get('license')
             params.enforcements = response_json.get('enforcements')
