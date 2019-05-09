@@ -19,7 +19,7 @@ import hmac
 import logging
 
 from .params import RestApiContext
-from .error import KeeperApiError
+from .error import KeeperApiError, CommunicationError
 from . import APIRequest_pb2 as proto
 
 from Cryptodome.PublicKey import RSA
@@ -178,34 +178,40 @@ def get_device_token(context):
     return context.device_id
 
 
-def pre_login(context, username, two_factor_token=None, retry=False):
+def pre_login(context, username, two_factor_token=None):
     # type: (RestApiContext, str, Optional[bytes], bool) -> proto.PreLoginResponse
-    rq = proto.PreLoginRequest()
-    rq.authRequest.clientVersion = CLIENT_VERSION
-    rq.authRequest.username = username
-    rq.authRequest.encryptedDeviceToken = get_device_token(context)
-    rq.loginType = proto.LoginType.Value('NORMAL')
-    if two_factor_token:
-        rq.twoFactorToken = two_factor_token
 
-    rs = execute_rest(context, 'authentication/pre_login', rq.SerializeToString())
-    if type(rs) == bytes:
-        pre_login_rs = proto.PreLoginResponse()
-        pre_login_rs.ParseFromString(rs)
-        return pre_login_rs
+    attempt = 0
+    while attempt < 3:
+        attempt += 1
+        rq = proto.PreLoginRequest()
+        rq.authRequest.clientVersion = CLIENT_VERSION
+        rq.authRequest.username = username
+        rq.authRequest.encryptedDeviceToken = get_device_token(context)
+        rq.loginType = proto.LoginType.Value('NORMAL')
+        if two_factor_token:
+            rq.twoFactorToken = two_factor_token
 
-    if type(rs) == dict:
-        if 'error' in rs and 'message' in rs:
-            if rs['error'] == 'region_redirect' and not retry:
-                context.device_id = None
-                context.server_base = 'https://{0}/'.format(rs['region_host'])
-                logging.warning('Switching to region: %s', context.server_base)
-                return pre_login(context, username, two_factor_token, retry=True)
-            if rs['error'] == 'bad_request' and not retry:
-                context.device_id = None
-                return pre_login(context, username, two_factor_token, retry=True)
+        rs = execute_rest(context, 'authentication/pre_login', rq.SerializeToString())
+        if type(rs) == bytes:
+            pre_login_rs = proto.PreLoginResponse()
+            pre_login_rs.ParseFromString(rs)
+            return pre_login_rs
 
-            raise KeeperApiError(rs['error'], rs['message'])
+        if type(rs) == dict:
+            if 'error' in rs and 'message' in rs:
+                if rs['error'] == 'region_redirect':
+                    context.device_id = None
+                    context.server_base = 'https://{0}/'.format(rs['region_host'])
+                    logging.warning('Switching to region: %s.', context.server_base)
+                    continue
+                if rs['error'] == 'bad_request':
+                    logging.warning('Invalid device id')
+                    context.device_id = None
+                    continue
+
+                raise KeeperApiError(rs['error'], rs['message'])
+    raise CommunicationError('Cannot get user information')
 
 
 def get_new_user_params(context, username):
