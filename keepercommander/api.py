@@ -148,12 +148,10 @@ def login(params):
             if params.config.get('device_id') != device_id:
                 store_config = True
                 params.config['device_id'] = device_id
-                url1 = urllib.parse.urlsplit(params.config['server'])
+                url1 = urllib.parse.urlsplit(params.server)
                 url2 = urllib.parse.urlsplit(params.rest_context.server_base)
                 if url1.netloc != url2.netloc:
-                    parts = list(url1)
-                    parts[1] = url2.netloc
-                    params.config['server'] = urllib.parse.urlunsplit(parts)
+                    params.config['server'] = params.rest_context.server_base
 
             params.license = response_json.get('license')
             params.enforcements = response_json.get('enforcements')
