@@ -56,6 +56,7 @@ setup(name='keepercommander',
                 'keepercommander.plugins.pspasswd',
                 'keepercommander.yubikey',
                 ],
+      include_package_data=True,
       python_requires='>=3.4',
       entry_points={
           "console_scripts": [
