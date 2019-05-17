@@ -175,74 +175,72 @@ def loop(params):
     # type: (KeeperParams) -> None
 
     global prompt_session
-    try:
-        logging.debug('Params: %s', params)
+    logging.debug('Params: %s', params)
 
-        enforcement_checked = set()
-        prompt_session = None
-        if not params.batch_mode:
-            if os.isatty(0) and os.isatty(1):
-                completer = CommandCompleter(params, commands)
-                prompt_session = PromptSession(multiline=False,
-                                               editing_mode=EditingMode.VI,
-                                               completer=completer,
-                                               complete_style=CompleteStyle.MULTI_COLUMN,
-                                               complete_while_typing=False)
+    enforcement_checked = set()
+    prompt_session = None
+    if not params.batch_mode:
+        if os.isatty(0) and os.isatty(1):
+            completer = CommandCompleter(params, commands)
+            prompt_session = PromptSession(multiline=False,
+                                           editing_mode=EditingMode.VI,
+                                           completer=completer,
+                                           complete_style=CompleteStyle.MULTI_COLUMN,
+                                           complete_while_typing=False)
 
-        if len(params.commands) == 0:
-            params.batch_mode = False
-            display.welcome()
+    if len(params.commands) == 0:
+        params.batch_mode = False
+        display.welcome()
 
-        if params.user:
-            if not params.password:
-                print('Enter password for {0}'.format(params.user))
-                params.password = getpass.getpass(prompt='Password: ', stream=None)
-            if params.password:
-                logging.info('Logging in...')
-                try:
-                    login(params)
-                    if params.session_token:
-                        do_command(params, 'sync-down')
-                except AuthenticationError as e:
-                    logging.error(e)
-
-        while True:
-            command = ''
-            if len(params.commands) > 0:
-                command = params.commands[0].strip()
-                params.commands = params.commands[1:]
-
-            if not command:
-                params.batch_mode = False
-                try:
-                    if prompt_session is not None:
-                        if params.enforcements and params.user not in enforcement_checked:
-                            enforcement_checked.add(params.user)
-                            do_command(params, 'check-enforcements')
-
-                        command = prompt_session.prompt(get_prompt(params)+ '> ')
-                    else:
-                        command = input(get_prompt(params) + '> ')
-                except KeyboardInterrupt:
-                    print('')
-                except EOFError:
-                    raise KeyboardInterrupt
-
+    if params.user:
+        if not params.password:
+            print('Enter password for {0}'.format(params.user))
+            params.password = getpass.getpass(prompt='Password: ', stream=None)
+        if params.password:
+            logging.info('Logging in...')
             try:
-                if not do_command(params, command):
-                    raise KeyboardInterrupt
-            except CommunicationError as e:
-                logging.error("Communication Error: %s", e.message)
+                login(params)
+                if params.session_token:
+                    do_command(params, 'sync-down')
             except AuthenticationError as e:
-                logging.error("AuthenticationError Error: %s", e.message)
-            except KeyboardInterrupt:
-                raise
-            except:
-                logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
-                raise
+                logging.error(e)
 
-    except KeyboardInterrupt:
-        goodbye()
+    while True:
+        command = ''
+        if len(params.commands) > 0:
+            command = params.commands[0].strip()
+            params.commands = params.commands[1:]
+
+        if not command:
+            params.batch_mode = False
+            try:
+                if prompt_session is not None:
+                    if params.enforcements and params.user not in enforcement_checked:
+                        enforcement_checked.add(params.user)
+                        do_command(params, 'check-enforcements')
+
+                    command = prompt_session.prompt(get_prompt(params)+ '> ')
+                else:
+                    command = input(get_prompt(params) + '> ')
+            except KeyboardInterrupt:
+                pass
+            except EOFError:
+                break
+
+        try:
+            if not do_command(params, command):
+                break
+        except CommunicationError as e:
+            logging.error("Communication Error: %s", e.message)
+        except AuthenticationError as e:
+            logging.error("AuthenticationError Error: %s", e.message)
+        except KeyboardInterrupt:
+            print('')
+        except:
+            logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
+            raise
+
+    logging.info('\nGoodbye.\n')
 
 
 def get_prompt(params):

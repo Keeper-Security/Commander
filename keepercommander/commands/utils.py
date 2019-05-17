@@ -11,13 +11,10 @@
 
 import argparse
 import logging
-import base64
 import datetime
 
 import getpass
 from urllib.parse import urlsplit
-
-from Cryptodome.PublicKey import RSA
 
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
@@ -25,7 +22,7 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 
 def register_commands(commands):
     commands['sync-down'] = SyncDownCommand()
-    commands['delete_all'] = RecordDeleteAllCommand()
+    commands['delete-all'] = RecordDeleteAllCommand()
     commands['whoami'] = WhoamiCommand()
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
@@ -34,6 +31,7 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
+    aliases['delete_all'] = 'delete-all'
     for p in [whoami_parser, login_parser, logout_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
