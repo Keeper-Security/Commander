@@ -147,10 +147,18 @@ def export(params, file_format, filename):
                 rec.folders.append(folder)
         if exporter.has_attachments() and r.attachments:
             rec.attachments = []
+            names = set()
             for a in r.attachments:
+                orig_name = a.get('title') or a.get('name') or 'attachment'
+                name = orig_name
+                counter = 0
+                while name in names:
+                    counter += 1
+                    name = "{0}-{1}".format(orig_name, counter)
+                names.add(name)
                 atta = KeeperAttachment(params, rec.uid)
                 atta.file_id = a['id']
-                atta.name = a['name']
+                atta.name = name
                 atta.size = a['size']
                 atta.key = base64.urlsafe_b64decode(a['key'] + '==')
                 atta.mime = a.get('type') or ''
