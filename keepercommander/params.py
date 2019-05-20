@@ -77,6 +77,7 @@ class KeeperParams:
         self.team_cache = {}
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}
+        self.non_shared_data_cache = {}
         self.root_folder = None
         self.current_folder = None
         self.folder_cache = {}
@@ -111,6 +112,7 @@ class KeeperParams:
         self.team_cache.clear()
         self.subfolder_cache .clear()
         self.subfolder_record_cache.clear()
+        self.non_shared_data_cache.clear()
         if self.folder_cache:
             self.folder_cache.clear()
 
