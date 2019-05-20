@@ -521,7 +521,8 @@ def sync_down(params):
         for non_shared_data in response_json['non_shared_data']:
             try:
                 decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
-                params.non_shared_data_cache[non_shared_data['record_uid']] = json.loads(decrypted_data.decode('utf-8'))
+                non_shared_data['data_unencrypted'] = decrypted_data
+                params.non_shared_data_cache[non_shared_data['record_uid']] = non_shared_data
             except:
                 logging.debug('Non-shared data for record %s could not be decrypted', non_shared_data['record_uid'])
 
@@ -1314,6 +1315,28 @@ def delete_record(params, record_uid):
     sync_down(params)
     return True
 
+
+def store_non_shared_data(params, record_uid, data):
+    # type: (KeeperParams, str, dict) -> None
+    if record_uid not in params.record_cache:
+        logging.error('Record UID %s does not exist.', record_uid)
+        return
+
+    ur = resolve_record_write_path(params, record_uid)
+    ur['non_shared_data'] = encrypt_aes(json.dumps(data).encode('utf-8'), params.data_key)
+    ur['client_modified_time'] = current_milli_time()
+    ur['version'] = 2
+    if record_uid in params.non_shared_data_cache:
+        ur['revision'] = params.non_shared_data_cache[record_uid]['revision']
+    else:
+        ur['revision'] = 0
+
+    request = {
+        'command': 'record_update',
+        'update_records': [ur]
+    }
+    _ = communicate(params, request)
+    sync_down(params)
 
 def generate_record_uid():
     """ Generate url safe base 64 16 byte uid """

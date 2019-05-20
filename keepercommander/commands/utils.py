@@ -9,15 +9,26 @@
 # Contact: ops@keepersecurity.com
 #
 
+import re
+import os
+import base64
 import argparse
 import logging
 import datetime
-
 import getpass
-from urllib.parse import urlsplit
+import requests
+import tempfile
+import json
 
+from urllib.parse import urlsplit
+from tabulate import tabulate
+from Cryptodome.Cipher import AES
+
+from ..params import KeeperParams
+from ..record import Record
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
+from ..subfolder import try_resolve_path
 
 
 def register_commands(commands):
@@ -27,6 +38,7 @@ def register_commands(commands):
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
+    commands['connect'] = ConnectCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -58,6 +70,15 @@ logout_parser.exit = suppress_exit
 check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements', description='Check enterprise enforcements')
 check_enforcements_parser.error = raise_parse_exception
 check_enforcements_parser.exit = suppress_exit
+
+
+connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
+connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on command format and template parameters')
+connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')
+connect_parser.add_argument('-r', '--record', dest='record',  type=str, help='record UID or name')
+connect_parser.add_argument('endpoint', nargs='?', action='store', type=str, help='endpoint')
+connect_parser.error = raise_parse_exception
+connect_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -258,3 +279,246 @@ class LogoutCommand(Command):
 
     def execute(self, params, **kwargs):
         params.clear_session()
+
+
+connect_command_description = '''
+Command Command Syntax Description:
+
+Connect command reads the record''s custom fields with names starting with "connect:"
+
+  endpoint:<name>                command 
+  endpoint:<name>:description    command description
+
+Connection command may contain template parameters.
+Parameter syntax is ${<parameter_name>}
+
+Supported parameters:
+
+    ${user_email}                   Keeper user email address
+    ${login}                        Record login
+    ${password}                     Record password
+    ${text:<name>}                  non secured user variable. Stored to non-shared data
+    ${mask:<name>}                  secured user variable. Stored to non-shared data
+    ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
+    ${body:<attachment_name>}       content of the attachment file.
+'''
+
+
+endpoint_pattern =  re.compile(r'^connect:([^:]+)$')
+endpoint_desc_pattern =  re.compile(r'^connect:([^:]+):description$')
+endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
+
+
+class ConnectCommand(Command):
+    def get_parser(self):
+        return connect_parser
+
+    def execute(self, params, **kwargs):
+        if kwargs.get('syntax_help'):
+            logging.info(connect_command_description)
+            return
+
+        record = kwargs['record'] if 'record' in kwargs else None
+        records = []
+        folder = None
+        if record:
+            rs = try_resolve_path(params, kwargs['pattern'])
+            if rs is not None:
+                folder, record = rs
+
+        if not folder:
+            folder = params.folder_cache[params.current_folder] if params.current_folder else params.root_folder
+        folder_uid = folder.uid or ''
+        if folder_uid in params.subfolder_record_cache:
+            for uid in params.subfolder_record_cache[folder_uid]:
+                r = api.get_record(params, uid)
+                if record:
+                    if record == r.record_uid or record.lower() == r.title.lower():
+                        records.append(r)
+                else:
+                    records.append(r)
+
+        endpoint = kwargs.get('endpoint')
+        if not endpoint:
+            endpoints = []
+            endpoints_desc = {}
+            for record in records:
+                if record.custom_fields:
+                    for field in record.custom_fields:
+                        if 'name' in field:
+                            m = endpoint_pattern.match(field['name'])
+                            if m:
+                                endpoints.append(m[1])
+                            else:
+                                m = endpoint_desc_pattern.match(field['name'])
+                                if m:
+                                    endpoints_desc[m[1]] = field.get('value') or ''
+            if endpoints:
+                print("Available connect endpoints")
+                endpoints.sort()
+                table = [[i + 1, e, endpoints_desc.get(e) or ''] for i, e in enumerate(endpoints)]
+                headers = ["#", 'Endpoint', 'Description']
+                print(tabulate(table, headers=headers))
+                print('')
+            else:
+                logging.info("No connect endpoints found")
+            return
+
+        for record in records:
+            if record.custom_fields:
+                for field in record.custom_fields:
+                    if 'name' in field:
+                        m = endpoint_pattern.match(field['name'])
+                        if m:
+                            if m[1] == endpoint:
+                                ConnectCommand.connect_endpoint(params, endpoint, record, kwargs.get('new_data') or False)
+                                return
+
+        logging.info("Connect endpoint '{0}' not found".format(endpoint))
+
+    attachment_cache = {}
+    @staticmethod
+    def load_attachment_file(params, attachment, record):
+        # type: (KeeperParams, dict, Record) -> bytes
+        rq = {
+            'command': 'request_download',
+            'file_ids': [attachment['id']]
+        }
+        api.resolve_record_access_path(params, record.record_uid, path=rq)
+        rs = api.communicate(params, rq)
+        if 'url' in rs['downloads'][0]:
+            url = rs['downloads'][0]['url']
+            key = base64.urlsafe_b64decode(attachment['key'] + '==')
+            rq_http = requests.get(url, stream=True)
+            iv = rq_http.raw.read(16)
+            cipher = AES.new(key, AES.MODE_CBC, iv)
+            finished = False
+            decrypted = None
+            body = b''
+            while not finished:
+                if decrypted:
+                    body += decrypted
+                    decrypted = None
+
+                to_decrypt = rq_http.raw.read(10240)
+                finished = len(to_decrypt) < 10240
+                if len(to_decrypt) > 0:
+                    decrypted = cipher.decrypt(to_decrypt)
+            if decrypted:
+                decrypted = api.unpad_binary(decrypted)
+                body += decrypted
+
+            return body
+
+    @staticmethod
+    def ask_personal_parameter(params, ask, record):
+        # type: (KeeperParams, str, Record) -> str
+        old_value = ''
+        if record.record_uid in params.non_shared_data_cache:
+            nsd = params.non_shared_data_cache[record.record_uid]
+            if 'commander' in nsd:
+                old_value = nsd['commander'].get(ask) or ''
+
+        question = record.get('ask:{0}:description') or 'Parameter \"{0}\" requires input.'.format(ask)
+        print(question)
+        if old_value:
+            value = input('Press <Enter> to accept last value \"{0}\"> '.format(old_value))
+            if not value:
+                value = old_value
+        else:
+            value = input('> ')
+
+        if not value and value != old_value:
+            nsd = params.non_shared_data_cache.get(record.record_uid) or {}
+            if 'commander' not in nsd:
+                nsd['commander'] = {}
+            nsd['commander'][ask] = value
+
+
+        return value
+
+    @staticmethod
+    def connect_endpoint(params, endpoint, record, new_data):
+        # type: (KeeperParams, str, Record, dict) -> None
+        command = record.get('connect:' + endpoint)
+        temp_files = []
+        store_non_shared = False
+        non_shared = None
+        try:
+            while True:
+                m = endpoint_parameter_pattern.search(command)
+                if not m:
+                    break
+                p = m.group(1)
+                pv = ''
+                if p.startswith('file:') or p.startswith('body:'):
+                    file_name = p[5:]
+                    if file_name not in ConnectCommand.attachment_cache:
+                        attachment = None
+                        if record.attachments:
+                            for atta in record.attachments:
+                                if file_name == atta['id'] or file_name.lower() in [atta[x].lower() for x in ['name', 'title'] if x in atta]:
+                                    attachment = atta
+                                    break
+                        if not attachment:
+                            logging.error('Attachment file \"%s\" not found', file_name)
+                            return
+                        body = ConnectCommand.load_attachment_file(params, attachment, record)
+                        if body:
+                            ConnectCommand.attachment_cache[file_name] = body
+                    if file_name not in ConnectCommand.attachment_cache:
+                        logging.error('Attachment file \"%s\" not found', file_name)
+                        return
+                    body = ConnectCommand.attachment_cache[file_name] # type: bytes
+                    if p.startswith('file:'):
+                        tf = tempfile.NamedTemporaryFile()
+                        tf.write(body)
+                        tf.flush()
+                        temp_files.append(tf)
+                        pv = tf.name
+                    else:
+                        pv = body.decode('utf-8')
+                elif p.startswith('text:') or p.startswith('mask:'):
+                    var_name = p[5:]
+                    non_shared_data = params.non_shared_data_cache.get(record.record_uid)
+                    if non_shared_data is not None:
+                        if 'data_unencrypted' in non_shared_data:
+                            non_shared = json.loads(non_shared_data['data_unencrypted'])
+                    if non_shared_data is None:
+                        non_shared = {}
+                    cmndr = non_shared.get('commander')
+                    if cmndr is None:
+                        cmndr = {}
+                        non_shared['commander'] = cmndr
+                    pv = cmndr.get(var_name)
+                    if new_data or pv is None:
+                        prompt = 'Type value for \'{0}\' > '.format(var_name)
+                        if p.startswith('text:'):
+                            pv = input(prompt)
+                        else:
+                            pv = getpass.getpass(prompt)
+                        cmndr[var_name] = pv
+                        store_non_shared = True
+                elif p == 'user_email':
+                    pv = params.user
+                elif p == 'login':
+                    pv = record.login
+                elif p == 'password':
+                    pv = record.password
+                else:
+                    value = record.get(p)
+                    if value:
+                        pv = value
+                    else:
+                        logging.error('Parameter \"%s\" cannot be resolved', m[0])
+                        return
+                command = command[:m.start()] + pv + command[m.end():]
+
+            if store_non_shared:
+                api.store_non_shared_data(params, record.record_uid, non_shared)
+            logging.debug(command)
+            logging.info('Connecting to %s...', endpoint)
+            os.system(command)
+        finally:
+            for file in temp_files:
+                file.close()
