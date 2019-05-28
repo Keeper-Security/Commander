@@ -1127,15 +1127,11 @@ Once configured, you can simply authenticate to Commander using the service acco
 
 Keeper Commander can be used to initiate SSH, RDP or other external connections utilizing credentials stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. 
 
-The ```connect``` command reads the record's custom fields with names starting with "connect:"
-
-  endpoint:<name>                command 
-  endpoint:<name>:description    command description
-
-The connection string may contain template parameters. Parameter syntax is ${<parameter_name>}
+The ```connect``` command reads the record's custom fields with names starting with "connect:".
 
 Supported parameters:
 
+```
     ${user_email}                   Keeper user email address
     ${login}                        Record login
     ${password}                     Record password
@@ -1143,23 +1139,27 @@ Supported parameters:
     ${mask:<name>}                  secured user variable. Stored to non-shared data
     ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
     ${body:<attachment_name>}       content of the attachment file.
+```
 
 Example: Connect via Gateway using SSH keys
 
-```
 Title: SSH to my Server via Gateway
 
-Custom Field Name: ```connect:my_server:description```
-Custom Field Value: ```Production Server Inside Gateway```
+Custom Field Name: 
+```connect:my_server:description```
 
-Custom Field Name: ```connect:my_server```
-Custom Field Value: ```ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com```
+Custom Field Value: 
+```Production Server Inside Gateway```
+
+Custom Field Name: 
+```connect:my_server```
+
+Custom Field Value: 
+```ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com```
 
 File Attachments:
 ```gateway.pem```
 ```server.pem```
-
-Note: Field substitutions 
 
 To initiate the connection from Commander simply type:
 
