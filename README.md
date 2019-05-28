@@ -1141,7 +1141,7 @@ ${mask:<name>} | Custom per-user variable. Upon first use, you will be prompted 
 ${file:<attachment_name>} | stores attachment into temporary file. parameter is replaced with temp file name
 ${body:<attachment_name>} | content of the attachment file.
 
-Example Record: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
+#### SSH Example: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
 Record Field | Record Value 
 ---------------------- | -------------
@@ -1153,11 +1153,24 @@ Custom Field 2 Value | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@
 File Attachment 1 | gateway.pem
 File Attachment 2 | server.pem
 
-To initiate the connection from Commander simply type:
+#### RDP Example: Connect to server via Windows Remote Desktop (example IP: 12.34.56.78)
 
-```
-My Vault> connect my_server
-```
+To connect seamlessly to a remote windows server using the standard Microsoft Remote Desktop application, Keeper will execute a command pre-login, login, and post-login command via system call.  In this example, the pre-login command stores the password temporarily in the Windows credential manager for the current user.  The login command initiates the connection using an RDP template file and the stored credentials.  Upon session termination, the post login command is executed that deletes the password from the credential manager.
+
+Record Field | Record Value
+---------------------- | -------------
+Title | Windows RDP Launch Demo 
+Login | Administrator
+Password | <Admin Password Here>
+Custom Field 1 Name | connect:rdp_demo:description
+Custom Field 1 Value | Remote connection to Demo Server 
+Custom Field 2 Name | connect:rdp_demo:pre
+Custom Field 2 Value | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
+Custom Field 3 Name | connect:rdp_demo
+Custom Field 3 Value | mstsc ${file:Default.rdp} 
+Custom Field 4 Name | connect:rdp_demo:post 
+Custom Field 4 Value | cmdkey /delete:12.34.56.78 > NUL
+File Attachment 1 | Default.rdp
 
 To get a list of available connections, type:
 
@@ -1165,7 +1178,30 @@ To get a list of available connections, type:
 My Vault> connect
 ```
  
-Note that a single vault record can contain any number of connection references, or the connections can be separated one per record.
+To initiate the connection from Commander simply type:
+
+```
+My Vault> connect my_server
+or
+My Vault> connect rdp_demo
+```
+
+Alternatively, you can execute the connection from the terminal without the interactive shell:
+
+```
+$ keeper connect rdp_demo
+```
+
+Or
+
+```
+$ keeper connect my_server
+```
+
+Notes:
+
+- A single vault record can contain any number of connection references, or the connections can be separated one per record.
+- If a system command requires user interaction (e.g. if a passphrase is included on an SSH key file), Commander will prompt for input.
 
 ### Targeted Password Rotations & Plugins 
 
