@@ -18,6 +18,7 @@ Jump to:
 * [Enterprise SSO Login](#enterprise-sso-login)
 * [Pushing Records to Users and Teams](#pushing-records-to-users-and-teams)
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
+* [Password Retrieval API](#password-retrieval-api)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
@@ -26,11 +27,7 @@ Jump to:
 
 Keeper Security develops the world's most downloaded password manager and encrypted digital vault with millions of individual customers and thousands of enterprise customers worldwide.  Keeper is a zero-knowledge, native and cloud-based solution available on every mobile and desktop device platform. <a href="#about-keeper">Read more</a> about Keeper or visit the [Keeper Security](https://keepersecurity.com) website.
 
-Keeper Commander is a command-line, interactive shell and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, rotate passwords and perform Keeper Enterprise administrative functions related to user onboarding and provisioning of vault records. Most features available in the Keeper Admin Console are available through Commander's interactive shell and SDK interface.
-
-In addition to vault and administrative functionality, Commander can be used to perform targeted password rotations, integrate password management into your backend systems and eliminate the use of hardcoded passwords. Using our connector [plugins](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins), Commander can execute a password rotation directly to any common system or service account such as Unix systems, SQL Databases, Active Directory, Amazon AWS, local Administator accounts, network devices, etc...
-
-Keeper Commander is an open source project written in Python, and it is under continuous development by the Keeper engineering team. As new features and capabilities are added to the Keeper platform, we add new commands and features to Commander.  If you need any assistance or require specific functionality, please contact commander@keepersecurity.com.
+Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and customers. If you need any assistance or require specific functionality not supported in Commander yet, please contact us at commander@keepersecurity.com.
 
 ### Use Cases
 
@@ -43,6 +40,7 @@ Keeper Commander is an open source project written in Python, and it is under co
 * Rotate passwords on service accounts or other targets
 * Integrate Keeper into your existing backend systems
 * Schedule and automate commands
+* Initiate remote connections (such as SSH and RDP) 
 
 ### Installation - Linux and Mac
 
@@ -1108,6 +1106,18 @@ ${generate_password}   Generate random password
 ${user_name}           User full name
 ```
 
+### Password Retrieval API
+
+A common use case for Commander is pulling credentials from the vault to replace hard-coded passwords, and to automate processes within CI/CD pipelines.  The recommended architecture is to isolate vault access to specific "service account" vaults in order to limit access.  Follow the process below:
+
+1. Create a separate "service account" vault for each set of records that the service needs access to.
+
+2. Set a strong master password, 2FA and role enforcement policy on each vault.
+
+3. Share records (either direct share or shared folder) from the source vault to the service account vault.
+
+Once configured, you can simply authenticate to Commander using the service accounts. By isolating the vaults to only contain a set of shared records, you will be limiting the exposure if the process or server becomes compromised.  Note that a unique and valid email address must be used for each service account.
+
 ### Targeted Password Rotations & Plugins 
 
 Keeper Commander can communicate to internal and external systems for the purpose of rotating a password and synchronizing the change to your Keeper Vault.  We accomplish this by associating a Keeper record with a physical system through the use of custom fields.  For example, you might want to rotate your MySQL password, Active Directory password and local Administrator password automatically.  To support a plugin, simply add a set of **custom field** values to the Keeper record. The custom field values tell Commander which plugin to use, and what system to communicate with when rotating the password.  To modify your Keeper record to include custom fields, login to Keeper on the [Web Vault](https://keepersecurity.com/vault) or [Keeper Desktop](https://keepersecurity.com/download.html) app.  
@@ -1215,10 +1225,6 @@ Keeper is free for local password management on your device.  Premium subscripti
 [Mac](https://keepersecurity.com/desktop_electron/Darwin/KeeperSetup.dmg)
 
 [Linux](https://keepersecurity.com/download.html)
-
-### Microsoft Store (Windows 10, Surface) Platform
-
-[Microsoft Store Version - Windows 10](https://www.microsoft.com/en-us/store/p/keeper-password-manager/9wzdncrdmpt6)
 
 ### Web Vault and Browser Extensions
 
