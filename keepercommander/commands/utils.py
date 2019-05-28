@@ -282,9 +282,9 @@ class LogoutCommand(Command):
 
 
 connect_command_description = '''
-Command Command Syntax Description:
+Connect Command Syntax Description:
 
-Connect command reads the record''s custom fields with names starting with "connect:"
+This command reads the custom fields for names starting with "connect:"
 
   endpoint:<name>                command 
   endpoint:<name>:description    command description
@@ -301,8 +301,20 @@ Supported parameters:
     ${mask:<name>}                  secured user variable. Stored to non-shared data
     ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
     ${body:<attachment_name>}       content of the attachment file.
-'''
 
+SSH Example:
+
+Title: SSH to my Server via Gateway
+Custom Field 1 Name: connect:my_server:description
+Custom Field 1 Value: Production Server Inside Gateway
+Custom Field 2 Name: connect:my_server
+Custom Field 2 Value: ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com
+File Attachments:
+gateway.pem
+server.pem
+
+To initiate connection: "connect my_server"
+'''
 
 endpoint_pattern =  re.compile(r'^connect:([^:]+)$')
 endpoint_desc_pattern =  re.compile(r'^connect:([^:]+):description$')

@@ -19,6 +19,7 @@ Jump to:
 * [Pushing Records to Users and Teams](#pushing-records-to-users-and-teams)
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Retrieval API](#password-retrieval-api)
+* [Connect to Remote Servers](#connect-to-remote-servers)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
@@ -208,6 +209,10 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 * ```mv``` Move record or folder
 
 * ```ln``` Create a link between record or folder
+
+**Remote Connection Commands**
+
+* ```connect``` Connect to external server using SSH, RDP or any other protocol.
 
 **Password Rotation Commands**
 
@@ -1117,6 +1122,58 @@ A common use case for Commander is pulling credentials from the vault to replace
 3. Share records (either direct share or shared folder) from the source vault to the service account vault.
 
 Once configured, you can simply authenticate to Commander using the service accounts. By isolating the vaults to only contain a set of shared records, you will be limiting the exposure if the process or server becomes compromised.  Note that a unique and valid email address must be used for each service account.
+
+### Connect to Remote Servers
+
+Keeper Commander can be used to initiate SSH, RDP or other external connections utilizing credentials stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. 
+
+The ```connect``` command reads the record's custom fields with names starting with "connect:"
+
+  endpoint:<name>                command 
+  endpoint:<name>:description    command description
+
+The connection string may contain template parameters. Parameter syntax is ${<parameter_name>}
+
+Supported parameters:
+
+    ${user_email}                   Keeper user email address
+    ${login}                        Record login
+    ${password}                     Record password
+    ${text:<name>}                  non secured user variable. Stored to non-shared data
+    ${mask:<name>}                  secured user variable. Stored to non-shared data
+    ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
+    ${body:<attachment_name>}       content of the attachment file.
+
+Example: Connect via Gateway using SSH keys
+
+```
+Title: SSH to my Server via Gateway
+
+Custom Field Name: ```connect:my_server:description```
+Custom Field Value: ```Production Server Inside Gateway```
+
+Custom Field Name: ```connect:my_server```
+Custom Field Value: ```ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com```
+
+File Attachments:
+```gateway.pem```
+```server.pem```
+
+Note: Field substitutions 
+
+To initiate the connection from Commander simply type:
+
+```
+My Vault> connect my_server
+```
+
+To get a list of available connections, type:
+
+```
+My Vault> connect
+```
+ 
+Note that a single vault record can contain any number of connection references, or the connections can be separated one per record.
 
 ### Targeted Password Rotations & Plugins 
 
