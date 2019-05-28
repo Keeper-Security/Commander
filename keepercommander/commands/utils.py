@@ -471,10 +471,11 @@ class ConnectCommand(Command):
                         return
                     body = ConnectCommand.attachment_cache[file_name] # type: bytes
                     if p.startswith('file:'):
-                        tf = tempfile.NamedTemporaryFile()
+                        tf = tempfile.NamedTemporaryFile(delete=False)
                         tf.write(body)
                         tf.flush()
-                        temp_files.append(tf)
+                        temp_files.append(tf.name)
+                        tf.close()
                         pv = tf.name
                     else:
                         pv = body.decode('utf-8')
@@ -521,4 +522,4 @@ class ConnectCommand(Command):
             os.system(command)
         finally:
             for file in temp_files:
-                file.close()
+                os.remove(file)
