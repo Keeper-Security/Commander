@@ -1143,8 +1143,8 @@ Supported parameters:
 
 Example 1: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
-Field | Value 
------------- | -------------
+Record Field | Record Value 
+---------------------- | -------------
 Title | SSH to my Server via Gateway 
 Custom Field 1 Name | connect:my_server:description 
 Custom Field 1 Value | Production Server Inside Gateway 
