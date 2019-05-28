@@ -1131,17 +1131,17 @@ The ```connect``` command reads the record's custom fields with names starting w
 
 Supported parameters:
 
-```
-    ${user_email}                   Keeper user email address
-    ${login}                        Record login
-    ${password}                     Record password
-    ${text:<name>}                  non secured user variable. Stored to non-shared data
-    ${mask:<name>}                  secured user variable. Stored to non-shared data
-    ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
-    ${body:<attachment_name>}       content of the attachment file.
-```
+Parameter | Description
+-------------------------- | ---------------------------
+${user_email} | Email address of Keeper user 
+${login} | Record login field
+${password} | Record password field
+${text:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (in the clear) and it is stored to the record. Not shared to other users. 
+${mask:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (password-masked) and it is stored to the record. Not shared to other users.
+${file:<attachment_name>} | stores attachment into temporary file. parameter is replaced with temp file name
+${body:<attachment_name>} | content of the attachment file.
 
-Example 1: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
+Example Record: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
 Record Field | Record Value 
 ---------------------- | -------------
