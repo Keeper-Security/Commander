@@ -16,6 +16,8 @@ import argparse
 import logging
 import datetime
 import getpass
+from typing import Optional
+
 import requests
 import tempfile
 import json
@@ -438,88 +440,111 @@ class ConnectCommand(Command):
         return value
 
     @staticmethod
-    def connect_endpoint(params, endpoint, record, new_data):
-        # type: (KeeperParams, str, Record, dict) -> None
-        command = record.get('connect:' + endpoint)
-        temp_files = []
+    def get_command_string(params, record, template, temp_files, new_data):
+        # type: (KeeperParams, Record, str, list, bool) -> Optional[str]
+        command = template
         store_non_shared = False
         non_shared = None
-        try:
-            while True:
-                m = endpoint_parameter_pattern.search(command)
-                if not m:
-                    break
-                p = m.group(1)
-                pv = ''
-                if p.startswith('file:') or p.startswith('body:'):
-                    file_name = p[5:]
-                    if file_name not in ConnectCommand.attachment_cache:
-                        attachment = None
-                        if record.attachments:
-                            for atta in record.attachments:
-                                if file_name == atta['id'] or file_name.lower() in [atta[x].lower() for x in ['name', 'title'] if x in atta]:
-                                    attachment = atta
-                                    break
-                        if not attachment:
-                            logging.error('Attachment file \"%s\" not found', file_name)
-                            return
-                        body = ConnectCommand.load_attachment_file(params, attachment, record)
-                        if body:
-                            ConnectCommand.attachment_cache[file_name] = body
-                    if file_name not in ConnectCommand.attachment_cache:
+        while True:
+            m = endpoint_parameter_pattern.search(command)
+            if not m:
+                break
+            p = m.group(1)
+            pv = ''
+            if p.startswith('file:') or p.startswith('body:'):
+                file_name = p[5:]
+                if file_name not in ConnectCommand.attachment_cache:
+                    attachment = None
+                    if record.attachments:
+                        for atta in record.attachments:
+                            if file_name == atta['id'] or file_name.lower() in [atta[x].lower() for x in ['name', 'title'] if x in atta]:
+                                attachment = atta
+                                break
+                    if not attachment:
                         logging.error('Attachment file \"%s\" not found', file_name)
-                        return
-                    body = ConnectCommand.attachment_cache[file_name] # type: bytes
-                    if p.startswith('file:'):
-                        tf = tempfile.NamedTemporaryFile(delete=False)
-                        tf.write(body)
-                        tf.flush()
-                        temp_files.append(tf.name)
-                        tf.close()
-                        pv = tf.name
-                    else:
-                        pv = body.decode('utf-8')
-                elif p.startswith('text:') or p.startswith('mask:'):
-                    var_name = p[5:]
-                    non_shared_data = params.non_shared_data_cache.get(record.record_uid)
-                    if non_shared_data is not None:
-                        if 'data_unencrypted' in non_shared_data:
-                            non_shared = json.loads(non_shared_data['data_unencrypted'])
-                    if non_shared_data is None:
-                        non_shared = {}
-                    cmndr = non_shared.get('commander')
-                    if cmndr is None:
-                        cmndr = {}
-                        non_shared['commander'] = cmndr
-                    pv = cmndr.get(var_name)
-                    if new_data or pv is None:
-                        prompt = 'Type value for \'{0}\' > '.format(var_name)
-                        if p.startswith('text:'):
-                            pv = input(prompt)
-                        else:
-                            pv = getpass.getpass(prompt)
-                        cmndr[var_name] = pv
-                        store_non_shared = True
-                elif p == 'user_email':
-                    pv = params.user
-                elif p == 'login':
-                    pv = record.login
-                elif p == 'password':
-                    pv = record.password
+                        return None
+                    body = ConnectCommand.load_attachment_file(params, attachment, record)
+                    if body:
+                        ConnectCommand.attachment_cache[file_name] = body
+                if file_name not in ConnectCommand.attachment_cache:
+                    logging.error('Attachment file \"%s\" not found', file_name)
+                    return None
+                body = ConnectCommand.attachment_cache[file_name] # type: bytes
+                if p.startswith('file:'):
+                    tf = tempfile.NamedTemporaryFile(delete=False)
+                    tf.write(body)
+                    tf.flush()
+                    temp_files.append(tf.name)
+                    tf.close()
+                    pv = tf.name
                 else:
-                    value = record.get(p)
-                    if value:
-                        pv = value
+                    pv = body.decode('utf-8')
+            elif p.startswith('text:') or p.startswith('mask:'):
+                var_name = p[5:]
+                non_shared_data = params.non_shared_data_cache.get(record.record_uid)
+                if non_shared_data is not None:
+                    if 'data_unencrypted' in non_shared_data:
+                        non_shared = json.loads(non_shared_data['data_unencrypted'])
+                if non_shared_data is None:
+                    non_shared = {}
+                cmndr = non_shared.get('commander')
+                if cmndr is None:
+                    cmndr = {}
+                    non_shared['commander'] = cmndr
+                pv = cmndr.get(var_name)
+                if new_data or pv is None:
+                    prompt = 'Type value for \'{0}\' > '.format(var_name)
+                    if p.startswith('text:'):
+                        pv = input(prompt)
                     else:
-                        logging.error('Parameter \"%s\" cannot be resolved', m[0])
-                        return
-                command = command[:m.start()] + pv + command[m.end():]
+                        pv = getpass.getpass(prompt)
+                    cmndr[var_name] = pv
+                    store_non_shared = True
+            elif p == 'user_email':
+                pv = params.user
+            elif p == 'login':
+                pv = record.login
+            elif p == 'password':
+                pv = record.password
+            else:
+                value = record.get(p)
+                if value:
+                    pv = value
+                else:
+                    logging.error('Parameter \"%s\" cannot be resolved', m[0])
+                    return
+            command = command[:m.start()] + pv + command[m.end():]
 
-            if store_non_shared:
-                api.store_non_shared_data(params, record.record_uid, non_shared)
-            logging.debug(command)
-            logging.info('Connecting to %s...', endpoint)
-            os.system(command)
+        if store_non_shared:
+            api.store_non_shared_data(params, record.record_uid, non_shared)
+
+        logging.debug(command)
+        return command
+
+    @staticmethod
+    def connect_endpoint(params, endpoint, record, new_data):
+        # type: (KeeperParams, str, Record, bool) -> None
+        temp_files = []
+        try:
+            command = record.get('connect:' + endpoint + ':pre')
+            if command:
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, new_data)
+                if command:
+                    os.system(command)
+
+            command = record.get('connect:' + endpoint)
+            if command:
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, new_data)
+                if command:
+                    logging.info('Connecting to %s...', endpoint)
+                    os.system(command)
+
+            command = record.get('connect:' + endpoint + ':post')
+            if command:
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, new_data)
+                if command:
+                    os.system(command)
+
         finally:
             for file in temp_files:
                 os.remove(file)
