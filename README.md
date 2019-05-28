@@ -1144,10 +1144,15 @@ Supported parameters:
 Example 1: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
 Record Title: ```SSH to my Server via Gateway```
+
 Custom Field Name: ```connect:my_server:description```
+
 Custom Field Value: ```Production Server Inside Gateway```
+
 Custom Field Name: ```connect:my_server```
+
 Custom Field Value: ```ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com```
+
 File Attachments: ```gateway.pem``` ```server.pem```
 
 To initiate the connection from Commander simply type:
