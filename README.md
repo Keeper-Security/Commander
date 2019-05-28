@@ -1125,7 +1125,7 @@ Once configured, you can simply authenticate to Commander using the service acco
 
 ### Connect to Remote Servers
 
-Keeper Commander can be used to initiate SSH, RDP or other external connections utilizing credentials stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. 
+Keeper Commander can be used to initiate SSH, RDP or other external connections utilizing credentials stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections. 
 
 The ```connect``` command reads the record's custom fields with names starting with "connect:".
 
@@ -1141,25 +1141,14 @@ Supported parameters:
     ${body:<attachment_name>}       content of the attachment file.
 ```
 
-Example: Connect via Gateway using SSH keys
+Example 1: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
-Title: SSH to my Server via Gateway
-
-Custom Field Name: 
-```connect:my_server:description```
-
-Custom Field Value: 
-```Production Server Inside Gateway```
-
-Custom Field Name: 
-```connect:my_server```
-
-Custom Field Value: 
-```ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com```
-
-File Attachments:
-```gateway.pem```
-```server.pem```
+Record Title: ```SSH to my Server via Gateway```
+Custom Field Name: ```connect:my_server:description```
+Custom Field Value: ```Production Server Inside Gateway```
+Custom Field Name: ```connect:my_server```
+Custom Field Value: ```ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com```
+File Attachments: ```gateway.pem``` ```server.pem```
 
 To initiate the connection from Commander simply type:
 
