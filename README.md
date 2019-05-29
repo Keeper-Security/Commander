@@ -1134,12 +1134,12 @@ The ```connect``` command reads the record's custom fields with names starting w
 Record Field | Record Value 
 ---------------------- | -------------
 Title | SSH to my Server via Gateway 
-Custom Name | connect:my_server:description 
-Custom Value | Production Server Inside Gateway 
-Custom Name | connect:my_server 
-Custom Value | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
-File Attachment | gateway.pem
-File Attachment | server.pem
+Custom Name 1 | connect:my_server:description 
+Custom Value 1 | Production Server Inside Gateway 
+Custom Name 2 | connect:my_server 
+Custom Value 2 | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
+File Attachment 1 | gateway.pem
+File Attachment 2 | server.pem
 
 #### RDP Example: Connect to server via Windows Remote Desktop (example IP: 12.34.56.78)
 
@@ -1150,17 +1150,17 @@ Record Field | Record Value
 Title | Windows RDP Launch Demo 
 Login | Administrator
 Password | *********** 
-Custom Name | connect:rdp_demo:description
-Custom Value | Remote connection to Demo Server 
-Custom Name | connect:rdp_demo:pre
-Custom Value | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
-Custom Name | connect:rdp_demo
-Custom Value | mstsc ${file:Default.rdp} 
-Custom Name | connect:rdp_demo:post 
-Custom Value | cmdkey /delete:12.34.56.78 > NUL
-File Attachment 1 | Default.rdp
+Custom Name 1 | connect:rdp_demo:description
+Custom Value 1 | Remote connection to Demo Server 
+Custom Name 2 | connect:rdp_demo:pre
+Custom Value 2 | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
+Custom Name 3 | connect:rdp_demo
+Custom Value 3 | mstsc ${file:Default.rdp} 
+Custom Name 4 | connect:rdp_demo:post 
+Custom Value 4 | cmdkey /delete:12.34.56.78 > NUL
+File Attachment 1 | Default.rdp (saved from Remote Desktop Connection with your desired config)
 
-#### Supported Parameters:
+#### Supported parameter substitutions:
 
 Parameter | Description
 -------------------------- | ---------------------------
