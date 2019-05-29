@@ -19,7 +19,7 @@ Jump to:
 * [Pushing Records to Users and Teams](#pushing-records-to-users-and-teams)
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Retrieval API](#password-retrieval-api)
-* [Connect to Remote Servers](#connect-to-remote-servers)
+* [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
@@ -1123,7 +1123,7 @@ A common use case for Commander is pulling credentials from the vault to replace
 
 Once configured, you can simply authenticate to Commander using the service accounts. By isolating the vaults to only contain a set of shared records, you will be limiting the exposure if the process or server becomes compromised.  Note that a unique and valid email address must be used for each service account.
 
-### Connect to Remote Servers (Launching Connections)
+### Launching and Connecting to Remote Servers 
 
 Keeper Commander can be used to launch SSH, RDP or other external connections utilizing credentials and other metadata stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections.
 
