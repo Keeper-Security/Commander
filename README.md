@@ -1123,23 +1123,11 @@ A common use case for Commander is pulling credentials from the vault to replace
 
 Once configured, you can simply authenticate to Commander using the service accounts. By isolating the vaults to only contain a set of shared records, you will be limiting the exposure if the process or server becomes compromised.  Note that a unique and valid email address must be used for each service account.
 
-### Connect to Remote Servers
+### Connect to Remote Servers (Launching Connections)
 
-Keeper Commander can be used to initiate SSH, RDP or other external connections utilizing credentials stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections. 
+Keeper Commander can be used to launch SSH, RDP or other external connections utilizing credentials and other metadata stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections.
 
 The ```connect``` command reads the record's custom fields with names starting with "connect:".
-
-Supported parameters:
-
-Parameter | Description
--------------------------- | ---------------------------
-${user_email} | Email address of Keeper user 
-${login} | Record login field
-${password} | Record password field
-${text:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (in the clear) and it is stored to the record. Not shared to other users. 
-${mask:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (password-masked) and it is stored to the record. Not shared to other users.
-${file:<attachment_name>} | stores attachment into temporary file. parameter is replaced with temp file name
-${body:<attachment_name>} | content of the attachment file.
 
 #### SSH Example: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
@@ -1149,7 +1137,7 @@ Title | SSH to my Server via Gateway
 Custom Field 1 Name | connect:my_server:description 
 Custom Field 1 Value | Production Server Inside Gateway 
 Custom Field 2 Name | connect:my_server 
-Custom Field 2 Value | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com 
+Custom Field 2 Value | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
 File Attachment 1 | gateway.pem
 File Attachment 2 | server.pem
 
@@ -1161,7 +1149,7 @@ Record Field | Record Value
 ---------------------- | -------------
 Title | Windows RDP Launch Demo 
 Login | Administrator
-Password | <Admin Password Here>
+Password | *********** 
 Custom Field 1 Name | connect:rdp_demo:description
 Custom Field 1 Value | Remote connection to Demo Server 
 Custom Field 2 Name | connect:rdp_demo:pre
@@ -1172,27 +1160,41 @@ Custom Field 4 Name | connect:rdp_demo:post
 Custom Field 4 Value | cmdkey /delete:12.34.56.78 > NUL
 File Attachment 1 | Default.rdp
 
+#### Supported Parameters:
+
+Parameter | Description
+-------------------------- | ---------------------------
+${user_email} | Email address of Keeper user 
+${login} | Record login field
+${password} | Record password field
+${text:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (in the clear) and it is stored to the record. Not shared to other users. 
+${mask:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (password-masked) and it is stored to the record. Not shared to other users.
+${file:<attachment_name>} | stores attachment into temporary file. parameter is replaced with temp file name
+${body:<attachment_name>} | content of the attachment file.
+
+#### Listing all available connections
+
 To get a list of available connections, type:
 
 ```
 My Vault> connect
 ```
  
-To initiate the connection from Commander simply type:
+#### Initiating connections
+
+To initiate a connection (using the SSH/RDP examples) from Commander simply type:
 
 ```
 My Vault> connect my_server
+```
+
 or
+
+```
 My Vault> connect rdp_demo
 ```
 
 Alternatively, you can execute the connection from the terminal without the interactive shell:
-
-```
-$ keeper connect rdp_demo
-```
-
-Or
 
 ```
 $ keeper connect my_server
@@ -1202,6 +1204,8 @@ Notes:
 
 - A single vault record can contain any number of connection references, or the connections can be separated one per record.
 - If a system command requires user interaction (e.g. if a passphrase is included on an SSH key file), Commander will prompt for input.
+- Just like any other Keeper vault record, a connection record can be shared among a team, shared to another Keeper user or remain private.
+
 
 ### Targeted Password Rotations & Plugins 
 
