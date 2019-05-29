@@ -1134,12 +1134,12 @@ The ```connect``` command reads the record's custom fields with names starting w
 Record Field | Record Value 
 ---------------------- | -------------
 Title | SSH to my Server via Gateway 
-Custom Field 1 Name | connect:my_server:description 
-Custom Field 1 Value | Production Server Inside Gateway 
-Custom Field 2 Name | connect:my_server 
-Custom Field 2 Value | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
-File Attachment 1 | gateway.pem
-File Attachment 2 | server.pem
+Custom Name | connect:my_server:description 
+Custom Value | Production Server Inside Gateway 
+Custom Name | connect:my_server 
+Custom Value | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
+File Attachment | gateway.pem
+File Attachment | server.pem
 
 #### RDP Example: Connect to server via Windows Remote Desktop (example IP: 12.34.56.78)
 
@@ -1150,14 +1150,14 @@ Record Field | Record Value
 Title | Windows RDP Launch Demo 
 Login | Administrator
 Password | *********** 
-Custom Field 1 Name | connect:rdp_demo:description
-Custom Field 1 Value | Remote connection to Demo Server 
-Custom Field 2 Name | connect:rdp_demo:pre
-Custom Field 2 Value | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
-Custom Field 3 Name | connect:rdp_demo
-Custom Field 3 Value | mstsc ${file:Default.rdp} 
-Custom Field 4 Name | connect:rdp_demo:post 
-Custom Field 4 Value | cmdkey /delete:12.34.56.78 > NUL
+Custom Name | connect:rdp_demo:description
+Custom Value | Remote connection to Demo Server 
+Custom Name | connect:rdp_demo:pre
+Custom Value | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
+Custom Name | connect:rdp_demo
+Custom Value | mstsc ${file:Default.rdp} 
+Custom Name | connect:rdp_demo:post 
+Custom Value | cmdkey /delete:12.34.56.78 > NUL
 File Attachment 1 | Default.rdp
 
 #### Supported Parameters:
