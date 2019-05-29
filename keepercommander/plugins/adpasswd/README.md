@@ -39,3 +39,9 @@ C:\Users\craig>dsquery user -name Craig*
 "CN=Craig Lurey,CN=Users,DC=keeper,DC=test,DC=keepersecurity,DC=com"
 ```
 For connecting as Craig in this scenario, make sure the <strong>cmdr:userdn</strong> custom field contains this exact string (without the quotes).
+
+###Note
+Microsoft Active Directory requires SSL connection in order to change the password.
+The following link explains how how secure connection to Active Directory
+
+https://blogs.msdn.microsoft.com/microsoftrservertigerteam/2017/04/10/step-by-step-guide-to-setup-ldaps-on-windows-server/
