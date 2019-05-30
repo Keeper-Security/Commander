@@ -1138,7 +1138,7 @@ connect:my_server:description
 Production Server Inside Gateway 
 
 connect:my_server 
-ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
+ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user@server 
 
 File Attachments: 
 gateway.pem
