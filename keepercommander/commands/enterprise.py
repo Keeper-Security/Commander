@@ -1276,7 +1276,7 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
                 host = p.hostname
                 port = p.port
 
-        if not is_ssl or not host or not port:
+        if is_ssl is None or not host or not port:
             print('Enter Syslog TCP connection parameters:')
             host_name = input('...' + 'Syslog host name: '.rjust(32))
             if not host_name:
