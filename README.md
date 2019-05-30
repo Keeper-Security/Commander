@@ -1131,46 +1131,77 @@ The ```connect``` command reads the record's custom fields with names starting w
 
 #### SSH Example: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
 
-Record Field | Record Value 
----------------------- | -------------
-Title | SSH to my Server via Gateway 
-Custom Name 1 | connect:my_server:description 
-Custom Value 1 | Production Server Inside Gateway 
-Custom Name 2 | connect:my_server 
-Custom Value 2 | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
-File Attachment 1 | gateway.pem
-File Attachment 2 | server.pem
+```
+Title: SSH to my Server via Gateway 
+
+Custom Field: 
+connect:my_server:description 
+Production Server Inside Gateway 
+
+Custom Field:
+connect:my_server 
+ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
+
+File Attachments: 
+gateway.pem
+server.pem
+```
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 
 #### RDP Example: Connect to server via Windows Remote Desktop (example IP: 12.34.56.78)
 
 To connect seamlessly to a remote windows server using the standard Microsoft Remote Desktop application, Keeper will execute a command pre-login, login, and post-login command via system call.  In this example, the pre-login command stores the password temporarily in the Windows credential manager for the current user.  The login command initiates the connection using an RDP template file and the stored credentials.  Upon session termination, the post login command is executed that deletes the password from the credential manager.
 
-Record Field | Record Value
----------------------- | -------------
-Title | Windows RDP Launch Demo 
-Login | Administrator
-Password | *********** 
-Custom Name 1 | connect:rdp_demo:description
-Custom Value 1 | Remote connection to Demo Server 
-Custom Name 2 | connect:rdp_demo:pre
-Custom Value 2 | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
-Custom Name 3 | connect:rdp_demo
-Custom Value 3 | mstsc ${file:Default.rdp} 
-Custom Name 4 | connect:rdp_demo:post 
-Custom Value 4 | cmdkey /delete:12.34.56.78 > NUL
-File Attachment 1 | Default.rdp (saved from Remote Desktop Connection with your desired config)
+```
+Title: Windows RDP Launch Demo 
+Login: Administrator
+Password: *********** 
+Custom Fields:
+connect:rdp_demo:description
+Remote connection to Demo Server 
+
+connect:rdp_demo:pre
+cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
+
+connect:rdp_demo
+mstsc ${file:Default.rdp} 
+
+connect:rdp_demo:post 
+cmdkey /delete:12.34.56.78 > NUL
+
+File Attachments:
+Default.rdp
+```
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_rdp_screenshot.png)
+
+Note: The Default.rdp file is saved from Remote Desktop Connection with your desired config
 
 #### Supported parameter substitutions:
 
-Parameter | Description
--------------------------- | ---------------------------
-${user_email} | Email address of Keeper user 
-${login} | Record login field
-${password} | Record password field
-${text:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (in the clear) and it is stored to the record. Not shared to other users. 
-${mask:<name>} | Custom per-user variable. Upon first use, you will be prompted interactively (password-masked) and it is stored to the record. Not shared to other users.
-${file:<attachment_name>} | stores attachment into temporary file. parameter is replaced with temp file name
-${body:<attachment_name>} | content of the attachment file.
+```
+${user_email}
+Email address of Keeper user 
+
+${login}
+Record login field
+
+${password}
+Record password field
+
+${text:<name>}
+Custom per-user variable. Upon first use, you will be prompted interactively (in the clear) and it is stored to the record. Not shared to other users. 
+
+${mask:<name>}
+Custom per-user variable. Upon first use, you will be prompted interactively (password-masked) and it is stored to the record. Not shared to other users.
+
+${file:<attachment_name>}
+Stores attachment into temporary file during use. Parameter is replaced with path to temp filename.
+
+${body:<attachment_name>}
+Content of the attachment file.
+```
 
 #### Listing all available connections
 
