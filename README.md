@@ -1125,39 +1125,36 @@ Once configured, you can simply authenticate to Commander using the service acco
 
 ### Launching and Connecting to Remote Servers 
 
-Keeper Commander can be used to launch SSH, RDP or other external connections utilizing credentials and other metadata stored in vault records.  The "connect" command will initiate a connection based on the parameters supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections.
+Using the ```connect``` command, Keeper Commander can launch SSH, RDP or other external connections utilizing content and metadata stored in the Keeper vault record.  Command-line parameters are supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections.
 
 The ```connect``` command reads the record's custom fields with names starting with "connect:".
 
-#### SSH Example: Connect via Gateway using SSH keys (works on PC, Linux and Mac)
+#### SSH Launcher Example: SSH to a server via Gateway
 
 ```
-Title: SSH to my Server via Gateway 
+Custom Fields:
 
-Custom Field: 
 connect:my_server:description 
 Production Server Inside Gateway 
 
-Custom Field:
 connect:my_server 
-ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user<i></i>@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
+ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user<i></i>@server 
 
 File Attachments: 
 gateway.pem
 server.pem
 ```
 
+Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 
-#### RDP Example: Connect to server via Windows Remote Desktop (example IP: 12.34.56.78)
+#### Remote Desktop (RDP) Launcher Example
 
-To connect seamlessly to a remote windows server using the standard Microsoft Remote Desktop application, Keeper will execute a command pre-login, login, and post-login command via system call.  In this example, the pre-login command stores the password temporarily in the Windows credential manager for the current user.  The login command initiates the connection using an RDP template file and the stored credentials.  Upon session termination, the post login command is executed that deletes the password from the credential manager.
+To connect seamlessly to a remote windows server using the standard Microsoft Remote Desktop application, Keeper executes a command pre-login, login, and post-login via system calls.  In this example, the "pre-login" command stores the password temporarily in the Windows credential manager for the current user.  The "login" command initiates the connection using an RDP template file and the stored credentials (the RDP template file is optional).  Upon session termination, the "post login" command is executed that deletes the password from the credential manager.
 
 ```
-Title: Windows RDP Launch Demo 
-Login: Administrator
-Password: *********** 
 Custom Fields:
+
 connect:rdp_demo:description
 Remote connection to Demo Server 
 
@@ -1174,33 +1171,23 @@ File Attachments:
 Default.rdp
 ```
 
+Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_rdp_screenshot.png)
 
 Note: The Default.rdp file is saved from Remote Desktop Connection with your desired config
 
-#### Supported parameter substitutions:
+#### Supported parameter substitutions
+
+You can customize the commands with parameter substitutions described below:
 
 ```
-${user_email}
-Email address of Keeper user 
-
-${login}
-Record login field
-
-${password}
-Record password field
-
-${text:<name>}
-Custom per-user variable. Upon first use, you will be prompted interactively (in the clear) and it is stored to the record. Not shared to other users. 
-
-${mask:<name>}
-Custom per-user variable. Upon first use, you will be prompted interactively (password-masked) and it is stored to the record. Not shared to other users.
-
-${file:<attachment_name>}
-Stores attachment into temporary file during use. Parameter is replaced with path to temp filename.
-
-${body:<attachment_name>}
-Content of the attachment file.
+${user_email}: Email address of Keeper user 
+${login}: Record login field
+${password}: Record password field
+${text:<name>}: Custom per-user variable, prompted for value, not shared 
+${mask:<name>}: Custom per-user variable, prompted for value, not shared 
+${file:<attachment_name>}: Stored in temp file during use and deleted after connection close,
+${body:<attachment_name>}: Raw content of the attachment file.
 ```
 
 #### Listing all available connections
