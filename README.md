@@ -1131,30 +1131,28 @@ The ```connect``` command reads the record's custom fields with names starting w
 
 #### SSH Launcher Example: SSH to a server via Gateway
 
+Vault Record Fields:
 ```
-Custom Fields:
-
 connect:my_server:description 
 Production Server Inside Gateway 
 
 connect:my_server 
 ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user@server 
 
-File Attachments: 
-gateway.pem
-server.pem
+File Attachments: gateway.pem, server.pem
 ```
 
 Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 
+Note: If a passphrase is added to the SSH key file, you will be prompted for this when connecting.
+
 #### Remote Desktop (RDP) Launcher Example
 
 To connect seamlessly to a remote windows server using the standard Microsoft Remote Desktop application, Keeper executes a command pre-login, login, and post-login via system calls.  In this example, the "pre-login" command stores the password temporarily in the Windows credential manager for the current user.  The "login" command initiates the connection using an RDP template file and the stored credentials (the RDP template file is optional).  Upon session termination, the "post login" command is executed that deletes the password from the credential manager.
 
+Vault Record Fields:
 ```
-Custom Fields:
-
 connect:rdp_demo:description
 Remote connection to Demo Server 
 
@@ -1167,14 +1165,13 @@ mstsc ${file:Default.rdp}
 connect:rdp_demo:post 
 cmdkey /delete:12.34.56.78 > NUL
 
-File Attachments:
-Default.rdp
+File Attachment: Default.rdp
 ```
 
 Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_rdp_screenshot.png)
 
-Note: The Default.rdp file is saved from Remote Desktop Connection with your desired config
+Note: The Default.rdp file is saved from Remote Desktop Connection with your desired configuration.
 
 #### Supported parameter substitutions
 
