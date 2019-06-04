@@ -25,7 +25,7 @@ from .record import Record
 from .shared_folder import SharedFolder
 from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
-from .params import KeeperParams
+from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
 
 from Cryptodome import Random
@@ -1301,6 +1301,7 @@ def add_record(params, record):
 
         # sync down the data which updates the caches
         sync_down(params)
+        params.environment_variables[LAST_RECORD_UID] = record.record_uid
         return True
 
 
@@ -1512,7 +1513,7 @@ def query_enterprise(params):
     request = {
         'command': 'get_enterprise_data',
         'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
-                    'role_users', 'managed_nodes', 'role_keys', 'licenses']
+                    'role_users', 'managed_nodes', 'role_keys', 'licenses', 'queued_teams', 'queued_team_users']
     }
     try:
         response = communicate(params, request)

@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 from tabulate import tabulate
 from Cryptodome.Cipher import AES
 
-from ..params import KeeperParams
+from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
@@ -41,12 +41,14 @@ def register_commands(commands):
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
     commands['connect'] = ConnectCommand()
+    commands['echo'] = EchoCommand()
+    commands['set'] = SetCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, login_parser, logout_parser]:
+    for p in [whoami_parser, login_parser, logout_parser, echo_parser, set_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -81,6 +83,19 @@ connect_parser.add_argument('-r', '--record', dest='record',  type=str, help='re
 connect_parser.add_argument('endpoint', nargs='?', action='store', type=str, help='endpoint')
 connect_parser.error = raise_parse_exception
 connect_parser.exit = suppress_exit
+
+
+echo_parser = argparse.ArgumentParser(prog='echo', description='Displays argument to output')
+echo_parser.add_argument('argument', nargs='?', action='store', type=str, help='argument')
+echo_parser.error = raise_parse_exception
+echo_parser.exit = suppress_exit
+
+
+set_parser = argparse.ArgumentParser(prog='set', description='Set environment variable')
+set_parser.add_argument('name', action='store', type=str, help='name')
+set_parser.add_argument('value', action='store', type=str, help='value')
+set_parser.error = raise_parse_exception
+set_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -560,3 +575,38 @@ class ConnectCommand(Command):
         finally:
             for file in temp_files:
                 os.remove(file)
+
+
+class EchoCommand(Command):
+    def get_parser(self):
+        return echo_parser
+
+    def execute(self, params, **kwargs):
+        argument = kwargs.get('argument')
+        if argument:
+            print(argument)
+        else:
+            envs = {LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID}
+            for name in params.environment_variables:
+                envs.add(name)
+            names = [x for x in envs]
+            names.sort()
+            for name in names:
+                if name in params.environment_variables:
+                    print('${{{0}}} = "{1}"'.format(name, params.environment_variables[name] ))
+                else:
+                    print('${{{0}}} ='.format(name))
+
+
+class SetCommand(Command):
+    def get_parser(self):
+        return set_parser
+
+    def execute(self, params, **kwargs):
+        name = kwargs['name']
+        value = kwargs.get('value')
+        if value:
+            params.environment_variables[name] = value
+        else:
+            if name in params.environment_variables:
+                del params.environment_variables[name]
