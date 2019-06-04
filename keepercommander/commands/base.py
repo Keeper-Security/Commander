@@ -13,6 +13,7 @@
 import argparse
 import shlex
 import logging
+import re
 
 from ..params import KeeperParams
 
@@ -84,6 +85,8 @@ def suppress_exit():
     raise Exception()
 
 
+parameter_pattern = re.compile(r'\${(\w+)}')
+
 class Command:
     def execute(self, params, **kwargs):
         '''
@@ -92,11 +95,30 @@ class Command:
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):
+        # type: (Command, KeeperParams, str, dict) -> None
+
+        global parameter_pattern
         try:
             parser = self.get_parser()
             d = {}
             d.update(kwargs)
             if parser is not None:
+                if args:
+                    pos = 0
+                    value = args
+                    while True:
+                        m = parameter_pattern.search(value, pos)
+                        if not m:
+                            break
+                        p = m.group(1)
+                        if p in params.environment_variables:
+                            pv = params.environment_variables[p]
+                            value = value[:m.start()] + pv + value[m.end():]
+                            pos = m.start() + len(pv)
+                        else:
+                            pos = m.end() + 1
+                    args = value
+
                 opts = parser.parse_args(shlex.split(args))
                 d.update(opts.__dict__)
 

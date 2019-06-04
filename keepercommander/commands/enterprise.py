@@ -41,12 +41,13 @@ from .record import RecordAddCommand
 from .. import api
 from ..display import bcolors
 from ..record import Record
-from ..params import KeeperParams
+from ..params import KeeperParams, LAST_TEAM_UID
 from ..generator import generate
 
 
 def register_commands(commands):
     commands['enterprise-info'] = EnterpriseInfoCommand()
+    #commands['enterprise-node'] = EnterpriseNodeCommand()
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
@@ -76,6 +77,13 @@ enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='s
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
 enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
+
+
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Enterprise node management')
+enterprise_node_parser.add_argument('--wipe-out', action='store_true', help='wipe out node content')
+enterprise_node_parser.add_argument('node', type=str, action='store', help='node name or node ID')
+enterprise_node_parser.error = raise_parse_exception
+enterprise_node_parser.exit = suppress_exit
 
 
 enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Enterprise user management')
@@ -479,6 +487,116 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 print(tabulate(rows, headers=["Role ID", 'Name', 'Cascade?', 'New User?', 'Node']))
 
         print('')
+
+
+class EnterpriseNodeCommand(EnterpriseCommand):
+    def get_parser(self):
+        return enterprise_node_parser
+
+    @staticmethod
+    def get_subnodes(params, nodes, index):
+        if index < len(nodes):
+            node_id = nodes[index]
+            for node in params.enterprise['nodes']:
+                parent_id = node.get('parent_id')
+                if parent_id == node_id:
+                    nodes.append(node['node_id'])
+            EnterpriseNodeCommand.get_subnodes(params, nodes, index + 1)
+
+    def execute(self, params, **kwargs):
+        node_name = kwargs['node']
+        node_id = None
+        for node in params.enterprise['nodes']:
+            if node_name in {str(node['node_id']), node['data'].get('displayname')}:
+                node_id = node['node_id']
+                break
+            elif not node.get('parent_id') and node_name == params.enterprise['enterprise_name']:
+                node_id = node['node_id']
+                break
+        if not node_id:
+            logging.error('Node %s is not found.', node_name)
+            return
+
+        node = [x for x in params.enterprise['nodes'] if x['node_id'] == node_id][0]
+        if not node.get('parent_id'):
+            logging.error('Cannot wipe out root node')
+            return
+
+        answer = user_choice(
+            bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+            'This action cannot be undone.\n\n' +
+            'Do you want to proceed with deletion?', 'yn', 'n')
+        if answer.lower() != 'y':
+            return
+
+        sub_nodes = [node['node_id']]
+        EnterpriseNodeCommand.get_subnodes(params, sub_nodes, 0)
+
+        nodes = set(sub_nodes)
+
+        commands = []
+
+        if 'queued_teams' in params.enterprise:
+            queued_teams = [x for x in params.enterprise['queued_teams'] if x['node_id'] in nodes]
+            for qt in queued_teams:
+                rq = {
+                    'command': 'team_delete',
+                    'team_uid': qt['team_uid']
+                }
+                commands.append(rq)
+
+        managed_nodes = [x for x in params.enterprise['managed_nodes'] if x['managed_node_id'] in nodes]
+        roles = [x for x in params.enterprise['roles'] if x['node_id'] in nodes]
+        role_set = set([x['role_id'] for x in managed_nodes])
+        role_set = role_set.union([x['role_id'] for x in roles])
+        for ru in params.enterprise['role_users']:
+            if ru['role_id'] in role_set:
+                rq = {
+                    'command': 'role_user_remove',
+                    'role_id': ru['role_id'],
+                    'enterprise_user_id': ru['enterprise_user_id']
+                }
+                commands.append(rq)
+        for mn in managed_nodes:
+            rq = {
+                'command': 'role_managed_node_remove',
+                'role_id': mn['role_id'],
+                'managed_node_id': mn['managed_node_id']
+            }
+            commands.append(rq)
+        for r in roles:
+            rq = {
+                'command': 'role_delete',
+                'role_id': r['role_id']
+            }
+            commands.append(rq)
+        users = [x for x in params.enterprise['users'] if x['node_id'] in nodes]
+        for u in users:
+            rq = {
+                'command': 'enterprise_user_delete',
+                'enterprise_user_id': u['enterprise_user_id']
+            }
+            commands.append(rq)
+
+        teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
+        for t in teams:
+            rq = {
+                'command': 'team_delete',
+                'team_uid': t['team_uid']
+            }
+            commands.append(rq)
+
+        sub_nodes.pop(0)
+        sub_nodes.reverse()
+        for node_id in sub_nodes:
+            rq = {
+                'command': 'node_delete',
+                'node_id': node_id
+            }
+            commands.append(rq)
+
+        api.execute_batch(params, commands)
+        api.query_enterprise(params)
 
 
 class EnterpriseUserCommand(EnterpriseCommand):
@@ -955,6 +1073,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 if rs['result'] == 'success':
                     logging.info('Team %s created', t_arg)
                     api.query_enterprise(params)
+                    params.environment_variables[LAST_TEAM_UID] = team_uid
             else:
                 logging.warning('Team %s already exists', t_arg)
             return
@@ -1267,53 +1386,60 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
 
         host = None
         port = None
-        is_ssl = None
+        is_ssl = False
+        is_udp = False
         url = record.login_url
         if url:
             p = urlparse(url)
-            if p.scheme in ['syslog', 'syslogs']:
-                is_ssl = p.scheme == 'syslogs'
+            if p.scheme in ['syslog', 'syslogs', 'syslogu']:
+                if p.scheme == 'syslogu':
+                    is_udp = True
+                else:
+                    is_ssl = p.scheme == 'syslogs'
                 host = p.hostname
                 port = p.port
 
-        if is_ssl is None or not host or not port:
-            print('Enter Syslog TCP connection parameters:')
+        if not host or not port:
+            print('Enter Syslog connection parameters:')
             host_name = input('...' + 'Syslog host name: '.rjust(32))
             if not host_name:
                 raise Exception('Syslog host name is empty')
             host = host_name
 
+            conn_type = input('...' + 'Syslog port type [T]cp/[U]dp. Default TCP: '.rjust(32))
+            is_udp = conn_type.lower() in ['u', 'udp']
             port_number = input('...' + 'Syslog port number: '.rjust(32))
             if not port_number:
                 raise Exception('Syslog port is empty')
             if not port_number.isdigit():
                 raise Exception('Syslog port is a numeric value')
             port = int(port_number)
-
-            has_ssl = input('...' + 'Syslog port requires SSL/TLS (y/N): '.rjust(32))
-            is_ssl = has_ssl.lower() == 'y'
+            if not is_udp:
+                has_ssl = input('...' + 'Syslog port requires SSL/TLS (y/N): '.rjust(32))
+                is_ssl = has_ssl.lower() == 'y'
 
             is_new_config = True
 
         if is_new_config:
             print('Connecting to \'{0}:{1}\' ...'.format(host, port))
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM if not is_udp else socket.SOCK_DGRAM) as sock:
                 sock.settimeout(1)
                 if is_ssl:
                     s = ssl.wrap_socket(sock)
                 else:
                     s = sock
                 s.connect((host, port))
-            record.login_url = 'syslog{0}://{1}:{2}'.format('s' if is_ssl else '', host, port)
+            record.login_url = 'syslog{0}://{1}:{2}'.format('u' if is_udp else 's' if is_ssl else '', host, port)
             self.store_record = True
 
+        props['is_udp'] = is_udp
         props['is_ssl'] = is_ssl
         props['host'] = host
         props['port'] = port
 
     def export_events(self, props, events):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM if not props['is_udp'] else socket.SOCK_DGRAM) as sock:
                 sock.settimeout(1)
                 if props['is_ssl']:
                     s = ssl.wrap_socket(sock)
@@ -2187,3 +2313,5 @@ class EnterprisePushCommand(EnterpriseCommand):
         api.execute_batch(params, commands)
 
         params.sync_data = True
+
+

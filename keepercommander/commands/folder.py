@@ -22,7 +22,7 @@ from .. import api, display
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
-
+from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 
 def register_commands(commands):
     commands['ls'] = FolderListCommand()
@@ -314,7 +314,8 @@ class FolderMakeCommand(Command):
             else:
                 request['folder_type'] = 'user_folder'
 
-        request['folder_uid'] = api.generate_record_uid()
+        folder_uid =  api.generate_record_uid()
+        request['folder_uid'] = folder_uid
 
         folder_key = os.urandom(32)
         encryption_key = params.data_key
@@ -353,6 +354,9 @@ class FolderMakeCommand(Command):
 
         api.communicate(params, request)
         params.sync_data = True
+        params.environment_variables[LAST_FOLDER_UID] = folder_uid
+        if request['folder_type'] == 'shared_folder':
+            params.environment_variables[LAST_SHARED_FOLDER_UID] = folder_uid
 
 
 class FolderRemoveCommand(Command):

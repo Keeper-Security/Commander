@@ -12,6 +12,12 @@
 from urllib.parse import urlparse, urlunparse
 
 
+LAST_RECORD_UID = 'last_record_uid'
+LAST_SHARED_FOLDER_UID = 'last_shared_folder_uid'
+LAST_FOLDER_UID = 'last_folder_uid'
+LAST_TEAM_UID = 'last_team_uid'
+
+
 class RestApiContext:
     def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US', device_id=None):
         self.server_base = server
@@ -92,6 +98,7 @@ class KeeperParams:
         self.batch_mode = False
         self.__rest_context = RestApiContext(server=server, device_id=device_id)
         self.pending_share_requests = set()
+        self.environment_variables = {}
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -126,6 +133,7 @@ class KeeperParams:
         self.prepare_commands = True
         self.batch_mode = False
         self.pending_share_requests.clear()
+        self.environment_variables.clear()
 
     def __get_rest_context(self):
         return self.__rest_context

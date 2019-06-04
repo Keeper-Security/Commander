@@ -24,6 +24,7 @@ from .. import api, display, generator
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..record import Record
+from ..params import LAST_RECORD_UID
 
 
 def register_commands(commands):
@@ -245,6 +246,7 @@ class RecordAddCommand(Command):
         api.communicate(params, rq)
         params.sync_data = True
         logging.info('Record UID: %s', record_uid)
+        params.environment_variables[LAST_RECORD_UID] = record_uid
         return record_uid
 
 
