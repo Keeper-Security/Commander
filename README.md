@@ -1232,14 +1232,16 @@ Custom environmental variables can be created on the command line and through ba
 
 A few default variables can be used:
 
+```
 ${last_folder_uid} - This contains the last added Folder UID
 ${last_record_uid} - This contains the last added Record UID
 ${last_shared_folder_uid} - This contains the last added Shared Folder UID
+```
 
 To add a new environmental variable, use the "set" command:
 
 ```
-My Vault> set my_test foo                                                                                                                                                                                                                            
+My Vault> set my_test foo
 ```
 
 To use this variable, use ${my_test} 
@@ -1247,8 +1249,8 @@ To use this variable, use ${my_test}
 The below example will add a record and then share the record with a user:
 
 ```
-My Vault> add --login "testing123" --pass "12345" --url "https://google.com" "Test from Commander" -f                                                                                                                                                
-My Vault> share-record -e another_user@company.com -a grant -w ${last_record_uid}                                                                                                                                                                        
+My Vault> add --login "testing123" --pass "12345" --url "https://google.com" "Test from Commander" -f
+My Vault> share-record -e another_user@company.com -a grant -w ${last_record_uid}
 ```
 
 ### Targeted Password Rotations & Plugins 
