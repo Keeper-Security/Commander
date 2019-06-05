@@ -20,6 +20,7 @@ Jump to:
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Retrieval API](#password-retrieval-api)
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
+* [Environmental Variables](#environmental-variables))
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
