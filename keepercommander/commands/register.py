@@ -938,8 +938,8 @@ class ShareReportCommand(Command):
                 for user in user_names:
                     record_uids = record_shares[user]
                     records = [api.get_record(params, x) for x in record_uids]
+                    records.sort(key=lambda x: x.title.lower())
                     table = [[i+1, r.record_uid, r.title] for i, r in enumerate(records)]
-                    table.sort(key=lambda x: x[2].lower())
                     print('')
                     print('Records shared with: {0}'.format(user))
                     print('')
@@ -947,13 +947,13 @@ class ShareReportCommand(Command):
                     print('')
             if len(sf_shares) > 0:
                 user_names = [x for x in sf_shares.keys()]
-                user_names.sort()
+                user_names.sort(key=lambda x: x.lower())
                 headers = ['#', 'Shared Folder UID', 'Name']
                 for user in user_names:
                     sf_uids = sf_shares[user]
                     sfs = [api.get_shared_folder(params, x) for x in sf_uids]
+                    sfs.sort(key=lambda x: x.name.lower())
                     table = [[i+1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
-                    table.sort(key=lambda x: x[2].lower())
                     print('')
                     print('Folders shared with: {0}'.format(user))
                     print('')
