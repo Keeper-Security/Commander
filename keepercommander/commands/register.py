@@ -19,8 +19,8 @@ import logging
 
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
+from tabulate import tabulate
 
-from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
@@ -40,6 +40,7 @@ EMAIL_PATTERN=r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 def register_commands(commands):
     commands['share-record'] = ShareRecordCommand()
     commands['share-folder'] = ShareFolderCommand()
+    commands['share-report'] = ShareReportCommand()
     commands['create-user'] = RegisterCommand()
 
 
@@ -73,6 +74,15 @@ share_folder_parser.add_argument('-e', '--can-edit', dest='can_edit', action='st
 share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
+
+
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report on record sharing')
+share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
+share_report_parser.add_argument('-u', '--user', dest='user', action='append', help='user email or team name')
+#share_report_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='record permission: can be shared')
+#share_report_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
+share_report_parser.error = raise_parse_exception
+share_report_parser.exit = suppress_exit
 
 
 register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper User')
@@ -794,3 +804,172 @@ class ShareRecordCommand(Command):
             emails = [x['to_username'] for x in rs['remove_statuses'] if x['status'] == 'success']
             if emails:
                 logging.info('Stopped sharing record with: %s', ', '.join(emails))
+
+
+class ShareReportCommand(Command):
+    def get_parser(self):
+        return share_report_parser
+
+    def execute(self, params, **kwargs):
+
+        record_uids = []
+        user_filter = set()
+        record_filter = set()
+
+        if kwargs.get('record'):
+            records = kwargs.get('record') or []
+            for r in records:
+                if r in params.record_cache:
+                    record_filter.add(r)
+                else:
+                    r_uid = None
+                    rs = try_resolve_path(params, r)
+                    if rs is not None:
+                        sf, name = rs
+                        if name:
+                            shared_folder_uid = sf.uid or ''
+                            if shared_folder_uid in params.subfolder_record_cache:
+                                for uid in params.subfolder_record_cache[shared_folder_uid]:
+                                    r = params.record_cache[uid]
+                                    rec = api.get_record(params, uid)
+                                    if name in {rec.title, rec.record_uid}:
+                                        r_uid = rec.record_uid
+                                        break
+                    if r_uid:
+                        record_filter.add(r_uid)
+                    else:
+                        logging.error('\'%s\' is not an existing record title or UID', r)
+            if not record_filter:
+                logging.error('Record(s) not found')
+                return
+
+            record_uids = [x for x in record_filter]
+        elif kwargs.get('user'):
+            for u in kwargs['user']:
+                user_filter.add(u)
+
+            record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
+        else:
+            record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
+
+        api.get_record_shares(params, record_uids)
+
+        record_shares = {}
+        sf_shares = {}
+
+        for uid in record_uids:
+            record = params.record_cache[uid]
+            if 'shares' in record:
+                if 'user_permissions' in record['shares']:
+                    for up in record['shares']['user_permissions']:
+                        user_name = up['username']
+                        if user_filter:
+                            if user_name not in user_filter:
+                                continue
+                        if user_name not in record_shares:
+                            record_shares[user_name] = set()
+                        if uid not in record_shares[user_name]:
+                            record_shares[user_name].add(uid)
+                if 'shared_folder_permissions' in record['shares']:
+                    names = set()
+                    for sfp in record['shares']['shared_folder_permissions']:
+                        shared_folder_uid = sfp['shared_folder_uid']
+                        if shared_folder_uid in params.shared_folder_cache:
+                            shared_folder = params.shared_folder_cache[sfp['shared_folder_uid']]
+                            names.clear()
+                            if 'users' in shared_folder:
+                                for u in shared_folder['users']:
+                                    user_name = u['username']
+                                    if user_filter:
+                                        if user_name not in user_filter:
+                                            continue
+                                    names.add(user_name)
+                            if 'teams' in shared_folder:
+                                for t in shared_folder['teams']:
+                                    user_name = t['name']
+                                    if user_filter:
+                                        if user_name not in user_filter:
+                                            continue
+                                    names.add(user_name)
+
+                            for user_name in names:
+                                if user_name not in sf_shares:
+                                    sf_shares[user_name] = set()
+                                if shared_folder_uid not in sf_shares[user_name]:
+                                    sf_shares[user_name].add(shared_folder_uid)
+
+                            if 'records' in shared_folder:
+                                for sfr in shared_folder['records']:
+                                    uid = sfr['record_uid']
+                                    if record_filter:
+                                        if not uid in record_filter:
+                                            continue
+                                    for user_name in names:
+                                        if user_filter:
+                                            if user_name not in user_filter:
+                                                continue
+                                        if user_name not in record_shares:
+                                            record_shares[user_name] = set()
+                                        if uid not in record_shares[user_name]:
+                                            record_shares[user_name].add(uid)
+
+        if kwargs.get('record'):
+            if len(record_shares) > 0:
+                users_shares = {}
+                for user in record_shares:
+                    for uid in record_shares[user]:
+                        if uid not in users_shares:
+                            users_shares[uid] = set()
+                        users_shares[uid].add(user)
+                for record_uid in users_shares:
+                    record = api.get_record(params, record_uid)
+                    print('')
+                    print('{0:>20s}   {1}'.format('Record UID:', record.record_uid))
+                    print('{0:>20s}   {1}'.format('Title:', record.title))
+                    for i, user in enumerate(users_shares[record_uid]):
+                        print('{0:>20s}   {1}'.format('Shared with:' if i == 0 else '', user))
+                    print('')
+
+        elif kwargs.get('user'):
+            if len(record_shares) > 0:
+                user_names = [x for x in record_shares.keys()]
+                user_names.sort()
+                headers = ['#', 'Record UID', 'Title']
+                for user in user_names:
+                    record_uids = record_shares[user]
+                    records = [api.get_record(params, x) for x in record_uids]
+                    records.sort(key=lambda x: x.title.lower())
+                    table = [[i+1, r.record_uid, r.title] for i, r in enumerate(records)]
+                    print('')
+                    print('Records shared with: {0}'.format(user))
+                    print('')
+                    print(tabulate(table, headers=headers))
+                    print('')
+            if len(sf_shares) > 0:
+                user_names = [x for x in sf_shares.keys()]
+                user_names.sort(key=lambda x: x.lower())
+                headers = ['#', 'Shared Folder UID', 'Name']
+                for user in user_names:
+                    sf_uids = sf_shares[user]
+                    sfs = [api.get_shared_folder(params, x) for x in sf_uids]
+                    sfs.sort(key=lambda x: x.name.lower())
+                    table = [[i+1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
+                    print('')
+                    print('Folders shared with: {0}'.format(user))
+                    print('')
+                    print(tabulate(table, headers=headers))
+                    print('')
+        else:
+            if params.user in record_shares:
+                del record_shares[params.user]
+            if params.user in sf_shares:
+                del sf_shares[params.user]
+
+            headers = ['#', 'Shared to', 'Records']
+            table = [(s[0], len(s[1])) for s in record_shares.items()]
+            table.sort(key=lambda x: x[1], reverse=True)
+            table = [[i+1, s[0], s[1]] for i, s in enumerate(table)]
+            print('')
+            print(tabulate(table, headers=headers))
+            print('')
+

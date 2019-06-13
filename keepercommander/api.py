@@ -1476,7 +1476,8 @@ def get_record_shares(params, record_uids):
         return False
 
     uids = [x for x in record_uids if need_share_info(x)]
-    if len(uids) > 0:
+
+    while len(uids) > 0:
         records = []
         rq = {
             'command': 'get_records',
@@ -1484,7 +1485,8 @@ def get_record_shares(params, record_uids):
             'records': records,
             'client_time': current_milli_time()
         }
-        for uid in uids:
+        while len(records) < 100 and len(uids) > 0:
+            uid = uids.pop()
             params.record_cache[uid]['shares'] = {}
             ro = resolve_record_access_path(params, uid)
             records.append(ro)
