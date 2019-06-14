@@ -49,7 +49,7 @@ def register_command_info(aliases, command_info):
     aliases['sf'] = 'share-folder'
     aliases['cu'] = 'create-user'
 
-    for p in [share_record_parser, share_folder_parser, register_parser]:
+    for p in [share_record_parser, share_folder_parser, share_report_parser, register_parser]:
         command_info[p.prog] = p.description
 
 
@@ -459,7 +459,6 @@ class ShareFolderCommand(Command):
                                 shared_folder_uid = sf.uid or ''
                                 if shared_folder_uid in params.subfolder_record_cache:
                                     for uid in params.subfolder_record_cache[shared_folder_uid]:
-                                        r = params.record_cache[uid]
                                         rec = api.get_record(params, uid)
                                         if name in {rec.title, rec.record_uid}:
                                             r_uid = rec.record_uid
@@ -830,7 +829,6 @@ class ShareReportCommand(Command):
                             shared_folder_uid = sf.uid or ''
                             if shared_folder_uid in params.subfolder_record_cache:
                                 for uid in params.subfolder_record_cache[shared_folder_uid]:
-                                    r = params.record_cache[uid]
                                     rec = api.get_record(params, uid)
                                     if name in {rec.title, rec.record_uid}:
                                         r_uid = rec.record_uid
@@ -839,9 +837,7 @@ class ShareReportCommand(Command):
                         record_filter.add(r_uid)
                     else:
                         logging.error('\'%s\' is not an existing record title or UID', r)
-            if not record_filter:
-                logging.error('Record(s) not found')
-                return
+                        return
 
             record_uids = [x for x in record_filter]
         elif kwargs.get('user'):
