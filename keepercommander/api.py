@@ -768,9 +768,12 @@ def sync_down(params):
                 params.subfolder_record_cache[key].add(record_uid)
 
     if 'sharing_changes' in response_json:
-        # Not doing anything with this yet
         for sharing_change in response_json['sharing_changes']:
             record_uid = sharing_change['record_uid']
+            if record_uid in params.record_cache:
+                record = params.record_cache[record_uid]
+                if 'shares' in record:
+                    del record['shares']
 
     prepare_folder_tree(params)
 
