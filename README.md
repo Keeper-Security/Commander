@@ -316,6 +316,14 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--record-uid RECORD_UID``` Filter: Record UID
     - ```--shared-folder-uid SHARED_FOLDER_UID``` Filter: Shared Folder UID
 
+* ```share-report``` Generate ad-hoc sharing permission report that displays users and team permissions for all records in the vault
+
+    Parameters:
+    - ```--record``` View share permissions on specific record 
+    - ```--user``` View share permissions with specific user
+
+    Unless specified, defaults to all records and users.
+
 ### Importing Records into Keeper
 
 To import records into your vault, use the ```import``` command.  Supported import formats:
