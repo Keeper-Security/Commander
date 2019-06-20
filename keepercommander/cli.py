@@ -181,7 +181,7 @@ def loop(params):
     prompt_session = None
     if not params.batch_mode:
         if os.isatty(0) and os.isatty(1):
-            completer = CommandCompleter(params, commands)
+            completer = CommandCompleter(params, commands, aliases)
             prompt_session = PromptSession(multiline=False,
                                            editing_mode=EditingMode.VI,
                                            completer=completer,

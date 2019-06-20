@@ -17,7 +17,8 @@ install_requires = [
     'tabulate',
     'prompt_toolkit>=2.0.4',
     'asciitree',
-    'protobuf'
+    'protobuf',
+    'pyperclip'
 ]
 
 setup(name='keepercommander',
