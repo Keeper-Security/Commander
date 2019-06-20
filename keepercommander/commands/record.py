@@ -39,6 +39,7 @@ def register_commands(commands):
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
     commands['delete-attachment'] = RecordDeleteAttachmentCommand()
+    commands['clipboard-copy'] = ClipboardCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -51,12 +52,20 @@ def register_command_info(aliases, command_info):
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
+    aliases['cc'] = 'clipboard-copy'
 
-    for p in [search_parser, list_parser, get_info_parser, add_parser, rm_parser, append_parser,
+    for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, add_parser, rm_parser, append_parser,
               download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
+
+
+clipboard_copy_parser = argparse.ArgumentParser(prog='clipboard-copy|cc', description='Copy record password to clipboard')
+clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='login name')
+clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+clipboard_copy_parser.error = raise_parse_exception
+clipboard_copy_parser.exit = suppress_exit
 
 
 add_parser = argparse.ArgumentParser(prog='add|a', description='Add record')
@@ -873,3 +882,42 @@ class RecordDeleteAttachmentCommand(Command):
         }
         api.communicate(params, rq)
         params.sync_data = True
+
+
+class ClipboardCommand(Command):
+    def get_parser(self):
+        return clipboard_copy_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            logging.error('Enter name or uid of existing record')
+            return
+
+        rec = api.get_record(params, record_uid)
+        txt = rec.login if kwargs.get('login') else rec.password
+        if txt:
+            import pyperclip
+            pyperclip.copy(txt)
+            logging.info('Copied to clipboard')

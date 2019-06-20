@@ -13,6 +13,8 @@ import argparse
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
+
+from .params import KeeperParams
 from .commands.folder import ls_parser, mv_parser
 from . import api
 
@@ -99,10 +101,12 @@ def try_resolve_path(params, path):
 
 
 class CommandCompleter(Completer):
-    def __init__(self, params, commands):
+    def __init__(self, params, commands, aliases):
+        # type: (CommandCompleter, KeeperParams, dict, dict) -> None
         Completer.__init__(self)
         self.params = params
         self.commands = commands
+        self.aliases = aliases
 
     @staticmethod
     def fix_input(txt):
@@ -142,6 +146,8 @@ class CommandCompleter(Completer):
                             yield Completion(c, start_position=-len(document.text))
                 elif pos > 0:
                     cmd = document.text[:pos]
+                    if cmd in self.aliases:
+                        cmd = self.aliases[cmd]
                     raw_input = document.text[pos+1:].strip()
                     context = ''
                     extra = dict()
@@ -152,7 +158,7 @@ class CommandCompleter(Completer):
                             opts, _ = ls_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.pattern or ''
                             context = 'folder'
-                    elif cmd in {'download-attachment', 'upload-attachment', 'share-record', 'append-notes', 'rm'} :
+                    elif cmd in {'download-attachment', 'upload-attachment', 'share-record', 'append-notes', 'rm', 'clipboard-copy'} :
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
