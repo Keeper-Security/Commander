@@ -194,7 +194,7 @@ def loop(params):
 
     if params.user:
         if not params.password:
-            print('Enter password for {0}'.format(params.user))
+            logging.info('Enter password for {0}'.format(params.user))
             params.password = getpass.getpass(prompt='Password: ', stream=None)
         if params.password:
             logging.info('Logging in...')
