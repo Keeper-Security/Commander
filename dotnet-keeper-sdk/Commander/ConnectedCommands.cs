@@ -258,7 +258,7 @@ namespace Commander
                     tab.AddRow(new[] { "User Permissions:" });
                     foreach (var u in sf.Users)
                     {
-                        tab.AddRow(new[] { u.Username + ":", "Can Manage Records: " + u.ManageRecords.ToString(), "Can Manage Records: " + u.ManageUsers.ToString() });
+                        tab.AddRow(new[] { u.Username + ":", "Can Manage Records: " + u.ManageRecords.ToString(), "Can Manage Users: " + u.ManageUsers.ToString() });
                     }
                 }
                 if (sf.Teams.Count > 0)
@@ -267,7 +267,7 @@ namespace Commander
                     tab.AddRow(new[] { "Team Permissions:" });
                     foreach (var t in sf.Teams)
                     {
-                        tab.AddRow(new[] { t.Name + ":", "Can Manage Records: " + t.ManageRecords.ToString(), "Can Manage Records: " + t.ManageUsers.ToString() });
+                        tab.AddRow(new[] { t.Name + ":", "Can Manage Records: " + t.ManageRecords.ToString(), "Can Manage Users: " + t.ManageUsers.ToString() });
                     }
                 }
             }
