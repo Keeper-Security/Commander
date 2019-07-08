@@ -271,7 +271,7 @@ namespace KeeperSecurity.Sdk
 
         private void StoreConfigurationIfChanged(IConfiguration configuration)
         {
-            var shouldSaveConfig = !(configuration.LastLogin.AdjustServerUrl() == Api.Server.AdjustServerUrl() && configuration.LastLogin.AdjustUserName() == Username.AdjustUserName());
+            var shouldSaveConfig = !(configuration.LastLogin?.AdjustServerUrl() == Api.Server?.AdjustServerUrl() && configuration.LastLogin?.AdjustUserName() == Username.AdjustUserName());
             var serverConf = configuration.GetServerConfiguration(Api.Server);
             var shouldSaveServer = serverConf == null || !(serverConf.DeviceId.SequenceEqual(Api.EncryptedDeviceToken) && serverConf.ServerKeyId == Api.ServerKeyId);
 
