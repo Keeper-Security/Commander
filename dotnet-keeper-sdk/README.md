@@ -7,7 +7,17 @@ The Keeper .Net SDK is under active development and will be enhanced to include 
 * Customize integration into your backend systems
 * Update/Rotate passwords in the vault
 
-### Keeper .Net SDK Command Reference
+For integration into your .Net systems, please utilize the [KeeperSDK library](https://github.com/Keeper-Security/Commander/tree/master/dotnet-keeper-sdk/KeeperSdk).
+
+For help with implementation of SDK features, please see the [Commander](https://github.com/Keeper-Security/Commander/tree/master/dotnet-keeper-sdk/Commander) sample application.  This application contains several basic operations such as logging in, authentication with two-factor, loading and decrypting the vault and updating passwords.
+
+### Developer Requirements for KeeperSDK Library
+
+* .Net Framework 4.5
+* .Net Core 2.1
+* .Net Standard 2.0
+
+### Sample Commander application reference 
 
 * ```login``` Login to Keeper
 
@@ -15,9 +25,7 @@ The Keeper .Net SDK is under active development and will be enhanced to include 
 
 * ```sync-down``` or ```d``` Download, sync and decrypt vault
 
-* ```list``` or ```l``` List all records or search with a regular expression.
-
-* ```ls``` List folder contents (try ```ls -l``` as well)
+* ```list``` or ```ls``` List all records (try ```ls -l``` as well)
 
 * ```tree``` Display entire folder structure as a tree
 
@@ -25,7 +33,7 @@ The Keeper .Net SDK is under active development and will be enhanced to include 
 
 * ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
 
-* ```list-sf``` or ```lsf``` Display all shared folders
+* ```list-sf``` Display all shared folders
 
 **Record Management Commands**
 
