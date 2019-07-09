@@ -397,7 +397,7 @@ namespace KeeperSecurity.Sdk
         [DataMember(Name = "shared_folder_uid")]
         public string sharedFolderUid;
 
-        public string FolderUid => folderUid;
+        public string FolderUid => folderUid ?? sharedFolderUid;
         public string RecordUid => recordUid;
     }
 
