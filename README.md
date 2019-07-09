@@ -29,7 +29,9 @@ Jump to:
 
 Keeper Security develops the world's most downloaded password manager and encrypted digital vault with millions of individual customers and thousands of enterprise customers worldwide.  Keeper is a zero-knowledge, native and cloud-based solution available on every mobile and desktop device platform. <a href="#about-keeper">Read more</a> about Keeper or visit the [Keeper Security](https://keepersecurity.com) website.
 
-Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and customers. If you need any assistance or require specific functionality not supported in Commander yet, please contact us at commander@keepersecurity.com.
+Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and partners. 
+
+If you need any assistance or require specific functionality not supported in Commander yet, please contact us at commander@keepersecurity.com.
 
 ### Use Cases
 
@@ -44,7 +46,7 @@ Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Ma
 * Schedule and automate commands
 * Initiate remote connections (such as SSH and RDP) 
 
-### Installation - Linux and Mac
+### Python Installation - Linux and Mac
 
 1. Get Python 3 from [python.org](https://www.python.org).
 2. Install Keeper Commander with pip3:
@@ -55,7 +57,7 @@ $ pip3 install keepercommander
 
 Important: Restart your terminal session after installation
 
-### Installation - Windows 
+### Python Installation - Windows 
 
 1. Download and install [WinPython](https://winpython.github.io/)
 2. From the install folder of WinPython, run the "WinPython Command Prompt" 
@@ -65,11 +67,7 @@ Important: Restart your terminal session after installation
 $ pip3 install keepercommander
 ```
 
-### Install Keepass library
-
-If you plan to use the Keepass import or export features of Keeper Commander, please follow [these instructions](keepercommander/importer/keepass/README.md).
-
-### Upgrading to Latest Code
+### Upgrading to Latest Python Code
 
 ```bash
 $ pip3 install --upgrade keepercommander
@@ -77,7 +75,11 @@ $ pip3 install --upgrade keepercommander
 
 Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
 
-### Developer Setup
+### .Net SDK
+
+We are in active development of a .Net SDK that covers the core use cases of accessing and updating vault records.  See the [.Net SDK](https://github.com/Keeper-Security/Commander/tree/master/dotnet-keeper-sdk) for source code and sample Commander project of the latest version.
+
+### Python Developer Setup
 
 This type of installation assumes you want to view/modify the Python source code (Compatible with Python 3.4+).
 
@@ -330,11 +332,13 @@ To import records into your vault, use the ```import``` command.  Supported impo
 
 * JSON
 * CSV 
-* Keepass
+* Keepass (see additional [install instructions](keepercommander/importer/keepass/README.md))
 
 JSON import files can contain records, folders, subfolders, shared folders, default folder permissions  and user/team permissions.
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
 Keepass files will transfer records, file attachments, folders and subfolders. Option exists to make all folders as shared folders. File attachments are supported in both import and export with Keepass however they are limited to 1MB for each file based on keepass' structure.
+
+If you plan to use the Keepass import or export features of Keeper Commander, please follow [these instructions](keepercommander/importer/keepass/README.md).
 
 **JSON Record Import**
 
