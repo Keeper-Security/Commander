@@ -148,7 +148,30 @@ Logging in...
 Syncing...
 Decrypted [400] Records
 
-My Vault>
+My Vault> search amazon                                                                                                                 
+
+  #  Record UID              Title                        Login              URL
+---  ----------------------  ---------------------------  -----------------  ----------------------
+  1  8Q_NiK10JWKppngL5R4IvQ  Amazon AWS Demo              admin@company.com  https://aws.amazon.com
+  2  Pe8N7Ii0rDd64XVDOnlS4g  Business Account             me@company.com     https://aws.amazon.com
+
+My Vault> get Pe8N7Ii0rDd64XVDOnlS4g                                                                                                    
+
+                 UID: Pe8N7Ii0rDd64XVDOnlS4g
+              Folder: Amazon AWS          
+               Title: Business Account    
+               Login: me@company.com      
+            Password: BmW2NKqfaV@2O%DT!Qg0emOJQf
+                 URL: https://aws.amazon.com
+ Account ID or alias: mycompanyname
+       Access Key ID: BLklAomJ9NvGWtupv3QZmc0#m@
+          Secret Key: 0MZenvr0x4rzK$8qLHwzS42i8r7fsdjh4DKJASHd34
+               Notes: These are some notes 
+        Shared Users: craig@acme-demo.com (Owner) self
+      Shared Folders: Amazon AWS          
+
+My Vault>                                                                                                                               
+
 ```
 
 Type ```h``` to display all commands and help information.
