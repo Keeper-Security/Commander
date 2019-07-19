@@ -179,7 +179,9 @@ class WhoamiCommand(Command):
             print('{0:>20s}: {1:<20s}'.format('Logged in as', params.user))
             if params.license:
                 print('')
-                print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', params.license['product_type_name']))
+                account_type = params.license['account_type']
+                account_type_name = 'Enterprise' if account_type == 2 else 'Family Plan' if account_type == 1 else params.license['product_type_name']
+                print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', account_type_name))
                 print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
                 if 'bytes_total' in params.license:
                     storage_bytes = params.license['bytes_total']
