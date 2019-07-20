@@ -323,6 +323,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--target=syslog``` Export events to a local file in syslog format
     - ```--target=syslog-port``` Export events in syslog format to TCP port. Both plain and SSL connections are supported
     - ```--target=azure-la``` Export events to Azure Log Analytics to custom log named Keeper_CL
+    - ```--target=json``` Export events to a local file in JSON format
 
 * ```audit-report``` Generate ad-hoc customized audit event reports in raw and summarized formats - [See Details](#ad-hoc-event-reporting)
 

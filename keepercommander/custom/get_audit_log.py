@@ -8,9 +8,8 @@
 # Copyright 2019 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-# Example showing how to create a record and upload
-# to the server, then deleting the record from the
-# server.
+# Example showing how to access the raw enterprise event logs
+# for some custom processing.
 #
 
 import getpass
