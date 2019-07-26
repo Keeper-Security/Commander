@@ -54,6 +54,7 @@ def register_commands(commands):
     commands['enterprise-push'] = EnterprisePushCommand()
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
+    commands['user-report'] = UserReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -64,7 +65,7 @@ def register_command_info(aliases, command_info):
     aliases['al'] = 'audit-log'
 
     for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
-              audit_log_parser, audit_report_parser]:
+              audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
 
@@ -164,6 +165,12 @@ audit_report_parser.add_argument('--record-uid', dest='record_uid', action='stor
 audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='store', help='Filter: Shared Folder UID')
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
+
+
+user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run user report')
+user_report_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json'], default='detail', help='output format.')
+user_report_parser.error = raise_parse_exception
+user_report_parser.exit = suppress_exit
 
 
 def lock_text(lock):
@@ -1279,6 +1286,8 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                             if 'code' in js:
                                 if js['code'] == 6:
                                     token = test_token
+                                elif js['code'] == 10:
+                                    logging.error('HEC\'s Indexer Acknowledgement parameter is not supported yet')
                     except:
                         pass
                 record.password = token
@@ -2315,3 +2324,169 @@ class EnterprisePushCommand(EnterpriseCommand):
         params.sync_data = True
 
 
+class UserReportCommand(Command):
+    def __init__(self):
+        Command.__init__(self)
+        self.nodes = {}
+        self.roles = {}
+        self.teams = {}
+        self.users = {}
+        self.user_roles = {}
+        self.user_teams = {}
+
+    def get_parser(self):
+        return user_report_parser
+
+    def execute(self, params, **kwargs):
+        self.nodes.clear()
+        if 'nodes' in params.enterprise:
+            for node in params.enterprise['nodes']:
+                self.nodes[node['node_id']] = {
+                    'parent_id': node.get('parent_id') or 0,
+                    'name': node['data'].get('displayname') or ''
+                }
+
+        self.roles.clear()
+        if 'roles' in params.enterprise:
+            for role in params.enterprise['roles']:
+                if 'data' in role:
+                    self.roles[role['role_id']] = role['data'].get('displayname') or ''
+
+        self.teams.clear()
+        if 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
+                self.teams[team['team_uid']] = team['name']
+
+        self.users.clear()
+        if 'users' in params.enterprise:
+            for user in params.enterprise['users']:
+                u = {
+                    'enterprise_user_id': user['enterprise_user_id'],
+                    'node_id': user['node_id'],
+                    'username': user['username'],
+                    'name': user['data'].get('displayname') or '',
+                    'status': user['status'],
+                    'lock': user['lock']
+                }
+                if 'account_share_expiration' in user:
+                    u['account_share_expiration'] = user['account_share_expiration']
+                self.users[user['enterprise_user_id']] = u
+
+        self.user_roles.clear()
+        if 'role_users' in params.enterprise:
+            for ru in params.enterprise['role_users']:
+                if ru['enterprise_user_id'] not in self.user_roles:
+                    self.user_roles[ru['enterprise_user_id']] = []
+                if ru['role_id'] in self.roles:
+                    self.user_roles[ru['enterprise_user_id']].append(self.roles[ru['role_id']])
+
+        self.user_teams = {}
+        if 'team_users' in params.enterprise:
+            for tu in params.enterprise['team_users']:
+                if tu['enterprise_user_id'] not in self.user_teams:
+                    self.user_teams[tu['enterprise_user_id']] = []
+                if tu['team_uid'] in self.teams:
+                    self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
+
+        logging.info('Quering last login for the last 180 days')
+        from_date = datetime.datetime.utcnow() - datetime.timedelta(days=180)
+        rq = {
+            "command": "get_enterprise_audit_event_reports",
+            "report_type": "span",
+            "aggregate": ["last_created"],
+            "columns": ["username"],
+            "filter": {
+                "audit_event_type": "login",
+                "created": {
+                    "min": int(from_date.timestamp())
+                }
+            },
+            "timezone": "UTC"
+        }
+
+        last_login = {}
+        rs = api.communicate(params, rq)
+        for row in rs['audit_event_overview_report_rows']:
+            username = row['username']
+            last_login[username.lower()] = row['last_created']
+
+        for user in self.users.values():
+            key = user['username'].lower()
+            if key in last_login:
+                user['last_login'] = datetime.datetime.utcfromtimestamp(int(last_login[key])).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+
+        user_list = list(self.users.values())
+        user_list.sort(key=lambda x: x['username'].lower())
+
+        if kwargs.get('format') == 'json':
+            result = []
+            for user in user_list:
+                path = self.get_node_path(user['node_id'])
+                entry = {
+                    'email': user['username'],
+                    'name': user['name'],
+                    'status':  UserReportCommand.get_user_status(user),
+                    'node':  '->'.join(path)
+                }
+                teams = self.user_teams.get(user['enterprise_user_id'])
+                if teams:
+                    teams.sort(key=str.lower)
+                    entry['teams'] = teams
+                roles = self.user_roles.get(user['enterprise_user_id'])
+                if roles:
+                    roles.sort(key=str.lower)
+                    entry['roles'] = roles
+                ll = user.get('last_login')
+                if ll:
+                    entry['last_login'] = ll.strftime('%Y-%m-%dT%H:%M:%SZ')
+                result.append(entry)
+            print(json.dumps(result, indent=2))
+
+        else:
+            print('')
+            rows = []
+            headers = ['Email', 'Name', 'Status', 'Last Login', 'Node', 'Roles', 'Teams']
+            for user in user_list:
+                status = UserReportCommand.get_user_status(user)
+                path = self.get_node_path(user['node_id'])
+                teams = self.user_teams.get(user['enterprise_user_id']) or []
+                roles = self.user_roles.get(user['enterprise_user_id']) or []
+                team_len = len(teams)
+                role_len = len(roles)
+                teams.sort(key=str.lower)
+                roles.sort(key=str.lower)
+                ll = user.get('last_login')
+                las_log = str(ll) if ll else ''
+                rows.append([user['username'], user['name'], status, las_log, '->'.join(path), roles[0] if role_len > 0 else '', teams[0] if team_len > 0 else ''])
+                for i in range(1, max(role_len, team_len)):
+                    rows.append(['', '', '', '', '', roles[i] if i < role_len else '', teams[i] if i < team_len else ''])
+            print(tabulate(rows, headers=headers))
+
+    def get_node_path(self, node_id):
+        path = []
+        while node_id:
+            if node_id in self.nodes:
+                node = self.nodes[node_id]
+                node_name = node['name'] or 'Root'
+                path.append(node_name)
+                node_id = node['parent_id']
+            else:
+                break
+        path.reverse()
+        return path
+
+    @staticmethod
+    def get_user_status(user):
+        status = 'Invited' if user['status'] == 'invited' else 'Active'
+        lock = user['lock']
+        if lock == 1:
+            status = 'Locked'
+        elif lock == 2:
+            status = 'Disabled'
+        if 'account_share_expiration' in user:
+            expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
+            if expire_at < datetime.datetime.now():
+                status = 'Blocked'
+            else:
+                status = 'Pending Transfer'
+        return status

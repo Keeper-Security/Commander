@@ -357,8 +357,20 @@ class ConnectCommand(Command):
             if rs is not None:
                 folder, record = rs
 
+        endpoint = kwargs.get('endpoint')
+        if endpoint and not folder:
+            rpos = endpoint.rfind('/')
+            if rpos > 0:
+                try_path = endpoint[:rpos+1]
+                rs = try_resolve_path(params, try_path)
+                if rs is not None:
+                    if not rs[1]:
+                        folder = rs[0]
+                        endpoint = endpoint[rpos+1:]
+
         if not folder:
             folder = params.folder_cache[params.current_folder] if params.current_folder else params.root_folder
+
         folder_uid = folder.uid or ''
         if folder_uid in params.subfolder_record_cache:
             for uid in params.subfolder_record_cache[folder_uid]:
@@ -369,7 +381,6 @@ class ConnectCommand(Command):
                 else:
                     records.append(r)
 
-        endpoint = kwargs.get('endpoint')
         if not endpoint:
             endpoints = []
             endpoints_desc = {}
