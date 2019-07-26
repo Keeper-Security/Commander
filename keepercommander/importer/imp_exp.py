@@ -362,7 +362,7 @@ def upload_attachment(params, attachments):
             for record_id in uploaded:
                 if record_id in params.record_cache:
                     rec = params.record_cache[record_id]
-                    extra = json.loads(rec['extra'].decode('utf-8')) if 'extra' in rec else {}
+                    extra = json.loads(rec['extra_unencrypted'].decode('utf-8')) if 'extra' in rec else {}
                     files = extra.get('files')
                     if files is None:
                         files = []
