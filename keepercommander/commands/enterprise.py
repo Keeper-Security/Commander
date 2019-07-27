@@ -11,6 +11,7 @@
 
 import argparse
 import json
+import csv
 import base64
 
 import requests
@@ -27,6 +28,7 @@ import hashlib
 import hmac
 import copy
 import os
+import sys
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
@@ -168,7 +170,9 @@ audit_report_parser.exit = suppress_exit
 
 
 user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run user report')
-user_report_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json'], default='detail', help='output format.')
+user_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'], default='table', help='output format.')
+user_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365, help='number of days to look back for last login.')
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
 
@@ -2388,8 +2392,9 @@ class UserReportCommand(Command):
                 if tu['team_uid'] in self.teams:
                     self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
-        logging.info('Quering last login for the last 180 days')
-        from_date = datetime.datetime.utcnow() - datetime.timedelta(days=180)
+        look_back_days = kwargs.get('days') or 365
+        logging.info('Quering latest login for the last {0} days'.format(look_back_days))
+        from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
         rq = {
             "command": "get_enterprise_audit_event_reports",
             "report_type": "span",
@@ -2418,7 +2423,38 @@ class UserReportCommand(Command):
         user_list = list(self.users.values())
         user_list.sort(key=lambda x: x['username'].lower())
 
-        if kwargs.get('format') == 'json':
+        file_name = kwargs['output'] or ''
+        if file_name == '-':
+            file_name = ''
+
+
+        if kwargs.get('format') == 'csv':
+            if file_name:
+                _, ext = os.path.splitext(file_name)
+                if not ext:
+                    file_name += '.csv'
+            fd = open(file_name, 'w') if file_name else sys.stdout
+            csv_writer = csv.writer(fd)
+            csv_writer.writerow(['Email', 'Name', 'Status', 'Last Login', 'Node', 'Roles', 'Teams'])
+            for user in user_list:
+                status = UserReportCommand.get_user_status(user)
+                path = self.get_node_path(user['node_id'])
+                teams = self.user_teams.get(user['enterprise_user_id']) or []
+                roles = self.user_roles.get(user['enterprise_user_id']) or []
+                teams.sort(key=str.lower)
+                roles.sort(key=str.lower)
+                ll = user.get('last_login')
+                las_log = str(ll) if ll else ''
+                csv_writer.writerow([user['username'], user['name'], status, las_log, ' -> '.join(path), ' | '.join(roles), ' | '.join(teams)])
+            if file_name:
+                fd.flush()
+                fd.close()
+
+        elif kwargs.get('format') == 'json':
+            if file_name:
+                _, ext = os.path.splitext(file_name)
+                if not ext:
+                    file_name += '.json'
             result = []
             for user in user_list:
                 path = self.get_node_path(user['node_id'])
@@ -2438,9 +2474,14 @@ class UserReportCommand(Command):
                     entry['roles'] = roles
                 ll = user.get('last_login')
                 if ll:
+                    ll = ll.astimezone(tz=datetime.timezone.utc)
                     entry['last_login'] = ll.strftime('%Y-%m-%dT%H:%M:%SZ')
                 result.append(entry)
-            print(json.dumps(result, indent=2))
+            if file_name:
+                with open(file_name, 'w') as jf:
+                    json.dump(result, jf, indent=2)
+            else:
+                print(json.dumps(result, indent=2))
 
         else:
             print('')
@@ -2457,7 +2498,7 @@ class UserReportCommand(Command):
                 roles.sort(key=str.lower)
                 ll = user.get('last_login')
                 las_log = str(ll) if ll else ''
-                rows.append([user['username'], user['name'], status, las_log, '->'.join(path), roles[0] if role_len > 0 else '', teams[0] if team_len > 0 else ''])
+                rows.append([user['username'], user['name'], status, las_log, ' -> '.join(path), roles[0] if role_len > 0 else '', teams[0] if team_len > 0 else ''])
                 for i in range(1, max(role_len, team_len)):
                     rows.append(['', '', '', '', '', roles[i] if i < role_len else '', teams[i] if i < team_len else ''])
             print(tabulate(rows, headers=headers))
