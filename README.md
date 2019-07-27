@@ -342,6 +342,13 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--record-uid RECORD_UID``` Filter: Record UID
     - ```--shared-folder-uid SHARED_FOLDER_UID``` Filter: Shared Folder UID
 
+* ```user-report``` Generate ad-hoc user status report
+
+    Parameters:
+    - ```--format``` {table,json,csv}
+    - ```--output``` output to the given filename
+    - ```--days``` {number of days} number of days to look back for last login date
+
 * ```share-report``` Generate ad-hoc sharing permission report that displays users and team permissions for all records in the vault
 
     Parameters:
