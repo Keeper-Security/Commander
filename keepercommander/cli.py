@@ -188,9 +188,8 @@ def loop(params):
                                            complete_style=CompleteStyle.MULTI_COLUMN,
                                            complete_while_typing=False)
 
-    if len(params.commands) == 0:
-        params.batch_mode = False
-        display.welcome()
+        if len(params.commands) == 0:
+            display.welcome()
 
     if params.user:
         if not params.password:
@@ -212,16 +211,15 @@ def loop(params):
             params.commands = params.commands[1:]
 
         if not command:
-            params.batch_mode = False
             try:
                 if prompt_session is not None:
                     if params.enforcements and params.user not in enforcement_checked:
                         enforcement_checked.add(params.user)
                         do_command(params, 'check-enforcements')
 
-                    command = prompt_session.prompt(get_prompt(params)+ '> ')
+                    command = prompt_session.prompt(get_prompt(params))
                 else:
-                    command = input(get_prompt(params) + '> ')
+                    command = input(get_prompt(params))
             except KeyboardInterrupt:
                 pass
             except EOFError:
@@ -244,14 +242,17 @@ def loop(params):
 
 
 def get_prompt(params):
+    if params.batch_mode:
+        return ''
+
     if params.session_token:
         if params.current_folder is None:
             if params.root_folder:
                 params.current_folder = ''
             else:
-                return 'Keeper'
+                return 'Keeper> '
     else:
-        return 'Not logged in'
+        return 'Not logged in> '
 
     prompt = ''
     f = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
@@ -274,4 +275,4 @@ def get_prompt(params):
     if len(prompt) > 40:
         prompt = '...' + prompt[-37:]
 
-    return prompt
+    return prompt + '> '
