@@ -18,6 +18,7 @@ import os
 import hashlib
 import logging
 import urllib.parse
+from typing import Optional, Iterable
 
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -943,6 +944,8 @@ def get_record(params,record_uid):
         if 'extra_unencrypted' in cached_rec:
             extra = json.loads(cached_rec['extra_unencrypted'].decode('utf-8'))
         rec.load(data, revision=cached_rec['revision'], extra=extra)
+        if not resolve_record_view_path(params, record_uid):
+            rec.mask_password()
     except:
         logging.error('**** Error decrypting record %s', record_uid)
 
@@ -1257,7 +1260,7 @@ def update_record(params, record, **kwargs):
         return False
 
     if not kwargs.get('silent'):
-        logging.info('New record successful for record_uid=%s, revision=%d, new_revision=%s',
+        logging.info('Update record successful for record_uid=%s, revision=%d, new_revision=%s',
                      record_rq['record_uid'], record_rq['revision'], new_revision)
 
     record_rq['revision'] = new_revision
@@ -1326,7 +1329,7 @@ def store_non_shared_data(params, record_uid, data):
         logging.error('Record UID %s does not exist.', record_uid)
         return
 
-    ur = resolve_record_write_path(params, record_uid)
+    ur = resolve_record_access_path(params, record_uid)
     ur['non_shared_data'] = encrypt_aes(json.dumps(data).encode('utf-8'), params.data_key)
     ur['client_modified_time'] = current_milli_time()
     ur['version'] = 2
@@ -1389,85 +1392,111 @@ def prepare_folder_tree(params):
             parent_folder.subfolders.append(f.uid)
 
 
-def resolve_record_write_path(params, record_uid):
-    path = {
-        'record_uid': record_uid
-    }
+def resolve_record_permission_path(params, record_uid, permission):
+    # type: (KeeperParams, str, str) -> Optional[dict]
 
-    if record_uid in params.meta_data_cache:
-        rmd = params.meta_data_cache[record_uid]
-        if rmd['can_edit']:
+    for ap in enumerate_record_access_paths(params, record_uid):
+        if ap.get(permission):
+            path = {
+                'record_uid': record_uid
+            }
+            if 'shared_folder_uid' in ap:
+                path['shared_folder_uid'] = ap['shared_folder_uid']
+            if 'team_uid' in ap:
+                path['team_uid'] = ap['team_uid']
             return path
 
-    #shared through shared folder
-    for sf in params.shared_folder_cache.values():
-        if 'records' in sf:
-            for ro in sf['records']:
-                if ro['record_uid'] == record_uid:
-                    if ro['can_edit']:
-                        if 'key_type' in sf:
-                            path['shared_folder_uid'] = sf['shared_folder_uid']
-                            return path
-                        elif 'teams' in sf: #check team
-                            for to in sf['teams']:
-                                if to['manage_records']:
-                                    team = params.team_cache[to['team_uid']]
-                                    if not team['restrict_edit']:
-                                        path['shared_folder_uid'] = sf['shared_folder_uid']
-                                        path['team_uid'] = team['team_uid']
-                                        return path
     return None
 
+
+def resolve_record_write_path(params, record_uid):
+    # type: (KeeperParams, str) -> Optional[dict]
+    return resolve_record_permission_path(params, record_uid, 'can_edit')
 
 def resolve_record_share_path(params, record_uid):
-    path = {
-        'record_uid': record_uid
-    }
+    # type: (KeeperParams, str) -> Optional[dict]
+    return resolve_record_permission_path(params, record_uid, 'can_share')
 
-    if record_uid in params.meta_data_cache:
-        rmd = params.meta_data_cache[record_uid]
-        if rmd['can_share']:
-            return path
-
-    #shared through shared folder
-    for sf in params.shared_folder_cache.values():
-        if 'records' in sf:
-            for ro in sf['records']:
-                if ro['record_uid'] == record_uid:
-                    if ro['can_share']:
-                        if 'key_type' in sf:
-                            path['shared_folder_uid'] = sf['shared_folder_uid']
-                            return path
-                        elif 'teams' in sf: #check team
-                            for to in sf['teams']:
-                                if to['manage_records']:
-                                    team = params.team_cache[to['team_uid']]
-                                    if not team['restrict_share']:
-                                        path['shared_folder_uid'] = sf['shared_folder_uid']
-                                        path['team_uid'] = team['team_uid']
-                                        return
-    return None
-
+def resolve_record_view_path(params, record_uid):
+    # type: (KeeperParams, str) -> Optional[dict]
+    return resolve_record_permission_path(params, record_uid, 'can_view')
 
 def resolve_record_access_path(params, record_uid, path=None):
+    # type: (KeeperParams, str, Optional[dict]) -> dict
+    best_path = None
+
+    for ap in enumerate_record_access_paths(params, record_uid):
+        use_this_path = False
+        if not best_path:
+            use_this_path = True
+        else:
+            if not best_path.get('can_edit') and ap.get('can_edit'):
+                use_this_path = True
+            elif not best_path.get('can_share') and ap.get('can_share'):
+                use_this_path = True
+            elif not best_path.get('can_view') and ap.get('can_view'):
+                use_this_path = True
+
+        if use_this_path:
+            best_path = ap
+            if best_path.get('can_edit') and best_path.get('can_share') and best_path.get('can_view'):
+                break
+
     if path is None:
         path = {}
 
-    path['record_uid'] = record_uid
-    if not record_uid in params.meta_data_cache: #shared through shared folder
-        for sf_uid in params.shared_folder_cache:
-            sf = params.shared_folder_cache[sf_uid]
-            if 'records' in sf:
-                if any(sfr['record_uid'] == record_uid for sfr in sf['records']):
-                    if not 'key_type' in sf:
-                        if 'teams' in sf:
-                            for team in sf['teams']:
-                                path['shared_folder_uid'] = sf_uid
-                                path['team_uid'] = team['team_uid']
-                    else:
-                        path['shared_folder_uid'] = sf_uid
-                        break
+    if best_path:
+        path['record_uid'] = best_path['record_uid']
+        if 'shared_folder_uid' in best_path:
+            path['shared_folder_uid'] = best_path['shared_folder_uid']
+        if 'team_uid' in best_path:
+            path['team_uid'] = best_path['team_uid']
+
     return path
+
+
+def enumerate_record_access_paths(params, record_uid):
+    # type: (KeeperParams, str) -> Iterable[dict]
+
+    if record_uid in params.meta_data_cache:
+        rmd = params.meta_data_cache[record_uid]
+        yield {
+            'record_uid': record_uid,
+            'can_edit': rmd.get('can_edit') or False,
+            'can_share': rmd.get('can_share') or False,
+            'can_view': True
+        }
+
+    for sf_uid in params.shared_folder_cache:
+        sf = params.shared_folder_cache[sf_uid]
+        if 'records' in sf:
+            sfrs = [x for x in sf['records'] if x['record_uid'] == record_uid]
+            if len(sfrs) > 0:
+                sfr = sfrs[0]
+                can_edit = sfr['can_edit']
+                can_share = sfr['can_share']
+                if 'key_type' in sf:
+                    yield {
+                        'record_uid': record_uid,
+                        'shared_folder_uid': sf_uid,
+                        'can_edit': can_edit,
+                        'can_share': can_share,
+                        'can_view': True
+                    }
+                else:
+                    if 'teams' in sf:
+                        for sf_team in sf['teams']:
+                            team_uid = sf_team['team_uid']
+                            if team_uid in params.team_cache:
+                                team = params.team_cache[team_uid]
+                                yield {
+                                    'record_uid': record_uid,
+                                    'shared_folder_uid': sf_uid,
+                                    'team_uid': team_uid,
+                                    'can_edit': can_edit and not team['restrict_edit'],
+                                    'can_share': can_share and not team['restrict_share'],
+                                    'can_view': not team['restrict_view']
+                                }
 
 
 def get_record_shares(params, record_uids):

@@ -25,6 +25,7 @@ class Record:
         self.custom_fields = custom_fields or []
         self.attachments = None
         self.revision = revision
+        self.unmasked_password =  None
 
     def load(self, data, **kwargs):
 
@@ -76,7 +77,6 @@ class Record:
             params = kwargs['params']
             folders = [get_folder_path(params, x) for x in find_folders(params, self.record_uid)]
             for i in range(len(folders)):
-                folder = folders[i]
                 print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
 
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title',self.title))
@@ -164,6 +164,11 @@ class Record:
 
         print('')
 
+    def mask_password(self):
+        if self.password != '******':
+            self.unmasked_password = self.password
+        self.password = '******'
+
     def to_string(self):
         target = self.record_uid + self.folder + self.title + \
                  self.login + self.password + self.notes + \
@@ -185,8 +190,8 @@ class Record:
                     custom_fields = '\t'.join([field['name'] + '\t' + \
                         field['value'] for field in self.custom_fields])
 
-        return tabulate(self.folder, self.title, self.login, \
-                        self.password, self.login_url, self.notes.replace('\n', '\\\\n'), \
+        return tabulate(self.folder, self.title, self.login,
+                        self.password, self.login_url, self.notes.replace('\n', '\\\\n'),
                         custom_fields)
 
     def to_dictionary(self):

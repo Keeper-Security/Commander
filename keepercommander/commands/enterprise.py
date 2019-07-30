@@ -2395,17 +2395,18 @@ class UserReportCommand(Command):
         look_back_days = kwargs.get('days') or 365
         logging.info('Quering latest login for the last {0} days'.format(look_back_days))
         from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
+        report_filter = {
+            "audit_event_type": "login",
+            "created": {
+                "min": int(from_date.timestamp())
+            }
+        }
         rq = {
             "command": "get_enterprise_audit_event_reports",
             "report_type": "span",
             "aggregate": ["last_created"],
             "columns": ["username"],
-            "filter": {
-                "audit_event_type": "login",
-                "created": {
-                    "min": int(from_date.timestamp())
-                }
-            },
+            "filter": report_filter,
             "timezone": "UTC"
         }
 
@@ -2414,6 +2415,16 @@ class UserReportCommand(Command):
         for row in rs['audit_event_overview_report_rows']:
             username = row['username']
             last_login[username.lower()] = row['last_created']
+        if len(rs['audit_event_overview_report_rows']) >= 1000:
+            active = (x['username'].lower() for x in self.users.values() if x['status'] == 'active')
+            missing = [x for x in active if x not in last_login]
+            while len(missing) > 0:
+                report_filter['username'] = missing[:999]
+                missing = missing[999:]
+                rs = api.communicate(params, rq)
+                for row in rs['audit_event_overview_report_rows']:
+                    username = row['username']
+                    last_login[username.lower()] = row['last_created']
 
         for user in self.users.values():
             key = user['username'].lower()
