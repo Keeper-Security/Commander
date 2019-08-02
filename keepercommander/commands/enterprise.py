@@ -18,7 +18,6 @@ import requests
 import logging
 import platform
 import datetime
-import fnmatch
 import re
 import gzip
 import time
@@ -40,7 +39,7 @@ from collections import OrderedDict as OD
 
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from .record import RecordAddCommand
-from .. import api
+from .. import api, rest_api
 from ..display import bcolors
 from ..record import Record
 from ..params import KeeperParams, LAST_TEAM_UID
@@ -49,7 +48,7 @@ from ..generator import generate
 
 def register_commands(commands):
     commands['enterprise-info'] = EnterpriseInfoCommand()
-    #commands['enterprise-node'] = EnterpriseNodeCommand()
+    commands['enterprise-node'] = EnterpriseNodeCommand()
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
@@ -61,12 +60,13 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['ei'] = 'enterprise-info'
+    aliases['en'] = 'enterprise-node'
     aliases['eu'] = 'enterprise-user'
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
     aliases['al'] = 'audit-log'
 
-    for p in [enterprise_info_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
+    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
               audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
@@ -83,8 +83,12 @@ enterprise_info_parser.exit = suppress_exit
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Enterprise node management')
-enterprise_node_parser.add_argument('--wipe-out', action='store_true', help='wipe out node content')
-enterprise_node_parser.add_argument('node', type=str, action='store', help='node name or node ID')
+#enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
+enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
+enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
+enterprise_node_parser.add_argument('--name', dest='displayname', action='store', help='set node display name')
+enterprise_node_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
+enterprise_node_parser.add_argument('node', type=str, nargs='+', help='Node Name or ID. Can be repeated.')
 enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
@@ -103,7 +107,7 @@ enterprise_user_parser.add_argument('--add-role', dest='add_role', action='appen
 enterprise_user_parser.add_argument('--remove-role', dest='remove_role', action='append', help='role name or role ID')
 enterprise_user_parser.add_argument('--add-team', dest='add_team', action='append', help='team name or team UID')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
-enterprise_user_parser.add_argument('email', type=str, action='store', help='user email or user ID or user search pattern')
+enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
@@ -111,9 +115,18 @@ enterprise_user_parser.exit = suppress_exit
 enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Enterprise role management')
 #enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
+enterprise_role_parser.add_argument('--add', dest='add', action='store_true', help='create role')
+enterprise_role_parser.add_argument('--visible-below', dest='visible_below', action='store', choices=['on', 'off'], help='visible to all nodes. \'add\' only')
+enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store', choices=['on', 'off'], help='assign this role to new users. \'add\' only')
+enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
+enterprise_role_parser.add_argument('--node', dest='node', action='store', help='node Name or ID')
+enterprise_role_parser.add_argument('--name', dest='name', action='store', help='role\'s new name')
 enterprise_role_parser.add_argument('--add-user', dest='add_user', action='append', help='add user to role')
 enterprise_role_parser.add_argument('--remove-user', dest='remove_user', action='append', help='remove user from role')
-enterprise_role_parser.add_argument('role', type=str, action='store', help='role name or role ID')
+enterprise_role_parser.add_argument('--add-admin', dest='add_admin', action='append', help='add managed node to role')
+enterprise_role_parser.add_argument('--cascade', dest='cascade', action='store', choices=['on', 'off'], help='apply to the children nodes. \'add-admin\' only')
+enterprise_role_parser.add_argument('--remove-admin', dest='remove_admin', action='append', help='remove managed node from role')
+enterprise_role_parser.add_argument('role', type=str, nargs='+', help='Role Name ID. Can be repeated.')
 enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
@@ -122,6 +135,7 @@ enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', desc
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
+enterprise_team_parser.add_argument('--approve', dest='approve', action='store_true', help='approve queued team')
 enterprise_team_parser.add_argument('--delete', dest='delete', action='store_true', help='delete team')
 enterprise_team_parser.add_argument('--add-user', dest='add_user', action='append', help='add user to team')
 enterprise_team_parser.add_argument('--remove-user', dest='remove_user', action='append', help='remove user from team')
@@ -129,7 +143,8 @@ enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', cho
 enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
 enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
 enterprise_team_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
-enterprise_team_parser.add_argument('team', type=str, action='store', help='team name or team UID (except --add command)')
+enterprise_team_parser.add_argument('--name', dest='name', action='store', help='team\'s new name')
+enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name or UID')
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
@@ -215,7 +230,7 @@ class EnterpriseCommand(Command):
                 emails[pko['key_owner']] = public_key
 
     def get_public_key(self, params, email):
-        # type: (EnterpriseCommand, KeeperParams, str) -> None
+        # type: (EnterpriseCommand, KeeperParams, str) -> any
 
         public_key = self.public_keys.get(email.lower())
         if public_key is None:
@@ -230,6 +245,14 @@ class EnterpriseCommand(Command):
     def get_team_key(self, params, team_uid):
         team_key = self.team_keys.get(team_uid)
         if team_key is None:
+            if 'teams' in params.enterprise:
+                for team in params.enterprise['teams']:
+                    if team['team_uid'] == team_uid:
+                        if 'encrypted_team_key' in team:
+                            team_key = rest_api.decrypt_aes(team['encrypted_team_key'], params.enterprise['unencrypted_tree_key'])
+                        break
+
+        if team_key is None:
             rq = {
                 'command': 'team_get_keys',
                 'teams': [team_uid]
@@ -239,14 +262,12 @@ class EnterpriseCommand(Command):
                 ko = rs['keys'][0]
                 if 'key' in ko:
                     if ko['type'] == 1:
-                        team_key = api.decrypt_aes(ko['key'], params.data_key)
+                        team_key = api.decrypt_data(ko['key'], params.data_key)
                     elif ko['type'] == 2:
                         team_key = api.decrypt_rsa(ko['key'], params.rsa_key)
-                    elif ko['type'] == 3:
-                        team_key = base64.urlsafe_b64decode(ko['key'] + '==')
-                if team_key is not None:
-                    team_key = team_key[:32]
-                    self.team_keys[team_uid] = team_key
+
+        if team_key is not None:
+            self.team_keys[team_uid] = team_key
         return team_key
 
     @staticmethod
@@ -320,6 +341,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 'name': node['data'].get('displayname') or '',
                 'users': [],
                 'teams': [],
+                'queued_teams': [],
+                'roles': [],
                 'children': []
             }
         for node in nodes:
@@ -373,6 +396,29 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if tu['team_uid'] in teams:
                     teams[tu['team_uid']]['users'].append(tu['enterprise_user_id'])
 
+        queued_teams = {}
+        if 'queued_teams' in params.enterprise:
+            for queued_team in params.enterprise['queued_teams']:
+                node_id = queued_team['node_id']
+                if node_id not in node_scope:
+                    continue
+                team_id = queued_team['team_uid']
+                queued_teams[team_id] = {
+                    'id': team_id,
+                    'node_id': node_id,
+                    'name': queued_team['name'],
+                    'users': []
+                }
+                if node_id in nodes:
+                    nodes[node_id]['queued_teams'].append(team_id)
+
+        if 'queued_team_users' in params.enterprise:
+            for tu in params.enterprise['queued_team_users']:
+                if tu['team_uid'] in queued_teams:
+                    queued_teams[tu['team_uid']]['users'].extend(tu['users'])
+                elif tu['team_uid'] in teams:
+                    teams[tu['team_uid']]['users'].extend(tu['users'])
+
         roles = {}
         if 'roles' in params.enterprise:
             for role in params.enterprise['roles']:
@@ -385,8 +431,24 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'node_id': node_id,
                     'name': role['data'].get('displayname') or '',
                     'visible_below': role['visible_below'],
-                    'new_user_inherit': role['new_user_inherit']
+                    'new_user_inherit': role['new_user_inherit'],
+                    'is_admin': False,
+                    'users': []
                 }
+                if node_id in nodes:
+                    nodes[node_id]['roles'].append(role_id)
+
+        if 'role_users' in params.enterprise:
+            for ru in params.enterprise['role_users']:
+                role_id = ru['role_id']
+                if role_id in roles:
+                    roles[role_id]['users'].append(ru['enterprise_user_id'])
+
+        if 'managed_nodes' in params.enterprise:
+            for mn in params.enterprise['managed_nodes']:
+                role_id = mn['role_id']
+                if role_id in roles:
+                    roles[role_id]['is_admin'] = True
 
         show_users = kwargs.get('users') or False
         show_teams = kwargs.get('teams') or False
@@ -435,6 +497,17 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     else:
                         n['{0} user(s)'.format(len(node['users']))] = {}
 
+                if len(node['roles']) > 0:
+                    if kwargs.get('verbose'):
+                        ts = [roles[x] for x in node['roles']]
+                        ts.sort(key=lambda x: x['name'])
+                        td = OD()
+                        for t in ts:
+                            td['{0} ({1})'.format(t['name'], t['id'])] = {}
+                        n['Role(s)'] = td
+                    else:
+                        n['{0} role(s)'.format(len(node['roles']))] = {}
+
                 if len(node['teams']) > 0:
                     if kwargs.get('verbose'):
                         ts = [teams[x] for x in node['teams']]
@@ -445,6 +518,18 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         n['Teams(s)'] = td
                     else:
                         n['{0} team(s)'.format(len(node['teams']))] = {}
+
+                if len(node['queued_teams']) > 0:
+                    if kwargs.get('verbose'):
+                        ts = [teams[x] for x in node['queued_teams']]
+                        ts.sort(key=lambda x: x['name'])
+                        td = OD()
+                        for t in ts:
+                            td['{0} ({1})'.format(t['name'], t['id'])] = {}
+                        n['Queued Teams(s)'] = td
+                    else:
+                        n['{0} queued team(s)'.format(len(node['queued_teams']))] = {}
+
                 return n
 
             r = nodes[root_node]
@@ -482,20 +567,25 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_teams:
                 rows = []
                 for t in teams.values():
-                    rows.append([t['id'], t['name'], restricts(t), node_path(t['node_id'])])
+                    rows.append([t['id'], t['name'], restricts(t), node_path(t['node_id']), len(t['users'])])
+
+                for t in queued_teams.values():
+                    rows.append([t['id'], t['name'], 'Queued', node_path(t['node_id']), len(t['users'])])
+
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["Team ID", 'Name', 'Restricts', 'Node']))
+                print(tabulate(rows, headers=["Team ID", 'Name', 'Restricts', 'Node', 'Users']))
 
             if show_roles:
                 rows = []
                 for r in roles.values():
-                    rows.append([r['id'], r['name'], 'Y' if r['visible_below'] else '', 'Y' if r['new_user_inherit'] else '', node_path(r['node_id'])])
+                    rows.append([r['id'], r['name'], 'Y' if r['visible_below'] else '', 'Y' if r['new_user_inherit'] else '',
+                                 'Y' if r['is_admin'] else '', node_path(r['node_id']), len(r['users'])])
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["Role ID", 'Name', 'Cascade?', 'New User?', 'Node']))
+                print(tabulate(rows, headers=["Role ID", 'Name', 'Visible Below?', 'New User?', 'Admin?','Node', 'Users']))
 
         print('')
 
@@ -515,99 +605,246 @@ class EnterpriseNodeCommand(EnterpriseCommand):
             EnterpriseNodeCommand.get_subnodes(params, nodes, index + 1)
 
     def execute(self, params, **kwargs):
-        node_name = kwargs['node']
-        node_id = None
-        for node in params.enterprise['nodes']:
-            if node_name in {str(node['node_id']), node['data'].get('displayname')}:
-                node_id = node['node_id']
-                break
-            elif not node.get('parent_id') and node_name == params.enterprise['enterprise_name']:
-                node_id = node['node_id']
-                break
-        if not node_id:
-            logging.error('Node %s is not found.', node_name)
+        if kwargs.get('delete') and kwargs.get('add'):
+            logging.error("'add' and 'delete' parameters are mutually exclusive.")
             return
 
-        node = [x for x in params.enterprise['nodes'] if x['node_id'] == node_id][0]
-        if not node.get('parent_id'):
-            logging.error('Cannot wipe out root node')
-            return
+        node_lookup = {}
+        if 'nodes' in params.enterprise:
+            for node in params.enterprise['nodes']:
+                node_lookup[str(node['node_id'])] = node
+                node_name = node['data'].get('displayname') or ''
+                if not node_name and 'parent_id' not in node:
+                    node_name = params.enterprise['enterprise_name']
+                if node_name:
+                    node_name = node_name.lower()
+                    n = node_lookup.get(node_name)
+                    if n is None:
+                        node_lookup[node_name] = node
+                    elif type(n) == list:
+                        n.append(node)
+                    else:
+                        node_lookup[node_name] = [n, node]
 
-        answer = user_choice(
-            bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-            'This action cannot be undone.\n\n' +
-            'Do you want to proceed with deletion?', 'yn', 'n')
-        if answer.lower() != 'y':
-            return
+        parent_id = None
+        if kwargs.get('parent'):
+            parent_name = kwargs.get('parent')
+            n = node_lookup.get(parent_name)
+            if not n:
+                n = node_lookup.get(parent_name.lower())
+            if n:
+                if type(n) == list:
+                    logging.error('Parent node %s in not unique', parent_name)
+                    return
+                parent_id = n['node_id']
+            else:
+                logging.error('Cannot resolve parent node %s', parent_name)
+                return
 
-        sub_nodes = [node['node_id']]
-        EnterpriseNodeCommand.get_subnodes(params, sub_nodes, 0)
+        matched = {}
+        unmatched_nodes = set()
 
-        nodes = set(sub_nodes)
+        for node_name in kwargs['node']:
+            n = node_lookup.get(node_name)
+            if not n:
+                n = node_lookup.get(node_name.lower())
+            if n:
+                if type(n) == list:
+                    logging.warning('Node name \'%s\' is not unique. Skipping.', node_name)
+                else:
+                    matched[n['node_id']] = n
+            else:
+                unmatched_nodes.add(node_name)
 
-        commands = []
+        matched_nodes = list(matched.values())
 
-        if 'queued_teams' in params.enterprise:
-            queued_teams = [x for x in params.enterprise['queued_teams'] if x['node_id'] in nodes]
-            for qt in queued_teams:
+        request_batch = []
+        if kwargs.get('add'):
+            for node in matched_nodes:
+                logging.warning('Node \'%s\' already exists: Skipping.', node['data'].get('displayname'))
+
+            if not unmatched_nodes:
+                logging.warning('No nodes to add.')
+                return
+
+            if parent_id is None:
+                for node in params.enterprise['nodes']:
+                    if not node.get('parent_id'):
+                        parent_id = node['node_id']
+                        break
+
+            for node_name in unmatched_nodes:
+                dt = {'displayname': node_name}
+                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
                 rq = {
-                    'command': 'team_delete',
-                    'team_uid': qt['team_uid']
+                    'command': 'node_add',
+                    'node_id': self.get_enterprise_id(params),
+                    'parent_id': parent_id,
+                    'encrypted_data': encrypted_data
                 }
-                commands.append(rq)
+                request_batch.append(rq)
+        else:
+            for node_name in unmatched_nodes:
+                logging.warning('Node \'%s\' is not found: Skipping', node_name)
 
-        managed_nodes = [x for x in params.enterprise['managed_nodes'] if x['managed_node_id'] in nodes]
-        roles = [x for x in params.enterprise['roles'] if x['node_id'] in nodes]
-        role_set = set([x['role_id'] for x in managed_nodes])
-        role_set = role_set.union([x['role_id'] for x in roles])
-        for ru in params.enterprise['role_users']:
-            if ru['role_id'] in role_set:
-                rq = {
-                    'command': 'role_user_remove',
-                    'role_id': ru['role_id'],
-                    'enterprise_user_id': ru['enterprise_user_id']
-                }
-                commands.append(rq)
-        for mn in managed_nodes:
-            rq = {
-                'command': 'role_managed_node_remove',
-                'role_id': mn['role_id'],
-                'managed_node_id': mn['managed_node_id']
-            }
-            commands.append(rq)
-        for r in roles:
-            rq = {
-                'command': 'role_delete',
-                'role_id': r['role_id']
-            }
-            commands.append(rq)
-        users = [x for x in params.enterprise['users'] if x['node_id'] in nodes]
-        for u in users:
-            rq = {
-                'command': 'enterprise_user_delete',
-                'enterprise_user_id': u['enterprise_user_id']
-            }
-            commands.append(rq)
+            if not matched_nodes:
+                return
 
-        teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
-        for t in teams:
-            rq = {
-                'command': 'team_delete',
-                'team_uid': t['team_uid']
-            }
-            commands.append(rq)
+            if kwargs.get('delete'):
+                depths = {}
 
-        sub_nodes.pop(0)
-        sub_nodes.reverse()
-        for node_id in sub_nodes:
-            rq = {
-                'command': 'node_delete',
-                'node_id': node_id
-            }
-            commands.append(rq)
+                def traverse_to_root(node_id, depth):
+                    if not node_id:
+                        return depth
+                    nd = node_lookup.get(str(node_id))
+                    if nd:
+                        return traverse_to_root(nd.get('parent_id'), depth + 1)
+                    else:
+                        return depth
 
-        api.execute_batch(params, commands)
-        api.query_enterprise(params)
+                for node in matched_nodes:
+                    depths[node['node_id']] = traverse_to_root(node['node_id'], 0)
+                matched_nodes.sort(key=lambda x: depths[x['node_id']] or 0, reverse=True)
+                for node in matched_nodes:
+                    rq = {
+                        'command': 'node_delete',
+                        'node_id': node['node_id']
+                    }
+                    request_batch.append(rq)
+            elif kwargs.get('wipe_out'):
+                if len(matched_nodes) != 1:
+                    logging.error('Cannot wipe-out more than one node')
+                    return
+                node = matched_nodes[0]
+                if not node.get('parent_id'):
+                    logging.error('Cannot wipe out root node')
+                    return
+
+                answer = user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                    'This action cannot be undone.\n\n' +
+                    'Do you want to proceed with deletion?', 'yn', 'n')
+                if answer.lower() != 'y':
+                    return
+
+                sub_nodes = [node['node_id']]
+                EnterpriseNodeCommand.get_subnodes(params, sub_nodes, 0)
+                nodes = set(sub_nodes)
+
+                if 'queued_teams' in params.enterprise:
+                    queued_teams = [x for x in params.enterprise['queued_teams'] if x['node_id'] in nodes]
+                    for qt in queued_teams:
+                        rq = {
+                            'command': 'team_delete',
+                            'team_uid': qt['team_uid']
+                        }
+                        request_batch.append(rq)
+
+                managed_nodes = [x for x in params.enterprise['managed_nodes'] if x['managed_node_id'] in nodes]
+                roles = [x for x in params.enterprise['roles'] if x['node_id'] in nodes]
+                role_set = set([x['role_id'] for x in managed_nodes])
+                role_set = role_set.union([x['role_id'] for x in roles])
+                for ru in params.enterprise['role_users']:
+                    if ru['role_id'] in role_set:
+                        rq = {
+                            'command': 'role_user_remove',
+                            'role_id': ru['role_id'],
+                            'enterprise_user_id': ru['enterprise_user_id']
+                        }
+                        request_batch.append(rq)
+                for mn in managed_nodes:
+                    rq = {
+                        'command': 'role_managed_node_remove',
+                        'role_id': mn['role_id'],
+                        'managed_node_id': mn['managed_node_id']
+                    }
+                    request_batch.append(rq)
+                for r in roles:
+                    rq = {
+                        'command': 'role_delete',
+                        'role_id': r['role_id']
+                    }
+                    request_batch.append(rq)
+                users = [x for x in params.enterprise['users'] if x['node_id'] in nodes]
+                for u in users:
+                    rq = {
+                        'command': 'enterprise_user_delete',
+                        'enterprise_user_id': u['enterprise_user_id']
+                    }
+                    request_batch.append(rq)
+
+                teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
+                for t in teams:
+                    rq = {
+                        'command': 'team_delete',
+                        'team_uid': t['team_uid']
+                    }
+                    request_batch.append(rq)
+
+                sub_nodes.pop(0)
+                sub_nodes.reverse()
+                for node_id in sub_nodes:
+                    rq = {
+                        'command': 'node_delete',
+                        'node_id': node_id
+                    }
+                    request_batch.append(rq)
+            elif parent_id or kwargs.get('name'):
+
+                def is_in_chain(node_id, parent_id):
+                    if node_id == parent_id:
+                        return True
+                    nn = node_lookup.get(node_id)
+                    if not nn:
+                        return False
+                    return is_in_chain(nn['parent_id'], parent_id)
+
+                if kwargs.get('name') and len(matched_nodes) > 1:
+                    logging.warning('Cannot assign the same name to % nodes', len(matched_nodes) > 1)
+                    kwargs['name'] = None
+                if not parent_id or not kwargs.get('name'):
+                    for node in matched_nodes:
+                        encrypted_data = node['encrypted_data']
+                        if kwargs.get('name'):
+                            dt = node['data']
+                            dt['dsplayname'] = kwargs.get('name')
+                            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                        if parent_id:
+                            if is_in_chain(parent_id, node['node_id']):
+                                logging.warning('Cannot move node to itself or its children')
+                                continue
+                        rq = {
+                            'command': 'node_update',
+                            'encrypted_data': encrypted_data
+                        }
+                        if parent_id:
+                            rq['parent_id'] = parent_id
+                        request_batch.append(rq)
+
+        if request_batch:
+            rss = api.execute_batch(params, request_batch)
+            for rq, rs in zip(request_batch, rss):
+                command = rq.get('command')
+                if command == 'node_add':
+                    if rs['result'] == 'success':
+                        logging.info('Node is created')
+                    else:
+                        logging.warning('Failed to create node: %s', rs['message'])
+                elif command in { 'node_delete', 'node_update' }:
+                    node_id = rq['node_id']
+                    node_name = str(node_id)
+                    node = node_lookup.get(node_name)
+                    if node:
+                        node_name = node['data'].get('displayname') or node_name
+                    verb = 'deleted' if command == 'node_delete' else 'updated'
+                    if rs['result'] == 'success':
+                        logging.info('\'%s\' node is %s', node_name, verb)
+                    else:
+                        logging.warning('\'%s\' node is not %s. Error: %s', node_name, verb, rs['message'])
+                else:
+                    if rs['result'] != 'success':
+                        logging.warning('\'%s\' command error: %s', command,  rs['message'])
+            api.query_enterprise(params)
 
 
 class EnterpriseUserCommand(EnterpriseCommand):
@@ -615,21 +852,31 @@ class EnterpriseUserCommand(EnterpriseCommand):
         return enterprise_user_parser
 
     def execute(self, params, **kwargs):
-        user = None
+        if kwargs.get('delete') and kwargs.get('add'):
+            logging.error("'add' and 'delete' parameters are mutually exclusive.")
+            return
+
+        if kwargs.get('lock') and kwargs.get('unlock'):
+            logging.error("'lock' and 'unlock' parameters are mutually exclusive.")
+            return
+
         matched_users = []
-        email = kwargs['email']
+        unmatched_emails = set()
+
+        user_lookup = {}
         if 'users' in params.enterprise:
             for u in params.enterprise['users']:
-                if email in {str(u['enterprise_user_id']), u['username']}:
-                    user = u
-                    break
+                user_lookup[str(u['enterprise_user_id'])] = u
+                user_lookup[u['username'].lower()] = u
 
-        if not user:
-            regex = re.compile(fnmatch.translate(email)).match
-            if 'users' in params.enterprise:
-                for u in params.enterprise['users']:
-                    if regex(u['username']):
-                        matched_users.append(u)
+        emails = kwargs['email']
+        if emails:
+            for email in emails:
+                email = email.lower()
+                if email in user_lookup:
+                    matched_users.append(user_lookup[email])
+                else:
+                    unmatched_emails.add(email)
 
         node_id = None
         if kwargs.get('node'):
@@ -643,8 +890,44 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
         user_name = kwargs.get('displayname')
 
-        if kwargs.get('delete'):
-            if user:
+        request_batch = []
+
+        if kwargs.get('add'):
+            for user in matched_users:
+                logging.warning('User %s already exists: Skipping', user['username'])
+
+            if not unmatched_emails:
+                logging.warning('No email address to add.')
+                return
+
+            dt = {}
+            if user_name:
+                dt['displayname'] = user_name
+            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+            if node_id is None:
+                for node in params.enterprise['nodes']:
+                    if not node.get('parent_id'):
+                        node_id = node['node_id']
+                        break
+
+            for email in unmatched_emails:
+                rq = {
+                    'command': 'enterprise_user_add',
+                    'enterprise_user_id': self.get_enterprise_id(params),
+                    'node_id': node_id,
+                    'encrypted_data': encrypted_data,
+                    'enterprise_user_username': email
+                }
+                request_batch.append(rq)
+        else:
+            for email in unmatched_emails:
+                logging.warning('User %s is not found: Skipping', email)
+
+            if not matched_users:
+                logging.warning('No such user(s)')
+                return
+
+            if kwargs.get('delete'):
                 answer = 'y' if kwargs.get('force') else \
                     user_choice(
                         bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
@@ -654,202 +937,244 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         'This action cannot be undone.\n\n' +
                         'Do you want to proceed with deletion?', 'yn', 'n')
                 if answer.lower() == 'y':
-                    rq = {
-                        'command': 'enterprise_user_delete',
-                        'enterprise_user_id': user['enterprise_user_id']
-                    }
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        logging.info('User %s is deleted', user['username'])
-                        api.query_enterprise(params)
+                    for user in matched_users:
+                        rq = {
+                            'command': 'enterprise_user_delete',
+                            'enterprise_user_id': user['enterprise_user_id']
+                        }
+                        request_batch.append(rq)
             else:
-                logging.warning('No such user')
-            return
-
-        elif kwargs.get('add'):
-            dt = {}
-            if user_name:
-                dt['displayname'] = user_name
-            if node_id is None:
-                for node in params.enterprise['nodes']:
-                    if not node.get('parent_id'):
-                        node_id = node['node_id']
-                        break
-            rq = {
-                'command': 'enterprise_user_add',
-                'enterprise_user_id': self.get_enterprise_id(params),
-                'node_id': node_id,
-                'encrypted_data': api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
-                'enterprise_user_username': email
-            }
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                logging.info('User %s is added', email)
-                api.query_enterprise(params)
-            return
-
-        if user:
-            if kwargs.get('lock') or kwargs.get('unlock'):
-                is_locked = user['lock'] != 0
-                to_lock = kwargs.get('lock')
                 if kwargs.get('lock') or kwargs.get('unlock'):
-                    to_lock = not is_locked
-                rq = {
-                    'command': 'enterprise_user_lock',
-                    'enterprise_user_id': user['enterprise_user_id'],
-                    'lock': 'locked' if to_lock else 'unlocked'
-                }
-                rs = api.communicate(params, rq)
-                if rs['result'] == 'success':
-                    user['lock'] = 1 if to_lock else 0
-                    logging.info('User %s is %s', user['username'], 'locked' if to_lock else 'unlocked')
+                    for user in matched_users:
+                        if user['status'] == 'active':
+                            to_lock = kwargs.get('lock')
+                            request_batch.append({
+                                'command': 'enterprise_user_lock',
+                                'enterprise_user_id': user['enterprise_user_id'],
+                                'lock': 'locked' if to_lock else 'unlocked'
+                            })
+                        else:
+                            logging.warning('%s has not accepted invitation yet: Skipping', user['username'])
 
-            elif kwargs.get('expire'):
-                answer = 'y' if  kwargs.get('force') else \
-                    user_choice(
-                        bcolors.BOLD + '\nConfirm\n' + bcolors.ENDC +
-                        'User will be required to create a new Master Password on the next login.\n' +
-                        'Are you sure you want to expire master password?', 'yn', 'n')
-                if answer.lower() == 'y':
-                    rq = {
-                        'command': 'set_master_password_expire',
-                        'email': user['username']
-                    }
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        logging.info('User %s has master password expired', user['username'])
+                if kwargs.get('expire'):
+                    answer = 'y' if  kwargs.get('force') else \
+                        user_choice(
+                            bcolors.BOLD + '\nConfirm\n' + bcolors.ENDC +
+                            'User will be required to create a new Master Password on the next login.\n' +
+                            'Are you sure you want to expire master password?', 'yn', 'n')
+                    if answer.lower() == 'y':
+                        for user in matched_users:
+                            request_batch.append({
+                                'command': 'set_master_password_expire',
+                                'email': user['username']
+                            })
 
-            elif kwargs.get('add_role') or kwargs.get('remove_role'):
-                roles = {}
-                for is_add in [False, True]:
-                    l = kwargs.get('add_role') if is_add else kwargs.get('remove_role')
-                    if l:
-                        for r in l:
-                            role_node = None
-                            if 'roles' in params.enterprise:
-                                for role in params.enterprise['roles']:
-                                    if r in {str(role['role_id']), role['data'].get('displayname')}:
-                                        role_node = role
-                                        break
-                            if role_node:
-                                roles[role_node['role_id']] = is_add, role_node['data'].get('displayname')
-                            else:
-                                logging.warning('Role %s cannot be resolved', r)
-                if len(roles) > 0:
-                    admin_confirmed = False
-                    for role_id in roles:
-                        is_add, role_name = roles[role_id]
-                        rq = {
-                            'command': 'role_user_add' if is_add else 'role_user_remove',
-                            'enterprise_user_id': user['enterprise_user_id'],
-                            'role_id': role_id
-                        }
-                        need_confirm = False
-                        if is_add:
-                            if 'managed_nodes' in params.enterprise:
-                                for mn in params.enterprise['managed_nodes']:
-                                    if mn['role_id'] == role_id:
-                                        public_key = self.get_public_key(params, user['username'])
-                                        if public_key is None:
-                                            logging.warning('Cannot get public key for user %s', user['username'])
-                                            return
-                                        rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
-                                        need_confirm = True
-                                        break
-                            if 'role_keys' in params.enterprise:
-                                for rk in params.enterprise['role_keys']:
-                                    if rk['role_id'] == role_id:
-                                        public_key = self.get_public_key(params, user['username'])
-                                        if public_key is None:
-                                            logging.warning('Cannot get public key for user %s', user['username'])
-                                            return
-                                        role_key = None
-                                        if rk['key_type'] == 'encrypted_by_data_key':
-                                            role_key = api.decrypt_aes(rk['encrypted_key'], params.data_key)
-                                        elif rk['key_type'] == 'encrypted_by_public_key':
-                                            role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+                if kwargs.get('add_role') or kwargs.get('remove_role'):
+                    role_changes = {}
+                    for is_add in [False, True]:
+                        l = kwargs.get('add_role') if is_add else kwargs.get('remove_role')
+                        if l:
+                            for r in l:
+                                role_node = None
+                                if 'roles' in params.enterprise:
+                                    for role in params.enterprise['roles']:
+                                        if r in {str(role['role_id']), role['data'].get('displayname')}:
+                                            role_node = role
+                                            break
+                                if role_node:
+                                    role_changes[role_node['role_id']] = is_add, role_node['data'].get('displayname')
+                                else:
+                                    logging.warning('Role %s cannot be resolved', r)
+
+                    if len(role_changes) > 0:
+                        for role_id in role_changes:
+                            is_add, role_name = role_changes[role_id]
+                            role_users = set()
+                            if 'role_users' in params.enterprise:
+                                for ru in params.enterprise['role_users']:
+                                    if ru['role_id'] == role_id:
+                                        role_users.add(ru['enterprise_user_id'])
+
+                            role_key = None
+                            is_managed_role = False
+                            if is_add:
+                                if 'managed_nodes' in params.enterprise:
+                                    for mn in params.enterprise['managed_nodes']:
+                                        if mn['role_id'] == role_id:
+                                            is_managed_role = True
+                                            break
+                            if is_managed_role:
+                                if 'role_keys' in params.enterprise:
+                                    for rk in params.enterprise['role_keys']:
+                                        if rk['role_id'] == role_id:
+                                            if rk['key_type'] == 'encrypted_by_data_key':
+                                                role_key = api.decrypt_data(rk['encrypted_key'], params.data_key)
+                                            elif rk['key_type'] == 'encrypted_by_public_key':
+                                                role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+                                            break
+
+                            user_pkeys = {}
+                            for user in matched_users:
+                                if is_add and user['enterprise_user_id'] in role_users:
+                                    logging.warning('User %s is already in \'%s\' group: Add to group is skipped', user['username'], role_name)
+                                    continue
+                                if not is_add and user['enterprise_user_id'] not in role_users:
+                                    logging.warning('User %s is not in \'%s\': Remove from group is skipped', user['username'], role_name)
+                                    continue
+
+                                user_id = user['enterprise_user_id']
+                                rq = {
+                                    'command': 'role_user_add' if is_add else 'role_user_remove',
+                                    'enterprise_user_id': user['enterprise_user_id'],
+                                    'role_id': role_id
+                                }
+                                if is_managed_role:
+                                    if user_id not in user_pkeys:
+                                        answer = 'y' if kwargs.get('force') else user_choice('Do you want to grant administrative privileges to {0}'.format(user['username']), 'yn', 'n')
+                                        public_key = None
+                                        if answer == 'y':
+                                            public_key = self.get_public_key(params, user['username'])
+                                            if public_key is None:
+                                                logging.warning('Cannot get public key for user %s', user['username'])
+                                        user_pkeys[user_id] = public_key
+                                    if user_pkeys[user_id]:
+                                        rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
                                         if role_key:
-                                            need_confirm = True
-                                            rq['role_admin_key'] = api.encrypt_aes(role_key, public_key)
-                                        break
-                        if need_confirm and not admin_confirmed:
-                            answer = 'y' if kwargs.get('force') else user_choice('Do you want to grant administrative privileges to {0}'.format(user['username']), 'yn', 'n')
-                            if answer == 'y':
-                                admin_confirmed = True
-                            else:
-                                return
-                        rs = api.communicate(params, rq)
-                        if rs['result'] == 'success':
-                            logging.info('Role %s %s %s', role_name, 'added to' if is_add else 'removed from', user['username'])
-                    api.query_enterprise(params)
+                                            rq['role_admin_key'] = api.encrypt_aes(role_key, user_pkeys[user_id])
+                                        request_batch.append(rq)
+                                else:
+                                    request_batch.append(rq)
 
-            elif kwargs.get('add_team') or kwargs.get('remove_team'):
-                teams = {}
-                for is_add in [False, True]:
-                    tl = kwargs.get('add_team') if is_add else kwargs.get('remove_team')
-                    if tl:
-                        for t in tl:
-                            team_node = None
-                            if 'teams' in params.enterprise:
-                                for team in params.enterprise['teams']:
-                                    if t in { team['team_uid'], team['name']}:
-                                        team_node = team
-                                        break
-                            if team_node:
-                                team_uid = team_node['team_uid']
-                                teams[team_uid] = is_add, team_node['name']
-                            else:
-                                logging.warning('Team %s could be resolved', t)
-                if len(teams) > 0:
-                    for team_uid in teams:
-                        is_add, team_name = teams[team_uid]
-                        rq = {
-                            'command': 'team_enterprise_user_add' if is_add else 'team_enterprise_user_remove',
-                            'enterprise_user_id': user['enterprise_user_id'],
-                            'team_uid': team_uid
-                        }
-                        if is_add:
-                            team_key = self.get_team_key(params, team_uid)
-                            public_key = self.get_public_key(params, user['username'])
-                            if team_key and public_key:
-                                rq['team_key'] = api.encrypt_rsa(team_key, public_key)
-                                rq['user_type'] = 0
-                        rs = api.communicate(params, rq)
-                        if rs['result'] == 'success':
-                            logging.info('Team %s %s %s', team_name, 'added to' if is_add else 'removed from', user['username'])
-                    api.query_enterprise(params)
+                if kwargs.get('add_team') or kwargs.get('remove_team'):
+                    teams = {}
+                    for is_add in [False, True]:
+                        tl = kwargs.get('add_team') if is_add else kwargs.get('remove_team')
+                        if tl:
+                            for t in tl:
+                                team_node = None
+                                if 'teams' in params.enterprise:
+                                    for team in params.enterprise['teams']:
+                                        if t in { team['team_uid'], team['name']}:
+                                            team_node = team
+                                            break
+                                if team_node:
+                                    team_uid = team_node['team_uid']
+                                    teams[team_uid] = is_add, team_node['name']
+                                else:
+                                    logging.warning('Team %s could be resolved', t)
 
-            elif user_name or node_id:
-                dt = user['data'].copy()
-                if user_name:
-                    dt['displayname'] = user_name
-                rq = {
-                    'command': 'enterprise_user_update',
-                    'enterprise_user_id': user['enterprise_user_id'],
-                    'node_id': node_id if node_id is not None else user['node_id'],
-                    'encrypted_data': api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
-                    'enterprise_user_username': user['username']
-                }
-                rs = api.communicate(params, rq)
-                if rs['result'] == 'success':
-                    logging.info('User %s is modified', user['username'])
-                    api.query_enterprise(params)
+                    if teams:
+                        for team_uid in teams:
+                            is_add, team_name = teams[team_uid]
+                            for user in matched_users:
+                                if is_add:
+                                    if user['status'] == 'active':
+                                        rq = {
+                                            'command': 'team_enterprise_user_add',
+                                            'team_uid': team_uid,
+                                            'enterprise_user_id': user['enterprise_user_id'],
+                                        }
+                                        team_key = self.get_team_key(params, team_uid)
+                                        public_key = self.get_public_key(params, user['username'])
+                                        if team_key and public_key:
+                                            rq['team_key'] = api.encrypt_rsa(team_key, public_key)
+                                            rq['user_type'] = 0
+                                            request_batch.append(rq)
+                                    else:
+                                        rq = {
+                                            'command': 'team_queue_user',
+                                            'team_uid': team_uid,
+                                            'enterprise_user_id': user['enterprise_user_id']
+                                        }
+                                        request_batch.append(rq)
+                                else:
+                                    rq = {
+                                        'command': 'team_enterprise_user_remove',
+                                        'enterprise_user_id': user['enterprise_user_id'],
+                                        'team_uid': team_uid
+                                    }
+                                    request_batch.append(rq)
+                if node_id:
+                    for user in matched_users:
+                        if node_id != user['node_id']:
+                            rq = {
+                                'command': 'enterprise_user_update',
+                                'enterprise_user_id': user['enterprise_user_id'],
+                                'node_id': node_id,
+                                'encrypted_data': user['encrypted_data'],
+                                'enterprise_user_username': user['username']
+                            }
+                            request_batch.append(rq)
 
-            else:
-                is_verbose = kwargs.get('verbose') or False
-                self.display_user(params, user, is_verbose)
-        else:
-            if len(matched_users) > 0:
-                is_verbose = kwargs.get('verbose') or False
-                skip = True
-                for user in matched_users:
-                    if skip:
-                        skip = False
+        if request_batch:
+            rss = api.execute_batch(params, request_batch)
+            for rq, rs in zip(request_batch, rss):
+                command = rq.get('command')
+                if command == 'enterprise_user_add':
+                    if rs['result'] == 'success':
+                        logging.info('%s user invited', rq['enterprise_user_username'])
                     else:
-                        print('\n')
-                    self.display_user(params, user, is_verbose)
-            else:
-                logging.warning('No such user')
+                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], rs['message'])
+                else:
+                    user = None
+                    if not user and 'username' in rq:
+                        user = user_lookup.get(rq['username'].lower())
+                    if not user and 'email' in rq:
+                        user = user_lookup.get(rq['email'].lower())
+                    if not user and 'enterprise_user_id' in rq:
+                        user = user_lookup.get(str(rq['enterprise_user_id']))
+                    if user:
+                        if command == 'set_master_password_expire':
+                            if rs['result'] == 'success':
+                                logging.info('%s password expired', user['username'])
+                            else:
+                                logging.warning('%s failed to expire password: %s', user['username'], rs['message'])
+                        elif command == 'enterprise_user_delete':
+                            if rs['result'] == 'success':
+                                logging.info('%s user deleted', user['username'])
+                            else:
+                                logging.warning('%s failed to delete user: %s', user['username'], rs['message'])
+                        elif command == 'enterprise_user_update':
+                            node_names = [x['data'].get('displayname') for x in params.enterprise['nodes'] if x['node_id'] == rq['node_id']]
+                            node_name = node_names[0] if len(node_names) > 0 else str(rq['node_id'])
+                            if rs['result'] == 'success':
+                                logging.info('%s user moved to node \'%s\'', user['username'], node_name or 'Root')
+                            else:
+                                logging.warning('%s failed to move user to node \'%s\': %s', user['username'], node_name or 'Root', rs['message'])
+                        elif command == 'enterprise_user_lock':
+                            is_locked = rq['lock'] == 'locked'
+                            if rs['result'] == 'success':
+                                logging.info('%s is %s', user['username'], 'locked' if is_locked else 'unlocked')
+                            else:
+                                logging.warning(' %s failed to %s user: %s', user['username'], 'lock' if is_locked else 'unlock', rs['message'])
+                        elif command in {'role_user_add', 'role_user_remove'}:
+                            role_names = [x['data'].get('displayname') for x in params.enterprise['roles'] if x['role_id'] == rq['role_id']]
+                            role_name = role_names[0] if len(role_names) > 0 else str(rq['role_id'])
+                            if rs['result'] == 'success':
+                                logging.info('%s %s role \'%s\'', user['username'], 'added to' if command == 'role_user_add' else 'removed from', role_name)
+                            else:
+                                logging.warning('%s failed to %s role \'%s\': %s', user['username'], 'add to' if command == 'role_user_add' else 'remove from', role_name, rs['message'])
+                        elif command in {'team_enterprise_user_add', 'team_enterprise_user_remove', 'team_queue_user'}:
+                            team_names = [x['name'] for x in params.enterprise['teams'] if x['team_uid'] == rq['team_uid']]
+                            team_name = team_names[0] if len(team_names) > 0 else rq['team_uid']
+                            if rs['result'] == 'success':
+                                logging.info('%s %s team \'%s\'', user['username'], 'removed from' if command == 'team_enterprise_user_remove' else 'added to', team_name)
+                            else:
+                                logging.warning('%s failed to %s team \'%s\': %s', user['username'], 'removed from' if command == 'team_enterprise_user_remove' else 'added to', team_name, rs['message'])
+                        else:
+                            if rs['result'] != 'success':
+                                logging.warning('\'%s\' error: %s', command, rs['message'])
+                    else:
+                        if rs['result'] != 'success':
+                            logging.warning('Error: %s', rs['message'])
+            api.query_enterprise(params)
+
+        else:
+            is_verbose = kwargs.get('verbose') or False
+            print('\n')
+            for user in matched_users:
+                self.display_user(params, user, is_verbose)
+                print('\n')
 
     def display_user(self, params, user, is_verbose = False):
         print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
@@ -867,16 +1192,6 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 status = user['status'].capitalize()
         print('{0:>16s}: {1}'.format('Status', status))
 
-        if 'team_users' in params.enterprise and 'teams' in params.enterprise:
-            team_nodes = {}
-            for t in params.enterprise['teams']:
-                team_nodes[t['team_uid']] = t
-            user_id = user['enterprise_user_id']
-            ts = [t['team_uid'] for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
-            for i in range(len(ts)):
-                team_node = team_nodes[ts[i]]
-                print('{0:>16s}: {1:<22s} {2}'.format('Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
-
         if 'role_users' in params.enterprise:
             role_ids = [x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == user['enterprise_user_id']]
             if len(role_ids) > 0:
@@ -887,133 +1202,53 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     role_node = role_nodes[role_ids[i]]
                     print('{0:>16s}: {1:<22s} {2}'.format('Role' if i == 0 else '', role_node['data']['displayname'], role_node['role_id'] if is_verbose else ''))
 
+        team_nodes = {}
+        if 'teams' in params.enterprise:
+            for t in params.enterprise['teams']:
+                team_nodes[t['team_uid']] = t
+        if 'queued_teams' in params.enterprise:
+            for t in params.enterprise['queued_teams']:
+                team_nodes[t['team_uid']] = t
+
+        if 'team_users' in params.enterprise:
+            user_id = user['enterprise_user_id']
+            ts = [t['team_uid'] for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
+            for i in range(len(ts)):
+                team_node = team_nodes[ts[i]]
+                print('{0:>16s}: {1:<22s} {2}'.format('Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
+
+        if 'queued_team_users' in params.enterprise:
+            user_id = user['enterprise_user_id']
+            ts = [t['team_uid'] for t in params.enterprise['queued_team_users'] if user_id in t['users']]
+            for i in range(len(ts)):
+                team_node = team_nodes[ts[i]]
+                print('{0:>16s}: {1:<22s} {2}'.format('Queued Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
+
 
 class EnterpriseRoleCommand(EnterpriseCommand):
     def get_parser(self):
         return enterprise_role_parser
 
     def execute(self, params, **kwargs):
-        r_arg = str(kwargs['role'])
-        role = None
+        if kwargs.get('add') and kwargs.get('remove'):
+            logging.error("'add' and 'delete' parameters are mutually exclusive.")
+            return
+
+        role_lookup = {}
         if 'roles' in params.enterprise:
             for r in params.enterprise['roles']:
-                if r_arg in {str(r['role_id']), r['data'].get('displayname') or ''}:
-                    role = r
-                    break
-
-        show_info = True
-
-        if role and (kwargs.get('add_user') or kwargs.get('remove_user')):
-            show_info = False
-            users = {}
-            for is_add in [False, True]:
-                ul = kwargs.get('add_user') if is_add else kwargs.get('remove_user')
-                if ul:
-                    for u in ul:
-                        uname = u.lower()
-                        user_node = None
-                        if 'users' in params.enterprise:
-                            for user in params.enterprise['users']:
-                                if uname in { str(user['enterprise_user_id']),
-                                              user['username'].lower(),
-                                              (user['data'].get('displayname') or '').lower() }:
-                                    user_node = user
-                                    break
-                        if user_node:
-                            user_id = user_node['enterprise_user_id']
-                            users[user_id] = is_add, user_node['username']
+                role_lookup[str(r['role_id'])] = r
+                name = r['data'].get('displayname') or ''
+                if name:
+                    name = name.lower()
+                    if name in role_lookup:
+                        if type(role_lookup[name]) == list:
+                            role_lookup[name].append(r)
                         else:
-                            logging.warning('User %s could be resolved', u)
-            if len(users) > 0:
-                has_managed_nodes = False
-                role_key = False
-                if 'managed_nodes' in params.enterprise:
-                    for mn in params.enterprise['managed_nodes']:
-                        if mn['role_id'] == role['role_id']:
-                            has_managed_nodes = True
-                            break
-                if 'role_keys' in params.enterprise:
-                    for rk in params.enterprise['role_keys']:
-                        if rk['role_id'] == role['role_id']:
-                            if rk['key_type'] == 'encrypted_by_data_key':
-                                role_key = api.decrypt_aes(rk['encrypted_key'] , params.data_key)
-                            elif rk['key_type'] == 'encrypted_by_public_key':
-                                role_key = api.decrypt_rsa(rk['encrypted_key'] , params.rsa_key)
-                            break
-                for user_id in users:
-                    is_add, user_email = users[user_id]
-                    rq = {
-                        'command': 'role_user_add' if is_add else 'role_user_remove',
-                        'role_id': role['role_id'],
-                        'enterprise_user_id': user_id
-                    }
-                    if is_add:
-                        if has_managed_nodes:
-                            public_key = self.get_public_key(params, user_email)
-                            if public_key:
-                                rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
-                        if role_key:
-                            public_key = self.get_public_key(params, user_email)
-                            if public_key:
-                                rq['role_admin_key'] = api.encrypt_rsa(role_key, public_key)
-
-                    rs = api.communicate(params, rq)
-                    if rs['result'] == 'success':
-                        logging.info('User %s %s role %s', user_email, 'added to' if is_add else 'removed from', role['data'].get('displayname') or '')
-                api.query_enterprise(params)
-
-        if role:
-            if show_info:
-                role_id = role['role_id']
-                print('{0:>24s}: {1}'.format('Role ID', role_id))
-                print('{0:>24s}: {1}'.format('Role Name', role['data'].get('displayname')))
-                print('{0:>24s}: {1}'.format('Node', self.get_node_path(params, role['node_id'])))
-                print('{0:>24s}: {1}'.format('Cascade?', 'Yes' if role['visible_below'] else 'No'))
-                print('{0:>24s}: {1}'.format('New user?', 'Yes' if role['new_user_inherit'] else 'No'))
-                if 'role_users' in params.enterprise:
-                    user_ids = [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]
-                    if len(user_ids) > 0:
-                        users = {}
-                        for user in params.enterprise['users']:
-                            users[user['enterprise_user_id']] = user['username']
-                        user_ids.sort(key=lambda x: users[x])
-                        for i in range(len(user_ids)):
-                            user_id = user_ids[i]
-                            print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', users[user_id], user_id if kwargs.get('verbose') else ''))
-
-                if 'role_enforcements' in params.enterprise:
-                    enforcements = None
-                    for e in params.enterprise['role_enforcements']:
-                        if role_id == e['role_id']:
-                            enforcements = e['enforcements']
-                            break
-                    if enforcements:
-                        print('{0:>24s}: '.format('Role Enforcements'))
-                        if 'master_password_minimum_length' in enforcements:
-                            print('{0:>24s}: '.format('Password Complexity'))
-                            for p in [('Length', 'master_password_minimum_length'),
-                                      ('Digits', 'master_password_minimum_digits'),
-                                      ('Special Characters', 'master_password_minimum_special'),
-                                      ('Uppercase Letters', 'master_password_minimum_upper'),
-                                      ('Lowercase Letters', 'master_password_minimum_lower')]:
-                                if enforcements.get(p[1]) > 0:
-                                    print('{0:>24s}: {1}'.format(p[0], enforcements.get(p[1])))
-        else:
-            logging.warning('Role not found')
-
-
-class EnterpriseTeamCommand(EnterpriseCommand):
-    def get_parser(self):
-        return enterprise_team_parser
-
-    def execute(self, params, **kwargs):
-        t_arg = kwargs['team']
-        team = None
-        if 'teams' in params.enterprise:
-            for t in params.enterprise['teams']:
-                if t_arg == t['team_uid'] or t_arg.lower() == t['name'].lower():
-                    team = t
-                    break
+                            old = role_lookup[name]
+                            role_lookup[name] = [old, r]
+                    else:
+                        role_lookup[name] = r
 
         node_id = None
         if kwargs.get('node'):
@@ -1025,32 +1260,386 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     node_id = node['node_id']
                     break
 
-        if kwargs.get('delete'):
-            if team is not None:
-                answer = 'y' if kwargs.get('force') else \
-                    user_choice('Delete Team\n\nAre you sure you want to delete {0}'.format(team['name']), 'yn', 'n')
-                if answer.lower() == 'y':
+        matched = {}
+        role_names = set()
+
+        for role_name in kwargs['role']:
+            r = role_lookup.get(role_name.lower())
+            if r is None:
+                role_names.add(role_name)
+            elif type(r) == list:
+                role_in_node = None
+                if node_id:
+                    for ro in r:
+                        if ro['node_id'] == node_id:
+                            role_in_node = ro
+                            break
+                if role_in_node:
+                    matched[role_in_node['role_id']] = role_in_node
+                else:
+                    logging.warning('Role name \'%s\' is not unique. Use Role ID. Skipping', role_name)
+            elif type(r) == dict:
+                matched[r['role_id']] = r
+
+        matched_roles = list(matched.values())
+
+        request_batch = []
+        if kwargs.get('add'):
+            for role in matched_roles:
+                logging.warning('Role \'%s\' already exists: Skipping', role['data'].get('displayname'))
+            if not role_names:
+                return
+
+            if node_id is None:
+                for node in params.enterprise['nodes']:
+                    if not node.get('parent_id'):
+                        node_id = node['node_id']
+                        break
+
+            for role_name in role_names:
+                dt = { "displayname": role_name }
+                rq = {
+                    "command": "role_add",
+                    "role_id": self.get_enterprise_id(params),
+                    "node_id": node_id,
+                    "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    "visible_below": (kwargs['visible_below'] == 'on') or False,
+                    "new_user_inherit": (kwargs['new_user'] == 'on') or False
+                }
+                request_batch.append(rq)
+        else:
+            for role_name in role_names:
+                logging.warning('Role %s is not found: Skipping', role_name)
+
+            if not matched_roles:
+                return
+
+            if kwargs.get('delete'):
+                for role in matched_roles:
+                    request_batch.append({ "command": "role_delete", "role_id": role['role_id'] })
+
+            elif kwargs.get('add_user') or kwargs.get('remove_user'):
+                user_changes = {}
+                for is_add in [False, True]:
+                    ul = kwargs.get('add_user') if is_add else kwargs.get('remove_user')
+                    if ul:
+                        for u in ul:
+                            uname = u.lower()
+                            user_node = None
+                            if 'users' in params.enterprise:
+                                for user in params.enterprise['users']:
+                                    if uname in { str(user['enterprise_user_id']),
+                                                  user['username'].lower() }:
+                                        user_node = user
+                                        break
+                            if user_node:
+                                user_id = user_node['enterprise_user_id']
+                                user_changes[user_id] = is_add, user_node['username']
+                            else:
+                                logging.warning('User %s could be resolved', u)
+
+                user_pkeys = {}
+                for role in matched_roles:
+                    role_id = role['role_id']
+                    for user_id in user_changes:
+                        is_add, email = user_changes[user_id]
+                        role_key = None
+                        is_managed_role = False
+                        if is_add:
+                            if 'managed_nodes' in params.enterprise:
+                                for mn in params.enterprise['managed_nodes']:
+                                    if mn['role_id'] == role_id:
+                                        is_managed_role = True
+                                        break
+                        if is_managed_role:
+                            if 'role_keys' in params.enterprise:
+                                for rk in params.enterprise['role_keys']:
+                                    if rk['role_id'] == role_id:
+                                        if rk['key_type'] == 'encrypted_by_data_key':
+                                            role_key = api.decrypt_data(rk['encrypted_key'], params.data_key)
+                                        elif rk['key_type'] == 'encrypted_by_public_key':
+                                            role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+                                        break
+                        rq = {
+                            'command': 'role_user_add' if is_add else 'role_user_remove',
+                            'enterprise_user_id': user_id,
+                            'role_id': role_id
+                        }
+                        if is_managed_role:
+                            if user_id not in user_pkeys:
+                                answer = 'y' if kwargs.get('force') else user_choice('Do you want to grant administrative privileges to {0}'.format(email), 'yn', 'n')
+                                public_key = None
+                                if answer == 'y':
+                                    public_key = self.get_public_key(params, email)
+                                    if public_key is None:
+                                        logging.warning('Cannot get public key for user %s', email)
+                                user_pkeys[user_id] = public_key
+                            if user_pkeys[user_id]:
+                                rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
+                                if role_key:
+                                    rq['role_admin_key'] = api.encrypt_aes(role_key, user_pkeys[user_id])
+                                request_batch.append(rq)
+                        else:
+                            request_batch.append(rq)
+
+            elif kwargs.get('add_admin') or kwargs.get('remove_admin'):
+                node_lookup = {}
+                if 'nodes' in params.enterprise:
+                    for node in params.enterprise['nodes']:
+                        node_lookup[str(node['node_id'])] = node
+                        if node.get('parent_id'):
+                            node_name = node['data'].get('displayname')
+                        else:
+                            node_name = params.enterprise['enterprise_name']
+                        node_name = node_name.lower()
+                        value = node_lookup.get(node_name)
+                        if value is None:
+                             value = node
+                        elif type(value) == list:
+                            value.append(node)
+                        else:
+                            value = [value, node]
+                        node_lookup[node_name] = value
+
+                node_changes = {}
+                for is_add in [False, True]:
+                    ul = kwargs.get('add_admin') if is_add else kwargs.get('remove_admin')
+                    if ul:
+                        for u in ul:
+                            value = node_lookup.get(u.lower())
+                            if value:
+                                if value is None:
+                                    logging.warning('Node %s could be resolved', u)
+                                if type(value) == dict:
+                                    node_changes[value['node_id']] = is_add, value['data'].get('displayname') or params.enterprise['enterprise_name']
+                                elif type(value) == list:
+                                    logging.warning('Node name \'%s\' is not unique. Use Node ID. Skipping', u)
+
+                for role in matched_roles:
+                    role_id = role['role_id']
+                    for node_id in node_changes:
+                        is_add, node_name = node_changes[node_id]
+                        rq = {
+                            "command": "role_managed_node_add" if is_add else "role_managed_node_remove",
+                            "role_id": role_id,
+                            "managed_node_id": node_id
+                        }
+                        if is_add:
+                            rq['cascade_node_management'] = (kwargs.get('cascade') == 'on') or False
+                            rq['tree_keys'] = []
+                            if 'role_users' in params.enterprise:
+                                for user_id in [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]:
+                                    emails = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id]
+                                    if emails:
+                                        public_key = self.get_public_key(params, emails[0])
+                                        if public_key:
+                                            rq['tree_keys'].append({
+                                                "enterprise_user_id": user_id,
+                                                "tree_key": api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
+                                            })
+                        request_batch.append(rq)
+            elif node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name'):
+                if kwargs.get('name') and len(matched_roles) > 1:
+                    logging.warning('Cannot assign the same name to %s roles', len(matched_roles))
+                    kwargs['name'] = None
+
+                for role in matched_roles:
+                    encrypted_data = role['encrypted_data']
+                    if kwargs.get('name'):
+                        role_name = kwargs.get('name').strip()
+                        dt = { "displayname": role_name }
+                        encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
                     rq = {
-                        'command': 'team_delete',
-                        'team_uid': team['team_uid']
+                        "command": "role_update",
+                        "role_id": role['role_id'],
+                        "node_id": node_id or role['node_id'],
+                        "encrypted_data": encrypted_data
                     }
-                    rs = api.communicate(params, rq)
+                    if kwargs.get('visible_below'):
+                        rq['visible_below'] = kwargs.get('visible_below') == 'on'
+                    if kwargs.get('new_user'):
+                        rq['new_user_inherit'] = kwargs['new_user'] == 'on'
+                    request_batch.append(rq)
+
+        if request_batch:
+            rss = api.execute_batch(params, request_batch)
+            for rq, rs in zip(request_batch, rss):
+                command = rq.get('command')
+                if command == 'role_add':
                     if rs['result'] == 'success':
-                        logging.info('Team %s deleted', team['name'])
-                        api.query_enterprise(params)
-            else:
-                logging.warning('Team not found')
+                        logging.info('Role created')
+                    else:
+                        logging.warning('Failed to create role: %s', rs['message'])
+                else:
+                    role = None
+                    if not role and 'role_id' in rq:
+                        role = role_lookup.get(str(rq['role_id']))
+                    if role:
+                        role_name = role['data'].get('displayname')
+                        if command in { 'role_delete', 'role_update' }:
+                            if rs['result'] == 'success':
+                                logging.info('\'%s\' role is %s', role_name, 'deleted' if command == 'role_delete' else 'updated')
+                            else:
+                                logging.warning('\'%s\' failed to %s role: %s', role_name, 'delete' if command == 'role_delete' else 'update',  rs['message'])
+                        elif command in {'role_user_add', 'role_user_remove'}:
+                            user_names = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == rq['enterprise_user_id']]
+                            user_name = user_names[0] if len(user_names) > 0 else str(rq['enterprise_user_id'])
+                            if rs['result'] == 'success':
+                                logging.info('\'%s\' role %s %s', role_name, 'assigned to' if command == 'role_user_add' else 'removed from', user_name)
+                            else:
+                                logging.warning('\'%s\' role failed to %s %s: %s', role_name, 'assign' if command == 'role_user_add' else 'remove', user_name, rs['message'])
+                        elif command in {'role_managed_node_add', 'role_managed_node_remove'}:
+                            node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
+                            node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
+                            if rs['result'] == 'success':
+                                logging.info('\'%s\' role is %s managing node \'%s\'', role_name, 'assigned to' if command == 'role_managed_node_add' else 'removed from', node_name)
+                            else:
+                                logging.warning('\'%s\' role failed to %s managing node \'%s\': %s', role_name, 'assign' if command == 'role_managed_node_add' else 'remove', node_name, rs['message'])
+                        else:
+                            if rs['result'] != 'success':
+                                logging.warning('\'%s\' error: %s', command, rs['message'])
+                    else:
+                        if rs['result'] != 'success':
+                            logging.warning('Error: %s', rs['message'])
+            api.query_enterprise(params)
+        else:
+            for role in matched_roles:
+                print('\n')
+                self.display_role(params, role, kwargs.get('verbose'))
+            print('\n')
+
+    def display_role(self, params, role, is_verbose = False):
+        role_id = role['role_id']
+        print('{0:>24s}: {1}'.format('Role ID', role_id))
+        print('{0:>24s}: {1}'.format('Role Name', role['data'].get('displayname')))
+        print('{0:>24s}: {1}'.format('Node', self.get_node_path(params, role['node_id'])))
+        print('{0:>24s}: {1}'.format('Cascade?', 'Yes' if role['visible_below'] else 'No'))
+        print('{0:>24s}: {1}'.format('New user?', 'Yes' if role['new_user_inherit'] else 'No'))
+        if 'role_users' in params.enterprise:
+            user_ids = [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]
+            if len(user_ids) > 0:
+                users = {}
+                for user in params.enterprise['users']:
+                    users[user['enterprise_user_id']] = user['username']
+                user_ids.sort(key=lambda x: users[x])
+                for i in range(len(user_ids)):
+                    user_id = user_ids[i]
+                    print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', users[user_id], user_id if is_verbose else ''))
+
+        if 'managed_nodes' in params.enterprise:
+            node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
+            if len(node_ids) > 0:
+                nodes = {}
+                for node in params.enterprise['nodes']:
+                    nodes[node['node_id']] = node['data'].get('displayname') or params.enterprise['enterprise_name']
+                node_ids.sort(key=lambda x: nodes[x])
+                for i in range(len(node_ids)):
+                    node_id = node_ids[i]
+                    print('{0:>24s}: {1:<32s} {2}'.format('Manages Nodes(s)' if i == 0 else '', nodes[node_id], node_id if is_verbose else ''))
+
+        if 'role_enforcements' in params.enterprise:
+            enforcements = None
+            for e in params.enterprise['role_enforcements']:
+                if role_id == e['role_id']:
+                    enforcements = e['enforcements']
+                    break
+            if enforcements:
+                print('{0:>24s}: '.format('Role Enforcements'))
+                if 'master_password_minimum_length' in enforcements:
+                    print('{0:>24s}: '.format('Password Complexity'))
+                    for p in [('Length', 'master_password_minimum_length'),
+                              ('Digits', 'master_password_minimum_digits'),
+                              ('Special Characters', 'master_password_minimum_special'),
+                              ('Uppercase Letters', 'master_password_minimum_upper'),
+                              ('Lowercase Letters', 'master_password_minimum_lower')]:
+                        value = enforcements.get(p[1])
+                        if value is not None:
+                            print('{0:>24s}: {1}'.format(p[0], value))
+
+
+class EnterpriseTeamCommand(EnterpriseCommand):
+    def get_parser(self):
+        return enterprise_team_parser
+
+    def execute(self, params, **kwargs):
+        if (kwargs.get('add') or kwargs.get('approve')) and kwargs.get('remove'):
+            logging.error("'add'/'approve' and 'delete' commands are mutually exclusive.")
             return
 
-        if kwargs.get('add'):
-            if team is None:
-                if node_id is None:
-                    for node in params.enterprise['nodes']:
-                        if not node.get('parent_id'):
-                            node_id = node['node_id']
+        team_lookup = {}
+        if 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
+                team_lookup[team['team_uid']] = team
+                team_lookup[team['name'].lower()] = team
+
+        if 'queued_teams' in params.enterprise:
+            for team in params.enterprise['queued_teams']:
+                team_lookup[team['team_uid']] = team
+                team_lookup[team['name'].lower()] = team
+
+        node_id = None
+        if kwargs.get('node'):
+            for node in params.enterprise['nodes']:
+                if kwargs['node'] in {str(node['node_id']), node['data'].get('displayname')}:
+                    node_id = node['node_id']
+                    break
+                elif not node.get('parent_id') and kwargs['node'] == params.enterprise['enterprise_name']:
+                    node_id = node['node_id']
+                    break
+
+        matched = {}
+        team_names = set()
+
+        for team_name in kwargs['team']:
+            t = team_lookup.get(team_name)
+            if t is None:
+                t = team_lookup.get(team_name.lower())
+            if t is None:
+                team_names.add(team_name)
+            elif type(t) == list:
+                team_in_node = None
+                if node_id:
+                    for ro in t:
+                        if ro['node_id'] == node_id:
+                            team_in_node = ro
                             break
-                team_uid = api.generate_record_uid()
+                if team_in_node:
+                    matched[team_in_node['team_uid']] = team_in_node
+                else:
+                    logging.warning('Team name \'%s\' is not unique. Use Team UID. Skipping', team_name)
+            elif type(t) == dict:
+                matched[t['team_uid']] = t
+
+        matched_teams = list(matched.values())
+        request_batch = []
+
+        if kwargs.get('add') or kwargs.get('approve'):
+            queue = []
+            for team in matched_teams:
+                if kwargs.get('approve'):
+                    if 'restrict_edit' not in team:
+                        queue.append(team)
+                        continue
+                logging.warning('Team \'%s\' already exists: Skipping', team['name'])
+
+            if kwargs.get('add'):
+                queue.extend(team_names)
+
+            if not queue:
+                return
+
+            if node_id is None:
+                for node in params.enterprise['nodes']:
+                    if not node.get('parent_id'):
+                        node_id = node['node_id']
+                        break
+
+            for item in queue:
+                is_new_team = type(item) == str
+                team_name = item if is_new_team else item['name']
+                team_uid = api.generate_record_uid() if is_new_team else item['team_uid']
                 team_key = api.generate_aes_key()
+                encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
                 rsa_key = RSA.generate(2048)
                 private_key = DerSequence([0,
                                            rsa_key.n,
@@ -1070,46 +1659,37 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 rq = {
                     'command': 'team_add',
                     'team_uid': team_uid,
-                    'team_name': t_arg,
-                    'restrict_edit': kwargs.get('restrict_edit') == 'on' if kwargs.get('restrict_edit') else False,
-                    'restrict_share': kwargs.get('restrict_share') == 'on' if kwargs.get('restrict_share') else False,
-                    'restrict_view': kwargs.get('restrict_view') == 'on' if kwargs.get('restrict_view') else False,
-                    'public_key': base64.urlsafe_b64encode(public_key).rstrip(b'=').decode(),
+                    'team_name': team_name,
+                    'restrict_edit': kwargs.get('restrict_edit') == 'on',
+                    'restrict_share': kwargs.get('restrict_share') == 'on',
+                    'restrict_view': kwargs.get('restrict_view') == 'on',
+                    'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
                     'private_key': api.encrypt_aes(private_key, team_key),
                     'node_id': node_id,
                     'team_key': api.encrypt_aes(team_key, params.data_key),
+                    'encrypted_team_key': base64.urlsafe_b64encode(encrypted_team_key).decode().rstrip('='),
                     'manage_only': True
                 }
-                rs = api.communicate(params, rq)
-                if rs['result'] == 'success':
-                    logging.info('Team %s created', t_arg)
-                    api.query_enterprise(params)
-                    params.environment_variables[LAST_TEAM_UID] = team_uid
-            else:
-                logging.warning('Team %s already exists', t_arg)
-            return
+                request_batch.append(rq)
+        else:
+            for team_name in team_names:
+                logging.warning('\'%s\' team is not found: Skipping', team_name)
 
-        if team:
-            show_info = True
-            team_name = kwargs.get('name')
-            if team_name or node_id or kwargs.get('restrict_edit') or kwargs.get('restrict_share') or kwargs.get('restrict_view'):
-                rq = {
-                    'command': 'team_update',
-                    'team_uid': team['team_uid'],
-                    'team_name': team_name or team['name'],
-                    'restrict_edit': kwargs.get('restrict_edit') == 'on' if kwargs.get('restrict_edit') else team['restrict_edit'],
-                    'restrict_share': kwargs.get('restrict_share') == 'on' if kwargs.get('restrict_share') else team['restrict_sharing'],
-                    'restrict_view': kwargs.get('restrict_view') == 'on' if kwargs.get('restrict_view') else team['restrict_view'],
-                    'node_id': node_id or team['node_id']
-                }
-                rs = api.communicate(params, rq)
-                if rs['result'] == 'success':
-                    print('Team {0} modified'.format(team['name']))
-                    show_info = False
-                    api.query_enterprise(params)
+            if not matched_teams:
+                return
+
+            if kwargs.get('delete'):
+                answer = 'y' if kwargs.get('force') else \
+                    user_choice('Delete Team(s)\n\nAre you sure you want to delete {0} team(s)'.format(len(matched_teams)), 'yn', 'n')
+                if answer.lower() == 'y':
+                    for team in matched_teams:
+                        rq = {
+                            'command': 'team_delete',
+                            'team_uid': team['team_uid']
+                        }
+                        request_batch.append(rq)
 
             if kwargs.get('add_user') or kwargs.get('remove_user'):
-                show_info = False
                 users = {}
                 for is_add in [False, True]:
                     ul = kwargs.get('add_user') if is_add else kwargs.get('remove_user')
@@ -1120,53 +1700,131 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                             if 'users' in params.enterprise:
                                 for user in params.enterprise['users']:
                                     if uname in { str(user['enterprise_user_id']),
-                                                  user['username'].lower(),
-                                                  (user['data'].get('displayname') or '').lower() }:
+                                                  user['username'].lower() }:
                                         user_node = user
                                         break
                             if user_node:
                                 user_id = user_node['enterprise_user_id']
-                                users[user_id] = is_add, user_node['username']
+                                users[user_id] = is_add, user_node
                             else:
                                 logging.warning('User %s could be resolved', u)
+
                 if len(users) > 0:
-                    for user_id in users:
-                        is_add, user_email = users[user_id]
-                        rq = {
-                            'command': 'team_enterprise_user_add' if is_add else 'team_enterprise_user_remove',
-                            'team_uid': team['team_uid'],
-                            'enterprise_user_id': user_id
-                        }
-                        if is_add:
-                            public_key = self.get_public_key(params, user_email)
-                            team_key = self.get_team_key(params, team['team_uid'])
-                            if public_key and team_key:
-                                rq['user_type'] = 0
-                                rq['team_key'] = api.encrypt_rsa(team_key, public_key)
-                        rs = api.communicate(params, rq)
-                        if rs['result'] == 'success':
-                            api.query_enterprise(params)
-                            logging.info('User %s %s team %s', user_email, 'added to' if is_add else 'removed from', team['name'])
+                    for team in matched_teams:
+                        is_real_team = 'restrict_edit' in team
+                        for user_id in users:
+                            is_add, user = users[user_id]
+                            rq = None
+                            if is_add:
+                                is_active_user = user['status'] == 'active'
+                                if is_real_team and is_active_user:
+                                    public_key = self.get_public_key(params, user['username'])
+                                    team_key = self.get_team_key(params, team['team_uid'])
+                                    if public_key and team_key:
+                                        rq = {
+                                            'command': 'team_enterprise_user_add',
+                                            'team_uid': team['team_uid'],
+                                            'enterprise_user_id': user_id,
+                                            'user_type': 0,
+                                            'team_key': api.encrypt_rsa(team_key, public_key)
+                                        }
+                                else:
+                                    rq = {
+                                        'command': 'team_queue_user',
+                                        'team_uid': team['team_uid'],
+                                        'enterprise_user_id': user_id
+                                    }
+                            else:
+                                rq = {
+                                    'command': 'team_enterprise_user_remove',
+                                    'team_uid': team['team_uid'],
+                                    'enterprise_user_id': user_id
+                                }
+                            if rq:
+                                request_batch.append(rq)
+            elif node_id or kwargs.get('name') or kwargs.get('restrict_edit') or kwargs.get('restrict_share') or kwargs.get('restrict_view'):
+                if kwargs['name'] and len(matched_teams) > 1:
+                    logging.warning('Cannot set same name to %s teams', len(matched_teams))
+                    kwargs['name'] = None
 
-            if show_info:
-                team_uid = team['team_uid']
-                print('{0:>24s}: {1}'.format('Team UID', team_uid))
-                print('{0:>24s}: {1}'.format('Team Name', team['name']))
-                print('{0:>24s}: {1:<32s} {2}'.format('Node', self.get_node_path(params, team['node_id']), str(team['node_id'])))
-                print('{0:>24s}: {1}'.format('Restrict Edit?', 'Yes' if team['restrict_edit'] else 'No'))
-                print('{0:>24s}: {1}'.format('Restrict Share?', 'Yes' if team['restrict_sharing'] else 'No'))
-                print('{0:>24s}: {1}'.format('Restrict View?', 'Yes' if team['restrict_view'] else 'No'))
+                for team in matched_teams:
+                    rq = {
+                        'command': 'team_update',
+                        'team_uid': team['team_uid'],
+                        'team_name': kwargs.get('name') or team['name'],
+                        'restrict_edit': kwargs.get('restrict_edit') == 'on' if kwargs.get('restrict_edit') else team['restrict_edit'],
+                        'restrict_share': kwargs.get('restrict_share') == 'on' if kwargs.get('restrict_share') else team['restrict_sharing'],
+                        'restrict_view': kwargs.get('restrict_view') == 'on' if kwargs.get('restrict_view') else team['restrict_view'],
+                        'node_id': node_id or team['node_id']
+                    }
+                    request_batch.append(rq)
 
-                if 'team_users' in params.enterprise:
-                    user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
-                    user_names = {}
-                    for u in params.enterprise['users']:
-                        user_names[u['enterprise_user_id']] = u['username']
-                    user_ids.sort(key=lambda x: user_names.get(x))
-                    for i in range(len(user_ids)):
-                        print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if kwargs.get('verbose') else ''))
+        if request_batch:
+            rss = api.execute_batch(params, request_batch)
+            for rq, rs in zip(request_batch, rss):
+                command = rq.get('command')
+                team_name = None
+                if 'team_name' in rq:
+                    team_name = rq['team_name']
+                elif 'team_uid' in rq:
+                    team = team_lookup.get(rq['team_uid'])
+                    if team:
+                        team_name = team['name']
+                if not team_name:
+                    team_name = rq['team_uid']
+                if command in { 'team_add', 'team_delete', 'team_update' }:
+                    verb = 'created' if command == 'team_add' else 'deleted' if command == 'team_delete' else 'updated'
+                    if rs['result'] == 'success':
+                        logging.info('\'%s\' team is %s', team_name, verb)
+                    else:
+                        logging.warning('\'%s\' team is not %s: %s', team_name, verb, rs['message'])
+                elif command in {'team_enterprise_user_add', 'team_queue_user', 'team_enterprise_user_remove'}:
+                    user_id = rq['enterprise_user_id']
+                    user_names = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id]
+                    user_name = user_names[0] if len(user_names) > 0 else str(user_id)
+                    if rs['result'] == 'success':
+                        logging.info('\'%s\' %s team %s user %s', team_name, 'queued' if command == 'team_queue_user' else '',
+                                     'deleted' if command == 'team_enterprise_user_remove' else 'added', user_name)
+                    else:
+                        logging.warning('\'%s\' %s team failed to %s user %s: %s', team_name, 'queued' if command == 'team_queue_user' else '',
+                                        'delete' if command == 'team_enterprise_user_remove' else 'add', user_name, rs['message'])
+            api.query_enterprise(params)
         else:
-            logging.warning('Team not found')
+            for team in matched_teams:
+                print('\n')
+                self.display_team(params, team, kwargs.get('verbose'))
+            print('\n')
+
+    def display_team(self, params, team, is_verbose = False):
+        team_uid = team['team_uid']
+        is_queued_team = 'restrict_edit' not in team
+
+        print('{0:>24s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team UID', team_uid))
+        print('{0:>24s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team Name', team['name']))
+        print('{0:>24s}: {1:<32s} {2}'.format('Node', self.get_node_path(params, team['node_id']), str(team['node_id'])))
+        if not is_queued_team:
+            print('{0:>24s}: {1}'.format('Restrict Edit?', 'Yes' if team['restrict_edit'] else 'No'))
+            print('{0:>24s}: {1}'.format('Restrict Share?', 'Yes' if team['restrict_sharing'] else 'No'))
+            print('{0:>24s}: {1}'.format('Restrict View?', 'Yes' if team['restrict_view'] else 'No'))
+
+        user_names = {}
+        for u in params.enterprise['users']:
+            user_names[u['enterprise_user_id']] = u['username']
+
+        if 'team_users' in params.enterprise:
+            user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
+            user_ids.sort(key=lambda x: user_names.get(x))
+            for i in range(len(user_ids)):
+                print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
+
+        if 'queued_team_users' in params.enterprise:
+            user_ids = []
+            for qtu in params.enterprise['queued_team_users']:
+                if qtu['team_uid'] == team['team_uid']:
+                    user_ids.extend(qtu['users'])
+            user_ids.sort(key=lambda x: user_names.get(x))
+            for i in range(len(user_ids)):
+                print('{0:>24s}: {1:<32s} {2}'.format('Queued User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
 
 
 syslog_templates = None
@@ -2395,17 +3053,18 @@ class UserReportCommand(Command):
         look_back_days = kwargs.get('days') or 365
         logging.info('Quering latest login for the last {0} days'.format(look_back_days))
         from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
+        report_filter = {
+            "audit_event_type": "login",
+            "created": {
+                "min": int(from_date.timestamp())
+            }
+        }
         rq = {
             "command": "get_enterprise_audit_event_reports",
             "report_type": "span",
             "aggregate": ["last_created"],
             "columns": ["username"],
-            "filter": {
-                "audit_event_type": "login",
-                "created": {
-                    "min": int(from_date.timestamp())
-                }
-            },
+            "filter": report_filter,
             "timezone": "UTC"
         }
 
@@ -2414,6 +3073,16 @@ class UserReportCommand(Command):
         for row in rs['audit_event_overview_report_rows']:
             username = row['username']
             last_login[username.lower()] = row['last_created']
+        if len(rs['audit_event_overview_report_rows']) >= 1000:
+            active = (x['username'].lower() for x in self.users.values() if x['status'] == 'active')
+            missing = [x for x in active if x not in last_login]
+            while len(missing) > 0:
+                report_filter['username'] = missing[:999]
+                missing = missing[999:]
+                rs = api.communicate(params, rq)
+                for row in rs['audit_event_overview_report_rows']:
+                    username = row['username']
+                    last_login[username.lower()] = row['last_created']
 
         for user in self.users.values():
             key = user['username'].lower()

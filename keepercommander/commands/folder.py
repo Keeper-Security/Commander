@@ -24,6 +24,7 @@ from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 
+
 def register_commands(commands):
     commands['ls'] = FolderListCommand()
     commands['cd'] = FolderCdCommand()
@@ -192,14 +193,13 @@ class FolderListCommand(Command):
 
                 width, _ = shutil.get_terminal_size(fallback=(1, 1))
                 max_name = functools.reduce(lambda val, elem: len(elem) if len(elem) > val else val, names, 0)
-                max_name = max_name
                 cols = width // max_name
                 if cols == 0:
                     cols = 1
 
-                if cols > 3:
-                    max_name = max_name + 2
-                    cols = width // max_name
+                if cols > 2:
+                    if ((max_name * cols) + (cols - 1) * 2) > width:
+                        cols = cols - 1
 
                 tbl = FolderListCommand.chunk_list([x.ljust(max_name) if cols > 1 else x for x in names], cols)
 
