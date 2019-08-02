@@ -571,7 +571,6 @@ def sync_down(params):
                 team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
             else:
                 team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
-#            team['team_key_unencrypted'] = team['team_key_unencrypted'][:32]
             team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
 
             if 'removed_shared_folders' in team:
