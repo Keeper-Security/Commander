@@ -97,6 +97,7 @@ enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', desc
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
+enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true', help='extend account share expiration')
 enterprise_user_parser.add_argument('--lock', dest='lock', action='store_true', help='lock user')
 enterprise_user_parser.add_argument('--unlock', dest='unlock', action='store_true', help='unlock user')
 enterprise_user_parser.add_argument('--add', dest='add', action='store_true', help='invite user')
@@ -521,7 +522,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 if len(node['queued_teams']) > 0:
                     if kwargs.get('verbose'):
-                        ts = [teams[x] for x in node['queued_teams']]
+                        ts = [queued_teams[x] for x in node['queued_teams']]
                         ts.sort(key=lambda x: x['name'])
                         td = OD()
                         for t in ts:
@@ -969,6 +970,13 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 'email': user['username']
                             })
 
+                if kwargs.get('extend'):
+                    for user in matched_users:
+                        request_batch.append({
+                            'command': 'extend_account_share_expiration',
+                            'enterprise_user_id': user['enterprise_user_id']
+                        })
+
                 if kwargs.get('add_role') or kwargs.get('remove_role'):
                     role_changes = {}
                     for is_add in [False, True]:
@@ -1129,6 +1137,11 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 logging.info('%s password expired', user['username'])
                             else:
                                 logging.warning('%s failed to expire password: %s', user['username'], rs['message'])
+                        elif command == 'extend_account_share_expiration':
+                            if rs['result'] == 'success':
+                                logging.info('%s account share expiration extended by 7 days', user['username'])
+                            else:
+                                logging.warning('%s failed to extend account share expiration: %s', user['username'], rs['message'])
                         elif command == 'enterprise_user_delete':
                             if rs['result'] == 'success':
                                 logging.info('%s user deleted', user['username'])
