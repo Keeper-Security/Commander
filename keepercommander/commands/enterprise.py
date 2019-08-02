@@ -521,7 +521,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 if len(node['queued_teams']) > 0:
                     if kwargs.get('verbose'):
-                        ts = [teams[x] for x in node['queued_teams']]
+                        ts = [queued_teams[x] for x in node['queued_teams']]
                         ts.sort(key=lambda x: x['name'])
                         td = OD()
                         for t in ts:
