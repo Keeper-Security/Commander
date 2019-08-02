@@ -16,7 +16,7 @@ import argparse
 import logging
 import datetime
 import getpass
-from typing import Optional
+from typing import Optional, List
 
 import requests
 import tempfile
@@ -30,7 +30,7 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..record import Record
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
-from ..subfolder import try_resolve_path
+from ..subfolder import try_resolve_path, find_folders, get_folder_path
 
 
 def register_commands(commands):
@@ -79,7 +79,6 @@ check_enforcements_parser.exit = suppress_exit
 connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
 connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on command format and template parameters')
 connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')
-connect_parser.add_argument('-r', '--record', dest='record',  type=str, help='record UID or name')
 connect_parser.add_argument('endpoint', nargs='?', action='store', type=str, help='endpoint')
 connect_parser.error = raise_parse_exception
 connect_parser.exit = suppress_exit
@@ -340,7 +339,19 @@ endpoint_desc_pattern =  re.compile(r'^connect:([^:]+):description$')
 endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
 
 
+class ConnectEndpoint:
+    def __init__(self, name, description, record_uid, record_title, paths):
+        self.name = name
+        self.description = description
+        self.record_uid = record_uid
+        self.record_title = record_title
+        self.paths = paths
+
+
 class ConnectCommand(Command):
+    LastRevision = 0 # int
+    Endpoints = [] # type: List[ConnectEndpoint]
+
     def get_parser(self):
         return connect_parser
 
@@ -349,43 +360,56 @@ class ConnectCommand(Command):
             logging.info(connect_command_description)
             return
 
-        record = kwargs['record'] if 'record' in kwargs else None
-        records = []
-        folder = None
-        if record:
-            rs = try_resolve_path(params, kwargs['pattern'])
-            if rs is not None:
-                folder, record = rs
+        ConnectCommand.find_endpoints(params)
 
         endpoint = kwargs.get('endpoint')
-        if endpoint and not folder:
-            rpos = endpoint.rfind('/')
-            if rpos > 0:
-                try_path = endpoint[:rpos+1]
-                rs = try_resolve_path(params, try_path)
-                if rs is not None:
-                    if not rs[1]:
-                        folder = rs[0]
-                        endpoint = endpoint[rpos+1:]
+        if endpoint:
+            endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
+            if not endpoints:
+                folder = None
+                rpos = endpoint.rfind('/')
+                if rpos > 0:
+                    try_path = endpoint[:rpos+1]
+                    rs = try_resolve_path(params, try_path)
+                    if rs is not None:
+                        if not rs[1]:
+                            folder = rs[0]
+                            endpoint = endpoint[rpos+1:]
+                endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
+            if len(endpoints) > 0:
+                ConnectCommand.connect_endpoint(params, endpoint, api.get_record(params, endpoints[0].record_uid), kwargs.get('new_data') or False)
+            else:
+                logging.info("Connect endpoint '{0}' not found".format(endpoint))
+        else:
+            if ConnectCommand.Endpoints:
+                print("Available connect endpoints")
+                print()
+                headers = ["#", 'Endpoint', 'Description', 'Record Title', 'Folder(s)']
+                table = []
+                for i in range(len(ConnectCommand.Endpoints)):
+                    endpoint = ConnectCommand.Endpoints[i]
+                    title = endpoint.record_title
+                    if len(title) > 23:
+                        title = title[:20] + '...'
+                    folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
+                    table.append([i + 1, endpoint.name, endpoint.description or '', title, folder])
+                print(tabulate(table, headers=headers))
+                print('')
+            else:
+                logging.info("No connect endpoints found")
+            return
 
-        if not folder:
-            folder = params.folder_cache[params.current_folder] if params.current_folder else params.root_folder
-
-        folder_uid = folder.uid or ''
-        if folder_uid in params.subfolder_record_cache:
-            for uid in params.subfolder_record_cache[folder_uid]:
-                r = api.get_record(params, uid)
-                if record:
-                    if record == r.record_uid or record.lower() == r.title.lower():
-                        records.append(r)
-                else:
-                    records.append(r)
-
-        if not endpoint:
-            endpoints = []
-            endpoints_desc = {}
-            for record in records:
+    @staticmethod
+    def find_endpoints(params):
+        # type: (KeeperParams) -> None
+        if ConnectCommand.LastRevision < params.revision:
+            ConnectCommand.LastRevision = params.revision
+            ConnectCommand.Endpoints.clear()
+            for record_uid in params.record_cache:
+                record = api.get_record(params, record_uid)
                 if record.custom_fields:
+                    endpoints = []
+                    endpoints_desc = {}
                     for field in record.custom_fields:
                         if 'name' in field:
                             m = endpoint_pattern.match(field['name'])
@@ -395,28 +419,14 @@ class ConnectCommand(Command):
                                 m = endpoint_desc_pattern.match(field['name'])
                                 if m:
                                     endpoints_desc[m[1]] = field.get('value') or ''
-            if endpoints:
-                print("Available connect endpoints")
-                endpoints.sort()
-                table = [[i + 1, e, endpoints_desc.get(e) or ''] for i, e in enumerate(endpoints)]
-                headers = ["#", 'Endpoint', 'Description']
-                print(tabulate(table, headers=headers))
-                print('')
-            else:
-                logging.info("No connect endpoints found")
-            return
-
-        for record in records:
-            if record.custom_fields:
-                for field in record.custom_fields:
-                    if 'name' in field:
-                        m = endpoint_pattern.match(field['name'])
-                        if m:
-                            if m[1] == endpoint:
-                                ConnectCommand.connect_endpoint(params, endpoint, record, kwargs.get('new_data') or False)
-                                return
-
-        logging.info("Connect endpoint '{0}' not found".format(endpoint))
+                    if endpoints:
+                        paths = []
+                        for folder_uid in find_folders(params, record_uid):
+                            path = '/' + get_folder_path(params, folder_uid, '/')
+                            paths.append(path)
+                        for endpoint in endpoints:
+                            ConnectCommand.Endpoints.append(ConnectEndpoint(endpoint, endpoints_desc.get(endpoint) or '', record_uid, record.title, paths))
+            ConnectCommand.Endpoints.sort(key=lambda x: x.name)
 
     attachment_cache = {}
     @staticmethod
