@@ -179,7 +179,7 @@ def get_device_token(context):
 
 
 def pre_login(context, username, two_factor_token=None):
-    # type: (RestApiContext, str, Optional[bytes], bool) -> proto.PreLoginResponse
+    # type: (RestApiContext, str, Optional[bytes]) -> proto.PreLoginResponse
 
     attempt = 0
     while attempt < 3:

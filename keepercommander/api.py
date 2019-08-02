@@ -18,7 +18,7 @@ import os
 import hashlib
 import logging
 import urllib.parse
-from typing import Optional, Iterable
+from typing import Optional, Iterable, List
 
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -571,6 +571,7 @@ def sync_down(params):
                 team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
             else:
                 team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
+#            team['team_key_unencrypted'] = team['team_key_unencrypted'][:32]
             team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
 
             if 'removed_shared_folders' in team:
@@ -1198,8 +1199,10 @@ def communicate(params, request):
 
 
 def execute_batch(params, requests):
+    # type: (KeeperParams, List[dict]) -> List[dict]
+    responses = []
     if not requests:
-        return
+        return responses
 
     chunk_size = 100
     queue = requests.copy()
@@ -1214,8 +1217,9 @@ def execute_batch(params, requests):
         try:
             rs = communicate(params, rq)
             if 'results' in rs:
-                results = rs['results']
+                results = rs['results'] # type: list
                 if len(results) > 0:
+                    responses.extend(results)
                     if params.debug:
                         pos = len(results) - 1
                         req = chunk[pos]
@@ -1227,6 +1231,8 @@ def execute_batch(params, requests):
 
         except Exception as e:
             logging.error(e)
+
+    return responses
 
 
 def update_record(params, record, **kwargs):
