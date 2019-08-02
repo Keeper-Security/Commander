@@ -278,6 +278,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--expire``` Expire the master password for the user
     - ```--lock``` Unlock the user account
     - ```--unlock``` Lock the user account 
+    - ```--extend``` Extend vault transfer consent by 7 days 
     - ```--add``` Invite a new user to join the enterprise
     - ```--delete``` Delete the user and all stored vault records (use with caution)
     - ```--name``` Rename a user's display name

@@ -97,7 +97,7 @@ enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', desc
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
-enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true', help='extend account share expiration')
+enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true', help='extend vault transfer consent by 7 days')
 enterprise_user_parser.add_argument('--lock', dest='lock', action='store_true', help='lock user')
 enterprise_user_parser.add_argument('--unlock', dest='unlock', action='store_true', help='unlock user')
 enterprise_user_parser.add_argument('--add', dest='add', action='store_true', help='invite user')
@@ -1139,9 +1139,9 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 logging.warning('%s failed to expire password: %s', user['username'], rs['message'])
                         elif command == 'extend_account_share_expiration':
                             if rs['result'] == 'success':
-                                logging.info('%s account share expiration extended by 7 days', user['username'])
+                                logging.info('%s vault transfer consent expiration extended by 7 days', user['username'])
                             else:
-                                logging.warning('%s failed to extend account share expiration: %s', user['username'], rs['message'])
+                                logging.warning('%s failed to extend vault transfer consent expiration: %s', user['username'], rs['message'])
                         elif command == 'enterprise_user_delete':
                             if rs['result'] == 'success':
                                 logging.info('%s user deleted', user['username'])
