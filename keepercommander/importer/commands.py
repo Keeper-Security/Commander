@@ -34,17 +34,17 @@ def register_command_info(aliases, command_info):
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from local file to Keeper')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',  help='display Keeper JSON import instructions')
-import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
+import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass'], required=True, help='file format')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
-import_parser.add_argument('filename', type=str, help='file name')
+import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
-export_parser.add_argument('filename', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
+export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
 
@@ -117,14 +117,14 @@ class RecordImportCommand(ImporterCommand):
         return import_parser
 
     def execute(self, params, **kwargs):
-        file_format = kwargs['format'] if 'format' in kwargs else None
-        filename = kwargs['filename'] if 'filename' in kwargs else None
+        import_format = kwargs['format'] if 'format' in kwargs else None
+        import_name = kwargs['name'] if 'name' in kwargs else None
         shared = kwargs.get('shared') or False
         manage_users = False
         manage_records = False
         can_edit = False
         can_share = False
-        if file_format and filename:
+        if import_format and import_name:
             permissions = kwargs.get('permissions')
             if shared and not permissions:
                 permissions = user_choice('Default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one', 'uresan', show_choice=False, multi_choice=True)
@@ -147,7 +147,7 @@ class RecordImportCommand(ImporterCommand):
                         can_share = True
 
             logging.info('Processing... please wait.')
-            imp_exp._import(params, file_format, filename, shared=shared,
+            imp_exp._import(params, import_format, import_name, shared=shared,
                             manage_users=manage_users, manage_records=manage_records,
                             can_edit=can_edit, can_share=can_share)
         else:
@@ -159,10 +159,10 @@ class RecordExportCommand(ImporterCommand):
         return export_parser
 
     def execute(self, params, **kwargs):
-        file_format = kwargs['format'] if 'format' in kwargs else None
-        filename = kwargs['filename'] if 'filename' in kwargs else None
+        export_format = kwargs['format'] if 'format' in kwargs else None
+        export_name = kwargs['name'] if 'name' in kwargs else None
         if format:
             logging.info('Processing... please wait.')
-            imp_exp.export(params, file_format, filename)
+            imp_exp.export(params, export_format, export_name)
         else:
             logging.error('Missing argument')

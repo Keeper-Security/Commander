@@ -46,13 +46,13 @@ from lxml import objectify, etree
 
 from Cryptodome.Cipher import AES
 
-from ..importer import path_components, PathDelimiter, BaseImporter, BaseExporter, \
+from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
     Record, Folder, SharedFolder, Permission, Attachment
 
 from keepercommander.api import unpad_binary
 
 
-class KeepassImporter(BaseImporter):
+class KeepassImporter(BaseFileImporter):
 
     @staticmethod
     def get_folder(group):

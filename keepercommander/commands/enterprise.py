@@ -47,6 +47,7 @@ from ..generator import generate
 
 
 def register_commands(commands):
+    commands['enterprise-down'] = GetEnterpriseDataCommand()
     commands['enterprise-info'] = EnterpriseInfoCommand()
     commands['enterprise-node'] = EnterpriseNodeCommand()
     commands['enterprise-user'] = EnterpriseUserCommand()
@@ -59,6 +60,7 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
+    aliases['ed'] = 'enterprise-down'
     aliases['ei'] = 'enterprise-info'
     aliases['en'] = 'enterprise-node'
     aliases['eu'] = 'enterprise-user'
@@ -195,6 +197,11 @@ user_report_parser.exit = suppress_exit
 
 def lock_text(lock):
     return 'Locked' if lock == 1 else 'Disabled' if lock == 2 else ''
+
+
+class GetEnterpriseDataCommand(Command):
+    def execute(self, params, **kwargs):
+        api.query_enterprise(params)
 
 
 class EnterpriseCommand(Command):
@@ -503,8 +510,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         ts = [roles[x] for x in node['roles']]
                         ts.sort(key=lambda x: x['name'])
                         td = OD()
-                        for t in ts:
+                        for i, t in enumerate(ts):
                             td['{0} ({1})'.format(t['name'], t['id'])] = {}
+                            if i >= 50:
+                                td['{0} More Role(s)'.format(len(ts)-i)] = {}
+                                break
                         n['Role(s)'] = td
                     else:
                         n['{0} role(s)'.format(len(node['roles']))] = {}
@@ -514,8 +524,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         ts = [teams[x] for x in node['teams']]
                         ts.sort(key=lambda x: x['name'])
                         td = OD()
-                        for t in ts:
+                        for i, t in enumerate(ts):
                             td['{0} ({1})'.format(t['name'], t['id'])] = {}
+                            if i >= 50:
+                                td['{0} More Team(s)'.format(len(ts)-i)] = {}
+                                break
                         n['Teams(s)'] = td
                     else:
                         n['{0} team(s)'.format(len(node['teams']))] = {}
@@ -525,8 +538,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         ts = [queued_teams[x] for x in node['queued_teams']]
                         ts.sort(key=lambda x: x['name'])
                         td = OD()
-                        for t in ts:
+                        for i, t in enumerate(ts):
                             td['{0} ({1})'.format(t['name'], t['id'])] = {}
+                            if i >= 50:
+                                td['{0} More Queued Team(s)'.format(len(ts)-i)] = {}
+                                break
                         n['Queued Teams(s)'] = td
                     else:
                         n['{0} queued team(s)'.format(len(node['queued_teams']))] = {}

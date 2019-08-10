@@ -122,19 +122,10 @@ class Record:
 
 
 class BaseImporter:
-    def execute(self, filename):
+    def execute(self, name):
         # type: (BaseImporter, str) -> Iterable[Union[Record, SharedFolder]]
 
-        path = os.path.expanduser(filename)
-        if not os.path.isfile(path):
-            ext = self.extension()
-            if ext:
-                path = path + '.' + ext
-
-        if not os.path.isfile(path):
-            raise Exception('File \'{0}\' does not exist'.format(filename))
-
-        yield from self.do_import(path)
+        yield from self.do_import(name)
 
     def do_import(self, filename):
         # type: (BaseImporter, str) -> Iterable[Union[Record, SharedFolder]]
@@ -142,6 +133,22 @@ class BaseImporter:
 
     def extension(self):
         return ''
+
+
+class BaseFileImporter(BaseImporter):
+    def execute(self, name):
+        # type: (BaseFileImporter, str) -> Iterable[Union[Record, SharedFolder]]
+
+        path = os.path.expanduser(name)
+        if not os.path.isfile(path):
+            ext = self.extension()
+            if ext:
+                path = path + '.' + ext
+
+        if not os.path.isfile(path):
+            raise Exception('File \'{0}\' does not exist'.format(name))
+
+        yield from self.do_import(path)
 
 
 class BaseExporter:
