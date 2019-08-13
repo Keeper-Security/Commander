@@ -12,10 +12,10 @@
 import json
 import sys
 
-from ..importer import BaseImporter, BaseExporter, Record, Folder, SharedFolder, Permission
+from ..importer import BaseFileImporter, BaseExporter, Record, Folder, SharedFolder, Permission
 
 
-class KeeperJsonImporter(BaseImporter):
+class KeeperJsonImporter(BaseFileImporter):
     def do_import(self, filename):
         with open(filename, "r", encoding='utf-8') as json_file:
             j = json.load(json_file)

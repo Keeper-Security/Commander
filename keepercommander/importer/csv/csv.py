@@ -12,7 +12,7 @@
 import csv
 import sys
 
-from ..importer import BaseImporter, BaseExporter, Record, Folder
+from ..importer import BaseFileImporter, BaseExporter, Record, Folder
 
 
 '''
@@ -27,7 +27,7 @@ from ..importer import BaseImporter, BaseExporter, Record, Folder
 '''
 
 
-class KeeperCsvImporter(BaseImporter):
+class KeeperCsvImporter(BaseFileImporter):
 
     def do_import(self, filename):
         with open(filename, "r", encoding='utf-8') as csvfile:
