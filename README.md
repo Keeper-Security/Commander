@@ -250,7 +250,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
 **Import and Export Commands**
 
-* ```import``` Import data from local file to Keeper. JSON, CSV, Keepass formats accepted. Keepass import includes all file attachments.
+* ```import``` Import data from local file to Keeper. JSON, CSV, Keepass, LastPass formats accepted. Keepass import includes all file attachments.
 
 * ```export``` Export data from Keeper to local file or stdout. JSON, CSV, Keepass file formats supported.  Keepass exports include all file attachments.
 
@@ -365,12 +365,12 @@ To import records into your vault, use the ```import``` command.  Supported impo
 * JSON
 * CSV 
 * Keepass (see additional [install instructions](keepercommander/importer/keepass/README.md))
+* LastPass (see additional [install instructions](keepercommander/importer/lastpass/README.md))
 
 JSON import files can contain records, folders, subfolders, shared folders, default folder permissions  and user/team permissions.
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
 Keepass files will transfer records, file attachments, folders and subfolders. Option exists to make all folders as shared folders. File attachments are supported in both import and export with Keepass however they are limited to 1MB for each file based on keepass' structure.
-
-If you plan to use the Keepass import or export features of Keeper Commander, please follow [these instructions](keepercommander/importer/keepass/README.md).
+LastPass import will transfer the vault passwords directly to Keeper retaining the folder structure.
 
 **JSON Record Import**
 
@@ -562,6 +562,31 @@ You can optionally make all top level folders as shared folder object with defau
 
 ```bash
 $ keeper import --format=keepass --shared --permissions=URES test.kdbx
+```
+
+For more options, see the help screen:
+```bash
+$ keeper import -h
+```
+
+**LastPass Import**
+
+Keeper supports automatic import of your LastPass vault by providing your LastPass email, master password and 2FA code. Make sure to first follow [these instructions](keepercommander/importer/lastpass/README.md) to install the necessary LastPass modules.
+
+```bash
+$ keeper import --format=lastpass craig@acme-demo.com 
+Processing... please wait.
+...             LastPass Password: *******
+Press <Enter> if account is not protected with Multifactor Authentication
+...          Multifactor Password: ******
+13 records imported successfully
+My Vault>                                                                                                                                                                                         
+```
+
+You can optionally make all top level folders as shared folder object with default permissions.
+
+```bash
+$ keeper import --format=lastpass --shared --permissions=URES craig@acme-demo.com 
 ```
 
 For more options, see the help screen:
