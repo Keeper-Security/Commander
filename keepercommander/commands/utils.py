@@ -79,6 +79,8 @@ check_enforcements_parser.exit = suppress_exit
 connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
 connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on command format and template parameters')
 connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')
+connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'], help='sort output')
+connect_parser.add_argument('-f', '--filter', dest='filter_by', action='store', help='filter output')
 connect_parser.add_argument('endpoint', nargs='?', action='store', type=str, help='endpoint')
 connect_parser.error = raise_parse_exception
 connect_parser.exit = suppress_exit
@@ -382,17 +384,26 @@ class ConnectCommand(Command):
                 logging.info("Connect endpoint '{0}' not found".format(endpoint))
         else:
             if ConnectCommand.Endpoints:
-                print("Available connect endpoints")
-                print()
+                sorted_by = kwargs['sort_by'] or 'endpoint'
+                filter_by = kwargs['filter_by'] or ''
+                logging.info("Available connect endpoints")
+                if filter_by:
+                    logging.info('Filtered by \"%s\"', filter_by)
+                    filter_by = filter_by.lower()
+                logging.info('')
                 headers = ["#", 'Endpoint', 'Description', 'Record Title', 'Folder(s)']
                 table = []
                 for i in range(len(ConnectCommand.Endpoints)):
                     endpoint = ConnectCommand.Endpoints[i]
                     title = endpoint.record_title
+                    folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
+                    if filter_by:
+                        if not any([x for x in [endpoint.name.lower(), title.lower(), folder.lower()] if x.find(filter_by) >= 0]):
+                            continue
                     if len(title) > 23:
                         title = title[:20] + '...'
-                    folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
                     table.append([i + 1, endpoint.name, endpoint.description or '', title, folder])
+                table.sort(key=lambda x: x[4] if sorted_by == 'folder' else x[3] if sorted_by == 'title' else x[1])
                 print(tabulate(table, headers=headers))
                 print('')
             else:
