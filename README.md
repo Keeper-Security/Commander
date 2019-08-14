@@ -580,7 +580,7 @@ Processing... please wait.
 Press <Enter> if account is not protected with Multifactor Authentication
 ...          Multifactor Password: ******
 13 records imported successfully
-My Vault>                                                                                                                                                                                         
+My Vault>
 ```
 
 You can optionally make all top level folders as shared folder object with default permissions.
