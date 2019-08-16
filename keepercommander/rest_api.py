@@ -186,7 +186,7 @@ def pre_login(context, username, two_factor_token=None):
         attempt += 1
         rq = proto.PreLoginRequest()
         rq.authRequest.clientVersion = CLIENT_VERSION
-        rq.authRequest.username = username
+        rq.authRequest.username = username.lower()
         rq.authRequest.encryptedDeviceToken = get_device_token(context)
         rq.loginType = proto.LoginType.Value('NORMAL')
         if two_factor_token:
@@ -218,7 +218,7 @@ def get_new_user_params(context, username):
     # type: (RestApiContext, str) -> proto.NewUserMinimumParams
     rq = proto.AuthRequest()
     rq.clientVersion = CLIENT_VERSION
-    rq.username = username
+    rq.username = username.lower()
     rq.encryptedDeviceToken = get_device_token(context)
 
     rs = execute_rest(context, 'authentication/get_new_user_params', rq.SerializeToString())

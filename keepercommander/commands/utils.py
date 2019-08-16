@@ -233,7 +233,7 @@ class LoginCommand(Command):
             logging.info('Canceled')
             return
 
-        params.user = user
+        params.user = user.lower()
         params.password = password
 
         logging.info('Logging in...')

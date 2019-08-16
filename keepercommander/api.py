@@ -69,6 +69,7 @@ install_fido_package_warning = 'You can use Security Key with Commander:\n' +\
                                'Install fido2 package ' + bcolors.OKGREEN +\
                                '\'pip install fido2\'' + bcolors.ENDC
 
+
 def login(params):
     # type: (KeeperParams) -> None
     global should_cancel_u2f
@@ -105,7 +106,7 @@ def login(params):
             'include': ['keys', 'license', 'settings', 'enforcements', 'is_enterprise_admin'],
             'version': 2,
             'auth_response': params.auth_verifier,
-            'username': params.user
+            'username': params.user.lower()
         }
 
         if params.mfa_token:
@@ -1174,7 +1175,7 @@ def communicate(params, request):
         rq['locale'] = 'en_US'
         rq['device_id'] = 'Commander'
         rq['session_token'] = params.session_token
-        rq['username'] = params.user
+        rq['username'] = params.user.lower()
 
     if not params.session_token:
         login(params)
