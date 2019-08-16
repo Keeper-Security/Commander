@@ -45,15 +45,6 @@ def get_params_from_config(config_filename):
                 if 'password' in params.config:
                     params.password = params.config['password']
 
-                if 'challenge' in params.config:
-                    try:
-                        import keepercommander.yubikey.yubikey
-                        challenge = params.config['challenge']
-                        params.password = keepercommander.yubikey.yubikey.get_response(challenge)
-                    except Exception as e:
-                        print(e)
-                        sys.exit(1)
-
                 if 'timedelay' in params.config:
                     params.timedelay = params.config['timedelay']
 
@@ -99,7 +90,7 @@ def usage(m):
     print(m)
     parser.print_help()
     cli.display_command_help(show_enterprise=True, show_shell=True)
-    exit(1)
+    sys.exit(1)
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False)
 parser.add_argument('--server', '-ks', dest='server', action='store', help='Keeper Host address.')

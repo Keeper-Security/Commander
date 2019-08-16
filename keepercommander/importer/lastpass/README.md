@@ -1,10 +1,10 @@
 Commander support for LastPass accounts
 ---
 
-If you plan to use the LastPass import feature, you need to manually install the lastpass-python module.
+Keeper Commander uses lastpass-python library to access LastPass data.
 
-```bash
-$ pip3 install lastpass-python 
-```
+https://pypi.org/project/lastpass-python/
 
-Now you can use the ```import --format=lastpass <email>``` commands within Keeper Commander.
+[The MIT License](https://opensource.org/licenses/mit-license.php)
+
+You can use the ```import --format=lastpass <email>``` commands within Keeper Commander.

@@ -1,0 +1,10 @@
+pexpect
+ldap3
+awscli
+pymssql
+PyMySQL
+cx_Oracle
+psycopg2
+fido2
+libkeepass
+pyinstaller

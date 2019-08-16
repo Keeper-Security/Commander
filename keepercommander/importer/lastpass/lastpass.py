@@ -11,17 +11,10 @@
 
 from ..importer import BaseImporter, Record, Folder
 
-try:
-    import lastpass
-except:
-    lastpass_instructions = """
-lastpass-python is not installed
-
-pip3 install lastpass-python
-"""
-    raise Exception(lastpass_instructions)
-
 import getpass
+
+from .vault import Vault
+from .account import Account
 
 
 class LastPassImporter(BaseImporter):
@@ -34,8 +27,8 @@ class LastPassImporter(BaseImporter):
         if not twofa_code:
             twofa_code = None
 
-        vault = lastpass.Vault.open_remote(username, password, multifactor_password=twofa_code)
-        for account in vault.accounts:  # type: lastpass.account.Account
+        vault = Vault.open_remote(username, password, multifactor_password=twofa_code)
+        for account in vault.accounts:  # type: Account
             record = Record()
             if account.name:
                 record.title = account.name.decode('utf-8')
