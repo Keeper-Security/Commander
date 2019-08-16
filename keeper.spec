@@ -2,11 +2,13 @@
 
 block_cipher = None
 
-
 a = Analysis(['keeper.py'],
              pathex=['.'],
              binaries=[],
-             datas=[('keepercommander\\importer\\keepass\\template.kdbx', 'keepercommander\\importer\\keepass')],
+             datas=[
+                ('keepercommander\\importer\\keepass\\template.kdbx', 'keepercommander\\importer\\keepass'),
+                ('public_suffix_list.dat', 'fido2'),
+             ],
              hiddenimports=['keepercommander.importer.json',
                             'keepercommander.importer.csv',
                             'keepercommander.importer.keepass',

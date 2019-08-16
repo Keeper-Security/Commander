@@ -22,7 +22,7 @@ class Record:
         self.password = password 
         self.login_url = login_url
         self.notes = notes 
-        self.custom_fields = custom_fields or []
+        self.custom_fields = custom_fields or [] # type: list
         self.attachments = None
         self.revision = revision
         self.unmasked_password =  None
@@ -68,6 +68,12 @@ class Record:
                 break
         if not found:
             self.custom_fields.append({'name': name, 'value': value})
+
+    def remove_field(self, name):
+        if self.custom_fields:
+            idxs = [i for i,x in enumerate(self.custom_fields) if x['name'] == name]
+            if len(idxs) == 1:
+                return self.custom_fields.pop(idxs[0])
 
     def display(self, **kwargs):
         print('') 

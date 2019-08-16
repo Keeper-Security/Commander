@@ -29,6 +29,7 @@ from ..params import LAST_RECORD_UID
 
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
+    commands['edit'] = RecordEditCommand()
     commands['rm'] = RecordRemoveCommand()
     commands['search'] = SearchCommand()
     commands['list'] = RecordListCommand()
@@ -54,8 +55,8 @@ def register_command_info(aliases, command_info):
     aliases['ua'] = 'upload-attachment'
     aliases['cc'] = 'clipboard-copy'
 
-    for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, add_parser, rm_parser, append_parser,
-              download_parser, upload_parser, delete_attachment_parser]:
+    for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, add_parser, edit_parser, rm_parser,
+              append_parser, download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -80,6 +81,18 @@ add_parser.add_argument('-g', '--generate', dest='generate', action='store_true'
 add_parser.add_argument('title', type=str, action='store', help='record title')
 add_parser.error = raise_parse_exception
 add_parser.exit = suppress_exit
+
+
+edit_parser = argparse.ArgumentParser(prog='edit', description='Edit record')
+edit_parser.add_argument('--login', dest='login', action='store', help='login name')
+edit_parser.add_argument('--pass', dest='password', action='store', help='password')
+edit_parser.add_argument('--url', dest='url', action='store', help='url')
+edit_parser.add_argument('--notes', dest='notes', action='store', help='notes. + in front of notes appends text to existing notes')
+edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
+edit_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+edit_parser.error = raise_parse_exception
+edit_parser.exit = suppress_exit
 
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove record')
@@ -257,6 +270,128 @@ class RecordAddCommand(Command):
         logging.info('Record UID: %s', record_uid)
         params.environment_variables[LAST_RECORD_UID] = record_uid
         return record_uid
+
+
+class RecordEditCommand(Command):
+    def get_parser(self):
+        return edit_parser
+
+    def execute(self, params, **kwargs):
+        name = kwargs['record'] if 'record' in kwargs else None
+
+        if not name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            logging.warning('Enter name or uid of existing record')
+            return
+        record = api.get_record(params, record_uid)
+
+        changed = False
+        if kwargs.get('title') is not None:
+            title = kwargs['title']
+            if title:
+                record.title = title
+                changed = True
+            else:
+                logging.warning('Record title cannot be empty.')
+        if kwargs.get('login') is not None:
+            record.login = kwargs['login']
+            changed = True
+        if kwargs.get('password') is not None:
+            record.password = kwargs['password']
+            changed = True
+        else:
+            if kwargs.get('generate'):
+                record.password = generator.generate(16)
+                changed = True
+        if kwargs.get('url') is not None:
+            record.login_url = kwargs['url']
+            changed = True
+        if kwargs.get('notes') is not None:
+            notes = kwargs['notes'] # type: str
+            if notes:
+                if notes.startswith("+"):
+                    notes = record.notes + "\n" + notes[1:]
+            record.notes = notes
+            changed = True
+
+        custom_list = kwargs.get('custom')
+        if custom_list:
+            custom = []
+            if type(custom_list) == str:
+                try:
+                    custom_json = json.loads(custom_list)
+                    for k,v in custom_json.items():
+                        custom.append({
+                            'name': k,
+                            'value': str(v)
+                        })
+                except ValueError as e:
+                    pass
+                if len(custom) == 0:
+                    pairs = custom_list.split(',')
+                    for pair in pairs:
+                        idx = pair.find(':')
+                        if idx > 0:
+                            custom.append({
+                                'name': pair[:idx].strip(),
+                                'value': pair[idx+1:].strip()
+                            })
+            elif type(custom_list) == list:
+                for c in custom_list:
+                    if type(c) == dict:
+                        name = c.get('name')
+                        value = c.get('value')
+                        if name and value:
+                            custom.append({
+                                'name': name,
+                                'value': value
+                            })
+            if custom:
+                for c in custom:
+                    if c['value']:
+                        record.set_field(c['name'], c['value'])
+                        changed = True
+                    else:
+                        deleted = record.remove_field(c['name'])
+                        if deleted:
+                            changed = True
+
+        if changed:
+            params.sync_data = True
+            api.update_record(params, record)
+
+
+class RecordAppendNotesCommand(Command):
+    def get_parser(self):
+        return append_parser
+
+    def execute(self, params, **kwargs):
+        notes = kwargs['notes'] if 'notes' in kwargs else None
+        while not notes:
+            notes = input("... Notes to append: ")
+
+        edit_command = RecordEditCommand()
+        kwargs['notes'] = '+' + notes
+        edit_command.execute(params, **kwargs)
 
 
 class RecordRemoveCommand(Command):
@@ -506,50 +641,6 @@ class RecordGetUidCommand(Command):
                     print(json.dumps(ro, indent=2))
                 else:
                     r.display(params=params)
-
-
-class RecordAppendNotesCommand(Command):
-    def get_parser(self):
-        return append_parser
-
-    def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-
-        if not name:
-            self.get_parser().print_help()
-            return
-
-        record_uid = None
-        if name in params.record_cache:
-            record_uid = name
-        else:
-            rs = try_resolve_path(params, name)
-            if rs is not None:
-                folder, name = rs
-                if folder is not None and name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == name.lower():
-                                record_uid = uid
-                                break
-
-        if record_uid is None:
-            logging.warning('Enter name or uid of existing record')
-            return
-
-        notes = kwargs['notes'] if 'notes' in kwargs else None
-        while not notes:
-            notes = input("... Notes to append: ")
-
-        record = api.get_record(params, record_uid)
-
-        if record.notes:
-            record.notes += '\n'
-        record.notes += notes
-        params.sync_data = True
-        api.update_record(params, record)
 
 
 class RecordDownloadAttachmentCommand(Command):

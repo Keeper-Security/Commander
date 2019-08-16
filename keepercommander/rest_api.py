@@ -206,7 +206,7 @@ def pre_login(context, username, two_factor_token=None):
                     logging.warning('Switching to region: %s.', context.server_base)
                     continue
                 if rs['error'] == 'bad_request':
-                    logging.warning('Invalid device id')
+                    logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     context.device_id = None
                     continue
 

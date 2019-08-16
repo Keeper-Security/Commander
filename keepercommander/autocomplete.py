@@ -151,7 +151,7 @@ class CommandCompleter(Completer):
                     raw_input = document.text[pos+1:].strip()
                     context = ''
                     extra = dict()
-                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'append-notes', 'rm', 'clipboard-copy'} :
+                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes', 'rm', 'clipboard-copy'} :
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
