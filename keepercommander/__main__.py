@@ -37,7 +37,7 @@ def get_params_from_config(config_filename):
                 params.config = json.load(config_file)
 
                 if 'user' in params.config:
-                    params.user = params.config['user']
+                    params.user = params.config['user'].lower()
 
                 if 'server' in params.config:
                     params.server = params.config['server']

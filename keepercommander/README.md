@@ -71,6 +71,19 @@ python3 -m unittest discover unit-tests
 ```
 in ```Commander``` folder
 
+### Commander Binary Package
+
+Commander can be built as a binary package. The binary distribution package does not require Python interpreter to be installed on the target computer.
+To build binary package:
+1) Clone Commander repository ```git clone https://github.com/Keeper-Security/Commander.git```
+1) Create a new Python virtual environment ```python -m venv keeper```
+1) Activate virtual environment: Windows ```keeper\Script\activate``` Unix ```source keeper/bin/activate``` 
+1) Change directory to the cloned Commander repository
+1) Install required Commander packages ```pip -r requirements.txt```
+1) Install additional Commander packages ```pip -r extra_dependencies.txt```
+1) Build a binary package ```PyInstaller keeper.spec```
+1) Binary distribution package is located in ```dist/keeper``` folder
+
 ### Help
 
 If you need help, found a bug, or you're interested in contributing, email us at commander@keepersecurity.com.
