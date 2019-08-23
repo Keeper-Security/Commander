@@ -66,7 +66,7 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['enterprise_user_delete']
-        cmd.execute(params, delete=True, force=True, email=ent_env.user2_email)
+        cmd.execute(params, delete=True, force=True, email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_enterprise_lock_user(self):
@@ -75,8 +75,8 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['enterprise_user_lock', 'enterprise_user_lock']
-        cmd.execute(params, unlock=True, email=ent_env.user2_email)
-        cmd.execute(params, lock=True, email=ent_env.user2_email)
+        cmd.execute(params, unlock=True, email=[ent_env.user2_email])
+        cmd.execute(params, lock=True, email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_enterprise_wrong_user(self):
@@ -93,16 +93,17 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['set_master_password_expire']
-        cmd.execute(params, expire=True, force=True, email=ent_env.user2_email)
+        cmd.execute(params, expire=True, force=True, email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         with mock.patch('keepercommander.commands.enterprise.user_choice') as mock_choice:
             TestEnterprise.expected_commands = ['set_master_password_expire']
             mock_choice.return_value = 'y'
-            cmd.execute(params, expire=True, email=ent_env.user2_email)
-            self.assertEqual(len(TestEnterprise.expected_commands), 0)
-            mock_choice.return_value = 'n'
-            cmd.execute(params, expire=True, email=ent_env.user2_email)
+            cmd.execute(params, expire=True, email=[ent_env.user2_email])
+            with mock.patch('builtins.print'):
+                self.assertEqual(len(TestEnterprise.expected_commands), 0)
+                mock_choice.return_value = 'n'
+                cmd.execute(params, expire=True, email=[ent_env.user2_email])
 
     def test_enterprise_user_update(self):
         params = get_connected_params()
@@ -110,15 +111,11 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['enterprise_user_update']
-        cmd.execute(params, displayname='User 2 New Name', email=ent_env.user2_email)
+        cmd.execute(params, node='Root node', email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['enterprise_user_update']
-        cmd.execute(params, node='Sub node 1', email=ent_env.user2_email)
-        self.assertEqual(len(TestEnterprise.expected_commands), 0)
-
-        TestEnterprise.expected_commands = ['enterprise_user_update']
-        cmd.execute(params, node='{0}'.format(ent_env.node1_id), email=ent_env.user2_email)
+        cmd.execute(params, node='{0}'.format(ent_env.node1_id), email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_enterprise_user_team(self):
@@ -127,11 +124,11 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['team_enterprise_user_add']
-        cmd.execute(params, add_team=[ent_env.team2_uid], email=ent_env.user2_email)
+        cmd.execute(params, add_team=[ent_env.team2_uid], email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['team_enterprise_user_remove']
-        cmd.execute(params, remove_team=[ent_env.team2_uid], email=ent_env.user2_email)
+        cmd.execute(params, remove_team=[ent_env.team2_uid], email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_enterprise_role(self):
@@ -140,19 +137,20 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseRoleCommand()
         with mock.patch('builtins.print'):
-            cmd.execute(params, role=ent_env.role1_name)
+            cmd.execute(params, role=[ent_env.role1_name])
 
         TestEnterprise.expected_commands = ['role_user_add']
-        cmd.execute(params, add_user=[ent_env.user2_email], role=ent_env.role1_id)
+        cmd.execute(params, add_user=[ent_env.user2_email], role=[ent_env.role1_id])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['role_user_remove']
-        cmd.execute(params, remove_user=[ent_env.user2_email], role=ent_env.role1_name)
+        cmd.execute(params, remove_user=[ent_env.user2_email], role=[ent_env.role1_name])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         with self.assertLogs(level=logging.WARNING):
-            cmd.execute(params, add_user=[ent_env.user2_email], verbose=True, role='Invalid')
-            cmd.execute(params, add_user=['invalid@keepersecurity.com'], verbose=True, role=ent_env.role1_name)
+            cmd.execute(params, add_user=[ent_env.user2_email], verbose=True, role=['Invalid'])
+            with mock.patch('builtins.print'):
+                cmd.execute(params, add_user=['invalid@keepersecurity.com'], verbose=True, role=[ent_env.role1_name])
 
     def test_enterprise_team(self):
         params = get_connected_params()
@@ -160,24 +158,25 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseTeamCommand()
         with mock.patch('builtins.print'):
-            cmd.execute(params, team=ent_env.team1_uid)
+            cmd.execute(params, team=[ent_env.team1_uid])
 
         TestEnterprise.expected_commands = ['team_add']
-        cmd.execute(params, add=True, restrict_edit='on', node=str(ent_env.node1_id), team='Team 3')
+        cmd.execute(params, add=True, restrict_edit='on', node=str(ent_env.node1_id), team=['Team 3'])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         with mock.patch('keepercommander.commands.enterprise.user_choice') as mock_choice:
             TestEnterprise.expected_commands = ['team_delete']
             mock_choice.return_value = 'y'
-            cmd.execute(params, delete=True, team='Team 1')
+            cmd.execute(params, delete=True, team=['Team 1'])
             self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
-            mock_choice.return_value = 'n'
-            cmd.execute(params, delete=True, team=ent_env.team1_uid)
-            self.assertEqual(len(TestEnterprise.expected_commands), 0)
+            with mock.patch('builtins.print'):
+                mock_choice.return_value = 'n'
+                cmd.execute(params, delete=True, team=[ent_env.team1_uid])
+                self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         with self.assertLogs(level=logging.WARNING):
-            cmd.execute(params, delete=True, team='Unknown Team')
+            cmd.execute(params, delete=True, team=['Unknown Team'])
             self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_enterprise_team_user(self):
@@ -187,11 +186,11 @@ class TestEnterprise(TestCase):
         cmd = enterprise.EnterpriseTeamCommand()
 
         TestEnterprise.expected_commands = ['team_enterprise_user_add']
-        cmd.execute(params, add_user=[ent_env.user2_email], team=ent_env.team1_uid)
+        cmd.execute(params, add_user=[ent_env.user2_email], team=[ent_env.team1_uid])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['team_enterprise_user_remove']
-        cmd.execute(params, remove_user=[ent_env.user2_email], team=ent_env.team1_uid)
+        cmd.execute(params, remove_user=[ent_env.user2_email], team=[ent_env.team1_uid])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_audit_log_splunk_properties_success(self):
@@ -380,5 +379,9 @@ class TestEnterprise(TestCase):
         cmd = TestEnterprise.expected_commands.pop(0)
         if cmd == request['command']:
             return rs
+        if request['command'] == 'execute':
+            request = request['requests'][0]
+            if cmd == request['command']:
+                return rs
         raise Exception()
 

@@ -55,7 +55,7 @@ class TestImporterUtils(TestCase):
 
         with mock.patch('keepercommander.api.sync_down'), mock.patch('builtins.open', mock.mock_open()) as m_open:
             m_open.return_value.write = mock_write
-            cmd_export.execute(params_export, format='json', filename='json')
+            cmd_export.execute(params_export, format='json', name='json')
 
         with mock.patch('keepercommander.api.sync_down'), mock.patch('builtins.open', mock.mock_open()) as m_open:
             m_open.return_value.read = mock_read
@@ -66,7 +66,7 @@ class TestImporterUtils(TestCase):
                 'message': ''
             }
             with mock.patch('os.path.isfile', return_value=True):
-                cmd_import.execute(param_import, format='json', filename='json')
+                cmd_import.execute(param_import, format='json', name='json')
 
 
 
