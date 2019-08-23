@@ -257,7 +257,8 @@ class EnterpriseCommand(Command):
                 for team in params.enterprise['teams']:
                     if team['team_uid'] == team_uid:
                         if 'encrypted_team_key' in team:
-                            team_key = rest_api.decrypt_aes(team['encrypted_team_key'], params.enterprise['unencrypted_tree_key'])
+                            enc_team_key = team['encrypted_team_key']  # type: str
+                            team_key = rest_api.decrypt_aes(base64.urlsafe_b64decode(enc_team_key + '=='), params.enterprise['unencrypted_tree_key'])
                         break
 
         if team_key is None:
@@ -1295,6 +1296,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         role_names = set()
 
         for role_name in kwargs['role']:
+            role_name = str(role_name)
             r = role_lookup.get(role_name.lower())
             if r is None:
                 role_names.add(role_name)
