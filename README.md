@@ -5,7 +5,7 @@
 Jump to:
 * [Overview](#password-management-sdk-for-it-admins--developers)
 * [Use Cases](#use-cases)
-* [Installation](#installation---linux-and-mac)
+* [Installation](#python-installation---linux-and-mac)
 * [Developer Setup](#developer-setup)
 * [Command-line Usage](#command-line-usage)
 * [Interactive Shell](#interactive-shell)
