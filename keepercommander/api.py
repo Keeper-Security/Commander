@@ -532,32 +532,34 @@ def sync_down(params):
     if 'record_meta_data' in response_json:
         logging.debug('Processing record_meta_data')
         for meta_data in response_json['record_meta_data']:
-
-            if 'record_key' not in meta_data:
-                # old record that doesn't have a record key so make one
-                logging.debug('...no record key.  creating...')
-                # store as b64 encoded string
-                # note: decode() converts bytestream (b') to string
-                # note2: remove == from the end
-                meta_data['record_key_unencrypted'] = os.urandom(32)
-                meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
-                meta_data['record_key_type'] = 1
-                # temporary flag for decryption routine below
-                meta_data['old_record_flag'] = True
-                meta_data['is_converted_record_type'] = True
-
-            elif meta_data['record_key_type'] == 2:
-                logging.debug('Converting RSA-encrypted key')
-                # decrypt the type2 key using their RSA key
-                unencrypted_key = decrypt_rsa(meta_data['record_key'], params.rsa_key)
-                if len(unencrypted_key) == 32:
-                    meta_data['record_key_unencrypted'] = unencrypted_key
+            try:
+                if 'record_key' not in meta_data:
+                    # old record that doesn't have a record key so make one
+                    logging.debug('...no record key.  creating...')
+                    # store as b64 encoded string
+                    # note: decode() converts bytestream (b') to string
+                    # note2: remove == from the end
+                    meta_data['record_key_unencrypted'] = os.urandom(32)
                     meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
                     meta_data['record_key_type'] = 1
+                    # temporary flag for decryption routine below
+                    meta_data['old_record_flag'] = True
                     meta_data['is_converted_record_type'] = True
 
-            elif meta_data['record_key_type'] == 1:
-                meta_data['record_key_unencrypted'] = decrypt_data(meta_data['record_key'], params.data_key)
+                elif meta_data['record_key_type'] == 2:
+                    logging.debug('Converting RSA-encrypted key')
+                    # decrypt the type2 key using their RSA key
+                    unencrypted_key = decrypt_rsa(meta_data['record_key'], params.rsa_key)
+                    if len(unencrypted_key) == 32:
+                        meta_data['record_key_unencrypted'] = unencrypted_key
+                        meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
+                        meta_data['record_key_type'] = 1
+                        meta_data['is_converted_record_type'] = True
+
+                elif meta_data['record_key_type'] == 1:
+                    meta_data['record_key_unencrypted'] = decrypt_data(meta_data['record_key'], params.data_key)
+            except Exception as e:
+                logging.debug('Decryption error: %s', e)
 
             # add to local cache
             if 'record_key_unencrypted' in meta_data:
@@ -640,10 +642,13 @@ def sync_down(params):
         team = params.team_cache[team_uid]
         for sf_key in team['shared_folder_keys']:
             if 'shared_folder_key_unencrypted' not in sf_key:
-                if sf_key['key_type'] == 2:
-                    sf_key['shared_folder_key_unencrypted'] = decrypt_rsa(sf_key['shared_folder_key'], team['team_private_key_unencrypted'])
-                else:
-                    sf_key['shared_folder_key_unencrypted'] = decrypt_data(sf_key['shared_folder_key'], team['team_key_unencrypted'])
+                try:
+                    if sf_key['key_type'] == 2:
+                        sf_key['shared_folder_key_unencrypted'] = decrypt_rsa(sf_key['shared_folder_key'], team['team_private_key_unencrypted'])
+                    else:
+                        sf_key['shared_folder_key_unencrypted'] = decrypt_data(sf_key['shared_folder_key'], team['team_key_unencrypted'])
+                except Exception as e:
+                    logging.debug('Decryption error: %s', e)
 
     # process shared folder keys
     sf_to_delete = []
@@ -651,10 +656,13 @@ def sync_down(params):
         shared_folder = params.shared_folder_cache[shared_folder_uid]
         if 'shared_folder_key_unencrypted' not in shared_folder:
             if 'shared_folder_key' in shared_folder:
-                if shared_folder['key_type'] == 2:
-                    shared_folder['shared_folder_key_unencrypted'] = decrypt_rsa(shared_folder['shared_folder_key'], params.rsa_key)
-                else:
-                    shared_folder['shared_folder_key_unencrypted'] = decrypt_data(shared_folder['shared_folder_key'], params.data_key)
+                try:
+                    if shared_folder['key_type'] == 2:
+                        shared_folder['shared_folder_key_unencrypted'] = decrypt_rsa(shared_folder['shared_folder_key'], params.rsa_key)
+                    else:
+                        shared_folder['shared_folder_key_unencrypted'] = decrypt_data(shared_folder['shared_folder_key'], params.data_key)
+                except Exception as e:
+                    logging.debug('Decryption error: %s', e)
             else:
                 if 'teams' in shared_folder:
                     teams_to_remove = set()
@@ -1351,6 +1359,7 @@ def store_non_shared_data(params, record_uid, data):
     _ = communicate(params, request)
     sync_down(params)
 
+
 def generate_record_uid():
     """ Generate url safe base 64 16 byte uid """
     return base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip('=')
@@ -1370,7 +1379,11 @@ def prepare_folder_tree(params):
             uf = UserFolderNode()
             uf.uid = sf['folder_uid']
             uf.parent_uid = sf.get('parent_uid')
-            data = json.loads(decrypt_data(sf['data'], sf['folder_key_unencrypted']).decode())
+            try:
+                data = json.loads(decrypt_data(sf['data'], sf['folder_key_unencrypted']).decode())
+            except Exception as e:
+                logging.debug('Error decrypting user folder name. Folder UID: %s. Error: %s', uf.uid, e)
+                data = {}
             uf.name = data['name'] if 'name' in data else uf.uid
             params.folder_cache[uf.uid] = uf
 
@@ -1379,7 +1392,11 @@ def prepare_folder_tree(params):
             sff.uid = sf['folder_uid']
             sff.shared_folder_uid = sf['shared_folder_uid']
             sff.parent_uid = sf.get('parent_uid') or sff.shared_folder_uid
-            data = json.loads(decrypt_data(sf['data'], sf['folder_key_unencrypted']).decode())
+            try:
+                data = json.loads(decrypt_data(sf['data'], sf['folder_key_unencrypted']).decode())
+            except Exception as e:
+                logging.debug('Error decrypting shared folder folder name. Folder UID: %s. Error: %s', sff.uid, e)
+                data = {}
             sff.name = data['name'] if 'name' in data else sff.uid
             params.folder_cache[sff.uid] = sff
 
