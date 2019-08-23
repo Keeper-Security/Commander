@@ -8,7 +8,7 @@ This plugin allows rotating a user's password in PostgreSQL Server
 1) Install the below modules
 
 ```
-pip3 install psycopg2
+pip3 install psycopg2-binary
 ```
 
 2) Add the following Custom Fields to the record that you want to rotate within Keeper
