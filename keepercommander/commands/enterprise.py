@@ -85,7 +85,7 @@ enterprise_info_parser.exit = suppress_exit
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Enterprise node management')
-#enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
+enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
 enterprise_node_parser.add_argument('--name', dest='displayname', action='store', help='set node display name')
@@ -1242,6 +1242,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
         if 'team_users' in params.enterprise:
             user_id = user['enterprise_user_id']
             ts = [t['team_uid'] for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
+            ts.sort(key=lambda x: team_nodes[x]['name'])
             for i in range(len(ts)):
                 team_node = team_nodes[ts[i]]
                 print('{0:>16s}: {1:<22s} {2}'.format('Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
@@ -1249,6 +1250,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
         if 'queued_team_users' in params.enterprise:
             user_id = user['enterprise_user_id']
             ts = [t['team_uid'] for t in params.enterprise['queued_team_users'] if user_id in t['users']]
+            ts.sort(key=lambda x: team_nodes[x]['name'])
             for i in range(len(ts)):
                 team_node = team_nodes[ts[i]]
                 print('{0:>16s}: {1:<22s} {2}'.format('Queued Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
