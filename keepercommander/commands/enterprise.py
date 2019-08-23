@@ -1079,7 +1079,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 team_node = None
                                 if 'teams' in params.enterprise:
                                     for team in params.enterprise['teams']:
-                                        if t in { team['team_uid'], team['name']}:
+                                        if t == team['team_uid'] or t.lower() == team['name'].lower():
                                             team_node = team
                                             break
                                 if team_node:
