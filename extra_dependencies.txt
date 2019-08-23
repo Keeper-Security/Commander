@@ -1,10 +1,9 @@
 pexpect
 ldap3
 awscli
-pymssql
 PyMySQL
 cx_Oracle
-psycopg2
+psycopg2-binary
 fido2
 libkeepass
 pyinstaller

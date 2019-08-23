@@ -79,8 +79,8 @@ To build binary package:
 1) Create a new Python virtual environment ```python -m venv keeper```
 1) Activate virtual environment: Windows ```keeper\Script\activate``` Unix ```source keeper/bin/activate``` 
 1) Change directory to the cloned Commander repository
-1) Install required Commander packages ```pip -r requirements.txt```
-1) Install additional Commander packages ```pip -r extra_dependencies.txt```
+1) Install required Commander packages ```pip install -r requirements.txt```
+1) Install additional Commander packages ```pip install -r extra_dependencies.txt```
 1) Build a binary package ```PyInstaller keeper.spec```
 1) Binary distribution package is located in ```dist/keeper``` folder
 
