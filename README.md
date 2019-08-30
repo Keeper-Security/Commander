@@ -6,7 +6,7 @@ Jump to:
 * [Overview](#password-management-sdk-for-it-admins--developers)
 * [Use Cases](#use-cases)
 * [Installation](#python-installation---linux-and-mac)
-* [Developer Setup](#developer-setup)
+* [Developer Setup](#developer-mode)
 * [Command-line Usage](#command-line-usage)
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
@@ -79,9 +79,9 @@ Please do not upgrade a production system without validation in your test enviro
 
 We are in active development of a .Net SDK that covers the core use cases of accessing and updating vault records.  See the [.Net SDK](https://github.com/Keeper-Security/Commander/tree/master/dotnet-keeper-sdk) for source code and sample Commander project of the latest version.
 
-### Python Developer Setup
+### Developer Mode
 
-This type of installation assumes you want to view/modify the Python source code (Compatible with Python 3.4+).
+If you are a developer and you want to modify the Python source code then follow these steps:
 
 1. Clone/Download the Commander repository 
 2. Install Python3 from python.org
@@ -221,6 +221,8 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 **Record Management Commands**
 
 * ```add``` Add a record to the vault
+
+* ```edit``` Edit a record in the vault
 
 * ```rm``` Remove record
 
