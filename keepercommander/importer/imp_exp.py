@@ -25,8 +25,8 @@ from Cryptodome.Cipher import AES
 from keepercommander import api
 
 from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
-    Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder, Permission as ImportPermission,\
-    Attachment as ImportAttachment
+    Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder,  Permission as ImportPermission,\
+    Attachment as ImportAttachment, BaseImporter
 from ..subfolder import BaseFolderNode, find_folders
 
 
@@ -178,7 +178,7 @@ def _import(params, file_format, filename, **kwargs):
     shared = kwargs.get('shared') or False
 
     importer = importer_for_format(file_format)()
-    """:type : BaseImporter"""
+    # type: BaseImporter
 
     records_before = len(params.record_cache)
 
@@ -525,7 +525,7 @@ def prepare_shared_folder_add(params, folders):
                                 'team_uid': perm.uid,
                                 'manage_users': perm.manage_users,
                                 'manage_records': perm.manage_records,
-                                'shared_folder_key': api.encrypt_aes(parent_key, team['team_key'])
+                                'shared_folder_key': api.encrypt_aes(parent_key, team['team_key_unencrypted'])
                             })
                     else:
                         if 'add_users' not in request:
