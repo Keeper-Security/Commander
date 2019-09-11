@@ -12,7 +12,7 @@ import os.path
 import importlib
 import logging
 
-from typing import Iterable, Union
+from typing import Iterable, Union, Optional
 
 PathDelimiter = '\\'
 
@@ -102,8 +102,8 @@ class Attachment:
 class Folder:
     def __init__(self):
         self.uid = None
-        self.domain = None # type: str
-        self.path = None # type: str
+        self.domain = None # type: Optional[str]
+        self.path = None # type: Optional[str]
         self.can_edit = None
         self.can_share = None
 

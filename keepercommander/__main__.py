@@ -62,7 +62,7 @@ def get_params_from_config(config_filename):
                     params.plugins = params.config['plugins']
 
                 if 'debug' in params.config:
-                    params.debug = params.config['debug']
+                    logging.getLogger().setLevel(logging.DEBUG)
 
                 if 'batch_mode' in params.config:
                     params.batch_mode = params.config['batch_mode'] == True
