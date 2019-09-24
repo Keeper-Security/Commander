@@ -62,7 +62,7 @@ def get_params_from_config(config_filename):
                     params.plugins = params.config['plugins']
 
                 if 'debug' in params.config:
-                    params.debug = params.config['debug']
+                    logging.getLogger().setLevel(logging.DEBUG)
 
                 if 'batch_mode' in params.config:
                     params.batch_mode = params.config['batch_mode'] == True
@@ -106,8 +106,6 @@ parser.error = usage
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
-
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
@@ -144,6 +142,8 @@ def main():
     if (opts.command or '') in {'?', ''}:
         if opts.command == '?' or not params.commands:
             usage('')
+
+    logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s')
 
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)

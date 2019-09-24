@@ -682,11 +682,19 @@ def sync_down(params):
                             shared_folder['teams'] = [x for x in shared_folder['teams'] if x['team_uid'] not in teams_to_remove]
 
             if 'shared_folder_key_unencrypted' in shared_folder:
-                shared_folder['name_unencrypted'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key_unencrypted']).decode('utf-8')
+                try:
+                    shared_folder['name_unencrypted'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key_unencrypted']).decode('utf-8')
+                except Exception as e:
+                    logging.debug('Shared folder %s name decryption error: %s', shared_folder_uid, e)
+                    shared_folder['name_unencrypted'] = shared_folder_uid
                 if 'records' in shared_folder:
                     for sfr in shared_folder['records']:
                         if 'record_key_unencrypted' not in sfr:
-                            sfr['record_key_unencrypted'] = decrypt_data(sfr['record_key'], shared_folder['shared_folder_key_unencrypted'])
+                            try:
+                                sfr['record_key_unencrypted'] = decrypt_data(sfr['record_key'], shared_folder['shared_folder_key_unencrypted'])
+                            except Exception as e:
+                                logging.debug('Shared folder %s record key decryption error: %s', shared_folder_uid, e)
+
             else:
                 sf_to_delete.append(shared_folder_uid)
 

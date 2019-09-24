@@ -203,7 +203,7 @@ def pre_login(context, username, two_factor_token=None):
                 if rs['error'] == 'region_redirect':
                     context.device_id = None
                     context.server_base = 'https://{0}/'.format(rs['region_host'])
-                    logging.warning('Switching to region: %s.', context.server_base)
+                    logging.warning('Switching to region: %s', rs['region_host'])
                     continue
                 if rs['error'] == 'bad_request':
                     logging.warning('Pre-Auth error: %s', rs.get('additional_info'))

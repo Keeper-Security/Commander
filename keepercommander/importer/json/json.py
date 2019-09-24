@@ -77,6 +77,7 @@ class KeeperJsonExporter(BaseExporter):
         for r in records:
             if type(r) == Record:
                 ro = {
+                    'uid': r.uid or '',
                     'title': r.title or '',
                     'login': r.login or '',
                     'password': r.password or '',
