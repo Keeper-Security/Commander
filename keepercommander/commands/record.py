@@ -115,7 +115,7 @@ search_parser.exit = suppress_exit
 
 
 get_info_parser = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
-get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json'], default='detail', help='output format.')
+get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
@@ -639,6 +639,8 @@ class RecordGetUidCommand(Command):
                                 } for su in permissions]
 
                     print(json.dumps(ro, indent=2))
+                elif fmt == 'password':
+                    print(r.password)
                 else:
                     r.display(params=params)
 
