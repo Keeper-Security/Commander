@@ -190,6 +190,8 @@ def loop(params):
 
         if len(params.commands) == 0:
             display.welcome()
+        else:
+            logging.getLogger().setLevel(logging.WARNING)
 
     if params.user:
         if not params.password:
@@ -242,9 +244,6 @@ def loop(params):
 
 
 def get_prompt(params):
-    if params.batch_mode:
-        return ''
-
     if params.session_token:
         if params.current_folder is None:
             if params.root_folder:
