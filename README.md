@@ -182,7 +182,8 @@ Whether using the interactive shell, CLI or JSON config file, Keeper supports th
 
 **Basic Vault Commands**
 
-_Note:_ Some commands accept record or shared folder UID parameter. UID values may start with dash character (**-**) that is interpreted by command parser as an option. To pass a parameter starting with dash separate this parameter with two dashes (**--**). `rmdir -- -Gd9l4daPw-fMd`  
+_Note:_ Some commands accept record or shared folder UID parameter. UID values may start with dash character (**-**) that is interpreted by command parser as an option. To pass a parameter starting with dash separate this parameter with two dashes (**--**). For example: `rmdir -- -Gd9l4daPw-fMd`
+
 * ```login``` Login to Keeper
 
 * ```whoami``` Information about logged in user
