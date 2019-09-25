@@ -8,6 +8,7 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+from typing import Optional, List, NoReturn
 
 import re
 import os
@@ -16,21 +17,33 @@ import argparse
 import logging
 import datetime
 import getpass
-from typing import Optional, List
 
 import requests
 import tempfile
 import json
 
+from socket import AF_UNIX, IPPROTO_TCP, SOCK_STREAM, socket
+
 from urllib.parse import urlsplit
 from tabulate import tabulate
 from Cryptodome.Cipher import AES
+from Cryptodome.PublicKey import RSA
+from Cryptodome.Math.Numbers import Integer
 
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
+
+
+SSH_AGENT_FAILURE = 5
+SSH_AGENT_SUCCESS = 6
+SSH2_AGENTC_ADD_IDENTITY = 17
+SSH2_AGENTC_REMOVE_IDENTITY = 18
+SSH2_AGENTC_ADD_ID_CONSTRAINED = 25
+
+SSH_AGENT_CONSTRAIN_LIFETIME = 1
 
 
 def register_commands(commands):
@@ -306,8 +319,9 @@ Connect Command Syntax Description:
 
 This command reads the custom fields for names starting with "connect:"
 
-  endpoint:<name>                command 
-  endpoint:<name>:description    command description
+  connect:<name>                        command 
+  connect:<name>:description            command description
+  connect:<name>:ssh-key:<key-comment>  ssh private key to add to ssh-agent
 
 Connection command may contain template parameters.
 Parameter syntax is ${<parameter_name>}
@@ -321,6 +335,7 @@ Supported parameters:
     ${mask:<name>}                  secured user variable. Stored to non-shared data
     ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
     ${body:<attachment_name>}       content of the attachment file.
+    ${<custom_field_name>}          custom field value
 
 SSH Example:
 
@@ -379,7 +394,8 @@ class ConnectCommand(Command):
                             endpoint = endpoint[rpos+1:]
                 endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
             if len(endpoints) > 0:
-                ConnectCommand.connect_endpoint(params, endpoint, api.get_record(params, endpoints[0].record_uid), kwargs.get('new_data') or False)
+                record = api.get_record(params, endpoints[0].record_uid)
+                ConnectCommand.connect_endpoint(params, endpoint, record, kwargs.get('new_data') or False)
             else:
                 logging.info("Connect endpoint '{0}' not found".format(endpoint))
         else:
@@ -411,6 +427,100 @@ class ConnectCommand(Command):
             return
 
     @staticmethod
+    def delete_ssh_keys(delete_requests):
+        ssh_socket_path = os.environ['SSH_AUTH_SOCK']
+        try:
+            with socket(AF_UNIX, SOCK_STREAM, 0) as sock:
+                sock.settimeout(1)
+                sock.connect(ssh_socket_path)
+                for rq in delete_requests:
+                    sock.send(ConnectCommand.ssh_agent_encode_bytes(rq))
+                    len_bytes = sock.recv(4)
+                    answer_len = int.from_bytes(len_bytes, byteorder='big')
+                    recv_payload = sock.recv(answer_len)
+                    if recv_payload[0] == SSH_AGENT_FAILURE:
+                        logging.info('Failed to delete added ssh key')
+        except Exception as e:
+            logging.error(e)
+
+    @staticmethod
+    def add_ssh_keys(params, endpoint, record, temp_files, non_shared):
+        # type: (KeeperParams, str, Record, List[str], dict) -> List[bytes]
+        rs = []
+        key_prefix = 'connect:{0}:ssh-key'.format(endpoint)
+        ssh_socket_path = os.environ['SSH_AUTH_SOCK']
+        for cf in record.custom_fields:
+            cf_name = cf['name']        # type: str
+            if cf_name.startswith(key_prefix):
+                key_name = cf_name[len(key_prefix)+1:] or 'Commander'
+                cf_value = cf['value']  # type: str
+                parsed_values = []
+                while True:
+                    m = endpoint_parameter_pattern.search(cf_value)
+                    if not m:
+                        break
+                    p = m.group(1)
+                    val = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared)
+                    if not val:
+                        raise Exception('Add ssh-key. Failed to resolve key parameter: {0}'.format(p))
+                    parsed_values.append(val)
+                    cf_value = cf_value[m.end():]
+                if len(parsed_values) > 0:
+                    cf_value = cf_value.strip()
+                    if cf_value:
+                        parsed_values.append(cf_value)
+
+                    if not ssh_socket_path:
+                        raise Exception('Add ssh-key. \'SSH_AUTH_SOCK\' environment variable is not set')
+                    private_key = RSA.importKey(parsed_values[0], parsed_values[1] if len(parsed_values) > 0 else None)
+                    with socket(AF_UNIX, SOCK_STREAM, 0) as sock:
+                        sock.connect(ssh_socket_path)
+
+                        payload = SSH2_AGENTC_ADD_ID_CONSTRAINED.to_bytes(1, byteorder='big')
+                        payload += ConnectCommand.ssh_agent_encode_str('ssh-rsa')
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.n)
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.e)
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.d)
+                        payload += ConnectCommand.ssh_agent_encode_long(int(Integer(private_key.q).inverse(private_key.p)))
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.p)
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.q)
+                        payload += ConnectCommand.ssh_agent_encode_str(key_name)
+                        payload += SSH_AGENT_CONSTRAIN_LIFETIME.to_bytes(1, byteorder='big')
+                        payload += int(10).to_bytes(4, byteorder='big')
+
+                        payload = ConnectCommand.ssh_agent_encode_bytes(payload)
+                        sock.send(payload)
+                        len_bytes = sock.recv(4)
+                        answer_len = int.from_bytes(len_bytes, byteorder='big')
+                        recv_payload = sock.recv(answer_len)
+                        if recv_payload[0] == SSH_AGENT_FAILURE:
+                            raise Exception('Add ssh-key. Failed to add ssh key \"{0}\" to ssh-agent'.format(key_name))
+
+                        payload = ConnectCommand.ssh_agent_encode_str('ssh-rsa')
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.e)
+                        payload += ConnectCommand.ssh_agent_encode_long(private_key.n)
+                        payload = SSH2_AGENTC_REMOVE_IDENTITY.to_bytes(1, byteorder='big') + ConnectCommand.ssh_agent_encode_bytes(payload)
+
+                        rs.append(payload)
+        return rs
+
+    @staticmethod
+    def ssh_agent_encode_bytes(b):      # type: (bytes) -> bytes
+        return len(b).to_bytes(4, byteorder='big') + b
+
+    @staticmethod
+    def ssh_agent_encode_long(l):       # type: (int) -> bytes
+        len = (l.bit_length() + 7) // 8
+        b = l.to_bytes(length=len, byteorder='big')
+        if b[0] >= 0x80:
+            b = b'\x00' + b
+        return ConnectCommand.ssh_agent_encode_bytes(b)
+
+    @staticmethod
+    def ssh_agent_encode_str(s):                  # type: (str) -> bytes
+        return ConnectCommand.ssh_agent_encode_bytes(s.encode('utf-8'))
+
+    @staticmethod
     def find_endpoints(params):
         # type: (KeeperParams) -> None
         if ConnectCommand.LastRevision < params.revision:
@@ -423,11 +533,12 @@ class ConnectCommand(Command):
                     endpoints_desc = {}
                     for field in record.custom_fields:
                         if 'name' in field:
-                            m = endpoint_pattern.match(field['name'])
+                            field_name = field['name']
+                            m = endpoint_pattern.match(field_name)
                             if m:
                                 endpoints.append(m[1])
                             else:
-                                m = endpoint_desc_pattern.match(field['name'])
+                                m = endpoint_desc_pattern.match(field_name)
                                 if m:
                                     endpoints_desc[m[1]] = field.get('value') or ''
                     if endpoints:
@@ -436,7 +547,8 @@ class ConnectCommand(Command):
                             path = '/' + get_folder_path(params, folder_uid, '/')
                             paths.append(path)
                         for endpoint in endpoints:
-                            ConnectCommand.Endpoints.append(ConnectEndpoint(endpoint, endpoints_desc.get(endpoint) or '', record_uid, record.title, paths))
+                            epoint = ConnectEndpoint(endpoint, endpoints_desc.get(endpoint) or '', record_uid, record.title, paths)
+                            ConnectCommand.Endpoints.append(epoint)
             ConnectCommand.Endpoints.sort(key=lambda x: x.name)
 
     attachment_cache = {}
@@ -474,135 +586,106 @@ class ConnectCommand(Command):
             return body
 
     @staticmethod
-    def ask_personal_parameter(params, ask, record):
-        # type: (KeeperParams, str, Record) -> str
-        old_value = ''
-        if record.record_uid in params.non_shared_data_cache:
-            nsd = params.non_shared_data_cache[record.record_uid]
-            if 'commander' in nsd:
-                old_value = nsd['commander'].get(ask) or ''
-
-        question = record.get('ask:{0}:description') or 'Parameter \"{0}\" requires input.'.format(ask)
-        print(question)
-        if old_value:
-            value = input('Press <Enter> to accept last value \"{0}\"> '.format(old_value))
-            if not value:
-                value = old_value
-        else:
-            value = input('> ')
-
-        if not value and value != old_value:
-            nsd = params.non_shared_data_cache.get(record.record_uid) or {}
-            if 'commander' not in nsd:
-                nsd['commander'] = {}
-            nsd['commander'][ask] = value
-
-
-        return value
-
-    @staticmethod
-    def get_command_string(params, record, template, temp_files, new_data):
-        # type: (KeeperParams, Record, str, list, bool) -> Optional[str]
+    def get_command_string(params, record, template, temp_files, non_shared):
+        # type: (KeeperParams, Record, str, list, dict) -> Optional[str]
         command = template
-        store_non_shared = False
-        non_shared = None
         while True:
             m = endpoint_parameter_pattern.search(command)
             if not m:
                 break
             p = m.group(1)
-            pv = ''
-            if p.startswith('file:') or p.startswith('body:'):
-                file_name = p[5:]
-                if file_name not in ConnectCommand.attachment_cache:
-                    attachment = None
-                    if record.attachments:
-                        for atta in record.attachments:
-                            if file_name == atta['id'] or file_name.lower() in [atta[x].lower() for x in ['name', 'title'] if x in atta]:
-                                attachment = atta
-                                break
-                    if not attachment:
-                        logging.error('Attachment file \"%s\" not found', file_name)
-                        return None
-                    body = ConnectCommand.load_attachment_file(params, attachment, record)
-                    if body:
-                        ConnectCommand.attachment_cache[file_name] = body
-                if file_name not in ConnectCommand.attachment_cache:
-                    logging.error('Attachment file \"%s\" not found', file_name)
-                    return None
-                body = ConnectCommand.attachment_cache[file_name] # type: bytes
-                if p.startswith('file:'):
-                    tf = tempfile.NamedTemporaryFile(delete=False)
-                    tf.write(body)
-                    tf.flush()
-                    temp_files.append(tf.name)
-                    tf.close()
-                    pv = tf.name
-                else:
-                    pv = body.decode('utf-8')
-            elif p.startswith('text:') or p.startswith('mask:'):
-                var_name = p[5:]
-                non_shared_data = params.non_shared_data_cache.get(record.record_uid)
-                if non_shared_data is not None:
-                    if 'data_unencrypted' in non_shared_data:
-                        non_shared = json.loads(non_shared_data['data_unencrypted'])
-                if non_shared_data is None:
-                    non_shared = {}
-                cmndr = non_shared.get('commander')
-                if cmndr is None:
-                    cmndr = {}
-                    non_shared['commander'] = cmndr
-                pv = cmndr.get(var_name)
-                if new_data or pv is None:
-                    prompt = 'Type value for \'{0}\' > '.format(var_name)
-                    if p.startswith('text:'):
-                        pv = input(prompt)
-                    else:
-                        pv = getpass.getpass(prompt)
-                    cmndr[var_name] = pv
-                    store_non_shared = True
-            elif p == 'user_email':
-                pv = params.user
-            elif p == 'login':
-                pv = record.login
-            elif p == 'password':
-                pv = record.password
-            else:
-                value = record.get(p)
-                if value:
-                    pv = value
-                else:
-                    logging.error('Parameter \"%s\" cannot be resolved', m[0])
-                    return
-            command = command[:m.start()] + pv + command[m.end():]
-
-        if store_non_shared:
-            api.store_non_shared_data(params, record.record_uid, non_shared)
-
+            pv = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared)
+            command = command[:m.start()] + (pv or '') + command[m.end():]
         logging.debug(command)
         return command
+
+    @staticmethod
+    def get_parameter_value(params, record, parameter, temp_files, non_shared):
+        # type: (KeeperParams, Record, str, list, dict) -> Optional[str]
+        if parameter.startswith('file:') or parameter.startswith('body:'):
+            file_name = parameter[5:]
+            if file_name not in ConnectCommand.attachment_cache:
+                attachment = None
+                if record.attachments:
+                    for atta in record.attachments:
+                        if file_name == atta['id'] or file_name.lower() in [atta[x].lower() for x in ['name', 'title'] if x in atta]:
+                            attachment = atta
+                            break
+                if not attachment:
+                    logging.error('Attachment file \"%s\" not found', file_name)
+                    return None
+                body = ConnectCommand.load_attachment_file(params, attachment, record)
+                if body:
+                    ConnectCommand.attachment_cache[file_name] = body
+            if file_name not in ConnectCommand.attachment_cache:
+                logging.error('Attachment file \"%s\" not found', file_name)
+                return None
+            body = ConnectCommand.attachment_cache[file_name] # type: bytes
+            if parameter.startswith('file:'):
+                tf = tempfile.NamedTemporaryFile(delete=False)
+                tf.write(body)
+                tf.flush()
+                temp_files.append(tf.name)
+                tf.close()
+                return tf.name
+            else:
+                return body.decode('utf-8')
+        elif parameter.startswith('text:') or parameter.startswith('mask:'):
+            var_name = parameter[5:]
+            val = non_shared.get(var_name)
+            if val is None:
+                prompt = 'Type value for \'{0}\' > '.format(var_name)
+                if parameter.startswith('text:'):
+                    val = input(prompt)
+                else:
+                    val = getpass.getpass(prompt)
+                non_shared[var_name] = val
+            return val
+        elif parameter == 'user_email':
+            return params.user
+        elif parameter == 'login':
+            return record.login
+        elif parameter == 'password':
+            return record.password
+        else:
+            value = record.get(parameter)
+            if value:
+                return value
+        logging.error('Parameter \"%s\" cannot be resolved', parameter)
 
     @staticmethod
     def connect_endpoint(params, endpoint, record, new_data):
         # type: (KeeperParams, str, Record, bool) -> None
         temp_files = []
+
+        cmndr = {}
+        non_shared_data = params.non_shared_data_cache.get(record.record_uid)
+        if non_shared_data is not None:
+            if 'data_unencrypted' in non_shared_data:
+                non_shared = json.loads(non_shared_data['data_unencrypted'])
+                cmndr = non_shared.get('commander') or {}
+        non_shared = cmndr if not new_data else {}
+
         try:
             command = record.get('connect:' + endpoint + ':pre')
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, new_data)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
                 if command:
                     os.system(command)
 
             command = record.get('connect:' + endpoint)
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, new_data)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
                 if command:
+                    added_keys = ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files, non_shared)
                     logging.info('Connecting to %s...', endpoint)
                     os.system(command)
+                    if added_keys:
+                        ConnectCommand.delete_ssh_keys(added_keys)
 
             command = record.get('connect:' + endpoint + ':post')
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, new_data)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
                 if command:
                     os.system(command)
 
