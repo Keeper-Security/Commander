@@ -1005,8 +1005,16 @@ class ClipboardCommand(Command):
                                 break
 
         if record_uid is None:
-            logging.error('Enter name or uid of existing record')
-            return
+            records = api.search_records(params, kwargs['record'])
+            if len(records) == 1:
+                logging.info('Record Title: {0}'.format(records[0].title))
+                record_uid = records[0].record_uid
+            else:
+                if len(records) == 0:
+                    logging.error('Enter name or uid of existing record')
+                else:
+                    logging.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
+                return
 
         rec = api.get_record(params, record_uid)
         txt = rec.login if kwargs.get('login') else rec.password
