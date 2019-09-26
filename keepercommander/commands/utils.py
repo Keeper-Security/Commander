@@ -22,8 +22,6 @@ import requests
 import tempfile
 import json
 
-from socket import AF_UNIX, IPPROTO_TCP, SOCK_STREAM, socket
-
 from urllib.parse import urlsplit
 from tabulate import tabulate
 from Cryptodome.Cipher import AES
@@ -356,6 +354,46 @@ endpoint_desc_pattern =  re.compile(r'^connect:([^:]+):description$')
 endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
 
 
+class ConnectSshAgent:
+    def __init__(self, path):
+        self.path = path
+        self._fd = None
+
+    def __enter__(self):
+        if os.name == 'posix':
+            if not self.path:
+                raise Exception('Add ssh-key. \'SSH_AUTH_SOCK\' environment variable is not set')
+            from socket import AF_UNIX, SOCK_STREAM, socket
+            self._fd = socket(AF_UNIX, SOCK_STREAM, 0)
+            self._fd.settimeout(1)
+            self._fd.connect(self.path)
+#        elif os.name == 'nt':
+            #path = self.path or  r'\\.\pipe\openssh-ssh-agent'
+            #self._fd = open(path, 'rb+', buffering=0)
+        else:
+            raise Exception('SSH Agent Connect: Unsupported platform')
+        return self
+
+    def __exit__(self, type, value, traceback):
+        if self._fd:
+            self._fd.close()
+
+    def send(self, rq):     # type: (bytes) -> bytes
+        if self._fd:
+            if os.name == 'posix':
+                self._fd.send(rq)
+                lb = self._fd.recv(4)
+                rs_len = int.from_bytes(lb, byteorder='big')
+                return self._fd.recv(rs_len)
+            #elif os.name == 'nt':
+                #b = self._fd.write(rq)
+                #self._fd.flush()
+                #lb = self._fd.read(4)
+                #rs_len = int.from_bytes(lb, byteorder='big')
+                #return self._fd.read(rs_len)
+        raise Exception('SSH Agent Connect: Unsupported platform')
+
+
 class ConnectEndpoint:
     def __init__(self, name, description, record_uid, record_title, paths):
         self.name = name
@@ -428,17 +466,12 @@ class ConnectCommand(Command):
 
     @staticmethod
     def delete_ssh_keys(delete_requests):
-        ssh_socket_path = os.environ['SSH_AUTH_SOCK']
         try:
-            with socket(AF_UNIX, SOCK_STREAM, 0) as sock:
-                sock.settimeout(1)
-                sock.connect(ssh_socket_path)
+            ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
+            with ConnectSshAgent(ssh_socket_path) as fd:
                 for rq in delete_requests:
-                    sock.send(ConnectCommand.ssh_agent_encode_bytes(rq))
-                    len_bytes = sock.recv(4)
-                    answer_len = int.from_bytes(len_bytes, byteorder='big')
-                    recv_payload = sock.recv(answer_len)
-                    if recv_payload[0] == SSH_AGENT_FAILURE:
+                    recv_payload = fd.send(ConnectCommand.ssh_agent_encode_bytes(rq))
+                    if recv_payload and  recv_payload[0] == SSH_AGENT_FAILURE:
                         logging.info('Failed to delete added ssh key')
         except Exception as e:
             logging.error(e)
@@ -448,7 +481,7 @@ class ConnectCommand(Command):
         # type: (KeeperParams, str, Record, List[str], dict) -> List[bytes]
         rs = []
         key_prefix = 'connect:{0}:ssh-key'.format(endpoint)
-        ssh_socket_path = os.environ['SSH_AUTH_SOCK']
+        ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
         for cf in record.custom_fields:
             cf_name = cf['name']        # type: str
             if cf_name.startswith(key_prefix):
@@ -470,12 +503,9 @@ class ConnectCommand(Command):
                     if cf_value:
                         parsed_values.append(cf_value)
 
-                    if not ssh_socket_path:
-                        raise Exception('Add ssh-key. \'SSH_AUTH_SOCK\' environment variable is not set')
                     private_key = RSA.importKey(parsed_values[0], parsed_values[1] if len(parsed_values) > 0 else None)
-                    with socket(AF_UNIX, SOCK_STREAM, 0) as sock:
-                        sock.connect(ssh_socket_path)
 
+                    with ConnectSshAgent(ssh_socket_path) as fd:
                         payload = SSH2_AGENTC_ADD_ID_CONSTRAINED.to_bytes(1, byteorder='big')
                         payload += ConnectCommand.ssh_agent_encode_str('ssh-rsa')
                         payload += ConnectCommand.ssh_agent_encode_long(private_key.n)
@@ -489,11 +519,8 @@ class ConnectCommand(Command):
                         payload += int(10).to_bytes(4, byteorder='big')
 
                         payload = ConnectCommand.ssh_agent_encode_bytes(payload)
-                        sock.send(payload)
-                        len_bytes = sock.recv(4)
-                        answer_len = int.from_bytes(len_bytes, byteorder='big')
-                        recv_payload = sock.recv(answer_len)
-                        if recv_payload[0] == SSH_AGENT_FAILURE:
+                        recv_payload = fd.send(payload)
+                        if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
                             raise Exception('Add ssh-key. Failed to add ssh key \"{0}\" to ssh-agent'.format(key_name))
 
                         payload = ConnectCommand.ssh_agent_encode_str('ssh-rsa')

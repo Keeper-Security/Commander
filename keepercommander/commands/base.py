@@ -87,6 +87,7 @@ def suppress_exit():
 
 parameter_pattern = re.compile(r'\${(\w+)}')
 
+
 class Command:
     def execute(self, params, **kwargs):
         '''
