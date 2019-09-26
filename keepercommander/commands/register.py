@@ -26,6 +26,7 @@ from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
 
 from .. import api, generator
+from .base import dump_report_data
 from .record import RecordAddCommand
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode, try_resolve_path
@@ -77,9 +78,11 @@ share_folder_parser.exit = suppress_exit
 
 
 share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report on record sharing')
+share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
+share_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
 share_report_parser.add_argument('-u', '--user', dest='user', action='append', help='user email or team name')
-#share_report_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='record permission: can be shared')
+share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true', help='record ownership information')
 #share_report_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
@@ -850,122 +853,133 @@ class ShareReportCommand(Command):
 
         api.get_record_shares(params, record_uids)
 
-        record_shares = {}
-        sf_shares = {}
-
-        for uid in record_uids:
-            record = params.record_cache[uid]
-            if 'shares' in record:
-                if 'user_permissions' in record['shares']:
-                    for up in record['shares']['user_permissions']:
-                        user_name = up['username']
-                        if user_filter:
-                            if user_name not in user_filter:
-                                continue
-                        if user_name not in record_shares:
-                            record_shares[user_name] = set()
-                        if uid not in record_shares[user_name]:
-                            record_shares[user_name].add(uid)
-                if 'shared_folder_permissions' in record['shares']:
-                    names = set()
-                    for sfp in record['shares']['shared_folder_permissions']:
-                        shared_folder_uid = sfp['shared_folder_uid']
-                        if shared_folder_uid in params.shared_folder_cache:
-                            shared_folder = params.shared_folder_cache[sfp['shared_folder_uid']]
-                            names.clear()
-                            if 'users' in shared_folder:
-                                for u in shared_folder['users']:
-                                    user_name = u['username']
-                                    if user_filter:
-                                        if user_name not in user_filter:
-                                            continue
-                                    names.add(user_name)
-                            if 'teams' in shared_folder:
-                                for t in shared_folder['teams']:
-                                    user_name = t['name']
-                                    if user_filter:
-                                        if user_name not in user_filter:
-                                            continue
-                                    names.add(user_name)
-
-                            for user_name in names:
-                                if user_name not in sf_shares:
-                                    sf_shares[user_name] = set()
-                                if shared_folder_uid not in sf_shares[user_name]:
-                                    sf_shares[user_name].add(shared_folder_uid)
-
-                            if 'records' in shared_folder:
-                                for sfr in shared_folder['records']:
-                                    uid = sfr['record_uid']
-                                    if record_filter:
-                                        if not uid in record_filter:
-                                            continue
-                                    for user_name in names:
+        if not kwargs.get('owner'):
+            record_shares = {}
+            sf_shares = {}
+            for uid in record_uids:
+                record = params.record_cache[uid]
+                if 'shares' in record:
+                    if 'user_permissions' in record['shares']:
+                        for up in record['shares']['user_permissions']:
+                            user_name = up['username']
+                            if user_filter:
+                                if user_name not in user_filter:
+                                    continue
+                            if user_name not in record_shares:
+                                record_shares[user_name] = set()
+                            if uid not in record_shares[user_name]:
+                                record_shares[user_name].add(uid)
+                    if 'shared_folder_permissions' in record['shares']:
+                        names = set()
+                        for sfp in record['shares']['shared_folder_permissions']:
+                            shared_folder_uid = sfp['shared_folder_uid']
+                            if shared_folder_uid in params.shared_folder_cache:
+                                shared_folder = params.shared_folder_cache[sfp['shared_folder_uid']]
+                                names.clear()
+                                if 'users' in shared_folder:
+                                    for u in shared_folder['users']:
+                                        user_name = u['username']
                                         if user_filter:
                                             if user_name not in user_filter:
                                                 continue
-                                        if user_name not in record_shares:
-                                            record_shares[user_name] = set()
-                                        if uid not in record_shares[user_name]:
-                                            record_shares[user_name].add(uid)
+                                        names.add(user_name)
+                                if 'teams' in shared_folder:
+                                    for t in shared_folder['teams']:
+                                        user_name = t['name']
+                                        if user_filter:
+                                            if user_name not in user_filter:
+                                                continue
+                                        names.add(user_name)
 
-        if kwargs.get('record'):
-            if len(record_shares) > 0:
-                users_shares = {}
-                for user in record_shares:
-                    for uid in record_shares[user]:
-                        if uid not in users_shares:
-                            users_shares[uid] = set()
-                        users_shares[uid].add(user)
-                for record_uid in users_shares:
-                    record = api.get_record(params, record_uid)
-                    print('')
-                    print('{0:>20s}   {1}'.format('Record UID:', record.record_uid))
-                    print('{0:>20s}   {1}'.format('Title:', record.title))
-                    for i, user in enumerate(users_shares[record_uid]):
-                        print('{0:>20s}   {1}'.format('Shared with:' if i == 0 else '', user))
-                    print('')
+                                for user_name in names:
+                                    if user_name not in sf_shares:
+                                        sf_shares[user_name] = set()
+                                    if shared_folder_uid not in sf_shares[user_name]:
+                                        sf_shares[user_name].add(shared_folder_uid)
 
-        elif kwargs.get('user'):
-            if len(record_shares) > 0:
-                user_names = [x for x in record_shares.keys()]
-                user_names.sort()
-                headers = ['#', 'Record UID', 'Title']
-                for user in user_names:
-                    record_uids = record_shares[user]
-                    records = [api.get_record(params, x) for x in record_uids]
-                    records.sort(key=lambda x: x.title.lower())
-                    table = [[i+1, r.record_uid, r.title] for i, r in enumerate(records)]
-                    print('')
-                    print('Records shared with: {0}'.format(user))
-                    print('')
-                    print(tabulate(table, headers=headers))
-                    print('')
-            if len(sf_shares) > 0:
-                user_names = [x for x in sf_shares.keys()]
-                user_names.sort(key=lambda x: x.lower())
-                headers = ['#', 'Shared Folder UID', 'Name']
-                for user in user_names:
-                    sf_uids = sf_shares[user]
-                    sfs = [api.get_shared_folder(params, x) for x in sf_uids]
-                    sfs.sort(key=lambda x: x.name.lower())
-                    table = [[i+1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
-                    print('')
-                    print('Folders shared with: {0}'.format(user))
-                    print('')
-                    print(tabulate(table, headers=headers))
-                    print('')
+                                if 'records' in shared_folder:
+                                    for sfr in shared_folder['records']:
+                                        uid = sfr['record_uid']
+                                        if record_filter:
+                                            if not uid in record_filter:
+                                                continue
+                                        for user_name in names:
+                                            if user_filter:
+                                                if user_name not in user_filter:
+                                                    continue
+                                            if user_name not in record_shares:
+                                                record_shares[user_name] = set()
+                                            if uid not in record_shares[user_name]:
+                                                record_shares[user_name].add(uid)
+
+            if kwargs.get('record'):
+                if len(record_shares) > 0:
+                    users_shares = {}
+                    for user in record_shares:
+                        for uid in record_shares[user]:
+                            if uid not in users_shares:
+                                users_shares[uid] = set()
+                            users_shares[uid].add(user)
+                    for record_uid in users_shares:
+                        record = api.get_record(params, record_uid)
+                        print('')
+                        print('{0:>20s}   {1}'.format('Record UID:', record.record_uid))
+                        print('{0:>20s}   {1}'.format('Title:', record.title))
+                        for i, user in enumerate(users_shares[record_uid]):
+                            print('{0:>20s}   {1}'.format('Shared with:' if i == 0 else '', user))
+                        print('')
+
+            elif kwargs.get('user'):
+                if len(record_shares) > 0:
+                    user_names = [x for x in record_shares.keys()]
+                    user_names.sort()
+                    headers = ['#', 'Record UID', 'Title']
+                    for user in user_names:
+                        record_uids = record_shares[user]
+                        records = [api.get_record(params, x) for x in record_uids]
+                        records.sort(key=lambda x: x.title.lower())
+                        table = [[i+1, r.record_uid, r.title] for i, r in enumerate(records)]
+                        title = 'Records shared with: {0}'.format(user)
+                        dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
+
+                if len(sf_shares) > 0:
+                    user_names = [x for x in sf_shares.keys()]
+                    user_names.sort(key=lambda x: x.lower())
+                    headers = ['#', 'Shared Folder UID', 'Name']
+                    for user in user_names:
+                        sf_uids = sf_shares[user]
+                        sfs = [api.get_shared_folder(params, x) for x in sf_uids]
+                        sfs.sort(key=lambda x: x.name.lower())
+                        table = [[i+1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
+                        title = 'Folders shared with: {0}'.format(user)
+                        dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
+            else:
+                if params.user in record_shares:
+                    del record_shares[params.user]
+                if params.user in sf_shares:
+                    del sf_shares[params.user]
+
+                headers = ['#', 'Shared to', 'Records']
+                table = [(s[0], len(s[1])) for s in record_shares.items()]
+                table.sort(key=lambda x: x[1], reverse=True)
+                table = [[i+1, s[0], s[1]] for i, s in enumerate(table)]
+                dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+
         else:
-            if params.user in record_shares:
-                del record_shares[params.user]
-            if params.user in sf_shares:
-                del sf_shares[params.user]
+            record_owners = {}
+            for uid in record_uids:
+                record = params.record_cache[uid]
+                if 'shares' in record:
+                    if 'user_permissions' in record['shares']:
+                        for up in record['shares']['user_permissions']:
+                            if up.get('owner'):
+                                user_name = up['username']
+                                record_owners[uid] = user_name
+            if len(record_owners) > 0:
+                headers = ['#', 'Record UID', 'Owner']
+                table = [(s[0], s[1]) for s in record_owners.items()]
+                table.sort(key=lambda x: x[1], reverse=True)
+                table = [[i+1, s[0], s[1]] for i, s in enumerate(table)]
+                dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
-            headers = ['#', 'Shared to', 'Records']
-            table = [(s[0], len(s[1])) for s in record_shares.items()]
-            table.sort(key=lambda x: x[1], reverse=True)
-            table = [[i+1, s[0], s[1]] for i, s in enumerate(table)]
-            print('')
-            print(tabulate(table, headers=headers))
-            print('')
 
