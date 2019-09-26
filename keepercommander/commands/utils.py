@@ -367,9 +367,9 @@ class ConnectSshAgent:
             self._fd = socket(AF_UNIX, SOCK_STREAM, 0)
             self._fd.settimeout(1)
             self._fd.connect(self.path)
-#        elif os.name == 'nt':
-            #path = self.path or  r'\\.\pipe\openssh-ssh-agent'
-            #self._fd = open(path, 'rb+', buffering=0)
+        elif os.name == 'nt':
+            path = self.path or  r'\\.\pipe\openssh-ssh-agent'
+            self._fd = open(path, 'rb+', buffering=0)
         else:
             raise Exception('SSH Agent Connect: Unsupported platform')
         return self
@@ -380,17 +380,20 @@ class ConnectSshAgent:
 
     def send(self, rq):     # type: (bytes) -> bytes
         if self._fd:
+            rq_len = len(rq)
+            to_send = rq_len.to_bytes(4, byteorder='big') + rq
+
             if os.name == 'posix':
-                self._fd.send(rq)
+                self._fd.send(to_send)
                 lb = self._fd.recv(4)
                 rs_len = int.from_bytes(lb, byteorder='big')
                 return self._fd.recv(rs_len)
-            #elif os.name == 'nt':
-                #b = self._fd.write(rq)
-                #self._fd.flush()
-                #lb = self._fd.read(4)
-                #rs_len = int.from_bytes(lb, byteorder='big')
-                #return self._fd.read(rs_len)
+            elif os.name == 'nt':
+                b = self._fd.write(to_send)
+                self._fd.flush()
+                lb = self._fd.read(4)
+                rs_len = int.from_bytes(lb, byteorder='big')
+                return self._fd.read(rs_len)
         raise Exception('SSH Agent Connect: Unsupported platform')
 
 
@@ -470,7 +473,7 @@ class ConnectCommand(Command):
             ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
             with ConnectSshAgent(ssh_socket_path) as fd:
                 for rq in delete_requests:
-                    recv_payload = fd.send(ConnectCommand.ssh_agent_encode_bytes(rq))
+                    recv_payload = fd.send(rq)
                     if recv_payload and  recv_payload[0] == SSH_AGENT_FAILURE:
                         logging.info('Failed to delete added ssh key')
         except Exception as e:
@@ -504,9 +507,8 @@ class ConnectCommand(Command):
                         parsed_values.append(cf_value)
 
                     private_key = RSA.importKey(parsed_values[0], parsed_values[1] if len(parsed_values) > 0 else None)
-
                     with ConnectSshAgent(ssh_socket_path) as fd:
-                        payload = SSH2_AGENTC_ADD_ID_CONSTRAINED.to_bytes(1, byteorder='big')
+                        payload = SSH2_AGENTC_ADD_IDENTITY.to_bytes(1, byteorder='big')
                         payload += ConnectCommand.ssh_agent_encode_str('ssh-rsa')
                         payload += ConnectCommand.ssh_agent_encode_long(private_key.n)
                         payload += ConnectCommand.ssh_agent_encode_long(private_key.e)
@@ -515,10 +517,10 @@ class ConnectCommand(Command):
                         payload += ConnectCommand.ssh_agent_encode_long(private_key.p)
                         payload += ConnectCommand.ssh_agent_encode_long(private_key.q)
                         payload += ConnectCommand.ssh_agent_encode_str(key_name)
-                        payload += SSH_AGENT_CONSTRAIN_LIFETIME.to_bytes(1, byteorder='big')
-                        payload += int(10).to_bytes(4, byteorder='big')
+                        # windows ssh implementation does not support constrained identities
+                        #payload += SSH_AGENT_CONSTRAIN_LIFETIME.to_bytes(1, byteorder='big')
+                        #payload += int(10).to_bytes(4, byteorder='big')
 
-                        payload = ConnectCommand.ssh_agent_encode_bytes(payload)
                         recv_payload = fd.send(payload)
                         if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
                             raise Exception('Add ssh-key. Failed to add ssh key \"{0}\" to ssh-agent'.format(key_name))
