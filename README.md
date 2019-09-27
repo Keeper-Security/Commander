@@ -1219,6 +1219,31 @@ ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${
 File Attachments: gateway.pem, server.pem
 ```
 
+#### Integration with SSH Agent
+
+Commander is capable to register private key (only RSA at the moment) with ssh-agent application.
+It users `SSH_AUTH_SOCK` environment variable on Mac OS / Unix systems. 
+PowerShell OpenSSH implementation is supported on Windows systems.
+To enable integration with ssh-agent ensure `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems.
+For Microsoft Windows, ensure `SSH Agent` system service is started. 
+
+To register private key with ssh-agent add a field to Vault record
+```
+connect:<my_server>:ssh-key[:<optional key name>]
+${<custom field with private key>} ${password}
+or
+${body:<attachment with private key>} ${password}
+``` 
+where first parameter references private key, the second parameter references passphase used to encrypt private key
+
+`${password}` references the value stored in record's Password field 
+
+SSH Connect command may be as simple as `ssh username@hostname.com` with ssh agent
+```
+connect:<my-server>
+ssh <username>@<my-server-hostname>
+```
+
 Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 

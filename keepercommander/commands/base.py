@@ -9,11 +9,17 @@
 # Contact: ops@keepersecurity.com
 #
 
+from typing import Optional, List, Any, NoReturn
 
 import argparse
 import shlex
 import logging
+import os
 import re
+import csv
+import sys
+
+from tabulate import tabulate
 
 from ..params import KeeperParams
 
@@ -85,7 +91,38 @@ def suppress_exit():
     raise Exception()
 
 
+def dump_report_data(data, headers, title=None, is_csv = False, filename=None, append=False):
+    # type: (List[List[Any]], List[str], Optional[str], bool, Optional[str], bool) -> NoReturn
+    if is_csv:
+        if filename:
+            _, ext = os.path.splitext(filename)
+            if not ext:
+                filename += '.csv'
+        fd = open(filename, 'a' if append else 'w') if filename else sys.stdout
+        csv_writer = csv.writer(fd)
+        if title:
+            csv_writer.writerow([])
+            csv_writer.writerow([title])
+            csv_writer.writerow([])
+        elif append:
+            csv_writer.writerow([])
+        if headers:
+            csv_writer.writerow(headers)
+        for row in data:
+            csv_writer.writerow(row)
+        if filename:
+            fd.flush()
+            fd.close()
+    else:
+        if title:
+            print('\n{0}\n'.format(title))
+        elif append:
+            print('\n')
+        print(tabulate(data, headers=headers))
+
+
 parameter_pattern = re.compile(r'\${(\w+)}')
+
 
 class Command:
     def execute(self, params, **kwargs):

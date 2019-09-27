@@ -37,7 +37,7 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 
-from .base import user_choice, suppress_exit, raise_parse_exception, Command
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .record import RecordAddCommand
 from .. import api, rest_api
 from ..display import bcolors
@@ -170,6 +170,8 @@ audit_log_parser.exit = suppress_exit
 
 audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run audit report')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
+audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
+audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
@@ -2700,11 +2702,11 @@ class AuditReportCommand(Command):
                     value = self.get_value(params, field, event)
                     row.append(self.convert_value(field, value))
                 table.append(row)
-            print(tabulate(table, headers=fields))
+            dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
         elif report_type == 'dim':
+            to_append = False
             for dim in rs['dimensions']:
-                print('\n{0}\n'.format(dim))
                 if dim in {'audit_event_type', 'keeper_version', 'ip_address'}:
                     if dim == 'audit_event_type':
                         fields = ['id', 'name', 'category', 'syslog']
@@ -2715,10 +2717,13 @@ class AuditReportCommand(Command):
                     table = []
                     for row in rs['dimensions'][dim]:
                         table.append([row.get(x) for x in fields])
-                    print(tabulate(table, headers=fields))
                 else:
+                    fields = [dim]
+                    table = []
                     for row in rs['dimensions'][dim]:
-                        print(row)
+                        table.append([row])
+                dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=to_append)
+                to_append = True
 
         else:
             if aggregates:
@@ -2734,7 +2739,7 @@ class AuditReportCommand(Command):
                 for f in fields:
                     row.append(self.convert_value(f, event.get(f), report_type=report_type))
                 table.append(row)
-            print(tabulate(table, headers=fields))
+            dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
     @staticmethod
     def convert_date(value):
