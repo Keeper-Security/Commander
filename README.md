@@ -1260,14 +1260,33 @@ connect:<my-server>
 ssh <username>@<my-server-hostname>
 ```
 
-Once this is defined, connecting to the remote system is easy. In our example, to connect to the server called 'sk-deb':
+Once this is defined, connecting to the remote system is easy. In our example, to connect to the server called 'example2':
 
 ```
-My Vault> connect sk-deb                                                                            
-Connecting to sk-deb...
+My Vault> connect example2
+Connecting to example2...
 
 Last login: Sat Sep 28 00:25:34 2019 from 12.23.34.5
-craig@sk-deb:~$ 
+craig@example2:~$ 
+craig@example2:~$ 
+craig@example2:~$ logout
+Connection to example2 closed.
+My Vault>                                                                                           
+```
+
+#### Combining SSH Key Rotation with Connection
+
+Utilizing the sshkey rotation plugin, Commander can also rotate the SSH private/public key pair.
+
+Here's an example on how this works from the Commander interface:
+
+```
+My Vault> rotate 2TlvQqNe7YSF9idGQ                                                                  
+Rotating with plugin sshkey
+Update record successful for record_uid=2TlvQqNe7YSF9idGQ
+Rotation successful for record_uid=2TlvQqNe7YSF9idGQ
+
+My Vault>                                                                                           
 ```
 
 #### Remote Desktop (RDP) Launcher Example
