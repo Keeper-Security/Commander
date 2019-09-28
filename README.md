@@ -1206,6 +1206,8 @@ Using the ```connect``` command, Keeper Commander can launch SSH, RDP or other e
 
 The ```connect``` command reads the record's custom fields with names starting with "connect:".
 
+Below is a simple example of SSH to a remote server via SSH tunnel gateway.
+
 #### SSH Launcher Example: SSH to a server via Gateway
 
 Vault Record Fields:
@@ -1219,18 +1221,21 @@ ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${
 File Attachments: gateway.pem, server.pem
 ```
 
+Screenshot of Keeper Vault record:
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
+
+In this case, if the SSH private key is encrypted with a passphrase, you will be prompted every time to type in the passphrase.  To avoid this, use the SSH Agent variation described in the next section.
+
 #### Integration with SSH Agent
 
-The SSH Agent stores and manages the private keys for SSH sessions. Commander integrates with the SSH Agent and can register RSA private keys with the running ssh-agent application. This eliminates the need for the user to type in the SSH passphrase every time.
+Commander can integrate with the local SSH agent to register RSA private keys. This eliminates the need for you to type in the SSH passphrase every you connect to the remote system. Commander uses the `SSH_AUTH_SOCK` environment variable on Mac OS / Linux systems. The PowerShell OpenSSH implementation is supported on Windows systems.
 
-Commander users the `SSH_AUTH_SOCK` environment variable on Mac OS / Linux systems. The PowerShell OpenSSH implementation is supported on Windows systems.
-
-To enable integration with ssh-agent ensure that `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems. For Microsoft Windows, ensure the `SSH Agent` system service is running. Keeper's 'connect' command uses SSH Agent to temporarily store the private key used in the connection session.  After the session disconnects, the private key is removed. 
+To enable integration with ssh-agent ensure that `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems. For Microsoft Windows, ensure the `SSH Agent` system service is running. Keeper's 'connect' command uses SSH Agent to temporarily store the private key used in the connection session.  After the session disconnects, the private key is removed.
 
 To utilize SSH Agent for connecting to a remote system, simply add a field to Vault record:
 ```
-Custom Field Name: connect:<my_server>:ssh-key[:<optional key name>]
-Custom Field Value: ${<custom field with private key>} ${password}
+connect:<my_server>:ssh-key[:<optional key name>]
+${<custom field with private key>} ${password}
 
 or:
 
@@ -1241,14 +1246,29 @@ In this example, the first parameter references the private key, the second para
 
 `${password}` references the value stored in the record's Password field 
 
-The SSH Connect command may be as simple as `ssh username@hostname.com` with ssh agent.  For example:
+Screenshot of Keeper Vault record (private key stored in custom field):
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot2.png)
+
+Screenshot of Keeper Vault record (private key stored in file attachment):
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot3.png)
+
+As you can see from the screenshot, a custom field to define the connection string is required.  For example:
 ```
-Custom Field Name: connect:<my-server>
-Custom Field Value: ssh <username>@<my-server-hostname>
+connect:<my-server>
+ssh <username>@<my-server-hostname>
 ```
 
-Screenshot of Keeper Vault record:
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
+Once this is defined, connecting to the remote system is easy. In our example, to connect to the server called 'sk-deb':
+
+```
+My Vault> connect sk-deb                                                                            
+Connecting to sk-deb...
+
+Last login: Sat Sep 28 00:25:34 2019 from 12.23.34.5
+craig@sk-deb:~$ 
+```
 
 #### Remote Desktop (RDP) Launcher Example
 
