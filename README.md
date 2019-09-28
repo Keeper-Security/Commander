@@ -1221,7 +1221,7 @@ ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${
 File Attachments: gateway.pem, server.pem
 ```
 
-Screenshot of Keeper Vault record:
+Here's a screenshot of the Keeper Vault record for the basic use case:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 
 In this case, if the SSH private key is encrypted with a passphrase, you will be prompted every time to type in the passphrase.  To avoid this, use the SSH Agent variation described in the next section.
@@ -1246,11 +1246,11 @@ In this example, the first parameter references the private key, the second para
 
 `${password}` references the value stored in the record's Password field 
 
-Screenshot of Keeper Vault record (private key stored in custom field):
+Here's a screenshot of a Keeper Vault record where the private key is stored in a custom field:
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot2.png)
 
-Screenshot of Keeper Vault record (private key stored in file attachment):
+Here's a screenshot of a Keeper Vault record where the private key is stored in a file attachment:
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot3.png)
 
@@ -1278,7 +1278,12 @@ My Vault>
 
 Utilizing the sshkey rotation plugin, Commander can also rotate the SSH private/public key pair.
 
-Here's an example on how this works from the Commander interface:
+The same vault record can be created that provides connection capability as well as SSH key rotation.  Here's a screenshot of a vault record that is configured for both connection and key rotation:
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot4.png)
+
+
+To rotate the password from the Commander interface, simply use the 'rotate' command:
 
 ```
 My Vault> rotate 2TlvQqNe7YSF9idGQ                                                                  
