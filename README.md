@@ -1221,33 +1221,34 @@ File Attachments: gateway.pem, server.pem
 
 #### Integration with SSH Agent
 
-Commander is capable to register private key (only RSA at the moment) with ssh-agent application.
-It users `SSH_AUTH_SOCK` environment variable on Mac OS / Unix systems. 
-PowerShell OpenSSH implementation is supported on Windows systems.
-To enable integration with ssh-agent ensure `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems.
-For Microsoft Windows, ensure `SSH Agent` system service is started. 
+The SSH Agent stores and manages the private keys for SSH sessions. Commander integrates with the SSH Agent and can register RSA private keys with the running ssh-agent application. This eliminates the need for the user to type in the SSH passphrase every time.
 
-To register private key with ssh-agent add a field to Vault record
+Commander users the `SSH_AUTH_SOCK` environment variable on Mac OS / Linux systems. The PowerShell OpenSSH implementation is supported on Windows systems.
+
+To enable integration with ssh-agent ensure that `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems. For Microsoft Windows, ensure the `SSH Agent` system service is running. Keeper's 'connect' command uses SSH Agent to temporarily store the private key used in the connection session.  After the session disconnects, the private key is removed. 
+
+To utilize SSH Agent for connecting to a remote system, simply add a field to Vault record:
 ```
-connect:<my_server>:ssh-key[:<optional key name>]
-${<custom field with private key>} ${password}
-or
+Custom Field Name: connect:<my_server>:ssh-key[:<optional key name>]
+Custom Field Value: ${<custom field with private key>} ${password}
+
+or:
+
 ${body:<attachment with private key>} ${password}
 ``` 
-where first parameter references private key, the second parameter references passphase used to encrypt private key
 
-`${password}` references the value stored in record's Password field 
+In this example, the first parameter references the private key, the second parameter references the passphase used to encrypt the private key.
 
-SSH Connect command may be as simple as `ssh username@hostname.com` with ssh agent
+`${password}` references the value stored in the record's Password field 
+
+The SSH Connect command may be as simple as `ssh username@hostname.com` with ssh agent.  For example:
 ```
-connect:<my-server>
-ssh <username>@<my-server-hostname>
+Custom Field Name: connect:<my-server>
+Custom Field Value: ssh <username>@<my-server-hostname>
 ```
 
 Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
-
-Note: If a passphrase is added to the SSH key file, you will be prompted for this when connecting.
 
 #### Remote Desktop (RDP) Launcher Example
 
