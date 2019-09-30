@@ -24,6 +24,11 @@ from tabulate import tabulate
 from ..params import KeeperParams
 
 
+aliases = {}
+commands = {}
+enterprise_commands = {}
+
+
 def register_commands(commands, aliases, command_info):
     from .record import register_commands as record_commands, register_command_info as record_command_info
     record_commands(commands)
@@ -125,14 +130,11 @@ parameter_pattern = re.compile(r'\${(\w+)}')
 
 
 class Command:
-    def execute(self, params, **kwargs):
-        '''
-        :type params: KeeperParams
-        '''
+    def execute(self, params, **kwargs):     # type: (KeeperParams, dict) -> Any
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):
-        # type: (Command, KeeperParams, str, dict) -> None
+        # type: (Command, KeeperParams, str, dict) -> Any
 
         global parameter_pattern
         try:
@@ -158,15 +160,11 @@ class Command:
 
                 opts = parser.parse_args(shlex.split(args))
                 d.update(opts.__dict__)
-
-            self.execute(params, **d)
+            return self.execute(params, **d)
         except Exception as e:
             logging.error(e)
 
-    def get_parser(self):
-        '''
-        :rtype: argparse.ArgumentParser
-        '''
+    def get_parser(self):   # type: () -> Optional[argparse.ArgumentParser]
         return None
 
     def is_authorised(self):

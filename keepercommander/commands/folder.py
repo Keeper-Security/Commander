@@ -102,7 +102,6 @@ ln_parser.exit = suppress_exit
 
 
 class FolderListCommand(Command):
-
     @staticmethod
     def folder_match_strings(folder):
         """

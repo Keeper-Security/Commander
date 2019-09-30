@@ -8,7 +8,7 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import Optional, List, NoReturn
+from typing import Optional, List
 
 import re
 import os
@@ -33,6 +33,7 @@ from ..record import Record
 from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
+from . import aliases, commands, enterprise_commands
 
 
 SSH_AGENT_FAILURE = 5
@@ -54,12 +55,13 @@ def register_commands(commands):
     commands['connect'] = ConnectCommand()
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
+    commands['help'] = HelpCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, login_parser, logout_parser, echo_parser, set_parser]:
+    for p in [whoami_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -82,15 +84,18 @@ logout_parser.error = raise_parse_exception
 logout_parser.exit = suppress_exit
 
 
-check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements', description='Check enterprise enforcements')
+check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements',
+                                                    description='Check enterprise enforcements')
 check_enforcements_parser.error = raise_parse_exception
 check_enforcements_parser.exit = suppress_exit
 
 
 connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
-connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on command format and template parameters')
+connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
+                            help='display help on command format and template parameters')
 connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')
-connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'], help='sort output')
+connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'],
+                            help='sort output')
 connect_parser.add_argument('-f', '--filter', dest='filter_by', action='store', help='filter output')
 connect_parser.add_argument('endpoint', nargs='?', action='store', type=str, help='endpoint')
 connect_parser.error = raise_parse_exception
@@ -108,6 +113,12 @@ set_parser.add_argument('name', action='store', type=str, help='name')
 set_parser.add_argument('value', action='store', type=str, help='value')
 set_parser.error = raise_parse_exception
 set_parser.exit = suppress_exit
+
+
+help_parser = argparse.ArgumentParser(prog='help', description='Displays help on command')
+help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
+help_parser.error = raise_parse_exception
+help_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -128,8 +139,8 @@ class SyncDownCommand(Command):
                     rs = api.communicate(params, rq)
                     if rs['result'] == 'success':
                         accepted = accepted or answer == 'y'
-                except:
-                    pass
+                except Exception as e:
+                    logging.debug('Accept share exception: %s', e)
 
             params.pending_share_requests.clear()
 
@@ -192,7 +203,9 @@ class WhoamiCommand(Command):
             if params.license:
                 print('')
                 account_type = params.license['account_type']
-                account_type_name = 'Enterprise' if account_type == 2 else 'Family Plan' if account_type == 1 else params.license['product_type_name']
+                account_type_name = 'Enterprise' if account_type == 2 \
+                    else 'Family Plan' if account_type == 1 \
+                    else params.license['product_type_name']
                 print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', account_type_name))
                 print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
                 if 'bytes_total' in params.license:
@@ -756,3 +769,24 @@ class SetCommand(Command):
         else:
             if name in params.environment_variables:
                 del params.environment_variables[name]
+
+
+class HelpCommand(Command):
+    def get_parser(self):
+        return help_parser
+
+    def execute(self, params, **kwargs):
+        cmd = kwargs.get('command')
+        if cmd:
+            if cmd in aliases:
+                cmd = aliases[cmd]
+            parser = None       # type: Optional[argparse.ArgumentParser]
+            if cmd in commands:
+                parser = commands[cmd].get_parser()
+            elif cmd in enterprise_commands:
+                parser = enterprise_commands[cmd].get_parser()
+            if parser:
+                parser.print_help()
+
+    def is_authorised(self):
+        return False

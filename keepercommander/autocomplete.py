@@ -10,12 +10,14 @@
 #
 
 import argparse
+import itertools
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
 
 from .params import KeeperParams
-from .commands.folder import ls_parser, mv_parser
+from .commands.folder import mv_parser
+from .commands import commands, enterprise_commands
 from . import api
 
 
@@ -181,6 +183,11 @@ class CommandCompleter(Completer):
                             else:
                                 extra['prefix'] = opts.dst or ''
                                 context = 'folder'
+                    elif cmd in ['help']:
+                        args = CommandCompleter.fix_input(raw_input)
+                        if args is not None:
+                            extra['prefix'] = args
+                            context = 'command'
 
                     if context in {'folder', 'path'}:
                         rs = try_resolve_path(self.params, extra['prefix'])
@@ -212,6 +219,12 @@ class CommandCompleter(Completer):
                                                 if len(d) > 39:
                                                     d = d[:29] + '...' + d[-7:]
                                                 yield Completion(n, display=d, start_position=-len(name))
+                    elif context == 'command':
+                        cmd = extra['prefix']
+                        for c in  itertools.chain(commands.keys(), enterprise_commands.keys()):
+                            if c.startswith(cmd):
+                                yield Completion(c, display=c, start_position=-len(cmd))
+
         except Exception as e:
             pass
 

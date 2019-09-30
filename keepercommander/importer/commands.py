@@ -44,6 +44,7 @@ import_parser.exit = suppress_exit
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
+export_parser.add_argument('--max-size', dest='max_size', help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
 export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
@@ -163,6 +164,27 @@ class RecordExportCommand(ImporterCommand):
         export_name = kwargs['name'] if 'name' in kwargs else None
         if format:
             logging.info('Processing... please wait.')
-            imp_exp.export(params, export_format, export_name)
+            extra = {}
+            msize = kwargs.get('max_size')    # type: str
+            if msize:
+                multiplier = 1
+                scale = msize[-1].upper()
+                if scale == 'K':
+                    multiplier = 1024
+                elif scale == 'M':
+                    multiplier = 1024 ** 2
+                elif scale == 'G':
+                    multiplier = 1024 ** 3
+
+                if multiplier != 1:
+                    msize = msize[:-1]
+                try:
+                    max_size = int(msize) * multiplier
+                    extra['max_size'] = max_size
+                except ValueError:
+                    logging.error('Invalid maximum attachment file size parameter: %s', kwargs.get('max_size'))
+                    return
+
+            imp_exp.export(params, export_format, export_name, **extra)
         else:
             logging.error('Missing argument')
