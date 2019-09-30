@@ -89,7 +89,7 @@ enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
 enterprise_node_parser.add_argument('--name', dest='displayname', action='store', help='set node display name')
-enterprise_node_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
+enterprise_node_parser.add_argument('--delete', dest='delete', action='store_true', help='delete node')
 enterprise_node_parser.add_argument('node', type=str, nargs='+', help='Node Name or ID. Can be repeated.')
 enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit

@@ -152,6 +152,9 @@ class BaseFileImporter(BaseImporter):
 
 
 class BaseExporter:
+    def __init__(self):
+        self.max_size = 10 * 1024 * 1024
+
     def execute(self, filename, records):
         # type: (BaseExporter, str, [Union[Record, SharedFolder]]) -> None
 

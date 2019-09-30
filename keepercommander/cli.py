@@ -29,15 +29,12 @@ from .api import sync_down, login
 from .error import AuthenticationError, CommunicationError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
-from .commands import register_commands, register_enterprise_commands
+from .commands import register_commands, register_enterprise_commands, aliases, commands, enterprise_commands
 
 
 stack = []
-aliases = {}
-commands = {}
 command_info = OrderedDict()
 register_commands(commands, aliases, command_info)
-enterprise_commands = {}
 enterprise_command_info = OrderedDict()
 register_enterprise_commands(enterprise_commands, aliases, enterprise_command_info)
 

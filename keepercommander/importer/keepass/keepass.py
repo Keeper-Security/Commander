@@ -189,7 +189,6 @@ class KeepassImporter(BaseFileImporter):
                                     except:
                                         pass
 
-
                             yield record
 
     def extension(self):
@@ -348,10 +347,7 @@ class KeepassExporter(BaseExporter):
 
                     if r.attachments:
                         for atta in r.attachments:
-                            max_size = 1024 * 1024
-                            if atta.size < max_size:
-                                bins = None
-                                bId = 0
+                            if atta.size < self.max_size:
                                 if hasattr(kdb.obj_root.Meta, 'Binaries'):
                                     bins = kdb.obj_root.Meta.Binaries
                                     elems = bins.findall('Binary')
@@ -360,27 +356,43 @@ class KeepassExporter(BaseExporter):
                                     bins = objectify.Element('Binaries')
                                     kdb.obj_root.Meta.append(bins)
                                     bId = 0
-                                with atta.open() as s:
-                                    buffer = s.read(max_size)
-                                    if len(buffer) >= 32:
-                                        iv = buffer[:16]
+
+                                out = io.BytesIO()
+                                with gzip.GzipFile(fileobj=out, mode='w') as gz:
+                                    with atta.open() as s:
+                                        iv = s.read(16)
                                         cipher = AES.new(atta.key, AES.MODE_CBC, iv)
-                                        buffer = cipher.decrypt(buffer[16:])
-                                        if len(buffer) > 0:
-                                            buffer = unpad_binary(buffer)
-                                            out = io.BytesIO()
-                                            with gzip.GzipFile(fileobj=out, mode='w') as gz:
+                                        finished = False
+                                        chunk_size = 1024 ** 2
+                                        while not finished:
+                                            buffer = s.read(chunk_size)
+                                            finished = len(buffer) < chunk_size
+                                            if buffer:
+                                                buffer = cipher.decrypt(buffer)
+                                                if finished:
+                                                    buffer = unpad_binary(buffer)
                                                 gz.write(buffer)
-                                            bin = objectify.E.Binary(base64.b64encode(out.getvalue()).decode(), Compressed=str(True), ID=str(bId))
-                                            bins.append(bin)
 
-                                            bin = objectify.Element('Binary')
-                                            bin.Key=atta.name
-                                            bin.Value = objectify.Element('Value', Ref=str(bId))
-                                            entry.append(bin)
+                                bin = objectify.E.Binary(base64.b64encode(out.getvalue()).decode(), Compressed=str(True), ID=str(bId))
+                                bins.append(bin)
+
+                                bin = objectify.Element('Binary')
+                                bin.Key=atta.name
+                                bin.Value = objectify.Element('Value', Ref=str(bId))
+                                entry.append(bin)
                             else:
-                                print('Warning: File \'{0}\' was skipped because it exceeds the 1MB Keepass filesize limit.'.format(atta.name))
-
+                                scale = ''
+                                msize = self.max_size
+                                if msize > 1024 ** 3:
+                                    scale = 'G'
+                                    msize //= 1024 ** 3
+                                elif msize > 1024 ** 2:
+                                    scale = 'M'
+                                    msize //= 1024 ** 2
+                                elif msize > 1024:
+                                    scale = 'K'
+                                    msize //= 1024
+                                print('Warning: File \'{0}\' was skipped because it exceeds the {1}{2} file size limit.'.format(atta.name, msize, scale))
                 except Exception as e:
                     pass
 

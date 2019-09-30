@@ -86,10 +86,13 @@ def get_folder_path(params, folder_uid):
     return path
 
 
-def export(params, file_format, filename):
+def export(params, file_format, filename, **export_args):
     api.sync_down(params)
 
     exporter = exporter_for_format(file_format)()  # type: BaseExporter
+    if export_args:
+        if 'max_size' in export_args:
+            exporter.max_size = int(export_args['max_size'])
 
     to_export = []
     if exporter.has_shared_folders():
