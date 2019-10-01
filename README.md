@@ -1210,23 +1210,36 @@ Below is a simple example of SSH to a remote server via SSH tunnel gateway.
 
 #### SSH Launcher Example: SSH to a server via Gateway
 
-Vault Record Fields:
-```
-connect:my_server:description 
-Production Server Inside Gateway 
+In this example, we are showing how to connect to a server through a SSH gateway. The following fields are set:
 
-connect:my_server 
-ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user@server 
+Custom Field Name       | Custom Field Value             
+----------------------- | ------------------------------
+connect:xxx:description | Production Server via Gateway 
+connect:xxx             | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user@server 
+File Attachment         | gateway.pem
+File Attachment         | server.pem
 
-File Attachments: gateway.pem, server.pem
-```
+```xxx``` refers to the 'friendly name' which can be referenced when connecting on the command line.
 
-Here's a screenshot of the Keeper Vault record for the basic use case:
+Here's a screenshot of the Keeper Vault record for this use case:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 
-In this case, if the SSH private key is encrypted with a passphrase, you will be prompted every time to type in the passphrase.  To avoid this, use the SSH Agent variation described in the next section.
+To connect to this server, simply run the below command:
 
-#### Integration with SSH Agent
+```
+My Vault> connect my_server
+Connecting to my_server...
+
+Last login: Sat Sep 28 00:25:34 2019 from 12.23.34.5
+ec2-user@my_server:~$ 
+ec2-user@my_server:~$ logout
+Connection to my_server closed.
+My Vault>                                                                                           
+```
+
+If the SSH private key is encrypted with a passphrase, you will be prompted every time to type in the passphrase.  To avoid this, we recommend using the SSH Agent variation described in the next section.
+
+#### SSH connection using SSH Agent capabilities
 
 Commander can integrate with the local SSH agent to register RSA private keys. This eliminates the need for you to type in the SSH passphrase every you connect to the remote system. Commander uses the `SSH_AUTH_SOCK` environment variable on Mac OS / Linux systems. The PowerShell OpenSSH implementation is supported on Windows systems.
 
