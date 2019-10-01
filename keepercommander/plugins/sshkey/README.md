@@ -15,13 +15,11 @@ To verify this, open the Terminal application and make sure `'openssl'` and `'ss
 
 4. Add the following 'Custom Fields' to the Keeper record
 
-Name          | Value     | Comment
----------     | -------   | ------------
-cmdr:plugin   | sshkey    |
-cmdr:host     |           | (Optional, Multiple) Host name or IP address of target server
-cmdr:rules    |           | (Optional) [passphrase complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
-
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey1.png)
+Name                   | Value     | Comment
+---------              | -------   | ------------
+cmdr:plugin:friendly   | sshkey    | Required.  Friendly name can be referenced in command line interface.
+cmdr:host              |           | (Optional, Multiple) Host name or IP address of target server
+cmdr:rules             |           | (Optional) [passphrase complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
 
 NOTE: In order to automate the rotation of the public key on the target server, the public key must be manually updated `one time` in .ssh/authorized_keys on the target host(s).  After it has been set this first time, subsequent rotations will be automated and updated by Commander.
 
@@ -46,8 +44,6 @@ Name                | Value   | Comment
 cmdr:ssh_public_key |         | Public key in SSH format. This key is uploaded to the target system.
 cmdr:rsa_public_key |         | Public key in RSA format.
 cmdr:private_key    |         | Private key encrypted with the passkey stored in the **'Password'** field
-
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_sshkey2.png)
 
 ### Establishing a connection
 
