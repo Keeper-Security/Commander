@@ -1297,18 +1297,18 @@ Note: The 'rotate' command accepts either Record UID or friendly name (specified
 
 Below is a summary of the fields required to perform connection and rotation:
 
-Name              | Field Type    | Comment
----------         | -------       | ------------
-Login             | Login         | Set to the username, e.g. **'ec2-user'** in the **'Login'** field. 
-Password          | Password      | Set to the passphrase to encrypt the SSH key in the **'Password'** field
-cmdr:plugin:xxx   | Custom        | Hard-code value to ```sshkey```. "xxx" is the friendly name which can be referenced in command line 'rotate' and 'connect' calls.
-cmdr:host         | Custom        | (Optional, Multiple) Set to hostname or IP address of target server
-cmdr:rules        | Custom        | (Optional) [passphrase complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
-connect:xxx:ssh-key | Custom      | Set to: ```${cmdr:private_key} ${password}``` where "xxx" is the friendly name to reference
-connect:xxx         | Custom      | Set to: ```ssh ${login}@${cmdr:host}``` for a basic SSH connection but can be customized
-cmdr:ssh_public_key | Custom      | Public key in SSH format. This key is uploaded to the target system.
-cmdr:rsa_public_key | Custom      | Public key in RSA format.
-cmdr:private_key    | Custom      | Private key encrypted with the passkey stored in the **'Password'** field.
+Name                  | Field         | Comments
+--------------------- | ------------- | ------------
+Login                 | Login         | Set to the username, e.g. **'ec2-user'** in the **'Login'** field. 
+Password              | Password      | Set to the passphrase to encrypt the SSH key in the **'Password'** field
+cmdr:plugin:xxx       | Custom        | ```sshkey``` "xxx" is the friendly name which can be referenced in command line 'rotate' and 'connect' calls.
+cmdr:host             | Custom        | (Optional, Multiple) Set to hostname or IP address of target server
+cmdr:rules            | Custom        | (Optional) [passphrase complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
+connect:xxx:ssh-key   | Custom        | ```${cmdr:private_key} ${password}``` where "xxx" is the friendly name
+connect:xxx           | Custom        | ```ssh ${login}@${cmdr:host}``` for a basic SSH connection but can be customized
+cmdr:ssh_public_key   | Custom        | Public key in SSH format. This key is uploaded to the target system.
+cmdr:rsa_public_key   | Custom        | Public key in RSA format.
+cmdr:private_key      | Custom        | Private key encrypted with the passkey stored in the **'Password'** field.
 
 Important: Please read the [SSH Key Rotation Doc](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/sshkey) on how to perform the initial setup of SSH keys in the vault record. Once set up the first time, all connection and rotations will be seamless.
 
