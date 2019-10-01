@@ -15,17 +15,17 @@ To verify this, open the Terminal application and make sure `'openssl'` and `'ss
 
 4. Add the following 'Custom Fields' to the Keeper record
 
-Name                   | Value     | Comment
----------              | -------   | ------------
-cmdr:plugin:friendly   | sshkey    | Required.  Friendly name can be referenced in command line interface.
-cmdr:host              |           | (Optional, Multiple) Host name or IP address of target server
-cmdr:rules             |           | (Optional) [passphrase complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
+Name              | Value     | Comment
+---------         | -------   | ------------
+cmdr:plugin:xxx   | sshkey    | Required.  ```xxx``` is the "friendly" name which can be referenced in the command line interface instead of Record UID.
+cmdr:host         |           | (Optional, Multiple) Host name or IP address of target server
+cmdr:rules        |           | (Optional) [passphrase complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
 
 NOTE: In order to automate the rotation of the public key on the target server, the public key must be manually updated `one time` in .ssh/authorized_keys on the target host(s).  After it has been set this first time, subsequent rotations will be automated and updated by Commander.
 
 When setting up this plugin for the first time please use the following steps:
   
-1. Populate the Title, Login, Custom Fields (cmdr:plugin, cmdr:host, cmdr:rules) of the Keeper record.
+1. Populate the Title, Login, Custom Fields (cmdr:plugin:xxx, cmdr:host, cmdr:rules) of the Keeper record.
 2. Execute the `rotate` command on the Keeper shell for this record. Commander will generate the public and private keys and store them in custom fields of the record. Copy or save the key in `cmdr:ssh_public_key` and save this public key to the file `.ssh/authorized_keys` in the target hosts - this step must be done manually the first time or you can use the `ssh-copy-id` unix command.  Make sure to set the permissions of the authorized_keys file on the target system. `chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys`
 3. Execute `rotate` command on Keeper shell to perform a full rotation.  If successful, the target hosts will be updated with the newly generated public key and the Keeper record will be updated with the private/public key pair.
 
