@@ -1280,19 +1280,21 @@ Utilizing the sshkey rotation plugin, Commander can also rotate the SSH private/
 
 The same vault record can be created that provides connection capability as well as SSH key rotation.  Here's a screenshot of a vault record that is configured for both connection and key rotation:
 
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot4.png)
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot5.png)
 
 
 To rotate the password from the Commander interface, simply use the 'rotate' command:
 
 ```
-My Vault> rotate 2TlvQqNe7YSF9idGQ                                                                  
+My Vault> rotate example2                                                                  
 Rotating with plugin sshkey
 Update record successful for record_uid=2TlvQqNe7YSF9idGQ
 Rotation successful for record_uid=2TlvQqNe7YSF9idGQ
 
 My Vault>                                                                                           
 ```
+
+Note: The 'rotate' command accepts either Record UID or friendly name (specified with the ```cmdr:plugin:name``` custom field) 
 
 #### Remote Desktop (RDP) Launcher Example
 
