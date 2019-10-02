@@ -193,7 +193,10 @@ def loop(params):
     if params.user:
         if not params.password:
             logging.info('Enter password for {0}'.format(params.user))
-            params.password = getpass.getpass(prompt='Password: ', stream=None)
+            try:
+                params.password = getpass.getpass(prompt='Password: ', stream=None)
+            except KeyboardInterrupt:
+                print('')
         if params.password:
             logging.info('Logging in...')
             try:

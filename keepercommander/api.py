@@ -114,7 +114,7 @@ def login(params):
             rq['2fa_type'] = params.mfa_type or 'device_token'
             if params.mfa_type == 'one_time':
                 expire_token = params.config.get('device_token_expiration') or False
-                expire_days = 30 if expire_token else 9999
+                expire_days = 0 if expire_token else 30
                 rq['device_token_expire_days'] = expire_days
 
         response_json = run_command(params, rq)
@@ -122,6 +122,7 @@ def login(params):
         if 'device_token' in response_json:
             logging.debug('params.mfa_token=%s', params.mfa_token)
             params.mfa_token = response_json['device_token']
+            params.mfa_type = 'device_token'
             if response_json.get('dt_scope') == 'expiration':
                 store_config = True
                 params.config['mfa_token'] = params.mfa_token
@@ -202,7 +203,7 @@ def login(params):
                         params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
                     except KeyboardInterrupt as e:
                         print('')
-                        params.password = None
+                        params.clear_session()
                         return
 
             except (EOFError, KeyboardInterrupt, SystemExit):
@@ -1204,12 +1205,16 @@ def communicate(params, request):
     if response_json['result_code'] == 'auth_failed':
         logging.debug('Re-authorizing.')
         login(params)
+        if not params.session_token:
+            return response_json
         authorize_request(request)
         response_json = run_command(params, request)
-
     if response_json['result'] != 'success':
         if response_json['result_code']:
-            raise KeeperApiError(response_json['result_code'], response_json['message'])
+            if response_json['result_code'] == 'auth_failed':
+                params.clear_session()
+            else:
+                raise KeeperApiError(response_json['result_code'], response_json['message'])
 
     return response_json
 
