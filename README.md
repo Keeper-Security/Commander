@@ -1219,9 +1219,9 @@ connect:xxx             | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-us
 File Attachment         | gateway.pem
 File Attachment         | server.pem
 
-```xxx``` refers to the 'friendly name' which can be referenced when connecting on the command line.
+```xxx``` refers to the friendly name which can be referenced when connecting on the command line. In this example we have "my_server".
 
-Here's a screenshot of the Keeper Vault record for this use case:
+Here's a screenshot of the Keeper Vault record for this example:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot.png)
 
 To connect to this server, simply run the below command:
@@ -1241,23 +1241,27 @@ If the SSH private key is encrypted with a passphrase, you will be prompted ever
 
 #### SSH connection using SSH Agent capabilities
 
-Commander can integrate with the local SSH agent to register RSA private keys. This eliminates the need for you to type in the SSH passphrase every you connect to the remote system. Commander uses the `SSH_AUTH_SOCK` environment variable on Mac OS / Linux systems. The PowerShell OpenSSH implementation is supported on Windows systems.
+Commander can integrate with the local SSH agent to register RSA private keys. This eliminates the need for you to type in the SSH passphrase every time you connect to the remote system. Commander uses the `SSH_AUTH_SOCK` environment variable on Mac OS / Linux systems. The PowerShell OpenSSH implementation is supported on Windows systems.
 
-To enable integration with ssh-agent ensure that `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems. For Microsoft Windows, ensure the `SSH Agent` system service is running. Keeper's 'connect' command uses SSH Agent to temporarily store the private key used in the connection session.  After the session disconnects, the private key is removed.
+To enable integration with ssh-agent ensure that `SSH_AUTH_SOCK` environment variable is set on Posix compatible systems. For Microsoft Windows, ensure the `SSH Agent` system service is running. Keeper's ```connect``` command uses SSH Agent to temporarily store the private key used in the connection session.  After the session disconnects, the private key is removed.
 
-To utilize SSH Agent for connecting to a remote system, simply add a field to Vault record:
-```
-connect:<my_server>:ssh-key[:<optional key name>]
-${<custom field with private key>} ${password}
+To utilize SSH Agent for connecting to a remote system, simply add one additional custom field to the Vault record:
 
-or:
+Custom Field Name       | Custom Field Value             
+----------------------- | ------------------------------
+connect:xxx:ssh-key:yyy | ${<custom field name with private key>} ${password}
 
-${body:<attachment with private key>} ${password}
-``` 
+or
+
+Custom Field Name       | Custom Field Value             
+----------------------- | ------------------------------
+connect:xxx:ssh-key:yyy | {<custom field with private key>} ${password}
+
+Here, ```xxx``` is the friendly name of the connection.  ```yyy``` is an optional key name used with the SSH agent.
 
 In this example, the first parameter references the private key, the second parameter references the passphase used to encrypt the private key.
 
-`${password}` references the value stored in the record's Password field 
+```${password}``` references the value stored in the record's Password field 
 
 Here's a screenshot of a Keeper Vault record where the private key is stored in a custom field:
 
@@ -1267,20 +1271,13 @@ Here's a screenshot of a Keeper Vault record where the private key is stored in 
 
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_ssh_screenshot3.png)
 
-As you can see from the screenshot, a custom field to define the connection string is required.  For example:
-```
-connect:<my-server>
-ssh <username>@<my-server-hostname>
-```
-
-Once this is defined, connecting to the remote system is easy. In our example, to connect to the server called 'example2':
+Connecting to the remote system using an encrypted passphrase is easy. In our example, to connect to the server called "example2":
 
 ```
 My Vault> connect example2
 Connecting to example2...
 
 Last login: Sat Sep 28 00:25:34 2019 from 12.23.34.5
-craig@example2:~$ 
 craig@example2:~$ 
 craig@example2:~$ logout
 Connection to example2 closed.
@@ -1330,21 +1327,14 @@ Important: Please read the [SSH Key Rotation Doc](https://github.com/Keeper-Secu
 To connect seamlessly to a remote windows server using the standard Microsoft Remote Desktop application, Keeper executes a command pre-login, login, and post-login via system calls.  In this example, the "pre-login" command stores the password temporarily in the Windows credential manager for the current user.  The "login" command initiates the connection using an RDP template file and the stored credentials (the RDP template file is optional).  Upon session termination, the "post login" command is executed that deletes the password from the credential manager.
 
 Vault Record Fields:
-```
-connect:rdp_demo:description
-Remote connection to Demo Server 
 
-connect:rdp_demo:pre
-cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
-
-connect:rdp_demo
-mstsc ${file:Default.rdp} 
-
-connect:rdp_demo:post 
-cmdkey /delete:12.34.56.78 > NUL
-
-File Attachment: Default.rdp
-```
+Custom Field Name                  | Custom Field Value
+---------------------------------- | ----------------------------------
+connect:rdp_demo:description       | Remote connection to Demo Server 
+connect:rdp_demo:pre               | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
+connect:rdp_demo                   | mstsc ${file:Default.rdp} 
+connect:rdp_demo:post              | cmdkey /delete:12.34.56.78 > NUL
+File Attachment                    | Default.rdp
 
 Screenshot of Keeper Vault record:
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_rdp_screenshot.png)
@@ -1433,16 +1423,11 @@ Keeper Commander can communicate to internal and external systems for the purpos
 
 Example custom fields for MySQL password rotation:
 
-```
-Name: cmdr:plugin
-Value: mysql
-
-Name: cmdr:host
-Value: 192.168.1.55
-
-Name: cmdr:db
-Value: testing
-```
+Custom Field Name     | Custom Field Value
+----------------------| ----------------------------------
+cmdr:plugin           | mysql
+cmdr:host             | 192.168.1.55
+cmdr:db               | testing
 
 When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided (e.g. mysql.py) then it will use the values of the Keeper record to connect, rotate the password and save the resulting data.
 
@@ -1520,8 +1505,6 @@ Keeper is free for local password management on your device.  Premium subscripti
 [Android - Google Play](https://play.google.com/store/apps/details?id=com.callpod.android_apps.keeper&hl=en)
 
 [Kindle and Amazon App Store](http://amzn.com/B00NUK3F6S)
-
-[Windows Phone](https://www.microsoft.com/en-us/store/p/keeper-password-manager/9wzdncrdmpt6)
 
 ### Cross-Platform Desktop App
 
