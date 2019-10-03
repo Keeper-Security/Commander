@@ -44,6 +44,7 @@ rotate_parser.exit = suppress_exit
 
 def rotate_password(params, record_uid, name=None):
     """ Rotate the password for the specified record """
+    api.sync_down(params)
     record = api.get_record(params, record_uid)
 
     # execute rotation plugin associated with this record
@@ -83,14 +84,14 @@ def rotate_password(params, record_uid, name=None):
     else:
         logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
                       'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
-        return
+        return False
 
     if api.update_record(params, record):
         new_record = api.get_record(params, record_uid)
         logging.info('Rotation successful for record_uid=%s, revision=%d', new_record.record_uid, new_record.revision)
+        return True
 
-    return True
-
+    return False
 
 class RotateEndpoint:
     def __init__(self, name, type, description, record_uid, record_title, paths):

@@ -11,47 +11,31 @@
 #
 
 import psycopg2
+import logging
 
-"""Commander Plugin for PostgreSQL Database Server
+"""Commander Plugin for Postgres Database Server
    Dependencies: 
-       pip3 install psycopg2
+       pip3 install psycopg2-binary
 """
 
+
 def rotate(record, newpassword):
-    """ Grab any required fields from the record """
     user = record.login
     oldpassword = record.password
 
-    result = False
-
-    host = record.get('cmdr:host')
-    db = record.get('cmdr:db')
-
-    connection = ''
-
     try:
-        # Connect to the database
-        connection = psycopg2.connect(host=host,
-                                     user=user,
-                                     password=oldpassword,
-                                     database=db)
+        host = record.get('cmdr:host')
+        db = record.get('cmdr:db') or 'postgres'
+        port = record.get('cmdr:port') or '5432'
 
-        with connection.cursor() as cursor:
-            print("Connected to %s"%(host))
-            # Create a new record
-            sql = 'ALTER USER %s WITH PASSWORD "%s";'%(user, newpassword)
-            cursor.execute(sql)
+        with psycopg2.connect(host=host, port=int(port), user=user, password=oldpassword, database=db) as connection:
+            logging.debug("Connected to %s", host)
+            with connection.cursor() as cursor:
+                sql = f'alter user {user} with password %s'
+                cursor.execute(sql, (newpassword,))
+                record.password = newpassword
+                return True
+    except Exception as e:
+        logging.error('Error rotating password at Postgres server: %s', e)
 
-        # connection is not autocommit by default. So you must commit to save
-        # your changes.
-        connection.commit()
-
-        record.password = newpassword
-        result = True
-    except:
-        print("Error during connection to PostgreSQL server")
-    finally:
-        if connection:
-            connection.close()
-
-    return result 
+    return False
