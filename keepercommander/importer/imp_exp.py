@@ -30,6 +30,8 @@ from .importer import importer_for_format, exporter_for_format, path_components,
 from ..subfolder import BaseFolderNode, find_folders
 
 
+TWO_FACTOR_CODE = 'TFC:Keeper'
+
 def get_import_folder(params, folder_uid, record_uid):
     folder = ImportFolder()
 
@@ -142,6 +144,9 @@ def export(params, file_format, filename, **export_args):
             value = cf.get('value')
             if name and value:
                 rec.custom_fields[name] = value
+        if r.totp:
+            rec.custom_fields[TWO_FACTOR_CODE] = r.totp
+
         for folder_uid in find_folders(params, r.record_uid):
             if folder_uid in params.folder_cache:
                 folder = get_import_folder(params, folder_uid, r.record_uid)
@@ -693,12 +698,16 @@ def prepare_record_add(params, records):
                             req['folder_uid'] = folder.uid
 
             custom_fields = []
+            totp = None
             if rec.custom_fields:
                 for cf in rec.custom_fields:
-                    custom_fields.append({
-                        'name': cf,
-                        'value': rec.custom_fields[cf]
-                    })
+                    if cf == TWO_FACTOR_CODE:
+                        totp = rec.custom_fields[cf]
+                    else:
+                        custom_fields.append({
+                            'name': cf,
+                            'value': rec.custom_fields[cf]
+                        })
 
             data = {
                 'title': rec.title or '',
@@ -709,6 +718,18 @@ def prepare_record_add(params, records):
                 'custom': custom_fields
             }
             req['data'] =  api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
+            if totp:
+                extra = {
+                    'fields': [
+                        {
+                            'id': api.generate_record_uid(),
+                            'field_type': 'totp',
+                            'field_title': 'Two-Factor Code',
+                            'type': 0,
+                            'data': totp
+                        }]
+                }
+                req['extra'] =  api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key)
             record_adds.append(req)
 
         rec.uid = record_uid
