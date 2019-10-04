@@ -492,6 +492,33 @@ class ConnectCommand(Command):
         except Exception as e:
             logging.error(e)
 
+
+    @staticmethod
+    def add_environment_variables(params, endpoint, record, temp_files, non_shared):
+        # type: (KeeperParams, str, Record, List[str], dict) -> List[str]
+        rs = []
+        key_prefix = 'connect:{0}:env:'.format(endpoint)
+        for cf in record.custom_fields:
+            cf_name = cf['name']        # type: str
+            if cf_name.startswith(key_prefix):
+                key_name = cf_name[len(key_prefix):]
+                if not key_name:
+                    continue
+                cf_value = cf['value']  # type: str
+                while True:
+                    m = endpoint_parameter_pattern.search(cf_value)
+                    if not m:
+                        break
+                    p = m.group(1)
+                    val = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared)
+                    if not val:
+                        raise Exception('Add environment variable. Failed to resolve key parameter: {0}'.format(p))
+                    cf_value = cf_value[:m.start()] + val + cf_value[m.end():]
+                if cf_value:
+                    rs.append(key_name)
+                    os.putenv(key_name, cf_value)
+        return rs
+
     @staticmethod
     def add_ssh_keys(params, endpoint, record, temp_files, non_shared):
         # type: (KeeperParams, str, Record, List[str], dict) -> List[bytes]
@@ -720,10 +747,14 @@ class ConnectCommand(Command):
                 command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
                 if command:
                     added_keys = ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files, non_shared)
+                    added_envs = ConnectCommand.add_environment_variables(params, endpoint, record, temp_files, non_shared)
                     logging.info('Connecting to %s...', endpoint)
                     os.system(command)
                     if added_keys:
                         ConnectCommand.delete_ssh_keys(added_keys)
+                    if added_envs:
+                        for name in added_envs:
+                            os.putenv(name, '')
 
             command = record.get('connect:' + endpoint + ':post')
             if command:

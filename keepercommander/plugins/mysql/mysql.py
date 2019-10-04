@@ -10,54 +10,50 @@
 # Contact: ops@keepersecurity.com
 #
 
-import pymysql.cursors
+import pymysql
+import logging
 
 """Commander Plugin for MySQL Database Server
    Dependencies: 
        pip3 install pymysql
 """
 
+
 def rotate(record, newpassword):
-    """ Grab any required fields from the record """
     user = record.login
     oldpassword = record.password
 
-    result = False
-
-    host = record.get('cmdr:host')
-    db = record.get('cmdr:db')
-
-    connection = ''
-
     try:
-        # Connect to the database
-        connection = pymysql.connect(host=host, 
-                                     user=user, 
-                                     password=oldpassword, 
-                                     db=db, 
-                                     charset='utf8mb4', 
-                                     cursorclass=pymysql.cursors.DictCursor)
+        host = record.get('cmdr:host')
+        port = record.get('cmdr:port') or '3306'
+        user_host = record.get('cmdr:user_host') or '%'
 
-        with connection.cursor() as cursor:
-            escaped = connection.escape(newpassword)
-            """ TBD - For MySQL 5.7+ use below command:
-                sql = 'ALTER USER "{}"@"{}" IDENTIFIED BY "{}";'.format(
-                    user, host, newpassword)
-            """
-            sql = 'SET PASSWORD = PASSWORD({});'.format(escaped)
+        with pymysql.connect(host=host, port=int(port), user=user, password=oldpassword) as cursor:
+            is_old_version = True
+            affected = cursor.execute('select @@version')
+            if affected == 1:
+                rs = cursor.fetchone()
+                version = rs[0]     # type: str
+                vc = version.split('.')
+                vn = 0
+                if len(vc) == 3:
+                    for n in vc:
+                        vn *= 1000
+                        vn += int(n)
+                    is_old_version = vn < 5007006
+
+            if is_old_version:
+                sql = f'set password for \'{user}\'@\'{user_host}\' = password(\'{pymysql.escape_string(newpassword)}\')'
+            else:
+                sql = f'alter user \'{user}\'@\'{user_host}\' identified by \'{pymysql.escape_string(newpassword)}\''
             cursor.execute(sql)
-
-        connection.commit()
-        record.password = newpassword
-        result = True
+            record.password = newpassword
+            return True
     except pymysql.err.OperationalError as e:
-        print("MySQL Plugin Error: Unable to establish connection: " + str(e))
+        logging.error("MySQL Plugin Error: Unable to establish connection: %s", e)
     except pymysql.err.ProgrammingError as e:
-        print("MySQL Plugin Syntax Error: " + str(e))
-    except:
-        print("Error during connection to MySQL server")
-    finally:
-        if connection:
-            connection.close()
+        logging.error("MySQL Plugin Syntax Error: %s", e)
+    except Exception as e:
+        logging.error("MySQL password rotation error: %s", e)
 
-    return result 
+    return False
