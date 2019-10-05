@@ -26,6 +26,7 @@ class Record:
         self.attachments = None
         self.revision = revision
         self.unmasked_password =  None
+        self.totp = None
 
     def load(self, data, **kwargs):
 
@@ -49,7 +50,12 @@ class Record:
         if 'revision' in kwargs:
             self.revision = kwargs['revision']
         if 'extra' in kwargs:
-            self.attachments = kwargs['extra'].get('files')
+            extra = kwargs['extra']
+            self.attachments = extra.get('files')
+            if 'fields' in extra:
+                for field in extra['fields']:
+                    if field['field_type'] == 'totp':
+                        self.totp = field['data']
 
     def get(self,field):
         result = ''

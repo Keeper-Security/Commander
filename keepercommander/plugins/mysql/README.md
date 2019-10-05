@@ -19,14 +19,21 @@ Value: mysql
 
 Name: cmdr:host
 Value: <hostname of your MySQL server>
-
-Name: cmdr:db
-Value: <database to connect to on MySQL server>
 ```
 
 3) The plugin will use the Login field as the username of the passwd command when rotating a password.
 
 ### Optional custom fields
+
+```
+Name: cmdr:port
+Value: <MySQL port. 3306 assumed if omitted>
+```
+```
+Name: cmdr:user_host
+Value: <user host. If omitted '%' assumed>
+```
+
 
 To specify the rules for password complexity to use add a custom field
 
@@ -56,6 +63,19 @@ Example:
     "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
 }
 ```
+
+### Intergation with the Keeper Commander's `connect` command
+
+Custom Field Name         | Custom Field Value             
+------------------------- | ------------------------------
+connect:xxx:env:MYSQL_PWD | ${password} 
+connect:xxx               | mysql -u${login} -h${cmdr:host}
+```xxx``` refers to the 'friendly name' which can be referenced when connecting on the command line.
+
+Here's a screenshot of the Keeper Vault record for this use case:
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_mysql_screenshot.png)
+
 
 In this example, we are telling Commander to first download and decrypt records, then rotate the password (record UID HKj0T-NmBndy8SJ6ttbt1A) using the plugin programmed into the record. To locate the Record UID, simply view it on the commander interactive shell or view it on the Keeper Web Vault and Desktop App (small 'key' icon to the right of the record title).
 

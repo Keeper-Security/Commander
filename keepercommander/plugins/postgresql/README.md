@@ -28,6 +28,11 @@ Value: <database to connect to on PostgreSQL server>
 
 ### Optional custom fields
 
+```
+Name: cmdr:port
+Value: <Postgres port. 5432 assumed if omitted>
+```
+
 To specify the rules for password complexity to use add a custom field
 
 ```
@@ -63,3 +68,14 @@ In this example, we are telling Commander to first download and decrypt records,
 
 If you have any feature requests for this plugin, please contact us at commander@keepersecurity.com.
 
+### Intergation with the Keeper Commander's `connect` command
+
+Custom Field Name          | Custom Field Value             
+-------------------------- | ------------------------------
+connect:xxx:env:PGPASSWORD | ${password}
+connect:xxx                | psql --host=${cmdr:host} --port=${cmdr:port} --username=${login} --dbname=${cmdr:db} --no-password
+```xxx``` refers to the 'friendly name' which can be referenced when connecting on the command line.
+
+Here's a screenshot of the Keeper Vault record for this use case:
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_postgres_screenshot.png)
