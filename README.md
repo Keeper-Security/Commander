@@ -278,7 +278,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 * ```enterprise-user <email>``` or ```eu <email>```   Enterprise user management
 
     Parameters:
-    - ```--expire``` Expire the master password for the user
+    - ```--expire``` Expire the Master Password for the user
     - ```--lock``` Unlock the user account
     - ```--unlock``` Lock the user account 
     - ```--extend``` Extend vault transfer consent by 7 days 
@@ -574,7 +574,7 @@ $ keeper import -h
 
 **LastPass Import**
 
-Keeper supports automatic import of your LastPass vault by providing your LastPass email, master password and 2FA code. Make sure to first follow [these instructions](keepercommander/importer/lastpass/README.md) to install the necessary LastPass modules.
+Keeper supports automatic import of your LastPass vault by providing your LastPass email, Master Password and 2FA code. Make sure to first follow [these instructions](keepercommander/importer/lastpass/README.md) to install the necessary LastPass modules.
 
 ```bash
 $ keeper import --format=lastpass craig@acme-demo.com 
@@ -1047,7 +1047,7 @@ Notes:
 
 * ```challenge``` parameter is the challenge phrase when using a Yubikey device to authenticate. 
 
-To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a master password.
+To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a Master Password.
 
 * ```device_token_expiration``` can be set to ```true``` to expire 2FA device tokens after 30 days. By default, the 2FA device token will never expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices.
 
@@ -1194,7 +1194,7 @@ A common use case for Commander is pulling credentials from the vault to replace
 
 1. Create a separate "service account" vault for each set of records that the service needs access to.
 
-2. Set a strong master password, 2FA and role enforcement policy on each vault.
+2. Set a strong Master Password, 2FA and role enforcement policy on each vault.
 
 3. Share records (either direct share or shared folder) from the source vault to the service account vault.
 
@@ -1209,7 +1209,7 @@ $ keeper --user=<Keeper Email> -- get --format=password <Record UID>
 ```
 The password retrieved is written to standard output. 
 
-In this case, you will be asked for the Keeper master password. There are a few ways to provide Commander with the master password. All of these methods make the Keeper Master Password accessible on the filesystem and should be used with caution:
+In this case, you will be asked for the Keeper Master Password. There are a few ways to provide Commander with the Master Password. All of these methods make the Keeper Master Password accessible on the filesystem and should be used with caution:
 
 1. `--password` parameter. i.e. `keeper --user=<Keeper Email> --password=<Keeper Password>`. 
 
