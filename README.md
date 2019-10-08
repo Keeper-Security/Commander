@@ -1200,6 +1200,68 @@ A common use case for Commander is pulling credentials from the vault to replace
 
 Once configured, you can simply authenticate to Commander using the service accounts. By isolating the vaults to only contain a set of shared records, you will be limiting the exposure if the process or server becomes compromised.  Note that a unique and valid email address must be used for each service account.
 
+Commander's `get` command lets you to query password by record UID:
+```bash
+~/$ keeper --user=<Keeper Account> -- get --format=password <Record UID>
+```
+the password is written to standard output. 
+You will be asked for Keeper account password. There are a few ways to provide Commander with the password.
+All these methods make Keeper password exposable and should be used with caution
+1. `--password` parameter. i.e. `keeper --user=<Keeper Account> --password=<Keeper Password>`. 
+2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Account>`. This method is user in Jenkinsfile script explaind later.  
+3. Stored to `config.json` file. Commander searches for file named `config.json` in the current working directory. 
+If such file is found then Commander uses values stored there.
+```json
+{
+  "user": "<Keeper Account>",
+  "password": "<Keeper Password>"
+}
+``` 
+
+The next example shows Commander integration with Jenkins CI
+1. Create a Python virtual environment in jenkins user home directory and install keepercommander package with pip 
+```sh
+jenkins@jenkins:~$ python3 -m venv keeper
+jenkins@jenkins:~/$ cd keeper
+jenkins@jenkins:~/$ . bin/activate
+(keeper)jenkins@jenkins:~/keeper$ pip install keepercommander
+```
+2. Login to Commander with the account you are planning to use with Jenkins. Enter two factor code if account has second factor protection.
+```sh
+(keeper)jenkins@jenkins:~/keeper$ keeper --user=jenkins@mycompany.com -- shell
+My Vault> q
+```  
+
+3. Add Keeper user account to Jenkins Credentials
+- Credential Kind: Username with password
+- Username: `jenkins@mycompany.com`
+- Password: [Password]
+- ID: `Keeper`
+
+
+```groovy
+node {
+    environment {
+        PASSWORD=''     // define environment variable
+    }
+   stage('Load') {
+       // change working directory to keeper venv
+       dir("/var/jenkins_home/keeper") {      
+           // load Keeper credentials into environmenmt variables. Commander uses KEEPER_PASSWORD variable if set 
+           withCredentials([usernamePassword(credentialsId: 'Keeper', usernameVariable: 'KEEPER_USERNAME', passwordVariable: 'KEEPER_PASSWORD')]) {
+                    // retrieve the password 
+                   env.PASSWORD = sh(script: ". bin/activate; keeper --user=${KEEPER_USERNAME} -- get --format=password <Record UID>", returnStdout: true).trim()
+            }
+       }
+   }
+   stage('Run') {
+       echo "${env.PASSWORD}"
+   }
+}
+```
+
+
+
 ### Launching and Connecting to Remote Servers 
 
 Using the ```connect``` command, Keeper Commander can launch SSH, RDP or other external connections utilizing content and metadata stored in the Keeper vault record.  Command-line parameters are supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections.
