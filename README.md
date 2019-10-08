@@ -20,7 +20,7 @@ Jump to:
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Retrieval API](#password-retrieval-api)
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
-* [Environmental Variables](#environmental-variables))
+* [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
@@ -1200,44 +1200,56 @@ A common use case for Commander is pulling credentials from the vault to replace
 
 Once configured, you can simply authenticate to Commander using the service accounts. By isolating the vaults to only contain a set of shared records, you will be limiting the exposure if the process or server becomes compromised.  Note that a unique and valid email address must be used for each service account.
 
-Commander's `get` command lets you to query password by record UID:
+#### Command-line Password Retrieval
+
+The `get` command allows you to query a stored Keeper password by record UID.  For example:
+
 ```bash
-~/$ keeper --user=<Keeper Account> -- get --format=password <Record UID>
+$ keeper --user=<Keeper Email> -- get --format=password <Record UID>
 ```
-the password is written to standard output. 
-You will be asked for Keeper account password. There are a few ways to provide Commander with the password.
-All these methods make Keeper password exposable and should be used with caution
-1. `--password` parameter. i.e. `keeper --user=<Keeper Account> --password=<Keeper Password>`. 
-2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Account>`. This method is user in Jenkinsfile script explaind later.  
-3. Stored to `config.json` file. Commander searches for file named `config.json` in the current working directory. 
-If such file is found then Commander uses values stored there.
+The password retrieved is written to standard output. 
+
+In this case, you will be asked for the Keeper master password. There are a few ways to provide Commander with the master password. All of these methods make the Keeper Master Password accessible on the filesystem and should be used with caution:
+
+1. `--password` parameter. i.e. `keeper --user=<Keeper Email> --password=<Keeper Password>`. 
+
+2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Email>`. This method is demonstrated in the Jenkinsfile script explained below.
+
+3. Stored to `config.json` file. Commander searches for file named `config.json` in the current working directory and uses the ```password``` parameter.
+
 ```json
 {
-  "user": "<Keeper Account>",
-  "password": "<Keeper Password>"
+  "user": "<Keeper Email>",
+  "password": "<Keeper Master Password>"
 }
 ``` 
 
-The next example shows Commander integration with Jenkins CI
-1. Create a Python virtual environment in jenkins user home directory and install keepercommander package with pip 
+#### Jenkins CI Integration
+
+This example demonstrates retrieving a password in Keeper for use in the Jenkins CI environment.
+
+1. Create a Python virtual environment in the jenkins user home directory and install keepercommander package with pip:
+ 
 ```sh
 jenkins@jenkins:~$ python3 -m venv keeper
 jenkins@jenkins:~/$ cd keeper
 jenkins@jenkins:~/$ . bin/activate
 (keeper)jenkins@jenkins:~/keeper$ pip install keepercommander
 ```
-2. Login to Commander with the account you are planning to use with Jenkins. Enter two factor code if account has second factor protection.
+
+2. Login to Commander with the account you are planning to use with Jenkins. Authenticate with Keeper Commander on the command-line in order to provide a two-factor code if the account has 2FA protection enabled.
+
 ```sh
 (keeper)jenkins@jenkins:~/keeper$ keeper --user=jenkins@mycompany.com -- shell
 My Vault> q
-```  
+```
 
-3. Add Keeper user account to Jenkins Credentials
+3. Add the Keeper user account to Jenkins Credentials configuration:
+
 - Credential Kind: Username with password
 - Username: `jenkins@mycompany.com`
 - Password: [Password]
 - ID: `Keeper`
-
 
 ```groovy
 node {
@@ -1260,6 +1272,7 @@ node {
 }
 ```
 
+In this example, replace the Record UID with the actual UID from the Keeper vault. To locate the Record UID see [this section](#locating-the-record-uid-and-other-identifiers).
 
 
 ### Launching and Connecting to Remote Servers 
