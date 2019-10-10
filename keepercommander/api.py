@@ -791,8 +791,10 @@ def sync_down(params):
             record_uid = sharing_change['record_uid']
             if record_uid in params.record_cache:
                 record = params.record_cache[record_uid]
-                if 'shares' in record:
-                    del record['shares']
+                record['shared'] = sharing_change['shared']
+    for record in params.record_cache.values():
+        if 'shares' in record:
+            del record['shares']
 
     prepare_folder_tree(params)
 

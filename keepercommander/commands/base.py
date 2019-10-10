@@ -128,7 +128,7 @@ parameter_pattern = re.compile(r'\${(\w+)}')
 
 
 class Command:
-    def execute(self, params, **kwargs):     # type: (KeeperParams, dict) -> any
+    def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):
