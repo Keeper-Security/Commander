@@ -8,9 +8,9 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import Iterator
 
 import argparse
+import collections
 import re
 import fnmatch
 import shutil
@@ -18,6 +18,7 @@ import functools
 import os
 import json
 import logging
+
 
 from .. import api, display
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
@@ -104,11 +105,11 @@ ln_parser.exit = suppress_exit
 
 class FolderListCommand(Command):
     @staticmethod
-    def folder_match_strings(folder):   # type: (BaseFolderNode) -> Iterator[str]
+    def folder_match_strings(folder):   # type: (BaseFolderNode) -> collections.Iterable[str]
         return filter(lambda f: type(f) == str and len(f) > 0, [folder.name, folder.uid])
 
     @staticmethod
-    def record_match_strings(record):     # type: (Record) -> Iterator[str]
+    def record_match_strings(record):     # type: (Record) -> collections.Iterable[str]
         return filter(lambda f: type(f) == str and len(f) > 0, [record.title, record.record_uid, record.login, record.login_url, record.notes])
 
     @staticmethod

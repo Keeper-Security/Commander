@@ -2,7 +2,6 @@ import os
 import base64
 import json
 import copy
-from typing import Optional
 
 from unittest import mock
 
@@ -157,7 +156,7 @@ def get_sync_down_response():
 
 
 def register_record(record, key_type=None):
-    # type: (record.Record, Optional[int]) -> bytes
+    # type: (record.Record, int or None) -> bytes
     data = {
         'title': record.title or '',
         'secret1': record.login or '',
@@ -214,7 +213,7 @@ def register_record(record, key_type=None):
 
 
 def register_records_to_folder(folder_uid, record_uids):
-    # type: (Optional[str], list) -> None
+    # type: (str or None, list) -> None
     for record_uid in record_uids:
         ufr = {
             'record_uid': record_uid

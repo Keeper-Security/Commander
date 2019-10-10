@@ -11,6 +11,7 @@
 
 import json
 import base64
+import collections
 import re
 import getpass
 import time
@@ -18,7 +19,6 @@ import os
 import hashlib
 import logging
 import urllib.parse
-from typing import Optional, Iterable, List
 
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -1220,7 +1220,7 @@ def communicate(params, request):
 
 
 def execute_batch(params, requests):
-    # type: (KeeperParams, List[dict]) -> List[dict]
+    # type: (KeeperParams, [dict]) -> [dict]
     responses = []
     if not requests:
         return responses
@@ -1429,7 +1429,7 @@ def prepare_folder_tree(params):
 
 
 def resolve_record_permission_path(params, record_uid, permission):
-    # type: (KeeperParams, str, str) -> Optional[dict]
+    # type: (KeeperParams, str, str) -> dict or None
 
     for ap in enumerate_record_access_paths(params, record_uid):
         if ap.get(permission):
@@ -1446,19 +1446,19 @@ def resolve_record_permission_path(params, record_uid, permission):
 
 
 def resolve_record_write_path(params, record_uid):
-    # type: (KeeperParams, str) -> Optional[dict]
+    # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_edit')
 
 def resolve_record_share_path(params, record_uid):
-    # type: (KeeperParams, str) -> Optional[dict]
+    # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_share')
 
 def resolve_record_view_path(params, record_uid):
-    # type: (KeeperParams, str) -> Optional[dict]
+    # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_view')
 
 def resolve_record_access_path(params, record_uid, path=None):
-    # type: (KeeperParams, str, Optional[dict]) -> dict
+    # type: (KeeperParams, str, dict or None) -> dict
     best_path = None
 
     for ap in enumerate_record_access_paths(params, record_uid):
@@ -1492,7 +1492,7 @@ def resolve_record_access_path(params, record_uid, path=None):
 
 
 def enumerate_record_access_paths(params, record_uid):
-    # type: (KeeperParams, str) -> Iterable[dict]
+    # type: (KeeperParams, str) -> collections.Iterable[dict]
 
     if record_uid in params.meta_data_cache:
         rmd = params.meta_data_cache[record_uid]

@@ -8,7 +8,6 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import Optional, List
 
 import re
 import os
@@ -421,7 +420,7 @@ class ConnectEndpoint:
 
 class ConnectCommand(Command):
     LastRevision = 0 # int
-    Endpoints = [] # type: List[ConnectEndpoint]
+    Endpoints = []          # type: [ConnectEndpoint]
 
     def get_parser(self):
         return connect_parser
@@ -495,8 +494,8 @@ class ConnectCommand(Command):
 
     @staticmethod
     def add_environment_variables(params, endpoint, record, temp_files, non_shared):
-        # type: (KeeperParams, str, Record, List[str], dict) -> List[str]
-        rs = []
+        # type: (KeeperParams, str, Record, [str], dict) -> [str]
+        rs = []         # type: [str]
         key_prefix = 'connect:{0}:env:'.format(endpoint)
         for cf in record.custom_fields:
             cf_name = cf['name']        # type: str
@@ -521,7 +520,7 @@ class ConnectCommand(Command):
 
     @staticmethod
     def add_ssh_keys(params, endpoint, record, temp_files, non_shared):
-        # type: (KeeperParams, str, Record, List[str], dict) -> List[bytes]
+        # type: (KeeperParams, str, Record, [str], dict) -> [bytes]
         rs = []
         key_prefix = 'connect:{0}:ssh-key'.format(endpoint)
         ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
@@ -656,7 +655,7 @@ class ConnectCommand(Command):
 
     @staticmethod
     def get_command_string(params, record, template, temp_files, non_shared):
-        # type: (KeeperParams, Record, str, list, dict) -> Optional[str]
+        # type: (KeeperParams, Record, str, list, dict) -> str or None
         command = template
         while True:
             m = endpoint_parameter_pattern.search(command)
@@ -670,7 +669,7 @@ class ConnectCommand(Command):
 
     @staticmethod
     def get_parameter_value(params, record, parameter, temp_files, non_shared):
-        # type: (KeeperParams, Record, str, list, dict) -> Optional[str]
+        # type: (KeeperParams, Record, str, list, dict) -> str or None
         if parameter.startswith('file:') or parameter.startswith('body:'):
             file_name = parameter[5:]
             if file_name not in ConnectCommand.attachment_cache:
@@ -811,7 +810,7 @@ class HelpCommand(Command):
         if cmd:
             if cmd in aliases:
                 cmd = aliases[cmd]
-            parser = None       # type: Optional[argparse.ArgumentParser]
+            parser = None       # type: argparse.ArgumentParser or None
             if cmd in commands:
                 parser = commands[cmd].get_parser()
             elif cmd in enterprise_commands:
