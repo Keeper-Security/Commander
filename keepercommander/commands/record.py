@@ -1211,7 +1211,7 @@ class RecordHistoryCommand(Command):
         if 'extra' in revision:
             extra = json.loads(api.decrypt_data(revision['extra'], record_key).decode('utf-8'))
         else:
-            extra = None
+            extra = {}
         rec = Record(revision['record_uid'])
         rec.load(data, extra=extra)
         return rec

@@ -95,7 +95,7 @@ class Record:
             self.custom_fields = data['custom']
         if 'revision' in kwargs:
             self.revision = kwargs['revision']
-        if 'extra' in kwargs:
+        if 'extra' in kwargs and kwargs['extra']:
             extra = kwargs['extra']
             self.attachments = extra.get('files')
             if 'fields' in extra:
