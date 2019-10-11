@@ -7,8 +7,54 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
+import datetime
+import hashlib
+import base64
+import hmac
 
-from keepercommander.subfolder import get_folder_path, find_folders, BaseFolderNode
+from urllib import parse
+
+from .subfolder import get_folder_path, find_folders, BaseFolderNode
+from .error import Error
+
+def get_totp_code(url):
+    # type: (str) -> (str, int) or None
+    comp = parse.urlparse(url)
+    if comp.scheme == 'otpauth':
+        secret = None
+        algorithm = 'SHA1'
+        digits = 6
+        period = 30
+        for k,v in parse.parse_qsl(comp.query):
+            if k == 'secret':
+                secret = v
+            elif k == 'algorithm':
+                algorithm = v
+            elif k == 'digits':
+                digits = int(v)
+            elif k == 'period':
+                period = int(v)
+        if secret:
+            tm_base = int(datetime.datetime.now().timestamp())
+            tm = tm_base / period
+            alg = algorithm.lower()
+            if alg in hashlib.__dict__:
+                key = base64.b32decode(secret, casefold=False)
+                msg = int(tm).to_bytes(8, byteorder='big')
+                hash =  hashlib.__dict__[alg]
+                hm = hmac.new(key, msg=msg, digestmod=hash)
+                digest = hm.digest()
+                offset = digest[-1] & 0x0f
+                base = bytearray(digest[offset:offset+4])
+                base[0] = base[0] & 0x7f
+                code_int = int.from_bytes(base, byteorder='big')
+                code = str(code_int % (10 ** digits))
+                if len(code) < digits:
+                    code = code.rjust(digits, '0')
+                return code, period - (tm_base % period), period
+            else:
+                raise Error('Unsupported hash algorithm: {0}'.format(algorithm))
+
 
 
 class Record:
@@ -125,6 +171,10 @@ class Record:
                         scale = 'Gb'
                 sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
                 print('{0:>21s} {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments:' if i == 0 else '', atta.get('name'), sz, scale, 'ID', atta.get('id')))
+
+        if self.totp:
+            code, remain, _ = get_totp_code(self.totp)
+            if code: print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
 
         if params is not None:
             if self.record_uid in params.record_cache:

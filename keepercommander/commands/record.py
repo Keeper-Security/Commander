@@ -11,20 +11,22 @@
 
 import os
 import argparse
+import datetime
 import json
 import requests
 import base64
 import tempfile
 import logging
-
+import threading
 from Cryptodome.Cipher import AES
+from tabulate import tabulate
 
 from ..team import Team
 from .. import api, display, generator
-from ..subfolder import BaseFolderNode, find_folders, try_resolve_path
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
-from ..record import Record
-from ..params import LAST_RECORD_UID
+from ..record import Record, get_totp_code
+from ..params import KeeperParams, LAST_RECORD_UID
 
 
 def register_commands(commands):
@@ -41,6 +43,8 @@ def register_commands(commands):
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
     commands['delete-attachment'] = RecordDeleteAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
+    commands['record-history'] = RecordHistoryCommand()
+    commands['totp'] = TotpCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -54,12 +58,27 @@ def register_command_info(aliases, command_info):
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
     aliases['cc'] = 'clipboard-copy'
+    aliases['rh'] = 'record-history'
 
-    for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, add_parser, edit_parser, rm_parser,
+    for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, record_history_parser, totp_parser,  add_parser, edit_parser, rm_parser,
               append_parser, download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
+
+
+record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Record History')
+record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], default='list', action='store', help='record history action. \'list\' if omitted')
+record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='history revision')
+record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+record_history_parser.error = raise_parse_exception
+record_history_parser.exit = suppress_exit
+
+
+totp_parser = argparse.ArgumentParser(prog='totp', description='Display Two Factor Code')
+totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+totp_parser.error = raise_parse_exception
+totp_parser.exit = suppress_exit
 
 
 clipboard_copy_parser = argparse.ArgumentParser(prog='clipboard-copy|cc', description='Copy record password to clipboard')
@@ -1022,3 +1041,384 @@ class ClipboardCommand(Command):
             import pyperclip
             pyperclip.copy(txt)
             logging.info('Copied to clipboard')
+
+
+class RecordHistoryCommand(Command):
+    def get_parser(self):
+        return record_history_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            logging.error('Enter name or uid of existing record')
+            return
+
+        current_rec = params.record_cache[record_uid]
+        if record_uid in params.record_history:
+            _,revision = params.record_history[record_uid]
+            if revision < current_rec['revision']:
+                del params.record_history[record_uid]
+        if record_uid not in params.record_history:
+            rq = {
+                'command': 'get_record_history',
+                'record_uid': record_uid,
+                'client_time': api.current_milli_time
+            }
+            rs = api.communicate(params, rq)
+            params.record_history[record_uid] = (rs['history'], current_rec['revision'])
+
+        if record_uid in params.record_history:
+            action = kwargs.get('action') or 'list'
+            history,_ = params.record_history[record_uid]
+            history.sort(key=lambda x: x['revision'])
+            history.reverse()
+            length = len(history)
+            if length == 0:
+                logging.info('Record does not have history of edit')
+                return
+
+            if 'revision' in kwargs and kwargs['revision'] is not None:
+                revision = kwargs['revision']
+                if revision < 1 or revision > length+1:
+                    logging.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
+                    return
+            else:
+                revision = 0
+
+            if action == 'list':
+                headers = ['Version', 'Modified By', 'Time Modified']
+                rows = []
+                for i, revision in enumerate(history):
+                    if 'client_modified_time' in revision:
+                        dt = datetime.datetime.fromtimestamp(revision['client_modified_time']/1000.0)
+                        tm = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        tm = ''
+                    rows.append(['V.{}'.format(length-i), revision.get('user_name') or '', tm])
+                print(tabulate(rows, headers=headers))
+            elif action == 'show':
+                if revision == 0:
+                    revision = length + 1
+                current_rec = params.record_cache[record_uid]
+                key = current_rec['record_key_unencrypted']
+                rev = history[length - revision]
+                rec = RecordHistoryCommand.load_revision(params, key, rev)
+                print('\n{0:>20s}: V.{1}'.format('Revision', revision))
+                rec.display()
+            elif action == 'diff':
+                if revision == 0:
+                    revision = 1
+                current_rec = params.record_cache[record_uid]
+                key = current_rec['record_key_unencrypted']
+                rev = history[0]
+                record_next = RecordHistoryCommand.load_revision(params, key, rev)
+                rows = []
+                for current_revision in range(length, revision-1, -1):
+                    current_rev = history[length - current_revision]
+                    record_current = RecordHistoryCommand.load_revision(params, key, current_rev)
+                    added = False
+                    for d in RecordHistoryCommand.get_record_diffs(record_next, record_current):
+                        rows.append(['V.{}'.format(current_revision+1) if not added else '', d[0], d[1], d[2]])
+                        added = True
+                    record_next = record_current
+                record_current = Record()
+                added = False
+                for d in RecordHistoryCommand.get_record_diffs(record_next, record_current):
+                    rows.append(['V.{}'.format(1) if not added else '', d[0], d[1], d[2]])
+                    added = True
+                headers = ('Version', 'Field', 'New Value', 'Old Value')
+                print(tabulate(rows, headers=headers))
+            elif action == 'restore':
+                ro = api.resolve_record_write_path(params, record_uid)    # type: dict
+                if not ro:
+                    logging.error('You do not have permission to modify this record')
+                    return
+                if revision == 0:
+                    logging.error('Invalid revision to restore: Revisions: 1-{0}'.format(length))
+                    return
+                rev = history[length - revision]
+                if rev['version'] in {1,2}:
+                    current_rec = params.record_cache[record_uid]
+                    ro.update({
+                        'version': rev['version'],
+                        'client_modified_time': api.current_milli_time(),
+                        'revision': current_rec['revision'],
+                        'data': rev['data']
+                    })
+                    udata = current_rec.get('udata') or {}
+                    extra = {}
+                    if 'extra_unencrypted' in current_rec:
+                        extra = json.loads(current_rec['extra_unencrypted'].decode('utf-8'))
+                    if 'udata' in rev:
+                        udata.update(rev['udata'])
+                    udata['file_ids'] = []
+                    if 'files' in extra:
+                        del extra['files']
+
+                    key = current_rec['record_key_unencrypted']
+                    if 'extra' in rev:
+                        decrypted_extra = api.decrypt_data(rev['extra'], key)
+                        extra_object = json.loads(decrypted_extra.decode('utf-8'))
+                        extra.update(extra_object)
+                        if 'files' in extra:
+                            for atta in extra_object['files']:
+                                udata['file_ids'].append(atta['id'])
+                                if 'thumbnails' in atta:
+                                    for thumb in atta['thumbnails']:
+                                        udata['file_ids'].append(thumb['id'])
+                    ro['extra'] = api.encrypt_aes(json.dumps(extra).encode('utf-8'), key)
+                    ro['udata'] = udata
+                    rq = {
+                        'command': 'record_update',
+                        'update_records': [ro]
+                    }
+                    rs = api.communicate(params, rq)
+                    if 'update_records' in rs:
+                        params.sync_data = True
+                        if rs['update_records']:
+                            status = rs['update_records'][0]
+                            if status['status'] == 'success':
+                                logging.info('Revision V.{0} is restored'.format(revision))
+                            else:
+                                logging.error('Failed to restore record revision: {0}'.format(status['status']))
+                else:
+                    logging.error('Cannot restore this revision')
+
+    @staticmethod
+    def load_revision(params, record_key, revision):
+        # type: (KeeperParams, bytes, dict) -> Record
+        data = json.loads(api.decrypt_data(revision['data'], record_key).decode('utf-8'))
+        if 'extra' in revision:
+            extra = json.loads(api.decrypt_data(revision['extra'], record_key).decode('utf-8'))
+        else:
+            extra = None
+        rec = Record(revision['record_uid'])
+        rec.load(data, extra=extra)
+        return rec
+
+    @staticmethod
+    def get_diff_index(value1, value2):
+        length = min(len(value1), len(value2))
+        for i in range(length):
+            if value1[i] != value2[i]:
+                return i
+        return length
+
+    TargetValueLength = 32
+    @staticmethod
+    def to_diff_str(value, index=0):
+        if len(value) > RecordHistoryCommand.TargetValueLength:
+            if index > 6:
+                tail_len = len(value) - index
+                if tail_len >= RecordHistoryCommand.TargetValueLength - 6:
+                    value = '... ' + value[index-2:]
+                else:
+                    value = '... ' + value[-(RecordHistoryCommand.TargetValueLength - 6):]
+            if len(value) > RecordHistoryCommand.TargetValueLength:
+                value = value[:26] + ' ...'
+        return value
+
+    @staticmethod
+    def compare_values(value1, value2):
+        # type: (str, str) -> (str, str) or None
+        if not value1 and not value2:
+            return None
+        if value1 and value2:
+            if value1 == value2:
+                return None
+            idx = RecordHistoryCommand.get_diff_index(value1, value2)
+            return RecordHistoryCommand.to_diff_str(value1, idx), RecordHistoryCommand.to_diff_str(value2, idx)
+        else:
+            return RecordHistoryCommand.to_diff_str(value1 or ''), RecordHistoryCommand.to_diff_str(value2 or '')
+
+    @staticmethod
+    def to_attachment_str(attachment):
+        # type: (dict) -> str
+        value = ''
+        if attachment:
+            value += attachment.get('title') or attachment.get('name') or attachment.get('id')
+            size = attachment.get('size') or 0
+            scale = 'b'
+            if size > 0:
+                if size > 2000:
+                    size = size / 1024
+                    scale = 'Kb'
+                if size > 2000:
+                    size = size / 1024
+                    scale = 'Mb'
+                if size > 2000:
+                    size = size / 1024
+                    scale = 'Gb'
+                value += ': ' + '{0:.2f}'.format(size).rstrip('0').rstrip('.') + scale
+        return value
+
+    @staticmethod
+    def get_record_diffs(record1, record2):
+        # type: (Record, Record) -> [(str, str, str)]
+        d1 = record1.__dict__
+        d2 = record2.__dict__
+        for field in [('title', 'Title'), ('login', 'Login'), ('password', 'Password'), ('login_url', 'URL'), ('notes', 'Notes'), ('totp', 'Two Factor')]:
+            v1 = d1.get(field[0]) or ''
+            v2 = d2.get(field[0]) or ''
+            cmp_result = RecordHistoryCommand.compare_values(v1, v2)
+            if cmp_result:
+                yield field[1], cmp_result[0], cmp_result[1]
+        if record1.custom_fields or record2.custom_fields:
+            all_keys = set()
+            all_keys.update([x['name'] for x in record1.custom_fields if 'name' in x])
+            all_keys.update([x['name'] for x in record2.custom_fields if 'name' in x])
+            keys = [x for x in all_keys]
+            keys.sort()
+            for key in keys:
+                v1 = record1.get(key) or ''
+                v2 = record2.get(key) or ''
+                cmp_result = RecordHistoryCommand.compare_values(v1, v2)
+                if cmp_result:
+                    yield key[:24], cmp_result[0], cmp_result[1]
+        if record1.attachments or record2.attachments:
+            att1 = {}
+            att2 = {}
+            if record1.attachments:
+                for atta in record1.attachments:
+                    if 'id' in atta:
+                        att1[atta['id']] = atta
+            if record2.attachments:
+                for atta in record2.attachments:
+                    if 'id' in atta:
+                        att2[atta['id']] = atta
+            s = set()
+            s.update(att1.keys())
+            s.symmetric_difference_update(att2.keys())
+            if len(s) > 0:
+                for id in s:
+                    yield 'Attachment', RecordHistoryCommand.to_attachment_str(att1.get(id)), RecordHistoryCommand.to_attachment_str(att2.get(id))
+
+
+class TotpEndpoint:
+    def __init__(self, record_uid, record_title, paths):
+        self.record_uid = record_uid
+        self.record_title = record_title
+        self.paths = paths
+
+
+class TotpCommand(Command):
+    LastRevision = 0 # int
+    Endpoints = []          # type: [TotpEndpoint]
+
+    def get_parser(self):
+        return totp_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        record_uid = None
+        if record_name:
+            if record_name in params.record_cache:
+                record_uid = record_name
+            else:
+                rs = try_resolve_path(params, record_name)
+                if rs is not None:
+                    folder, record_name = rs
+                    if folder is not None and record_name is not None:
+                        folder_uid = folder.uid or ''
+                        if folder_uid in params.subfolder_record_cache:
+                            for uid in params.subfolder_record_cache[folder_uid]:
+                                r = api.get_record(params, uid)
+                                if r.title.lower() == record_name.lower():
+                                    record_uid = uid
+                                    break
+
+            if record_uid is None:
+                records = api.search_records(params, kwargs['record'])
+                if len(records) == 1:
+                    logging.info('Record Title: {0}'.format(records[0].title))
+                    record_uid = records[0].record_uid
+                else:
+                    if len(records) == 0:
+                        logging.error('Enter name or uid of existing record')
+                    else:
+                        logging.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
+
+        if record_uid:
+            rec = api.get_record(params, record_uid)
+            tmer = None     # type: threading.Timer or None
+            done = False
+            def print_code():
+                global tmer
+                if not done:
+                    TotpCommand.display_code(rec.totp)
+                    tmer = threading.Timer(1, print_code).start()
+            try:
+                print('Press <Enter> to exit\n')
+                print_code()
+                input()
+            finally:
+                done = True
+                if tmer:
+                    tmer.cancel()
+        else:
+            TotpCommand.find_endpoints(params)
+            logging.info('')
+            headers = ["#", 'Record UID', 'Record Title', 'Folder(s)']
+            table = []
+            for i in range(len(TotpCommand.Endpoints)):
+                endpoint = TotpCommand.Endpoints[i]
+                title = endpoint.record_title
+                if len(title) > 23:
+                    title = title[:20] + '...'
+                folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
+                table.append([i + 1, endpoint.record_uid, title, folder])
+            table.sort(key=lambda x: x[2])
+            print(tabulate(table, headers=headers))
+            print('')
+
+    LastDisplayedCode = ''
+    @staticmethod
+    def display_code(url):
+        code, remains, total = get_totp_code(url)
+        progress = ''.rjust(remains, '=')
+        progress = progress.ljust(total, ' ')
+        if os.isatty(0):
+            print('\r', end='', flush=True)
+            print('\t{0}\t\t[{1}]'.format(code, progress), end='', flush=True)
+        else:
+            if TotpCommand.LastDisplayedCode != code:
+                print('\t{0}\t\tvalid for {1} seconds.'.format(code, remains))
+                TotpCommand.LastDisplayedCode = code
+
+    @staticmethod
+    def find_endpoints(params):
+        # type: (KeeperParams) -> None
+        if TotpCommand.LastRevision < params.revision:
+            TotpCommand.LastRevision = params.revision
+            TotpCommand.Endpoints.clear()
+            for record_uid in params.record_cache:
+                record = api.get_record(params, record_uid)
+                if record.totp:
+                    paths = []
+                    for folder_uid in find_folders(params, record_uid):
+                        path = '/' + get_folder_path(params, folder_uid, '/')
+                        paths.append(path)
+                    TotpCommand.Endpoints.append(TotpEndpoint(record_uid, record.title, paths))
+
+
+

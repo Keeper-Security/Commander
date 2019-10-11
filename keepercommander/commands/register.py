@@ -19,19 +19,19 @@ import logging
 
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
-from tabulate import tabulate
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
 
 from .. import api, generator
-from .base import dump_report_data
+from .base import dump_report_data, user_choice
 from .record import RecordAddCommand
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode, try_resolve_path
 from .enterprise import EnterpriseCommand, EnterprisePushCommand
-
+from ..display import bcolors
+from ..error import KeeperApiError
 from .base import raise_parse_exception, suppress_exit, Command
 
 
@@ -56,7 +56,7 @@ def register_command_info(aliases, command_info):
 
 share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change record share permissions')
 share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
-share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner'], default='grant', action='store', help='user share action. \'grant\' if omitted')
+share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'], default='grant', action='store', help='user share action. \'grant\' if omitted')
 share_record_parser.add_argument('-s', '--share', dest='can_share', action='store_true', help='can re-share record')
 share_record_parser.add_argument('-w', '--write', dest='can_edit', action='store_true', help='can modify record')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
@@ -660,8 +660,36 @@ class ShareRecordCommand(Command):
         return share_record_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
+        emails = kwargs.get('email') or []
+        if not emails:
+            logging.error('\'email\' parameter is missing')
+            return
 
+        action = kwargs.get('action') or 'grant'
+
+        if action == 'cancel':
+            answer = user_choice(bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                                 'This action cannot be undone.\n\n' +
+                                 'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            if answer.lower() in {'y', 'yes'}:
+                for email in emails:
+                    rq = {
+                        'command': 'cancel_share',
+                        'to_email': email
+                    }
+                    try:
+                        rs = api.communicate(params, rq)
+                    except KeeperApiError as kae:
+                        if kae.result_code == 'share_not_found':
+                            logging.info('{0}: No shared records are found.'.format(email))
+                        else:
+                            logging.warning('{0}: {1}.'.format(email, kae.message))
+                    except Exception as e:
+                        logging.warning('{0}: {1}.'.format(email, e))
+                params.sync_data = True
+            return
+
+        name = kwargs['record'] if 'record' in kwargs else None
         if not name:
             self.get_parser().print_help()
             return
@@ -684,11 +712,6 @@ class ShareRecordCommand(Command):
 
         if record_uid is None:
             logging.error('Enter name or uid of existing record')
-            return
-
-        emails = kwargs.get('email') or []
-        if not emails:
-            logging.error('\'email\' parameter is missing')
             return
 
         public_keys = {}
@@ -735,7 +758,6 @@ class ShareRecordCommand(Command):
             'command': 'record_share_update',
             'pt': 'Commander'
         }
-        action = kwargs.get('action') or 'grant'
         if action == 'owner':
             if len(public_keys) > 1:
                 logging.error('You can transfer ownership to a single account only')
@@ -760,7 +782,7 @@ class ShareRecordCommand(Command):
 
                 share_action = 'add_shares' if current is None else 'update_shares'
             elif action == 'revoke':
-                if not current is None:
+                if current:
                     if can_share or can_edit:
                         ro['editable'] = False if can_edit else current['editable']
                         ro['shareable'] =  False if can_share else current['shareable']
@@ -813,7 +835,6 @@ class ShareReportCommand(Command):
         return share_report_parser
 
     def execute(self, params, **kwargs):
-
         record_uids = []
         user_filter = set()
         record_filter = set()

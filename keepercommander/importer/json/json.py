@@ -74,8 +74,9 @@ class KeeperJsonExporter(BaseExporter):
     def do_export(self, filename, records):
         sfs = []
         rs = []
-        for r in records:
-            if type(r) == Record:
+        for elem in records:
+            if type(elem) == Record:
+                r = elem    # type: Record
                 ro = {
                     'uid': r.uid or '',
                     'title': r.title or '',
@@ -102,8 +103,8 @@ class KeeperJsonExporter(BaseExporter):
                             if folder.can_share:
                                 fo['can_share'] = True
                 rs.append(ro)
-            elif type(r) == SharedFolder:
-                sf = r      # type: SharedFolder
+            elif type(elem) == SharedFolder:
+                sf = elem      # type: SharedFolder
                 sfo = {
                     'uid': sf.uid,
                     'path': sf.path,

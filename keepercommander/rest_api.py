@@ -8,7 +8,6 @@
 # Copyright 2019 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import Optional, Union
 
 import requests
 import base64
@@ -107,7 +106,7 @@ def derive_key_v2(domain, password, salt, iterations):
 
 
 def execute_rest(context, endpoint, payload):
-    # type: (RestApiContext, str, bytes) -> Union[bytes, dict]
+    # type: (RestApiContext, str, bytes) -> bytes or dict
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
@@ -139,9 +138,9 @@ def execute_rest(context, endpoint, payload):
         content_type = rs.headers.get('Content-Type') or ''
         if rs.status_code == 200:
             if content_type == 'application/json':
-                return rs.json()
+                return rs.json()        # type: dict
             else:
-                return decrypt_aes(rs.content, context.transmission_key)
+                return decrypt_aes(rs.content, context.transmission_key)    # type: bytes
         elif rs.status_code >= 400:
             failure = rs.json() if content_type == 'application/json' else None
             if rs.status_code == 401 and json:
@@ -179,7 +178,7 @@ def get_device_token(context):
 
 
 def pre_login(context, username, two_factor_token=None):
-    # type: (RestApiContext, str, Optional[bytes]) -> proto.PreLoginResponse
+    # type: (RestApiContext, str, bytes or None) -> proto.PreLoginResponse
 
     attempt = 0
     while attempt < 3:
@@ -198,7 +197,7 @@ def pre_login(context, username, two_factor_token=None):
             pre_login_rs.ParseFromString(rs)
             return pre_login_rs
 
-        if type(rs) == dict:
+        elif type(rs) == dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
                     context.device_id = None

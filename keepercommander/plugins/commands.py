@@ -8,7 +8,6 @@
 # Copyright 2019 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import NoReturn, List, Dict
 
 import argparse
 import logging
@@ -160,18 +159,18 @@ class RecordRotateCommand(Command):
                 print('')
 
     LastRevision = 0
-    Endpoints = [] # type: List[RotateEndpoint]
+    Endpoints = [] # type: [RotateEndpoint]
 
     @staticmethod
     def find_endpoints(params):
-        # type: (KeeperParams) -> NoReturn
+        # type: (KeeperParams) -> None
         if RecordRotateCommand.LastRevision < params.revision:
             RecordRotateCommand.LastRevision = params.revision
             RecordRotateCommand.Endpoints.clear()
             for record_uid in params.record_cache:
                 record = api.get_record(params, record_uid)
                 if record.custom_fields:
-                    endpoints = {}    # type: Dict[str, str]
+                    endpoints = {}    # type: {str, str}
                     endpoints_desc = {}
                     for field in record.custom_fields:
                         if 'name' in field:

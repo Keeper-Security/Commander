@@ -9,8 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Optional, List, Any, NoReturn
-
 import argparse
 import shlex
 import logging
@@ -24,9 +22,9 @@ from tabulate import tabulate
 from ..params import KeeperParams
 
 
-aliases = {}
-commands = {}
-enterprise_commands = {}
+aliases = {}        # type: {str, str}
+commands = {}       # type: {str, Command}
+enterprise_commands = {}     # type: {str, Command}
 
 
 def register_commands(commands, aliases, command_info):
@@ -97,7 +95,7 @@ def suppress_exit():
 
 
 def dump_report_data(data, headers, title=None, is_csv = False, filename=None, append=False):
-    # type: (List[List[Any]], List[str], Optional[str], bool, Optional[str], bool) -> NoReturn
+    # type: (list, list, str, bool, str, bool) -> None
     if is_csv:
         if filename:
             _, ext = os.path.splitext(filename)
@@ -130,11 +128,11 @@ parameter_pattern = re.compile(r'\${(\w+)}')
 
 
 class Command:
-    def execute(self, params, **kwargs):     # type: (KeeperParams, dict) -> Any
+    def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):
-        # type: (Command, KeeperParams, str, dict) -> Any
+        # type: (Command, KeeperParams, str, dict) -> any
 
         global parameter_pattern
         try:
@@ -164,7 +162,7 @@ class Command:
         except Exception as e:
             logging.error(e)
 
-    def get_parser(self):   # type: () -> Optional[argparse.ArgumentParser]
+    def get_parser(self):   # type: () -> argparse.ArgumentParser or None
         return None
 
     def is_authorised(self):

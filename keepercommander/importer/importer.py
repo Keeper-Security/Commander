@@ -11,8 +11,7 @@
 import os.path
 import importlib
 import logging
-
-from typing import Iterable, Union, Optional
+import collections
 
 PathDelimiter = '\\'
 
@@ -47,7 +46,7 @@ def strip_path_delimiter(name, delimiter=PathDelimiter):
 
 
 def path_components(path, delimiter=PathDelimiter):
-    # type: (str, str) -> Iterable[str]
+    # type: (str, str) -> collections.Iterable[str]
     p = path.strip()
     pos = 0
     while pos < len(p):
@@ -102,8 +101,8 @@ class Attachment:
 class Folder:
     def __init__(self):
         self.uid = None
-        self.domain = None # type: Optional[str]
-        self.path = None # type: Optional[str]
+        self.domain = None # type: str or None
+        self.path = None # type: str or None
         self.can_edit = None
         self.can_share = None
 
@@ -123,12 +122,12 @@ class Record:
 
 class BaseImporter:
     def execute(self, name):
-        # type: (BaseImporter, str) -> Iterable[Union[Record, SharedFolder]]
+        # type: (BaseImporter, str) -> collections.Iterable[Record or SharedFolder]
 
         yield from self.do_import(name)
 
     def do_import(self, filename):
-        # type: (BaseImporter, str) -> Iterable[Union[Record, SharedFolder]]
+        # type: (BaseImporter, str) -> collections.Iterable[Record or SharedFolder]
         raise NotImplemented()
 
     def extension(self):
@@ -137,7 +136,7 @@ class BaseImporter:
 
 class BaseFileImporter(BaseImporter):
     def execute(self, name):
-        # type: (BaseFileImporter, str) -> Iterable[Union[Record, SharedFolder]]
+        # type: (BaseFileImporter, str) -> collections.Iterable[Record or SharedFolder]
 
         path = os.path.expanduser(name)
         if not os.path.isfile(path):
@@ -156,7 +155,7 @@ class BaseExporter:
         self.max_size = 10 * 1024 * 1024
 
     def execute(self, filename, records):
-        # type: (BaseExporter, str, [Union[Record, SharedFolder]]) -> None
+        # type: (BaseExporter, str, [Record or SharedFolder]) -> None
 
         if filename:
             filename = os.path.expanduser(filename)
@@ -171,7 +170,7 @@ class BaseExporter:
         self.do_export(filename, records)
 
     def do_export(self, filename, records):
-        # type: (BaseExporter, str, [Union[Record, SharedFolder]]) -> None
+        # type: (BaseExporter, str, [Record or SharedFolder]) -> None
         raise NotImplemented()
 
     def has_shared_folders(self):

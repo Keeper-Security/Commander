@@ -11,6 +11,7 @@
 
 import json
 import base64
+import collections
 import re
 import getpass
 import time
@@ -18,7 +19,6 @@ import os
 import hashlib
 import logging
 import urllib.parse
-from typing import Optional, Iterable, List
 
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -305,6 +305,7 @@ def accept_account_transfer_consent(params, share_account_to):
 
 
 def decrypt_aes(data, key):
+    # type: (str, bytes) -> bytes
     decoded_data = base64.urlsafe_b64decode(data + '==')
     iv = decoded_data[:16]
     ciphertext = decoded_data[16:]
@@ -313,6 +314,7 @@ def decrypt_aes(data, key):
 
 
 def decrypt_data(data, key):
+    # type: (str, bytes) -> bytes
     return unpad_binary(decrypt_aes(data, key))
 
 
@@ -423,13 +425,14 @@ def sync_down(params):
         if response_json['full_sync']:
             if params.debug: print('Full Sync response')
             check_convert_to_folders = True
-            params.record_cache = {}
-            params.meta_data_cache = {}
-            params.shared_folder_cache = {}
-            params.team_cache = {}
-            params.non_shared_data_cache = {}
-            params.subfolder_cache = {}
-            params.subfolder_record_cache = {}
+            params.record_cache.clear()
+            params.meta_data_cache.clear()
+            params.shared_folder_cache.clear()
+            params.team_cache.clear()
+            params.non_shared_data_cache.clear()
+            params.subfolder_cache.clear()
+            params.subfolder_record_cache.clear()
+            params.record_history.clear()
 
     if 'revision' in response_json:
         logging.debug('Getting revision %d', params.revision)
@@ -791,8 +794,10 @@ def sync_down(params):
             record_uid = sharing_change['record_uid']
             if record_uid in params.record_cache:
                 record = params.record_cache[record_uid]
-                if 'shares' in record:
-                    del record['shares']
+                record['shared'] = sharing_change['shared']
+    for record in params.record_cache.values():
+        if 'shares' in record:
+            del record['shares']
 
     prepare_folder_tree(params)
 
@@ -1220,7 +1225,7 @@ def communicate(params, request):
 
 
 def execute_batch(params, requests):
-    # type: (KeeperParams, List[dict]) -> List[dict]
+    # type: (KeeperParams, [dict]) -> [dict]
     responses = []
     if not requests:
         return responses
@@ -1429,7 +1434,7 @@ def prepare_folder_tree(params):
 
 
 def resolve_record_permission_path(params, record_uid, permission):
-    # type: (KeeperParams, str, str) -> Optional[dict]
+    # type: (KeeperParams, str, str) -> dict or None
 
     for ap in enumerate_record_access_paths(params, record_uid):
         if ap.get(permission):
@@ -1446,19 +1451,19 @@ def resolve_record_permission_path(params, record_uid, permission):
 
 
 def resolve_record_write_path(params, record_uid):
-    # type: (KeeperParams, str) -> Optional[dict]
+    # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_edit')
 
 def resolve_record_share_path(params, record_uid):
-    # type: (KeeperParams, str) -> Optional[dict]
+    # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_share')
 
 def resolve_record_view_path(params, record_uid):
-    # type: (KeeperParams, str) -> Optional[dict]
+    # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_view')
 
 def resolve_record_access_path(params, record_uid, path=None):
-    # type: (KeeperParams, str, Optional[dict]) -> dict
+    # type: (KeeperParams, str, dict or None) -> dict
     best_path = None
 
     for ap in enumerate_record_access_paths(params, record_uid):
@@ -1492,7 +1497,7 @@ def resolve_record_access_path(params, record_uid, path=None):
 
 
 def enumerate_record_access_paths(params, record_uid):
-    # type: (KeeperParams, str) -> Iterable[dict]
+    # type: (KeeperParams, str) -> collections.Iterable[dict]
 
     if record_uid in params.meta_data_cache:
         rmd = params.meta_data_cache[record_uid]

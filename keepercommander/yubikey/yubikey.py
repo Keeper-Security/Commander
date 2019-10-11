@@ -8,7 +8,6 @@
 # Copyright 2019 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import Optional, List, Tuple
 
 import time
 import threading
@@ -71,7 +70,7 @@ def get_input_interrupted(prompt):
 
 
 def u2f_authenticate(authenticateRequests):
-    # type: (List[dict]) -> Optional[dict]
+    # type: ([dict]) -> dict or None
 
     global should_cancel_u2f
     global u2f_response
@@ -110,7 +109,6 @@ def u2f_authenticate(authenticateRequests):
             except:
                 pass
 
-
     if to_auth:
         u2f_thread = threading.Thread(target=thread_function, args=((to_auth,)))
         u2f_thread.start()
@@ -124,7 +122,7 @@ def u2f_authenticate(authenticateRequests):
 
 
 def thread_function(auth_requests):
-    # type: (List[Tuple[CTAP1, str, bytes, bytes]]) -> None
+    # type: ([(CTAP1, str, bytes, bytes)]) -> None
     global should_cancel_u2f
     global u2f_response
 
