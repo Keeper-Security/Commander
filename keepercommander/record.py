@@ -50,7 +50,7 @@ def get_totp_code(url):
                 code_int = int.from_bytes(base, byteorder='big')
                 code = str(code_int % (10 ** digits))
                 if len(code) < digits:
-                    code = code.ljust(digits, '0')
+                    code = code.rjust(digits, '0')
                 return code, period - (tm_base % period), period
             else:
                 raise Error('Unsupported hash algorithm: {0}'.format(algorithm))
