@@ -8,7 +8,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-
 from urllib.parse import urlparse, urlunparse
 
 
@@ -99,6 +98,7 @@ class KeeperParams:
         self.__rest_context = RestApiContext(server=server, device_id=device_id)
         self.pending_share_requests = set()
         self.environment_variables = {}
+        self.record_history = {}        # type: dict[str, (list[dict], int)]
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -134,6 +134,7 @@ class KeeperParams:
         self.batch_mode = False
         self.pending_share_requests.clear()
         self.environment_variables.clear()
+        self.record_history.clear()
 
     def __get_rest_context(self):
         return self.__rest_context

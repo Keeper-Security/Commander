@@ -42,7 +42,7 @@ from .record import RecordAddCommand
 from .. import api, rest_api
 from ..display import bcolors
 from ..record import Record
-from ..params import KeeperParams, LAST_TEAM_UID
+from ..params import KeeperParams
 from ..generator import generate
 
 

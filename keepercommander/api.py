@@ -305,6 +305,7 @@ def accept_account_transfer_consent(params, share_account_to):
 
 
 def decrypt_aes(data, key):
+    # type: (str, bytes) -> bytes
     decoded_data = base64.urlsafe_b64decode(data + '==')
     iv = decoded_data[:16]
     ciphertext = decoded_data[16:]
@@ -313,6 +314,7 @@ def decrypt_aes(data, key):
 
 
 def decrypt_data(data, key):
+    # type: (str, bytes) -> bytes
     return unpad_binary(decrypt_aes(data, key))
 
 
@@ -423,13 +425,14 @@ def sync_down(params):
         if response_json['full_sync']:
             if params.debug: print('Full Sync response')
             check_convert_to_folders = True
-            params.record_cache = {}
-            params.meta_data_cache = {}
-            params.shared_folder_cache = {}
-            params.team_cache = {}
-            params.non_shared_data_cache = {}
-            params.subfolder_cache = {}
-            params.subfolder_record_cache = {}
+            params.record_cache.clear()
+            params.meta_data_cache.clear()
+            params.shared_folder_cache.clear()
+            params.team_cache.clear()
+            params.non_shared_data_cache.clear()
+            params.subfolder_cache.clear()
+            params.subfolder_record_cache.clear()
+            params.record_history.clear()
 
     if 'revision' in response_json:
         logging.debug('Getting revision %d', params.revision)
