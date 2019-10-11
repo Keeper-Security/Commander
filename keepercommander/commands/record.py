@@ -1158,20 +1158,28 @@ class RecordHistoryCommand(Command):
                         'revision': current_rec['revision'],
                         'data': rev['data']
                     })
-                    udata = {}
-                    extra = rev.get('extra') or ''
-                    if extra:
-                        key = current_rec['record_key_unencrypted']
-                        decrypted_extra = api.decrypt_data(extra, key)
+                    udata = current_rec.get('udata') or {}
+                    extra = {}
+                    if 'extra_unencrypted' in current_rec:
+                        extra = json.loads(current_rec['extra_unencrypted'].decode('utf-8'))
+                    if 'udata' in rev:
+                        udata.update(rev['udata'])
+                    udata['file_ids'] = []
+                    if 'files' in extra:
+                        del extra['files']
+
+                    key = current_rec['record_key_unencrypted']
+                    if 'extra' in rev:
+                        decrypted_extra = api.decrypt_data(rev['extra'], key)
                         extra_object = json.loads(decrypted_extra.decode('utf-8'))
-                        if 'files' in extra_object:
-                            udata['file_ids'] = []
+                        extra.update(extra_object)
+                        if 'files' in extra:
                             for atta in extra_object['files']:
                                 udata['file_ids'].append(atta['id'])
                                 if 'thumbnails' in atta:
                                     for thumb in atta['thumbnails']:
                                         udata['file_ids'].append(thumb['id'])
-                    ro['extra'] = extra
+                    ro['extra'] = api.encrypt_aes(json.dumps(extra).encode('utf-8'), key)
                     ro['udata'] = udata
                     rq = {
                         'command': 'record_update',
