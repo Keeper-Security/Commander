@@ -39,7 +39,7 @@ def get_totp_code(url):
             tm = tm_base / period
             alg = algorithm.lower()
             if alg in hashlib.__dict__:
-                key = base64.b32decode(secret, casefold=False)
+                key = base64.b32decode(secret, casefold=True)
                 msg = int(tm).to_bytes(8, byteorder='big')
                 hash =  hashlib.__dict__[alg]
                 hm = hmac.new(key, msg=msg, digestmod=hash)
