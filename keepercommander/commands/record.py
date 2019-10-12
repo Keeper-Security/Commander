@@ -68,7 +68,7 @@ def register_command_info(aliases, command_info):
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Record History')
-record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], default='list', action='store', help='record history action. \'list\' if omitted')
+record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='record history action. \'list\' if omitted')
 record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='history revision')
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 record_history_parser.error = raise_parse_exception
@@ -1102,6 +1102,8 @@ class RecordHistoryCommand(Command):
                 if revision < 1 or revision > length+1:
                     logging.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
                     return
+                if not kwargs.get('action'):
+                    action = 'show'
             else:
                 revision = 0
 
@@ -1211,7 +1213,7 @@ class RecordHistoryCommand(Command):
         if 'extra' in revision:
             extra = json.loads(api.decrypt_data(revision['extra'], record_key).decode('utf-8'))
         else:
-            extra = None
+            extra = {}
         rec = Record(revision['record_uid'])
         rec.load(data, extra=extra)
         return rec
