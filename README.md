@@ -19,6 +19,7 @@ Jump to:
 * [Pushing Records to Users and Teams](#pushing-records-to-users-and-teams)
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Retrieval API](#password-retrieval-api)
+* [Jenkins CI Integration](#jenkins-ci-integration)
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
@@ -205,6 +206,16 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```cd``` Change current folder
 
 * ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
+
+* ```clipboard-copy``` Copy the specified Keeper Record password field to the system clipboard 
+
+* ```record-history``` Display the record version history on the specified record.
+
+    Parameters:
+    - ```--action``` Options are: list,diff,show,restore.  Defaults to ```list```.
+    - ```--revision``` Get a specific revision 
+
+* ```totp``` Display the Two-Factor Code (TOTP) attached to a vault record. If no record UID is provided, a list of available records that contain Two-Factor Codes will be displayed. If a record UID is provided, the code is displayed with a countdown timer.
 
 * ```download-attachment``` Download all file attachments in specified record
 
@@ -1213,7 +1224,7 @@ In this case, you will be asked for the Keeper Master Password. There are a few 
 
 1. `--password` parameter. i.e. `keeper --user=<Keeper Email> --password=<Keeper Password>`. 
 
-2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Email>`. This method is demonstrated in the Jenkinsfile script explained below.
+2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Email>`. This method is demonstrated in the Jenkins script explained below.
 
 3. Stored to `config.json` file. Commander searches for file named `config.json` in the current working directory and uses the ```password``` parameter.
 
@@ -1224,7 +1235,7 @@ In this case, you will be asked for the Keeper Master Password. There are a few 
 }
 ``` 
 
-#### Jenkins CI Integration
+### Jenkins CI Integration
 
 This example demonstrates retrieving a password in Keeper for use in the Jenkins CI environment.
 
