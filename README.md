@@ -209,10 +209,13 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```clipboard-copy``` Copy the specified Keeper Record password field to the system clipboard 
 
-* ```record-history``` Display the record version history on the specified record.
+* ```record-history``` Display the record version history or a specific version of a record.
 
     Parameters:
-    - ```--action``` Options are: list,diff,show,restore.  Defaults to ```list```.
+    - ```--action=list``` Display the revision number, modified by user, time of modification.
+    - ```--action=diff``` Display revision, field changed and old/new values. 
+    - ```--action=show``` Provided the revision number, display the record for that specific revision and record. 
+    - ```--action=restore``` Restore the current version to the specified record UID and version.
     - ```--revision``` Get a specific revision 
 
 * ```totp``` Display the Two-Factor Code (TOTP) attached to a vault record. If no record UID is provided, a list of available records that contain Two-Factor Codes will be displayed. If a record UID is provided, the code is displayed with a countdown timer.
