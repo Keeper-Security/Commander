@@ -623,6 +623,7 @@ class RecordGetUidCommand(Command):
             api.get_record_shares(params, [uid])
             r = api.get_record(params, uid)
             if r:
+                params.queue_audit_event('open_record', record_uid=uid)
                 if fmt == 'json':
                     ro = {
                         'record_uid': r.record_uid,
@@ -745,6 +746,7 @@ class RecordDownloadAttachmentCommand(Command):
                             if decrypted:
                                 decrypted = api.unpad_binary(decrypted)
                                 f.write(decrypted)
+                            params.queue_audit_event('file_attachment_downloaded', record_uid=record_uid, attachment_id=file_id)
                     else:
                         logging.error('File "%s": Failed to file encryption key', file_name)
                 else:
@@ -851,6 +853,7 @@ class RecordUploadAttachmentCommand(Command):
                         response = requests.post(uo['url'], files=files, data=uo['parameters'])
                         if response.status_code == uo['success_status_code']:
                             attachments.append(a)
+                            params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
                 else:
                     logging.error('%s: file size exceeds file plan limits', file_path)
             except Exception as e:
@@ -969,6 +972,7 @@ class RecordDeleteAttachmentCommand(Command):
                 file_ids = [x for x in file_ids if x != file_uid]
                 if thumb_uid is not None:
                     file_ids = [x for x in file_ids if x != thumb_uid]
+                params.queue_audit_event('file_attachment_deleted', record_uid=record_uid, attachment_id=file_uid)
             else:
                 logging.info('Attachment \'%s\' is not found.', name)
 
@@ -1041,6 +1045,8 @@ class ClipboardCommand(Command):
             import pyperclip
             pyperclip.copy(txt)
             logging.info('Copied to clipboard')
+            if not kwargs.get('login'):
+                params.queue_audit_event('copy_password', record_uid=record_uid)
 
 
 class RecordHistoryCommand(Command):
@@ -1201,6 +1207,7 @@ class RecordHistoryCommand(Command):
                             status = rs['update_records'][0]
                             if status['status'] == 'success':
                                 logging.info('Revision V.{0} is restored'.format(revision))
+                                params.queue_audit_event('revision_restored', record_uid=record_uid)
                             else:
                                 logging.error('Failed to restore record revision: {0}'.format(status['status']))
                 else:

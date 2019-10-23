@@ -32,6 +32,7 @@ from ..subfolder import BaseFolderNode, find_folders
 
 TWO_FACTOR_CODE = 'TFC:Keeper'
 
+
 def get_import_folder(params, folder_uid, record_uid):
     folder = ImportFolder()
 
@@ -177,6 +178,7 @@ def export(params, file_format, filename, **export_args):
 
     if len(to_export) > 0:
         exporter.execute(filename, to_export)
+        params.queue_audit_event('exported_records', file_format=file_format)
         logging.info('%d records exported', rec_count)
 
 
@@ -272,6 +274,7 @@ def _import(params, file_format, filename, **kwargs):
 
     records_after = len(params.record_cache)
     if records_after > records_before:
+        params.queue_audit_event('imported_records', file_format=file_format)
         logging.info("%d records imported successfully", records_after - records_before)
 
 

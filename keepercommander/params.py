@@ -99,6 +99,7 @@ class KeeperParams:
         self.pending_share_requests = set()
         self.environment_variables = {}
         self.record_history = {}        # type: dict[str, (list[dict], int)]
+        self.event_queue = []
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -135,6 +136,7 @@ class KeeperParams:
         self.pending_share_requests.clear()
         self.environment_variables.clear()
         self.record_history.clear()
+        self.event_queue.clear()
 
     def __get_rest_context(self):
         return self.__rest_context
@@ -145,6 +147,15 @@ class KeeperParams:
     def __set_server(self, value):
         self.__server = value
         self.__rest_context.server_base = value
+
+    def queue_audit_event(self, name, **kwargs):
+        # type: (str, dict) -> None
+        if self.license and 'account_type' in self.license:
+            if self.license['account_type'] == 2:
+                self.event_queue.append({
+                    'audit_event_type': name,
+                    'inputs': {x:[kwargs[x]] for x in kwargs if x in {'record_uid', 'file_format', 'attachment_id', 'to_username'}}
+                })
 
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
