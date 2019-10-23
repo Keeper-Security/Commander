@@ -25,7 +25,7 @@ from prompt_toolkit.enums import EditingMode
 
 from .params import KeeperParams
 from . import display
-from .api import sync_down, login
+from .api import sync_down, login, communicate
 from .error import AuthenticationError, CommunicationError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
@@ -119,9 +119,19 @@ def do_command(params, command_line):
                             logging.info('Canceled')
                             return True
 
+                params.event_queue.clear()
                 command.execute_args(params, args, command=orig_cmd)
-
                 if params.session_token:
+                    if params.event_queue:
+                        try:
+                            rq = {
+                                'command': 'audit_event_client_logging',
+                                'item_logs': params.event_queue
+                            }
+                            communicate(params, rq)
+                        except Exception as e:
+                            logging.debug('Post client events error: %s', e)
+                        params.event_queue.clear()
                     if params.sync_data:
                         sync_down(params)
             else:

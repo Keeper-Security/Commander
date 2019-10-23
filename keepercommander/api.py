@@ -1158,7 +1158,11 @@ def prepare_record(params, record):
             return None
 
         rec = params.record_cache[record.record_uid]
+
         data.update(json.loads(rec['data_unencrypted'].decode('utf-8')))
+        if data['secret2'] != record.password:
+            params.queue_audit_event('record_password_change', record_uid=record.record_uid)
+
         if 'extra' in rec:
             extra.update(json.loads(rec['extra_unencrypted'].decode('utf-8')))
         if 'udata' in rec:
@@ -1185,6 +1189,18 @@ def prepare_record(params, record):
     record_object['data'] = encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
     record_object['extra'] = encrypt_aes(json.dumps(extra).encode('utf-8'), unencrypted_key)
     record_object['udata'] = udata
+
+    try:
+        if params.license and 'account_type' in params.license:
+            if record.password and params.license['account_type'] == 2:
+                for record_uid in params.record_cache:
+                    if record_uid != record.record_uid:
+                        rec = get_record(params, record_uid)
+                        if rec.password == record.password:
+                            params.queue_audit_event('reused_password', record_uid=record.record_uid)
+                            break
+    except:
+        pass
 
     return record_object
 
