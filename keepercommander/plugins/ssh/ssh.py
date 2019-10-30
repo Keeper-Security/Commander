@@ -32,7 +32,7 @@ def rotate(record, newpassword):
         s = pxssh.pxssh()
         s.login(host, user, oldpassword)
         s.sendline('passwd')
-        i = s.expect(['[Oo]ld [Pp]assword', 'current.*password', '[Nn]ew [Pp]assword'])
+        i = s.expect(['[Oo]ld.*[Pp]assword', 'current.*password', '[Nn]ew.*[Pp]assword'])
         if i == 0 or i == 1:
             s.sendline(oldpassword)
             s.expect('[Nn]ew.*[Pp]assword')

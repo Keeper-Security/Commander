@@ -1672,6 +1672,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             for item in queue:
                 is_new_team = type(item) == str
                 team_name = item if is_new_team else item['name']
+                team_node_id = node_id if is_new_team else item['node_id']
                 team_uid = api.generate_record_uid() if is_new_team else item['team_uid']
                 team_key = api.generate_aes_key()
                 encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
@@ -1700,7 +1701,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     'restrict_view': kwargs.get('restrict_view') == 'on',
                     'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
                     'private_key': api.encrypt_aes(private_key, team_key),
-                    'node_id': node_id,
+                    'node_id': team_node_id,
                     'team_key': api.encrypt_aes(team_key, params.data_key),
                     'encrypted_team_key': base64.urlsafe_b64encode(encrypted_team_key).decode().rstrip('='),
                     'manage_only': True
