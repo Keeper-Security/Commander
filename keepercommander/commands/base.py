@@ -58,6 +58,10 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_commands(commands)
     enterprise_command_info(aliases, command_info)
 
+    from .report import register_commands as report_commands, register_command_info as report_command_info
+    report_commands(commands)
+    report_command_info(aliases, command_info)
+
 
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
     choices = [ch.lower() if ch.upper() == default.upper() else ch.lower() for ch in choice]
