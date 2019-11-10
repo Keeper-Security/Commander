@@ -525,7 +525,10 @@ class RecordListCommand(Command):
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
-            display.formatted_records(results)
+            if 'time' in kwargs:
+                display.formatted_records(results, time=True)
+            else:
+                display.formatted_records(results)
 
 
 class RecordListSfCommand(Command):
