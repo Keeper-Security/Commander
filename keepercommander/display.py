@@ -48,9 +48,10 @@ def formatted_records(records, **kwargs):
     params = None
     if 'params' in kwargs:
         params = kwargs['params']
-
+    import pdb; pdb.set_trace()
+    reverse = True if 'reverse' in kwargs else False
     # Sort by folder+title
-    records.sort(key=lambda x: x.title.lower(), reverse=False)
+    records.sort(key=lambda x: x.title.lower(), reverse=reverse)
 
     if len(records) > 0:
         shared_folder = None

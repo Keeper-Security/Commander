@@ -123,6 +123,7 @@ rm_parser.exit = suppress_exit
 
 list_parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
 list_parser.add_argument('-t', '--time', dest='time', action='store_true', help='Sort by update time.')
+list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
@@ -525,10 +526,8 @@ class RecordListCommand(Command):
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
-            if 'time' in kwargs:
-                display.formatted_records(results, time=True)
-            else:
-                display.formatted_records(results)
+            #if 'time' in kwargs: display.formatted_records(results, time=True) else:
+            display.formatted_records(results, **kwargs)
 
 
 class RecordListSfCommand(Command):

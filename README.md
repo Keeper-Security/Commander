@@ -1,7 +1,7 @@
 ![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_250x100.png)
 # Github Keeper-Security/Commander fork
 ----
-## Aiming to enhance 'list' command print date fields.
+## Aiming to enhance 'list' command prints date fields.
 Jump to:
 * [Overview](#password-management-sdk-for-it-admins--developers)
 * [Use Cases](#use-cases)
