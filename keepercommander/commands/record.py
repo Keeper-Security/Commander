@@ -122,6 +122,7 @@ rm_parser.exit = suppress_exit
 
 
 list_parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
+list_parser.add_argument('-t', '--time', dest='time', action='store_true', help='Sort by update time.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
