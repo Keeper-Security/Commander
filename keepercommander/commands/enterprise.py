@@ -54,6 +54,7 @@ def register_commands(commands):
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
     commands['enterprise-push'] = EnterprisePushCommand()
+    commands['team-approve'] = TeamApproveCommand()
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
     commands['user-report'] = UserReportCommand()
@@ -69,7 +70,7 @@ def register_command_info(aliases, command_info):
     aliases['al'] = 'audit-log'
 
     for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
-              audit_log_parser, audit_report_parser, user_report_parser]:
+              team_approve_parser, audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
 
@@ -151,6 +152,14 @@ enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
+team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Automated team and user approval')
+team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
+team_approve_parser.add_argument('--user', dest='user', action='store_true', help='Approve team users only.')
+team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
+team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
+team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
+team_approve_parser.error = raise_parse_exception
+team_approve_parser.exit = suppress_exit
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on file format and template parameters')
@@ -3239,3 +3248,115 @@ class UserReportCommand(Command):
             else:
                 status = 'Pending Transfer'
         return status
+
+
+class TeamApproveCommand(EnterpriseCommand):
+    def get_parser(self):
+        return team_approve_parser
+
+    def execute(self, params, **kwargs):
+        approve_teams = True
+        approve_users = True
+        if kwargs['team'] or kwargs['user']:
+            approve_teams = kwargs['team'] or False
+            approve_users = kwargs['user'] or False
+
+        request_batch = []
+        if approve_teams and 'queued_teams' in params.enterprise:
+            for team in params.enterprise['queued_teams']:
+                team_name = team['name']
+                team_node_id = team['node_id']
+                team_uid = team['team_uid']
+                team_key = api.generate_aes_key()
+                encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
+                rsa_key = RSA.generate(2048)
+                private_key = DerSequence([0,
+                                           rsa_key.n,
+                                           rsa_key.e,
+                                           rsa_key.d,
+                                           rsa_key.p,
+                                           rsa_key.q,
+                                           rsa_key.d % (rsa_key.p-1),
+                                           rsa_key.d % (rsa_key.q-1),
+                                           Integer(rsa_key.q).inverse(rsa_key.p)
+                                           ]).encode()
+                pub_key = rsa_key.publickey()
+                public_key = DerSequence([pub_key.n,
+                                          pub_key.e
+                                          ]).encode()
+
+                rq = {
+                    'command': 'team_add',
+                    'team_uid': team_uid,
+                    'team_name': team_name,
+                    'restrict_edit': kwargs.get('restrict_edit') == 'on',
+                    'restrict_share': kwargs.get('restrict_share') == 'on',
+                    'restrict_view': kwargs.get('restrict_view') == 'on',
+                    'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
+                    'private_key': api.encrypt_aes(private_key, team_key),
+                    'node_id': team_node_id,
+                    'team_key': api.encrypt_aes(team_key, params.data_key),
+                    'encrypted_team_key': base64.urlsafe_b64encode(encrypted_team_key).decode().rstrip('='),
+                    'manage_only': True
+                }
+                request_batch.append(rq)
+            if request_batch:
+                rs = api.execute_batch(params, request_batch)
+                if rs:
+                    success = 0
+                    failure = 0
+                    for status in rs:
+                        if 'result' in status:
+                            if status['result'] == 'success':
+                                success += 1
+                            else:
+                                failure += 1
+                    if success or failure:
+                        logging.info('Team approval: success %s; failure %s', success, failure)
+                api.query_enterprise(params)
+
+        request_batch.clear()
+        if approve_users and 'queued_team_users' in params.enterprise and \
+                'teams' in params.enterprise and 'users' in params.enterprise:
+            active_users = {}
+            for u in params.enterprise['users']:
+                if u['status'] == 'active' and u['lock'] == 0:
+                    active_users[u['enterprise_user_id']] = u['username']
+
+            teams = {}
+            for t in params.enterprise['teams']:
+                teams[t['team_uid']] = t
+
+            for qtu in params.enterprise['queued_team_users']:
+                team_uid = qtu['team_uid']
+                if team_uid in teams:
+                    if 'users' in qtu:
+                        for u_id in qtu['users']:
+                            if u_id not in active_users:
+                                continue
+                            rq = {
+                                'command': 'team_enterprise_user_add',
+                                'team_uid': team_uid,
+                                'enterprise_user_id': u_id,
+                            }
+                            team_key = self.get_team_key(params, team_uid)
+                            public_key = self.get_public_key(params, active_users[u_id])
+                            if team_key and public_key:
+                                rq['team_key'] = api.encrypt_rsa(team_key, public_key)
+                                rq['user_type'] = 0
+                                request_batch.append(rq)
+            if request_batch:
+                rs = api.execute_batch(params, request_batch)
+                if rs:
+                    success = 0
+                    failure = 0
+                    for status in rs:
+                        if 'result' in status:
+                            if status['result'] == 'success':
+                                success += 1
+                            else:
+                                failure += 1
+                    if success or failure:
+                        logging.info('Team User approval: success %s; failure %s', success, failure)
+                api.query_enterprise(params)
+
