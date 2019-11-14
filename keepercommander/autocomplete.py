@@ -104,8 +104,8 @@ def try_resolve_path(params, path):
 
 
 class CommandCompleter(Completer):
-    def __init__(self, params, commands, aliases):
-        # type: (CommandCompleter, KeeperParams, dict, dict) -> None
+    def __init__(self, params, aliases):
+        # type: (CommandCompleter, KeeperParams, dict) -> None
         Completer.__init__(self)
         self.params = params
         self.commands = commands
@@ -142,7 +142,10 @@ class CommandCompleter(Completer):
             if document.is_cursor_at_the_end:
                 pos = document.text.find(' ')
                 if pos == -1:
-                    cmds = [x for x in self.commands if x.startswith(document.text)]
+                    cmds = [x for x in commands if x.startswith(document.text)]
+                    if self.params.enterprise:
+                        e_cmds = [x for x in enterprise_commands if x.startswith(document.text)]
+                        cmds.extend(e_cmds)
                     if len(cmds) > 0:
                         cmds.sort()
                         for c in cmds:
