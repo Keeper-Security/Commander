@@ -17,6 +17,7 @@ from prompt_toolkit.completion import Completion, Completer
 
 from .params import KeeperParams
 from .commands.folder import mv_parser
+from .commands.utils import ConnectCommand
 from .commands import commands, enterprise_commands
 from . import api
 
@@ -160,7 +161,7 @@ class CommandCompleter(Completer):
                             opts, _ = record_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
-                    elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'connect'}:
+                    elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
@@ -183,11 +184,16 @@ class CommandCompleter(Completer):
                             else:
                                 extra['prefix'] = opts.dst or ''
                                 context = 'folder'
-                    elif cmd in ['help']:
+                    elif cmd == 'help':
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['prefix'] = args
                             context = 'command'
+                    elif cmd == 'connect':
+                        args = CommandCompleter.fix_input(raw_input)
+                        if args is not None:
+                            extra['prefix'] = args
+                            context = 'connect'
 
                     if context in {'folder', 'path'}:
                         rs = try_resolve_path(self.params, extra['prefix'])
@@ -222,6 +228,13 @@ class CommandCompleter(Completer):
                     elif context == 'command':
                         cmd = extra['prefix']
                         for c in  itertools.chain(commands.keys(), enterprise_commands.keys()):
+                            if c.startswith(cmd):
+                                yield Completion(c, display=c, start_position=-len(cmd))
+                    elif context == 'connect':
+                        ConnectCommand.find_endpoints(self.params)
+                        cmd = extra['prefix']
+                        for ep in ConnectCommand.Endpoints:
+                            c = ep.name or ''
                             if c.startswith(cmd):
                                 yield Completion(c, display=c, start_position=-len(cmd))
 
