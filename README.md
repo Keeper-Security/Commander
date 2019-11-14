@@ -327,6 +327,15 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
+* ```team-approvee``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge 
+
+    Parameters:
+    - ```--team``` Approve teams only
+    - ```--user``` Approve team users only
+    - ```--restrict-edit {on,off}``` disable record edits
+    - ```--restrict-share {on,off}``` disable record re-shares
+    - ```--restrict-view {on,off}``` disable view/copy passwords
+
 * ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
 
     Parameters:
