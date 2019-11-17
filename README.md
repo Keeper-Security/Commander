@@ -97,6 +97,7 @@ $ cd /path/to/Commander
 $ virtualenv -p python3 venv
 $ source venv/bin/activate
 $ pip install -r requirements.txt
+$ export PIP_USER=no # To solve: "Can not perform a '--user' install. User site-packages are not visible in this virtualenv."
 $ pip install -e .
 ```
 
