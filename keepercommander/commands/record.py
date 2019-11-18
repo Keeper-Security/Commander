@@ -122,6 +122,7 @@ rm_parser.exit = suppress_exit
 
 
 list_parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
+list_parser.add_argument('-m', '--modified', dest='modified', action='store_true', help='Modified records only.')
 list_parser.add_argument('-t', '--time', dest='time', action='store_true', help='Sort by update time.')
 list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
@@ -524,6 +525,18 @@ class RecordListCommand(Command):
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_records(params, pattern or '')
         if results:
+            import pdb; pdb.set_trace()
+            if 'modified' in kwargs:
+                mDict = {}
+                for r in results:
+                    record_history = get_record_history(params, r.record_uid)
+                    if len(record_history) > 0:
+                        import pdb; pdb.set_trace()
+                        mtList = [r['client_modified_time'] for r in record_history]
+                        sortedMtList = sorted(mtList)
+                        lastVersion = sortedMtList[-1]
+                        mDict[r.record_uid] = lastVersion
+                import pdb; pdb.set_trace()
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
             #if 'time' in kwargs: display.formatted_records(results, time=True) else:
@@ -1051,6 +1064,14 @@ class ClipboardCommand(Command):
             if not kwargs.get('login'):
                 params.queue_audit_event('copy_password', record_uid=record_uid)
 
+def get_record_history(params, record_uid):
+    rq = {
+        'command': 'get_record_history',
+        'record_uid': record_uid,
+        'client_time': api.current_milli_time
+    }
+    rs = api.communicate(params, rq)
+    return rs['history']
 
 class RecordHistoryCommand(Command):
     def get_parser(self):
