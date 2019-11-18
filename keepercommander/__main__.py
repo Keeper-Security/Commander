@@ -152,7 +152,9 @@ def main():
             if opts.command:
                 flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
                 options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
-                command = ' '.join([opts.command, flags, options])
+                command = ' '.join([opts.command, flags])
+                if options:
+                    command += ' -- ' + options
                 params.commands.append(command)
             params.commands.append('q')
         cli.loop(params)
