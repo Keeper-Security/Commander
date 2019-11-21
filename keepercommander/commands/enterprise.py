@@ -81,6 +81,7 @@ enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
+enterprise_info_parser.add_argument('pattern', nargs='?', type=str, help='search pattern. applicable to users, teams, and roles.')
 enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
 
@@ -574,6 +575,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             print('')
             print(tr(tree))
         else:
+            pattern = (kwargs.get('pattern') or '').lower()
             if show_users:
                 rows = []
                 for u in users.values():
@@ -587,7 +589,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                 status = 'Transfer Acceptance'
                         else:
                             status = u['status'].capitalize()
-                    rows.append([u['id'], u['username'], u['name'], status, node_path(u['node_id'])])
+                    row = [u['id'], u['username'], u['name'], status, node_path(u['node_id'])]
+                    if pattern:
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                            continue
+                    rows.append(row)
                 rows.sort(key=lambda x: x[1])
 
                 print('')
@@ -596,10 +602,18 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_teams:
                 rows = []
                 for t in teams.values():
-                    rows.append([t['id'], t['name'], restricts(t), node_path(t['node_id']), len(t['users'])])
+                    row = [t['id'], t['name'], restricts(t), node_path(t['node_id']), len(t['users'])]
+                    if pattern:
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                            continue
+                    rows.append(row)
 
                 for t in queued_teams.values():
-                    rows.append([t['id'], t['name'], 'Queued', node_path(t['node_id']), len(t['users'])])
+                    row = [t['id'], t['name'], 'Queued', node_path(t['node_id']), len(t['users'])]
+                    if pattern:
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                            continue
+                    rows.append(row)
 
                 rows.sort(key=lambda x: x[1])
 
@@ -609,8 +623,12 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_roles:
                 rows = []
                 for r in roles.values():
-                    rows.append([r['id'], r['name'], 'Y' if r['visible_below'] else '', 'Y' if r['new_user_inherit'] else '',
-                                 'Y' if r['is_admin'] else '', node_path(r['node_id']), len(r['users'])])
+                    row = [r['id'], r['name'], 'Y' if r['visible_below'] else '', 'Y' if r['new_user_inherit'] else '',
+                           'Y' if r['is_admin'] else '', node_path(r['node_id']), len(r['users'])]
+                    if pattern:
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                            continue
+                    rows.append(row)
                 rows.sort(key=lambda x: x[1])
 
                 print('')
