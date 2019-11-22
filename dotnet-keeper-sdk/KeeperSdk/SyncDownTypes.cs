@@ -462,7 +462,7 @@ namespace KeeperSecurity.Sdk
         public string data;
 
         internal byte[] unencryptedFolderKey;
-        public string ParentUid => parentUid;
+        public string ParentUid => parentUid ?? sharedFolderUid;
         public string FolderUid => folderUid;
         public FolderType Type => FolderType.SharedFolderForder;
         public string SharedFolderUid => sharedFolderUid;
