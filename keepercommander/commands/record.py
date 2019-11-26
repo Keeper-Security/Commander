@@ -125,6 +125,7 @@ list_parser = argparse.ArgumentParser(prog='list|l', description='Display all re
 list_parser.add_argument('-m', '--modified', dest='modified', action='store_true', help='Modified records only.')
 list_parser.add_argument('-t', '--time', dest='time', action='store_true', help='Sort by update time.')
 list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
+list_parser.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
@@ -525,21 +526,15 @@ class RecordListCommand(Command):
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_records(params, pattern or '')
         if results:
-            import pdb; pdb.set_trace()
-            if 'modified' in kwargs:
-                mDict = {}
-                for r in results:
-                    record_history = get_record_history(params, r.record_uid)
-                    if len(record_history) > 0:
-                        import pdb; pdb.set_trace()
-                        mtList = [r['client_modified_time'] for r in record_history]
-                        sortedMtList = sorted(mtList)
-                        lastVersion = sortedMtList[-1]
-                        mDict[r.record_uid] = lastVersion
-                import pdb; pdb.set_trace()
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
             #if 'time' in kwargs: display.formatted_records(results, time=True) else:
+            history_command = RecordHistoryCommand()
+            def get_history(record):                
+                import pdb; pdb.set_trace()
+                hy = history_command.execute(params, record=record.record_uid, action='list')
+                return hy
+            hy = get_history(results[0])
             display.formatted_records(results, **kwargs)
 
 
@@ -1064,20 +1059,11 @@ class ClipboardCommand(Command):
             if not kwargs.get('login'):
                 params.queue_audit_event('copy_password', record_uid=record_uid)
 
-def get_record_history(params, record_uid):
-    rq = {
-        'command': 'get_record_history',
-        'record_uid': record_uid,
-        'client_time': api.current_milli_time
-    }
-    rs = api.communicate(params, rq)
-    return rs['history']
-
 class RecordHistoryCommand(Command):
     def get_parser(self):
         return record_history_parser
 
-    def execute(self, params, **kwargs):
+    def execute(self, params, print=print, **kwargs):
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             self.get_parser().print_help()
@@ -1140,6 +1126,7 @@ class RecordHistoryCommand(Command):
             if action == 'list':
                 headers = ['Version', 'Modified By', 'Time Modified']
                 rows = []
+                raws = []
                 for i, revision in enumerate(history):
                     if 'client_modified_time' in revision:
                         dt = datetime.datetime.fromtimestamp(revision['client_modified_time']/1000.0)
@@ -1147,7 +1134,9 @@ class RecordHistoryCommand(Command):
                     else:
                         tm = ''
                     rows.append(['V.{}'.format(length-i), revision.get('user_name') or '', tm])
+                    raws.append([length-i, revision.get('user_name') or '', dt])
                 print(tabulate(rows, headers=headers))
+                return raws
             elif action == 'show':
                 if revision == 0:
                     revision = length + 1
