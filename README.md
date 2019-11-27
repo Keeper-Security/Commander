@@ -688,18 +688,26 @@ Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Defaul
 ```
 
 For example, to see all record deletions that occurred in the last 7 days:
-
 ```
 My Vault> audit-report --report-type=raw --event-type record_delete --created last_7_days
 ```
 
 Another example, to see all event history for a particular record UID:
-
 ```
 My Vault> audit-report --report-type=raw --record-uid cQxq0MZ1ZmB-s9JE8CZpdA
 ```
 
-There are hundreds of possible report variations. If you have any questions, please contact us at commander@keepersecurity.com. 
+To see certain events (in this case, login_failure) today:
+```
+My Vault> audit-report --report-type=raw --event-type=login_failure --created=today
+```
+
+To list all possible event types:
+```
+My Vault> audit-report --report-type=dim --column=audit_event_type 
+```
+
+There are hundreds of possible report variations possible. If you have any questions, please contact us at commander@keepersecurity.com and we'll help you construct the perfect report syntax.
 
 ### Event Logging to SIEM
 
