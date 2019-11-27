@@ -2427,7 +2427,8 @@ class AuditLogCommand(EnterpriseCommand):
                 finished = True
                 if 'audit_event_overview_report_rows' in rs:
                     audit_events = rs['audit_event_overview_report_rows']
-                    if len(audit_events) > 1:
+                    event_count = len(audit_events)
+                    if event_count > 1:
                         # remove events from the tail for the last second
                         last_event_time = int(audit_events[-1]['created'])
                         while len(audit_events) > 0:
@@ -2443,6 +2444,10 @@ class AuditLogCommand(EnterpriseCommand):
                                 events.append(log_export.convert_event(props, event))
 
                         finished = len(events) == 0
+                        if finished:
+                            if event_count > 900:
+                                finished = False
+                                last_event_time += 1
 
             while len(events) > 0:
                 to_store = events[:chunk_length]
@@ -2457,9 +2462,10 @@ class AuditLogCommand(EnterpriseCommand):
         if last_event_time > 0:
             logging.info('')
             logging.info('Exported %d audit event(s)', count)
-            record.set_field('last_event_time', str(last_event_time))
-            params.sync_data = True
-            api.update_record(params, record, silent=True)
+            if count > 0:
+                record.set_field('last_event_time', str(last_event_time))
+                params.sync_data = True
+                api.update_record(params, record, silent=True)
 
 
 audit_report_description = '''
