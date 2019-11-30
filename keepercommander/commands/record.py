@@ -522,20 +522,24 @@ class RecordListCommand(Command):
     def get_parser(self):
         return list_parser
 
-    def execute(self, params, **kwargs):
-        pattern = kwargs['pattern'] if 'pattern' in kwargs else None
+    def execute(self, params, print=None, **kwargs):
+        import pdb;pdb.set_trace()
+        pattern = kwargs.get('pattern')
         results = api.search_records(params, pattern or '')
-        if results:
-            if len(results) < 5:
-                api.get_record_shares(params, [x.record_uid for x in results])
-            #if 'time' in kwargs: display.formatted_records(results, time=True) else:
+        if not results:
+            return None
+        #if len(results) < 5:
+        #    api.get_record_shares(params, [x.record_uid for x in results])
+        #if 'time' in kwargs: display.formatted_records(results, time=True) else:
+        history = kwargs.get('history')
+        get_history = None
+        if history:
             history_command = RecordHistoryCommand()
-            def get_history(record):                
-                import pdb; pdb.set_trace()
-                hy = history_command.execute(params, record=record.record_uid, action='list')
-                return hy
-            hy = get_history(results[0])
-            display.formatted_records(results, **kwargs)
+            get_history = lambda record: history_command.execute(params, record=record.record_uid, action='list', print=None)
+        formatted = display.formatted_records(results, append=get_history, print=None, **kwargs)
+        if print:
+            print formatted
+        return formatted            
 
 
 class RecordListSfCommand(Command):
