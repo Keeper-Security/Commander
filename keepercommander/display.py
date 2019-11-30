@@ -14,7 +14,7 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
-
+from .api import get_shared_folder
 
 init()
 
@@ -42,52 +42,50 @@ def welcome():
     print('')
     print('')
 
+RECORD_HEADER = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
 
 def formatted_records(records, **kwargs):
     """Display folders/titles/uids for the supplied shared folders"""
-    params = None
-    if 'params' in kwargs:
-        params = kwargs['params']
+    if len(records) == 0:
+        return None
     
-    # Sort by title
-    records.sort(key=lambda x: x.title.lower(), reverse='reverse' in kwargs)
-
-    if len(records) > 0:
-        shared_folder = None
-        if 'folder' in kwargs and params is not None:
-            fuid = kwargs['folder']
-            if fuid in params.folder_cache:
-                folder = params.folder_cache[fuid]
-                if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    if folder.type == BaseFolderNode.SharedFolderFolderType:
-                        fuid = folder.shared_folder_uid
-                else:
-                    fuid = None
-                if fuid and fuid in params.shared_folder_cache:
-                    shared_folder = params.shared_folder_cache[fuid]
-
-        table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
-        headers = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
-        if shared_folder and 'records' in shared_folder:
-            headers.append('Flags')
-            for row in table:
-                flag = ''
-                for sfr in shared_folder['records']:
-                    if sfr['record_uid'] == row[1]:
-                        flag = flag + ('W' if sfr['can_edit'] else '_') + ' '
-                        flag = flag + ('S' if sfr['can_share'] else '_')
-                        break
-                row.append(flag)
-
-        print(tabulate(table, headers=headers))
-
-        print('')
-
-    skip_details = kwargs.get('skip_details') or False
-    # Under 5 recs, just display on the screen
-    if len(records) < 5 and not skip_details:
+    # Under 5 recs and skip_details then, just display on the screen
+    if len(records) < 5 and 'skip_details' in kwargs:
         for r in records:
             r.display(**kwargs)
+        return None    
+
+    params = kwargs.get('params')    
+    # List or Search: Sort by title or revision
+    sort_key = kwargs.get('sort')
+    if sort_key == 'title':
+        get_key = lambda r: r.title.lower()
+    elif sort_key == 'revision':
+        get_key = lambda r: r.revision
+    else:
+        get_key = None
+    if get_key:
+        records.sort(key=get_key, reverse=kwargs.get('reverse'))
+
+    shared_folder = api.get_shared_folder()
+    shared_folder_records = shared_folder.get('records') if shared_folder else None
+    headers = RECORD_HEADER if shared_folder_records else RECORD_HEADER.append('Flags')
+    def put_flag(r):
+        if not shared_folder_records:
+            return None
+    table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
+    if shared_folder and 'records' in shared_folder:
+        for row in table:
+            flag = ''
+            for sfr in shared_folder['records']:
+                if sfr['record_uid'] == row[1]:
+                    flag = flag + ('W' if sfr['can_edit'] else '_') + ' '
+                    flag = flag + ('S' if sfr['can_share'] else '_')
+                    break
+            row.append(flag)
+
+    print(tabulate(table, headers=headers))
+    print('')
 
 
 def formatted_shared_folders(shared_folders, **kwargs):
