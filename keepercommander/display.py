@@ -44,8 +44,12 @@ def welcome():
 
 RECORD_HEADER = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
 
-def formatted_records(records, **kwargs):
-    """Display folders/titles/uids for the supplied shared folders"""
+def formatted_records(records, print=print, append=None, **kwargs):
+    """
+    Display folders/titles/uids for the supplied shared folders
+    print : function(*args)
+    append : function(record): returns its header if record==None
+    """
     if len(records) == 0:
         return None
     
@@ -69,23 +73,27 @@ def formatted_records(records, **kwargs):
 
     shared_folder = api.get_shared_folder()
     shared_folder_records = shared_folder.get('records') if shared_folder else None
-    headers = RECORD_HEADER if shared_folder_records else RECORD_HEADER.append('Flags')
+    headers = RECORD_HEADER if shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
     def put_flag(r):
         if not shared_folder_records:
             return None
     table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
-    if shared_folder and 'records' in shared_folder:
+    if shared_folder_records:
         for row in table:
-            flag = ''
-            for sfr in shared_folder['records']:
+            flags = []
+            for sfr in shared_folder_records:
                 if sfr['record_uid'] == row[1]:
-                    flag = flag + ('W' if sfr['can_edit'] else '_') + ' '
-                    flag = flag + ('S' if sfr['can_share'] else '_')
+                    flags += ['W'] if sfr['can_edit'] else ['_']
+                    flags += ['S'] if sfr['can_share'] else ['_']
                     break
-            row.append(flag)
+            row += flags
 
-    print(tabulate(table, headers=headers))
-    print('')
+
+enoN()dneppa =+ headersraeh            formatted = tabulate(table, headers=headers)
+    if print:
+        print(formatted);
+        print()
+    return formatted
 
 
 def formatted_shared_folders(shared_folders, **kwargs):
