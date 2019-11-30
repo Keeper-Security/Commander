@@ -127,8 +127,9 @@ class Record:
             if len(idxs) == 1:
                 return self.custom_fields.pop(idxs[0])
 
-    def display(self, **kwargs):
-        print('') 
+    def display(self, print=print, **kwargs):
+        def format(msg, item):
+            '{0:>20s}: {1:<20s}'.format(msg, item)
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
         params = None
         if 'params' in kwargs:
@@ -141,6 +142,7 @@ class Record:
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
         if self.password: print('{0:>20s}: {1:<20s}'.format('Password',self.password))
         if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL',self.login_url))
+        if self.revision: print(f'Revision: {self.revision}')
         #print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
         
         if len(self.custom_fields) > 0:
@@ -232,10 +234,15 @@ class Record:
         self.password = '******'
 
     def to_string(self):
-        target = self.record_uid + self.folder + self.title + \
-                 self.login + self.password + self.notes + \
-                 self.login_url + str(self.custom_fields)
-        return target
+        return f'''{self.record_uid}
+            {self.folder}
+            {self.title}
+            {self.login}
+            {self.password}
+            {self.revision}
+            {self.notes}
+            {self.login_url}
+            {str(self.custom_fields)}'''
 
     def to_lowerstring(self):
         return self.to_string().lower()
@@ -253,7 +260,7 @@ class Record:
                         field['value'] for field in self.custom_fields])
 
         return tabulate(self.folder, self.title, self.login,
-                        self.password, self.login_url, self.notes.replace('\n', '\\\\n'),
+                        self.password, self.login_url, self.revision, self.notes.replace('\n', '\\\\n'),
                         custom_fields)
 
     def to_dictionary(self):
@@ -264,6 +271,7 @@ class Record:
             'login': self.login,
             'password': self.password,
             'login_url': self.login_url,
+            'revision': self.revision,
             'notes': self.notes,
             'custom_fields': self.custom_fields,
         }
