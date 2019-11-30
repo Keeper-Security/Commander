@@ -1228,7 +1228,7 @@ Once configured, you can simply authenticate to Commander using the service acco
 The `get` command allows you to query a stored Keeper password by record UID.  For example:
 
 ```bash
-$ keeper --user=<Keeper Email> -- get --format=password <Record UID>
+$ keeper --user=<Keeper Email> --get --format=password <Record UID>
 ```
 The password retrieved is written to standard output. 
 
@@ -1285,7 +1285,7 @@ node {
            // load Keeper credentials into environmenmt variables. Commander uses KEEPER_PASSWORD variable if set 
            withCredentials([usernamePassword(credentialsId: 'Keeper', usernameVariable: 'KEEPER_USERNAME', passwordVariable: 'KEEPER_PASSWORD')]) {
                     // retrieve the password 
-                   env.PASSWORD = sh(script: ". bin/activate; keeper --user=${KEEPER_USERNAME} -- get --format=password <Record UID>", returnStdout: true).trim()
+                   env.PASSWORD = sh(script: ". bin/activate; keeper --user=${KEEPER_USERNAME} --get --format=password <Record UID>", returnStdout: true).trim()
             }
        }
    }
