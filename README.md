@@ -179,7 +179,7 @@ Type ```h``` to display all commands and help information.
 
 ### Keeper Command Reference
 
-Whether using the interactive shell, CLI or JSON config file, Keeper supports the following features specified by ```command```.  Each command supports additional parameters and options.  To get help on a particular command, use the ```-h``` flag. 
+Whether using the interactive shell, CLI or JSON config file, Keeper supports the following features specified by ```command```.  Each command supports additional parameters and options.  To get help on a particular command, run ```help <command>```. 
 
 **Basic Vault Commands**
 
@@ -190,6 +190,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```whoami``` Information about logged in user
 
 * ```logout``` Logout from Keeper
+
+* ```help``` Display help on Commander's command
 
 * ```shell``` Use Keeper interactive shell
 
@@ -592,7 +594,7 @@ $ keeper import --format=keepass --shared --permissions=URES test.kdbx
 
 For more options, see the help screen:
 ```bash
-$ keeper import -h
+$ keeper help import
 ```
 
 **LastPass Import**
@@ -617,7 +619,7 @@ $ keeper import --format=lastpass --shared --permissions=URES craig@acme-demo.co
 
 For more options, see the help screen:
 ```bash
-$ keeper import -h
+$ keeper help import
 ```
 
 ### Ad-Hoc Event Reporting 
