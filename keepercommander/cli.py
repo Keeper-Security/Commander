@@ -200,21 +200,22 @@ def loop(params):
         else:
             logging.getLogger().setLevel(logging.WARNING)
 
-    if params.user:
-        if not params.password:
-            logging.info('Enter password for {0}'.format(params.user))
-            try:
-                params.password = getpass.getpass(prompt='Password: ', stream=None)
-            except KeyboardInterrupt:
-                print('')
-        if params.password:
-            logging.info('Logging in...')
-            try:
-                login(params)
-                if params.session_token:
-                    do_command(params, 'sync-down')
-            except AuthenticationError as e:
-                logging.error(e)
+    if len(params.commands) == 0:
+        if params.user:
+            if not params.password:
+                logging.info('Enter password for {0}'.format(params.user))
+                try:
+                    params.password = getpass.getpass(prompt='Password: ', stream=None)
+                except KeyboardInterrupt:
+                    print('')
+            if params.password:
+                logging.info('Logging in...')
+                try:
+                    login(params)
+                    if params.session_token:
+                        do_command(params, 'sync-down')
+                except AuthenticationError as e:
+                    logging.error(e)
 
     while True:
         command = ''
