@@ -201,12 +201,13 @@ def loop(params):
             logging.getLogger().setLevel(logging.WARNING)
 
     if params.user:
-        if not params.password:
-            logging.info('Enter password for {0}'.format(params.user))
-            try:
-                params.password = getpass.getpass(prompt='Password: ', stream=None)
-            except KeyboardInterrupt:
-                print('')
+        if len(params.commands) == 0:
+            if not params.password:
+                logging.info('Enter password for {0}'.format(params.user))
+                try:
+                    params.password = getpass.getpass(prompt='Password: ', stream=None)
+                except KeyboardInterrupt:
+                    print('')
         if params.password:
             logging.info('Logging in...')
             try:
