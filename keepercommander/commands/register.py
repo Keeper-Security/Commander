@@ -71,7 +71,7 @@ share_folder_parser.add_argument('-r', '--record', dest='record', action='append
 share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true', help='account permission: can manage records.')
 share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true', help='account permission: can manage users.')
 share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='record permission: can be shared')
-share_folder_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
+share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
 share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
