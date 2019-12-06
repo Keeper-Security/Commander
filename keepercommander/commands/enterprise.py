@@ -3053,8 +3053,12 @@ class EnterprisePushCommand(EnterpriseCommand):
                 'add_shares': chunk
             })
 
-        api.execute_batch(params, commands)
-
+        rss = api.execute_batch(params, commands)
+        if rss:
+            for rs in rss:
+                if 'result' in rs:
+                    if rs['result'] != 'success':
+                        logging.error('Push error (%s): %s', rs.get('result_code'), rs.get('message'))
         params.sync_data = True
 
 

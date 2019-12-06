@@ -1132,7 +1132,7 @@ enterprise-push --email user@company.com push.json
 
 The "push.json" file is structured an an array of password objects.  For example:
 
-```
+```json
 [
     {
         "title": "Google",
@@ -1141,7 +1141,7 @@ The "push.json" file is structured an an array of password objects.  For example
         "login_url": "https://google.com",
         "notes": "",
         "custom_fields": {
-            "Name 1": "Value 1"
+            "Name 1": "Value 1",
             "Name 2": "Value 2"
         }
     },
