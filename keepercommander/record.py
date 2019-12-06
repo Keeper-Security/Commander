@@ -17,6 +17,7 @@ from urllib import parse
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
 from .error import Error
 
+
 def get_totp_code(url):
     # type: (str) -> (str, int) or None
     comp = parse.urlparse(url)
@@ -25,7 +26,7 @@ def get_totp_code(url):
         algorithm = 'SHA1'
         digits = 6
         period = 30
-        for k,v in parse.parse_qsl(comp.query):
+        for k, v in parse.parse_qsl(comp.query):
             if k == 'secret':
                 secret = v
             elif k == 'algorithm':
@@ -39,13 +40,17 @@ def get_totp_code(url):
             tm = tm_base / period
             alg = algorithm.lower()
             if alg in hashlib.__dict__:
+                reminder = len(secret) % 8
+                if reminder in {2, 4, 5, 7}:
+                    padding = '=' * (8 - reminder)
+                    secret += padding
                 key = base64.b32decode(secret, casefold=True)
                 msg = int(tm).to_bytes(8, byteorder='big')
-                hash =  hashlib.__dict__[alg]
+                hash = hashlib.__dict__[alg]
                 hm = hmac.new(key, msg=msg, digestmod=hash)
                 digest = hm.digest()
                 offset = digest[-1] & 0x0f
-                base = bytearray(digest[offset:offset+4])
+                base = bytearray(digest[offset:offset + 4])
                 base[0] = base[0] & 0x7f
                 code_int = int.from_bytes(base, byteorder='big')
                 code = str(code_int % (10 ** digits))
@@ -56,22 +61,22 @@ def get_totp_code(url):
                 raise Error('Unsupported hash algorithm: {0}'.format(algorithm))
 
 
-
 class Record:
     """Defines a user-friendly Keeper Record for display purposes"""
 
-    def __init__(self,record_uid='',folder='',title='',login='',password='', login_url='',notes='',custom_fields=None,revision=''):
-        self.record_uid = record_uid 
-        self.folder = folder 
-        self.title = title 
-        self.login = login 
-        self.password = password 
+    def __init__(self, record_uid='', folder='', title='', login='', password='', login_url='', notes='',
+                 custom_fields=None, revision=''):
+        self.record_uid = record_uid
+        self.folder = folder
+        self.title = title
+        self.login = login
+        self.password = password
         self.login_url = login_url
-        self.notes = notes 
-        self.custom_fields = custom_fields or [] # type: list
+        self.notes = notes
+        self.custom_fields = custom_fields or []  # type: list
         self.attachments = None
         self.revision = revision
-        self.unmasked_password =  None
+        self.unmasked_password = None
         self.totp = None
 
     def load(self, data, **kwargs):
@@ -103,7 +108,7 @@ class Record:
                     if field['field_type'] == 'totp':
                         self.totp = field['data']
 
-    def get(self,field):
+    def get(self, field):
         result = ''
         for c in self.custom_fields:
             if (c['name'] == field):
@@ -123,12 +128,12 @@ class Record:
 
     def remove_field(self, name):
         if self.custom_fields:
-            idxs = [i for i,x in enumerate(self.custom_fields) if x['name'] == name]
+            idxs = [i for i, x in enumerate(self.custom_fields) if x['name'] == name]
             if len(idxs) == 1:
                 return self.custom_fields.pop(idxs[0])
 
     def display(self, **kwargs):
-        print('') 
+        print('')
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
         params = None
         if 'params' in kwargs:
@@ -137,12 +142,12 @@ class Record:
             for i in range(len(folders)):
                 print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
 
-        if self.title: print('{0:>20s}: {1:<20s}'.format('Title',self.title))
-        if self.login: print('{0:>20s}: {1:<20s}'.format('Login',self.login))
-        if self.password: print('{0:>20s}: {1:<20s}'.format('Password',self.password))
-        if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL',self.login_url))
-        #print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
-        
+        if self.title: print('{0:>20s}: {1:<20s}'.format('Title', self.title))
+        if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
+        if self.password: print('{0:>20s}: {1:<20s}'.format('Password', self.password))
+        if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL', self.login_url))
+        # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
+
         if len(self.custom_fields) > 0:
             for c in self.custom_fields:
                 if not 'value' in c: c['value'] = ''
@@ -170,7 +175,9 @@ class Record:
                         size = size / 1024
                         scale = 'Gb'
                 sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
-                print('{0:>21s} {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments:' if i == 0 else '', atta.get('name'), sz, scale, 'ID', atta.get('id')))
+                print('{0:>21s} {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments:' if i == 0 else '',
+                                                                             atta.get('name'), sz, scale, 'ID',
+                                                                             atta.get('id')))
 
         if self.totp:
             code, remain, _ = get_totp_code(self.totp)
@@ -183,7 +190,8 @@ class Record:
                     no = 0
                     if 'user_permissions' in rec['shares']:
                         perm = rec['shares']['user_permissions'].copy()
-                        perm.sort(key=lambda r: (' 1' if r.get('owner') else ' 2' if r.get('editable') else ' 3' if r.get('sharable') else '') + r.get('username'))
+                        perm.sort(key=lambda r: (' 1' if r.get('owner') else ' 2' if r.get(
+                            'editable') else ' 3' if r.get('sharable') else '') + r.get('username'))
                         for uo in perm:
                             flags = ''
                             if uo.get('owner'):
@@ -200,7 +208,9 @@ class Record:
                             if not flags:
                                 flags = 'View'
 
-                            print('{0:>21s} {1} ({2}) {3}'.format('Shared Users:' if no == 0 else '', uo['username'], flags, 'self' if uo['username'] == params.user else ''))
+                            print('{0:>21s} {1} ({2}) {3}'.format('Shared Users:' if no == 0 else '', uo['username'],
+                                                                  flags,
+                                                                  'self' if uo['username'] == params.user else ''))
                             no = no + 1
                     no = 0
                     if 'shared_folder_permissions' in rec['shares']:
@@ -218,10 +228,12 @@ class Record:
                             for f_uid in find_folders(params, self.record_uid):
                                 if f_uid in params.subfolder_cache:
                                     fol = params.folder_cache[f_uid]
-                                    if fol.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                                    if fol.type in {BaseFolderNode.SharedFolderType,
+                                                    BaseFolderNode.SharedFolderFolderType}:
                                         sfid = fol.uid if fol.type == BaseFolderNode.SharedFolderType else fol.shared_folder_uid
                                         if sf_uid == sfid:
-                                            print('{0:>21s} {1:<20s}'.format('Shared Folders:' if no == 0 else '', fol.name))
+                                            print('{0:>21s} {1:<20s}'.format('Shared Folders:' if no == 0 else '',
+                                                                             fol.name))
                                             no = no + 1
 
         print('')
@@ -250,7 +262,7 @@ class Record:
             for field in self.custom_fields:
                 if ('name' in field) and ('value' in field):
                     custom_fields = '\t'.join([field['name'] + '\t' + \
-                        field['value'] for field in self.custom_fields])
+                                               field['value'] for field in self.custom_fields])
 
         return tabulate(self.folder, self.title, self.login,
                         self.password, self.login_url, self.notes.replace('\n', '\\\\n'),

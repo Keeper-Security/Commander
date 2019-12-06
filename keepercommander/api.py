@@ -91,7 +91,6 @@ def login(params):
                 params.iterations = auth_params.iterations
                 params.salt = auth_params.salt
                 params.auth_verifier = auth_verifier(params.password, params.salt, params.iterations)
-                logging.debug('<<< Auth Verifier:[%s]', params.auth_verifier)
             except KeeperApiError as e:
                 params.auth_verifier = None
                 if e.result_code == 'user_does_not_exist':
@@ -567,7 +566,6 @@ def sync_down(params):
 
             # add to local cache
             if 'record_key_unencrypted' in meta_data:
-                logging.debug('Adding meta data to cache for ' + meta_data['record_uid'])
                 params.meta_data_cache[meta_data['record_uid']] = meta_data
             else:
                 logging.error('Could not decrypt meta data key: %s', meta_data['record_uid'])
@@ -801,10 +799,6 @@ def sync_down(params):
 
     prepare_folder_tree(params)
 
-    logging.debug('--- Meta Data Cache: %s', params.meta_data_cache)
-    logging.debug('--- Record Cache: %s', params.record_cache)
-    logging.debug('--- Folders Cache: %s', params.shared_folder_cache)
-
     if 'pending_shares_from' in response_json:
         params.pending_share_requests.update(response_json['pending_shares_from'])
 
@@ -956,8 +950,6 @@ def get_record(params,record_uid):
         return
 
     cached_rec = params.record_cache[record_uid]
-    logging.debug('Cached rec: %s', cached_rec)
-
     rec = Record()
 
     try:
@@ -1086,11 +1078,7 @@ def search_shared_folders(params, searchstring):
 
         logging.debug('Getting Shared Folder UID: %s', shared_folder_uid)
         sf = get_shared_folder(params, shared_folder_uid)
-
-        logging.debug('sf: %s', sf)
         target = sf.to_lowerstring()
-
-        logging.debug('Lowercase: %s', target)
 
         if p.search(target):
             logging.debug('Search success')
@@ -1112,10 +1100,7 @@ def search_teams(params, searchstring):
         logging.debug('Getting Team UID: %s', team_uid)
         team = get_team(params, team_uid)
 
-        logging.debug('team: %s', team)
         target = team.to_lowerstring()
-
-        logging.debug('Lowercase: %s', target)
 
         if p.search(target):
             logging.debug('Search success')
@@ -1259,7 +1244,7 @@ def execute_batch(params, requests):
         try:
             rs = communicate(params, rq)
             if 'results' in rs:
-                results = rs['results'] # type: list
+                results = rs['results']  # type: list
                 if len(results) > 0:
                     responses.extend(results)
                     if params.debug:

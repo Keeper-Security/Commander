@@ -66,7 +66,7 @@ share_record_parser.exit = suppress_exit
 
 share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change shared folder permissions')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant', action='store', help='shared folder action. \'grant\' if omitted')
-share_folder_parser.add_argument('-u', '--user', dest='user', action='append', help='account email, team, or \'*\' as default folder permission')
+share_folder_parser.add_argument('-e', '--email', dest='user', action='append', help='account email, team, or \'*\' as default folder permission')
 share_folder_parser.add_argument('-r', '--record', dest='record', action='append', help='record name, record UID, or \'*\' as default folder permission')
 share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true', help='account permission: can manage records.')
 share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true', help='account permission: can manage users.')
@@ -81,9 +81,8 @@ share_report_parser = argparse.ArgumentParser(prog='share-report', description='
 share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 share_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
-share_report_parser.add_argument('-u', '--user', dest='user', action='append', help='user email or team name')
+share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
 share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true', help='record ownership information')
-#share_report_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 

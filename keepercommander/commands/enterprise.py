@@ -155,7 +155,7 @@ enterprise_team_parser.exit = suppress_exit
 
 team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Automated team and user approval')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
-team_approve_parser.add_argument('--user', dest='user', action='store_true', help='Approve team users only.')
+team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
 team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
 team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
 team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
@@ -165,7 +165,7 @@ team_approve_parser.exit = suppress_exit
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on file format and template parameters')
 enterprise_push_parser.add_argument('--team', dest='team', action='append', help='Team name or team UID. Records will be assigned to all users in the team.')
-enterprise_push_parser.add_argument('--user', dest='user', action='append', help='User email or User ID. Records will be assigned to the user.')
+enterprise_push_parser.add_argument('--email', dest='user', action='append', help='User email or User ID. Records will be assigned to the user.')
 enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='file name in JSON format that contains template records')
 enterprise_push_parser.error = raise_parse_exception
 enterprise_push_parser.exit = suppress_exit

@@ -329,7 +329,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
-* ```team-approvee``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge 
+* ```team-approve``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge 
 
     Parameters:
     - ```--team``` Approve teams only
@@ -343,7 +343,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     Parameters:
     - ```--syntax-help``` Displays information of record template file format
     - ```--team TEAM_NAME or TEAM UID``` Populate all team users' vaults
-    - ```--user USER_EMAIL``` Populate user's vault
+    - ```--email USER_EMAIL``` Populate user's vault
     - ```file``` JSON file name containing template records
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
@@ -382,7 +382,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
     Parameters:
     - ```--record``` View share permissions on specific record 
-    - ```--user``` View share permissions with specific user
+    - ```--email``` View share permissions with specific account. User email or team name
 
     Unless specified, defaults to all records and users.
 
@@ -1127,7 +1127,7 @@ enterprise-push --team "Engineering Admins" push.json
 ```
 
 ```
-enterprise-push --user user@company.com push.json
+enterprise-push --email user@company.com push.json
 ```
 
 The "push.json" file is structured an an array of password objects.  For example:
