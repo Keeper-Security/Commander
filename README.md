@@ -11,6 +11,7 @@ Jump to:
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
 * [Importing Data](#importing-records-into-keeper)
+* [Exporting Data](#exporting-records-from-keeper)
 * [Event Reporting](#ad-hoc-event-reporting)
 * [SIEM integration](#event-logging-to-siem)
 * [Advanced Configuration](#advanced-configuration-file)
@@ -580,7 +581,7 @@ The resulting vault will look like [this image](https://raw.githubusercontent.co
 
 **Keepass Import**
 
-Keeper supports importing the record and folder structure directly from an encrypted Keepass file. File attachments are also supported (up to 1MB per file).  Make sure to first follow [these instructions](keepercommander/importer/keepass/README.md) to install the necessary keepass modules.
+Keeper supports importing the record and folder structure directly from an encrypted Keepass file. File attachments are also supported.  Make sure to first follow [these instructions](keepercommander/importer/keepass/README.md) to install the necessary keepass modules.
 
 ```bash
 $ keeper import --format=keepass test.kdbx
@@ -621,6 +622,18 @@ For more options, see the help screen:
 ```bash
 $ keeper help import
 ```
+
+### Exporting Records from Keeper
+
+To export records from your vault, use the ```export``` command.  Supported import formats:
+
+* JSON
+* CSV
+* Keepass (see additional [install instructions](keepercommander/importer/keepass/README.md))
+
+JSON export files contain records, folders, subfolders, shared folders, default folder permissions and user/team permissions.
+CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
+Keepass files contain records, file attachments, folders and subfolders.
 
 ### Ad-Hoc Event Reporting 
 
