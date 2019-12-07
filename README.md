@@ -625,7 +625,7 @@ $ keeper help import
 
 ### Exporting Records from Keeper
 
-To export records from your vault, use the ```export``` command.  Supported import formats:
+To export records from your vault, use the ```export``` command.  Supported export formats:
 
 * JSON
 * CSV
