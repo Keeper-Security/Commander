@@ -14,7 +14,7 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
-from .api import get_shared_folder
+#from .api import get_shared_folder
 
 init()
 
@@ -44,7 +44,7 @@ def welcome():
 
 RECORD_HEADER = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
 
-def formatted_records(records, print=print, append=None, **kwargs):
+def formatted_records(records, print=print, appends=None, **kwargs):
     """
     Display folders/titles/uids for the supplied shared folders
     print : function(*args)
@@ -73,11 +73,13 @@ def formatted_records(records, print=print, append=None, **kwargs):
 
     shared_folder = api.get_shared_folder()
     shared_folder_records = shared_folder.get('records') if shared_folder else None
-    headers = RECORD_HEADER if shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
-    def put_flag(r):
+    headers = RECORD_HEADER if not shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
+    if appends:
+        headers += [x(None) for x in appends] # append field names
+    def put_flag(uid):
         if not shared_folder_records:
             return None
-    table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
+    table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] + [a(r) for a in appends] if appends else [] for i, r in enumerate(records)]
     if shared_folder_records:
         for row in table:
             flags = []
@@ -87,11 +89,9 @@ def formatted_records(records, print=print, append=None, **kwargs):
                     flags += ['S'] if sfr['can_share'] else ['_']
                     break
             row += flags
-
-
-enoN()dneppa =+ headersraeh            formatted = tabulate(table, headers=headers)
+    formatted = tabulate(table, headers=headers)
     if print:
-        print(formatted);
+        print(formatted)
         print()
     return formatted
 
