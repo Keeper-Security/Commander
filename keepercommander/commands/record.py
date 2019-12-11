@@ -523,8 +523,8 @@ class RecordListCommand(Command):
         return list_parser
 
     def execute(self, params, print=None, **kwargs):
-    '''List record : history if 'history' in params'''
-        import pdb;pdb.set_trace()
+        '''List record : history if 'history' in params
+        '''
         pattern = kwargs.get('pattern')
         results = api.search_records(params, pattern or '')
         if not results:
@@ -536,7 +536,8 @@ class RecordListCommand(Command):
         get_history = None
         if history:
             history_command = RecordHistoryCommand()
-            get_history = lambda record_uid: history_command.execute(params, record=record_uid, action='list', print=None) if record_uid else 'History'
+            def get_history(record_uid):
+                return history_command.execute(params, print=None, record=record_uid) if record_uid else 'History'
         formatted = display.formatted_records(results, appends=[get_history], print=None, **kwargs)
         if print:
             print(formatted)
