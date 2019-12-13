@@ -75,8 +75,12 @@ class KeepassImporter(BaseFileImporter):
 
     def do_import(self, filename):
         password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
+        print('Press Enter if your Keepass file in not protected with key file')
+        key = input('...' + 'Path to Key file'.rjust(20) + ': ')
+        if key:
+            key = os.path.expanduser(key)
 
-        with libkeepass.open(filename, password=password) as kdb:
+        with libkeepass.open(filename, password=password, keyfile=key) as kdb:
             root = kdb.obj_root.find('Root/Group')
             if root is not None:
                 groups = [root]
