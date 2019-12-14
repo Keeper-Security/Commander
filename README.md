@@ -180,7 +180,11 @@ Type ```h``` to display all commands and help information.
 
 ### Keeper Command Reference
 
-Whether using the interactive shell, CLI or JSON config file, Keeper supports the following features specified by ```command```.  Each command supports additional parameters and options.  To get help on a particular command, run ```help <command>```. 
+Whether using the interactive shell, CLI or JSON config file, Keeper supports the following features specified by ```command```.  Each command supports additional parameters and options.  
+
+To get help on a particular command, run:
+
+ ```help <command>```
 
 **Basic Vault Commands**
 
@@ -192,7 +196,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```logout``` Logout from Keeper
 
-* ```help``` Display help on Commander's command
+* ```help``` Display help docs on a particular command
 
 * ```shell``` Use Keeper interactive shell
 
