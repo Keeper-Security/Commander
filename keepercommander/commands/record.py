@@ -127,6 +127,7 @@ list_parser.add_argument('-t', '--time', dest='time', action='store_true', help=
 list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
 list_parser.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+list_parser.add_argument('-s', '--sort', type=str, action='store',  help="Sort records by 'title' or 'revision'")
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
