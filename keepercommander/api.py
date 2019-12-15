@@ -163,6 +163,10 @@ def login(params):
             if response_json.get('is_enterprise_admin'):
                 query_enterprise(params)
 
+            # sync data
+            logging.debug('Sync when login:')
+            #import pdb;pdb.set_trace()
+            sync_down(params)
             params.sync_data = True
             params.prepare_commands = True
 
@@ -819,10 +823,10 @@ def sync_down(params):
                 if not rs['value']:
                     if convert_to_folders(params):
                         params.revision = 0
-                        sync_down(params)
+                        sync_down(params) # Recursive call without limit?
                         return
     except:
-        pass
+        pass # Ignore any exception?
 
     if 'full_sync' in response_json:
         logging.info('Decrypted [%s] record(s)', len(params.record_cache))
