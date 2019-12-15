@@ -88,7 +88,7 @@ class KeeperParams:
         self.folder_cache = {}
         self.debug = False
         self.timedelay = 0
-        self.sync_data = True
+        self.sync_data = False # initially not True : 2019-12-15
         self.license = None
         self.settings = None
         self.enforcements = None
