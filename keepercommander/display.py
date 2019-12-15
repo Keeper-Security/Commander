@@ -14,7 +14,6 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
-#from .api import get_shared_folder
 
 init()
 
@@ -70,8 +69,18 @@ def formatted_records(records, print=print, appends=None, **kwargs):
         get_key = None
     if get_key:
         records.sort(key=get_key, reverse=kwargs.get('reverse'))
-
-    shared_folder = api.get_shared_folder()
+    shared_folder = None
+    if 'folder' in kwargs and params is not None:
+        fuid = kwargs['folder']
+        if fuid in params.folder_cache:
+            folder = params.folder_cache[fuid]
+            if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                if folder.type == BaseFolderNode.SharedFolderFolderType:
+                    fuid = folder.shared_folder_uid
+            else:
+                fuid = None
+            if fuid and fuid in params.shared_folder_cache:
+                shared_folder = params.shared_folder_cache[fuid]
     shared_folder_records = shared_folder.get('records') if shared_folder else None
     headers = RECORD_HEADER if not shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
     if appends:
@@ -79,7 +88,12 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     def put_flag(uid):
         if not shared_folder_records:
             return None
-    table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] + [a(r) for a in appends] if appends else [] for i, r in enumerate(records)]
+    table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
+    if appends:
+        for rec in table:
+            for app in appends:
+                import pdb;pdb.set_trace()
+                x = app(rec[1])
     if shared_folder_records:
         for row in table:
             flags = []
