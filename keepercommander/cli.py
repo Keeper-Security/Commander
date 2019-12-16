@@ -96,7 +96,13 @@ def do_command(params, command_line):
         if cmd:
             orig_cmd = cmd
             if cmd in aliases and cmd not in commands and cmd not in enterprise_commands:
-                cmd = aliases[cmd]
+                ali = aliases[cmd]
+                if type(ali) == tuple:
+                    cmd = ali[0]
+                    for i in range(1, len(ali)):
+                        args = ali[i] + ' ' + args
+                else:
+                    cmd = ali
 
             if cmd in commands or cmd in enterprise_commands:
                 if cmd in commands:

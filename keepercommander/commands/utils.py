@@ -809,7 +809,11 @@ class HelpCommand(Command):
         cmd = kwargs.get('command')
         if cmd:
             if cmd in aliases:
-                cmd = aliases[cmd]
+                ali = aliases[cmd]
+                if type(ali) == tuple:
+                    cmd = ali[0]
+                else:
+                    cmd = ali
             parser = None       # type: argparse.ArgumentParser or None
             if cmd in commands:
                 parser = commands[cmd].get_parser()

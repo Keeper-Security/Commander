@@ -143,6 +143,9 @@ class CommandCompleter(Completer):
                 pos = document.text.find(' ')
                 if pos == -1:
                     cmds = [x for x in commands if x.startswith(document.text)]
+                    if self.aliases:
+                        al_cmds = [x[0] for x in self.aliases.items() if type(x[1]) == tuple and x[0].startswith(document.text)]
+                        cmds.extend(al_cmds)
                     if self.params.enterprise:
                         e_cmds = [x for x in enterprise_commands if x.startswith(document.text)]
                         cmds.extend(e_cmds)
@@ -153,11 +156,15 @@ class CommandCompleter(Completer):
                 elif pos > 0:
                     cmd = document.text[:pos]
                     if cmd in self.aliases:
-                        cmd = self.aliases[cmd]
+                        ali = self.aliases[cmd]
+                        if type(ali) == tuple:
+                            cmd = ali[0]
+                        else:
+                            cmd = ali
                     raw_input = document.text[pos+1:].strip()
                     context = ''
                     extra = dict()
-                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes', 'rm', 'clipboard-copy'} :
+                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes', 'rm', 'clipboard-copy', 'find-password'} :
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
