@@ -83,10 +83,10 @@ totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
 
 
-clipboard_copy_parser = argparse.ArgumentParser(prog='clipboard-copy|find-password', description='Find record password')
-clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='result output')
-clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='limit search to an account')
-clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='login name')
+clipboard_copy_parser = argparse.ArgumentParser(prog='clipboard-copy|find-password', description='Find record then output password')
+clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
+clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='password output destination')
+clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='output login name instead of password')
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 clipboard_copy_parser.error = raise_parse_exception
 clipboard_copy_parser.exit = suppress_exit
