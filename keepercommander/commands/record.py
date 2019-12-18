@@ -127,7 +127,7 @@ list_parser.add_argument('-t', '--time', dest='time', action='store_true', help=
 list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
 list_parser.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
-list_parser.add_argument('-s', '--sort', type=str, action='store',  help="Sort records by 'title' or 'revision'")
+list_parser.add_argument('-s', '--sort', default='title', help="Sort records by 'title'(default) or 'revision'")
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
@@ -523,7 +523,7 @@ class RecordListCommand(Command):
     def get_parser(self):
         return list_parser
 
-    def execute(self, params, print=None, **kwargs):
+    def execute(self, params, print=print, **kwargs):
         '''List record : history if 'history' in params
         '''
         pattern = kwargs.get('pattern')
@@ -535,11 +535,14 @@ class RecordListCommand(Command):
         #if 'time' in kwargs: display.formatted_records(results, time=True) else:
         history = kwargs.get('history')
         get_history = None
+        from collections import deque
+        appends = deque()
         if history:
             history_command = RecordHistoryCommand()
             def get_history(record_uid):
                 return history_command.execute(params, print=None, record=record_uid) if record_uid else 'History'
-        formatted = display.formatted_records(results, appends=[get_history], print=None, **kwargs)
+            appends += get_history
+        formatted = display.formatted_records(results, appends=appends if len(appends) > 0 else None, print=None, **kwargs)
         if print:
             print(formatted)
         return formatted            
