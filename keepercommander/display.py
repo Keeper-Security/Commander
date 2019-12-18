@@ -60,15 +60,11 @@ def formatted_records(records, print=print, appends=None, **kwargs):
 
     params = kwargs.get('params')    
     # List or Search: Sort by title or revision
+    reverse_sort = kwargs.get('reverse')
     sort_key = kwargs.get('sort')
-    if sort_key == 'title':
-        get_key = lambda r: r.title.lower()
-    elif sort_key == 'revision':
-        get_key = lambda r: r.revision
-    else:
-        get_key = None
-    if get_key:
-        records.sort(key=get_key, reverse=kwargs.get('reverse'))
+    sorted_records = sorted(records, key=lambda r: getattr(r, sort_key), reverse=reverse_sort) if sort_key else None
+    if sorted_records:
+        records = sorted_records
     shared_folder = None
     if 'folder' in kwargs and params is not None:
         fuid = kwargs['folder']
@@ -85,22 +81,24 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     headers = RECORD_HEADER if not shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
     if appends:
         headers += [x(None) for x in appends] # append field names
-    def put_flag(uid):
-        if not shared_folder_records:
-            return None
     table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
     if appends:
-        for rec in table:
-            for app in appends:
-                import pdb;pdb.set_trace()
-                x = app(rec[1])
-    if shared_folder_records:
         for row in table:
-            flags = []
+            from collections import deque
+            dq = deque(row)
+            for app in appends:
+                x = app(row[1])
+                dq += x
+            row += dq
+    if shared_folder_records:
+        from collections import deque
+        for row in table:
+            dq = collections.deque(row)
+            flags = collections.deque()
             for sfr in shared_folder_records:
                 if sfr['record_uid'] == row[1]:
-                    flags += ['W'] if sfr['can_edit'] else ['_']
-                    flags += ['S'] if sfr['can_share'] else ['_']
+                    flags.append('W' if sfr['can_edit'] else '_')
+                    flags.append('S' if sfr['can_share'] else '_')
                     break
             row += flags
     formatted = tabulate(table, headers=headers)
