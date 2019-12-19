@@ -122,12 +122,10 @@ rm_parser.exit = suppress_exit
 
 
 list_parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
-list_parser.add_argument('-m', '--modified', dest='modified', action='store_true', help='Modified records only.')
-list_parser.add_argument('-t', '--time', dest='time', action='store_true', help='Sort by update time.')
 list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
 list_parser.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
-list_parser.add_argument('-s', '--sort', default='title', help="Sort records by 'title'(default) or 'revision'")
+list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
+list_parser.add_argument('-s', '--sort', dest='sort', action='store', choices=['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], default='title', help="Sort records by record_uid, folder, title, login, password, revision, notes or login_url")
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
