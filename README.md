@@ -288,6 +288,17 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
 * ```share-folder``` or ```sf``` Grant or revoke shared folder's user access or record permission
 
+* ```record-permission``` Changes record permissions inside the folder or folder tree. 
+
+    Parameters:
+    - ```--action``` Grant or revoke requested permissions
+    - ```--share-record``` Modify direct record share permissions only
+    - ```--share-folder``` Modify record permissions on shared folders
+    - ```--recursive``` Apply permissions to all records in folder tree
+    - ```--can-share``` Permission to share the record
+    - ```--can-edit``` Permission to edit the record
+    - ```--dry-run``` Do not modify but display permissions that are about to be changed by this command 
+
 **Enterprise Console Management Commands**
 
 * ```enterprise-info``` or ```ei```   Display enterprise information
