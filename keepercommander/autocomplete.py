@@ -209,10 +209,13 @@ class CommandCompleter(Completer):
                         rs = try_resolve_path(self.params, extra['prefix'])
                         if rs is not None:
                             folder, name = rs
+                            is_path = False if name else True
                             for uid in folder.subfolders:
                                 f = self.params.folder_cache[uid]
                                 if f.name.startswith(name) and len(name) < len(f.name):
                                     n = f.name
+                                    if is_path and not extra['prefix'].endswith('/'):
+                                        n = '/' + n
                                     if extra.get('escape_space'):
                                         n = n.replace(' ', '\\ ')
                                     yield Completion(n, display=n + '/', start_position=-len(name))

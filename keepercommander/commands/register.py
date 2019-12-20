@@ -1092,6 +1092,15 @@ class RecordPermissionCommand(Command):
             logging.error('Please choose at least one on the following options: can-edit, can-share')
             return
 
+        if not kwargs.get('force'):
+            logging.info('\nRequest to {0} {1}{3}{2} permission(s) in "{4}" folder {5}'
+                         .format('GRANT' if should_have else 'REVOKE',
+                                 '"Can Edit"' if change_edit else '',
+                                 '"Can Share"' if change_share else '',
+                                 ' & ' if change_edit and change_share else '',
+                                 folder_name,
+                                 'recursively' if kwargs.get('recursive') else 'only'))
+
         uids = set()
 
         direct_shares_update = []
@@ -1236,7 +1245,6 @@ class RecordPermissionCommand(Command):
                     row.append(cmd['to_username'])
                     table.append(row)
                 headers = ['#', 'Record UID', 'Title', 'Owner', 'Email']
-                logging.info('')
                 title = bcolors.FAIL + ' SKIP ' + bcolors.ENDC + 'Direct Record Share permission(s). Not permitted'
                 dump_report_data(table, headers, title=title)
                 logging.info('')
@@ -1257,7 +1265,6 @@ class RecordPermissionCommand(Command):
                         table.append(row)
                 if len(table) > 0:
                     headers = ['#', 'Shared Folder UID', 'Shared Folder Name', 'Record UID', 'Record Title']
-                    logging.info('')
                     title = (bcolors.FAIL + ' SKIP ' + bcolors.ENDC +
                              'Shared Folder Record Share permission(s). Not permitted')
                     dump_report_data(table, headers, title=title)
@@ -1291,7 +1298,6 @@ class RecordPermissionCommand(Command):
                 if change_share:
                     headers.append('Can Share')
 
-                logging.info('')
                 title = (bcolors.OKGREEN + ' {0}' + bcolors.ENDC + ' Direct Record Share permission(s)') \
                     .format('GRANT' if should_have else 'REVOKE')
                 dump_report_data(table, headers, title=title)
@@ -1326,7 +1332,6 @@ class RecordPermissionCommand(Command):
                         headers.append('Can Edit')
                     if change_share:
                         headers.append('Can Share')
-                    logging.info('')
                     title = (bcolors.OKGREEN + ' {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
                         .format('GRANT' if should_have else 'REVOKE')
                     dump_report_data(table, headers, title=title)
@@ -1358,7 +1363,6 @@ class RecordPermissionCommand(Command):
 
                 if len(table) > 0:
                     headers = ['#', 'Record UID', 'Email', 'Error Code', 'Message']
-                    logging.info('')
                     title = (bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Direct Record Share permission(s)') \
                         .format('GRANT' if should_have else 'REVOKE')
                     dump_report_data(table, headers, title=title)
@@ -1391,7 +1395,6 @@ class RecordPermissionCommand(Command):
 
                 if len(table) > 0:
                     headers = ['#', 'Shared Folder UID', 'Record UID', 'Error Code', 'Message']
-                    logging.info('')
                     title = (bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
                         .format('GRANT' if should_have else 'REVOKE')
                     dump_report_data(table, headers, title=title)
