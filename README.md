@@ -214,8 +214,12 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
 
-* ```clipboard-copy``` Copy the specified Keeper Record password field to the system clipboard 
-
+* ```find-password``` or ```clipboard-copy``` Copy the specified Keeper Record password field to the system output or clipboard 
+  accordingly. Command accepts record UID or record path. If record is not found then command matches records by title.
+  
+    Parameters:   
+    - ```--username``` Matches records by login/username field in addition to matching by title. Can be used if matching by record title returns more than one record.
+    
 * ```record-history``` Display the record version history or a specific version of a record.
 
     Parameters:

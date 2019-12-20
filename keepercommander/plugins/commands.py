@@ -16,7 +16,7 @@ import re
 from tabulate import tabulate
 
 from ..params import KeeperParams
-from .. import api, display
+from .. import api
 from ..commands.base import raise_parse_exception, suppress_exit, Command
 from . import plugin_manager
 from .. import generator
@@ -92,6 +92,7 @@ def rotate_password(params, record_uid, name=None):
 
     return False
 
+
 class RotateEndpoint:
     def __init__(self, name, type, description, record_uid, record_title, paths):
         self.name = name
@@ -132,15 +133,17 @@ class RecordRotateCommand(Command):
             if record_uid:
                 rotate_password(params, record_uid, name=rotate_name)
                 if print_result:
-                    display.print_record(params, record_uid)
+                    record = api.get_record(params, record_uid)
+                    record.display()
             else:
-                logging.error('Rotate %s: not found'.format(name))
+                logging.error('Rotate {0}: not found'.format(name))
         elif match:
             results = api.search_records(params, match)
             for r in results:
                 rotate_password(params, r.record_uid)
                 if print_result:
-                    display.print_record(params, r.record_uid)
+                    record = api.get_record(params, r.record_uid)
+                    record.display()
         else:
             RecordRotateCommand.find_endpoints(params)
             if RecordRotateCommand.Endpoints:
