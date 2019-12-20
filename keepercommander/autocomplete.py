@@ -171,7 +171,7 @@ class CommandCompleter(Completer):
                             opts, _ = record_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
-                    elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd'}:
+                    elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input

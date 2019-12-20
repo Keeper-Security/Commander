@@ -28,20 +28,21 @@ from .. import api, generator
 from .base import dump_report_data, user_choice
 from .record import RecordAddCommand
 from ..params import KeeperParams
-from ..subfolder import BaseFolderNode, try_resolve_path
+from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders
 from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
 from ..error import KeeperApiError
 from .base import raise_parse_exception, suppress_exit, Command
+from ..importer.imp_exp import get_folder_path
 
-
-EMAIL_PATTERN=r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
+EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 
 
 def register_commands(commands):
     commands['share-record'] = ShareRecordCommand()
     commands['share-folder'] = ShareFolderCommand()
     commands['share-report'] = ShareReportCommand()
+    commands['record-permission'] = RecordPermissionCommand()
     commands['create-user'] = RegisterCommand()
 
 
@@ -50,52 +51,85 @@ def register_command_info(aliases, command_info):
     aliases['sf'] = 'share-folder'
     aliases['cu'] = 'create-user'
 
-    for p in [share_record_parser, share_folder_parser, share_report_parser, register_parser]:
+    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser, register_parser]:
         command_info[p.prog] = p.description
 
 
 share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change record share permissions')
 share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
-share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'], default='grant', action='store', help='user share action. \'grant\' if omitted')
+share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'],
+                                 default='grant', action='store', help='user share action. \'grant\' if omitted')
 share_record_parser.add_argument('-s', '--share', dest='can_share', action='store_true', help='can re-share record')
 share_record_parser.add_argument('-w', '--write', dest='can_edit', action='store_true', help='can modify record')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 share_record_parser.error = raise_parse_exception
 share_record_parser.exit = suppress_exit
 
-
 share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change shared folder permissions')
-share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant', action='store', help='shared folder action. \'grant\' if omitted')
-share_folder_parser.add_argument('-e', '--email', dest='user', action='append', help='account email, team, or \'*\' as default folder permission')
-share_folder_parser.add_argument('-r', '--record', dest='record', action='append', help='record name, record UID, or \'*\' as default folder permission')
-share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true', help='account permission: can manage records.')
-share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true', help='account permission: can manage users.')
-share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='record permission: can be shared')
-share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true', help='record permission: can be modified.')
+share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant',
+                                 action='store', help='shared folder action. \'grant\' if omitted')
+share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
+                                 help='account email, team, or \'*\' as default folder permission')
+share_folder_parser.add_argument('-r', '--record', dest='record', action='append',
+                                 help='record name, record UID, or \'*\' as default folder permission')
+share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true',
+                                 help='account permission: can manage records.')
+share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true',
+                                 help='account permission: can manage users.')
+share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true',
+                                 help='record permission: can be shared')
+share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true',
+                                 help='record permission: can be modified.')
 share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
 
-
 share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report on record sharing')
-share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
-share_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table',
+                                 help='output format.')
+share_report_parser.add_argument('--output', dest='output', action='store',
+                                 help='output file name. (ignored for table format)')
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
-share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true', help='record ownership information')
+share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true',
+                                 help='record ownership information')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
+record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify record permissions')
+record_permission_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                                      help='Display record permissions to be changed')
+record_permission_parser.add_argument('--force', dest='force', action='store_true',
+                                      help='Apply permission changes without confirmation')
+record_permission_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
+                                      help='Apply permission changes to sub-folders recursively')
+record_permission_parser.add_argument('--share-record', dest='share_record', action='store_true',
+                                      help='Change direct share record permissions')
+record_permission_parser.add_argument('--share-folder', dest='share_folder', action='store_true',
+                                      help='Change shared folder record permissions')
+record_permission_parser.add_argument('-a', '--action', dest='action', action='store', choices=['grant', 'revoke'],
+                                      required=True, help='user share action')
+record_permission_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true',
+                                      help='record permission: can be shared')
+record_permission_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true',
+                                      help='record permission: can be edited')
+record_permission_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or folder UID')
+record_permission_parser.error = raise_parse_exception
+record_permission_parser.exit = suppress_exit
 
 register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper User')
-register_parser.add_argument('--store-record', dest='store', action='store_true', help='store credentials into Keeper record (must be logged in)')
+register_parser.add_argument('--store-record', dest='store', action='store_true',
+                             help='store credentials into Keeper record (must be logged in)')
 register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
 register_parser.add_argument('--pass', dest='password', action='store', help='user password')
-register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store', help='data center.')
+register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
+                             help='data center.')
 register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
 register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
-register_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password (enterprise only)')
-register_parser.add_argument('--records', dest='records', action='store', help='populate vault with default records (enterprise only)')
+register_parser.add_argument('--expire', dest='expire', action='store_true',
+                             help='expire master password (enterprise only)')
+register_parser.add_argument('--records', dest='records', action='store',
+                             help='populate vault with default records (enterprise only)')
 register_parser.add_argument('--question', dest='question', action='store', help='security question')
 register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
 register_parser.add_argument('email', action='store', help='email')
@@ -224,7 +258,7 @@ class RegisterCommand(Command):
                 dot_pos = host.rfind('.')
                 if dot_pos > 0:
                     host = host[:dot_pos] + suffix
-            parts[1] = host+port
+            parts[1] = host + port
             new_params.server = urlunsplit(parts)
 
         data_key = os.urandom(32)
@@ -240,8 +274,8 @@ class RegisterCommand(Command):
                                    rsa_key.d,
                                    rsa_key.p,
                                    rsa_key.q,
-                                   rsa_key.d % (rsa_key.p-1),
-                                   rsa_key.d % (rsa_key.q-1),
+                                   rsa_key.d % (rsa_key.p - 1),
+                                   rsa_key.d % (rsa_key.q - 1),
                                    Integer(rsa_key.q).inverse(rsa_key.p)
                                    ]).encode()
         pub_key = rsa_key.publickey()
@@ -380,11 +414,10 @@ class ShareFolderCommand(Command):
             logging.error('You can change permission of shared folders only')
             return
 
-
         shared_folder_uid = folder.shared_folder_uid if folder.type == BaseFolderNode.SharedFolderFolderType else folder.uid
         if shared_folder_uid in params.shared_folder_cache:
             sh_fol = params.shared_folder_cache[shared_folder_uid]
-            #TODO check permission to modify shared folder
+            # TODO check permission to modify shared folder
 
             action = kwargs.get('action') or 'grant'
 
@@ -630,7 +663,7 @@ class ShareFolderCommand(Command):
                     for t in response[node]:
                         team = api.get_team(params, t['team_uid'])
                         if t['status'] == 'success':
-                            logging.warning('Team share \'%s\' %s', team.name, 'added' if node =='add_teams' else 'updated' if node == 'update_teams' else 'removed')
+                            logging.warning('Team share \'%s\' %s', team.name, 'added' if node == 'add_teams' else 'updated' if node == 'update_teams' else 'removed')
                         else:
                             logging.error('Team share \'%s\' failed', team.name)
 
@@ -638,7 +671,7 @@ class ShareFolderCommand(Command):
                 if node in response:
                     for s in response[node]:
                         if s['status'] == 'success':
-                            logging.warning('User share \'%s\' %s', s['username'], 'added' if node =='add_users' else 'updated' if node == 'update_users' else 'removed')
+                            logging.warning('User share \'%s\' %s', s['username'], 'added' if node == 'add_users' else 'updated' if node == 'update_users' else 'removed')
                         elif s['status'] == 'invited':
                             logging.warning('User \'%s\' invited', s['username'])
                         else:
@@ -649,7 +682,7 @@ class ShareFolderCommand(Command):
                     for r in response[node]:
                         rec = api.get_record(params, r['record_uid'])
                         if r['status'] == 'success':
-                            logging.warning('Record share \'%s\' %s', rec.title, 'added' if node =='add_records' else 'updated' if node == 'update_records' else 'removed')
+                            logging.warning('Record share \'%s\' %s', rec.title, 'added' if node == 'add_records' else 'updated' if node == 'update_records' else 'removed')
                         else:
                             logging.error('Record share \'%s\' failed', rec.title)
 
@@ -749,7 +782,7 @@ class ShareRecordCommand(Command):
                     existing_shares[po['username'].lower()] = po
 
         can_edit = kwargs.get('can_edit') or False
-        can_share= kwargs.get('can_share') or False
+        can_share = kwargs.get('can_share') or False
 
         record_key = params.record_cache[record_uid]['record_key_unencrypted']
 
@@ -784,7 +817,7 @@ class ShareRecordCommand(Command):
                 if current:
                     if can_share or can_edit:
                         ro['editable'] = False if can_edit else current['editable']
-                        ro['shareable'] =  False if can_share else current['shareable']
+                        ro['shareable'] = False if can_share else current['shareable']
                         share_action = 'update_shares'
                     else:
                         share_action = 'remove_shares'
@@ -958,7 +991,7 @@ class ShareReportCommand(Command):
                         record_uids = record_shares[user]
                         records = [api.get_record(params, x) for x in record_uids]
                         records.sort(key=lambda x: x.title.lower())
-                        table = [[i+1, r.record_uid, r.title] for i, r in enumerate(records)]
+                        table = [[i + 1, r.record_uid, r.title] for i, r in enumerate(records)]
                         title = 'Records shared with: {0}'.format(user)
                         dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
 
@@ -970,7 +1003,7 @@ class ShareReportCommand(Command):
                         sf_uids = sf_shares[user]
                         sfs = [api.get_shared_folder(params, x) for x in sf_uids]
                         sfs.sort(key=lambda x: x.name.lower())
-                        table = [[i+1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
+                        table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
                         title = 'Folders shared with: {0}'.format(user)
                         dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
             else:
@@ -982,7 +1015,7 @@ class ShareReportCommand(Command):
                 headers = ['#', 'Shared to', 'Records']
                 table = [(s[0], len(s[1])) for s in record_shares.items()]
                 table.sort(key=lambda x: x[1], reverse=True)
-                table = [[i+1, s[0], s[1]] for i, s in enumerate(table)]
+                table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
         else:
@@ -999,7 +1032,370 @@ class ShareReportCommand(Command):
                 headers = ['#', 'Record UID', 'Owner']
                 table = [(s[0], s[1]) for s in record_owners.items()]
                 table.sort(key=lambda x: x[1], reverse=True)
-                table = [[i+1, s[0], s[1]] for i, s in enumerate(table)]
+                table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
 
+class RecordPermissionCommand(Command):
+    def get_parser(self):
+        return record_permission_parser
+
+    def execute(self, params, **kwargs):
+        folder_name = kwargs['folder'] if 'folder' in kwargs else ''
+        folder_uid = None
+        if folder_name:
+            if folder_name in params.folder_cache:
+                folder_uid = folder_name
+            else:
+                rs = try_resolve_path(params, folder_name)
+                if rs is not None:
+                    folder, pattern = rs
+                    if len(pattern) == 0:
+                        folder_uid = folder.uid
+                    else:
+                        logging.warning('Folder %s not found', folder_name)
+                        return
+
+        if folder_uid:
+            folder = params.folder_cache[folder_uid]  # type: BaseFolderNode or SharedFolderFolderNode
+        else:
+            folder = params.root_folder
+
+        share_record = kwargs.get('share_record') or False
+        share_folder = kwargs.get('share_folder') or False
+        if not share_record and not share_folder:
+            share_record = True
+            share_folder = True
+
+        flat_subfolders = [folder]
+        if kwargs.get('recursive'):
+            fols = set()
+            fols.add(folder.uid)
+            pos = 0
+            while pos < len(flat_subfolders):
+                folder = flat_subfolders[pos]
+                if folder.subfolders:
+                    for f_uid in folder.subfolders:
+                        if f_uid not in fols:
+                            f = params.folder_cache[f_uid]
+                            if f:
+                                flat_subfolders.append(f)
+                            fols.add(f_uid)
+                pos += 1
+            logging.debug('Folder count: %s', len(flat_subfolders))
+
+        should_have = True if kwargs['action'] == 'grant' else False
+        change_share = kwargs['can_share'] or False
+        change_edit = kwargs['can_edit'] or False
+
+        if not change_share and not change_edit:
+            logging.error('Please choose at least one on the following options: can-edit, can-share')
+            return
+
+        uids = set()
+
+        direct_shares_update = []
+        direct_shares_skip = []
+
+        # direct shares
+        if share_record:
+            uids.clear()
+            for folder in flat_subfolders:
+                folder_uid = folder.uid or ''
+                if folder_uid in params.subfolder_record_cache:
+                    uids.update(params.subfolder_record_cache[folder_uid])
+
+            if len(uids) > 0:
+                api.get_record_shares(params, uids)
+                for record_uid in uids:
+                    if record_uid in uids and record_uid in params.record_cache:
+                        record = params.record_cache[record_uid]
+                        has_record_share_permissions = False
+                        if record_uid in params.meta_data_cache:
+                            md = params.meta_data_cache[record_uid]
+                            has_record_share_permissions = md['can_share']
+
+                        if 'shares' in record:
+                            if 'user_permissions' in record['shares']:
+                                for up in record['shares']['user_permissions']:
+                                    if up['owner']:  # exclude record owners
+                                        continue
+                                    username = up['username']
+                                    if username == params.user:  # exclude self
+                                        continue
+                                    if (change_edit and should_have != up['editable']) or \
+                                            (change_share and should_have != up['shareable']):
+                                        cmd = {
+                                            'to_username': up['username'],
+                                            'record_uid': record_uid,
+                                            'editable': up['editable'],
+                                            'shareable': up['shareable']
+                                        }
+                                        if has_record_share_permissions:
+                                            if change_edit:
+                                                cmd['editable'] = should_have
+                                            if change_share:
+                                                cmd['shareable'] = should_have
+                                            direct_shares_update.append(cmd)
+                                        else:
+                                            direct_shares_skip.append(cmd)
+
+        # shared folder record permissions
+        shared_folder_update = {}  # dict<shared_folder_uid, list[sf_record]>
+        shared_folder_skip = {}
+
+        if share_folder:
+            for folder in flat_subfolders:
+                if folder.type not in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                    continue
+                uids.clear()
+                if folder.uid in params.subfolder_record_cache:
+                    uids.update(params.subfolder_record_cache[folder.uid])
+
+                shared_folder_uid = folder.uid
+                if type(folder) == SharedFolderFolderNode:
+                    shared_folder_uid = folder.shared_folder_uid
+                if shared_folder_uid in params.shared_folder_cache:
+                    shared_folder = params.shared_folder_cache[shared_folder_uid]
+                    team_uid = None
+                    has_manage_records_permission = False
+                    if 'shared_folder_key' in shared_folder:
+                        has_manage_records_permission = shared_folder.get('manage_records') or False
+                    if not has_manage_records_permission:
+                        if 'teams' in shared_folder:
+                            for sft in shared_folder['teams']:
+                                uid = sft['team_uid']
+                                if sft.get('manage_records') and uid in params.team_cache:
+                                    t = api.get_team(params, uid)
+                                    if not t.restrict_share:
+                                        team_uid = uid
+                                        has_manage_records_permission = True
+                                        break
+
+                    if 'records' in shared_folder:
+                        for rp in shared_folder['records']:
+                            record_uid = rp['record_uid']
+                            has_record_share_permissions = False
+                            if record_uid in params.meta_data_cache:
+                                md = params.meta_data_cache[record_uid]
+                                has_record_share_permissions = md['can_share']
+
+                            container = shared_folder_update \
+                                if has_record_share_permissions and has_manage_records_permission else shared_folder_skip
+                            if shared_folder_uid not in container:
+                                container[shared_folder_uid] = {}
+                            record_permissions = container[shared_folder_uid]
+
+                            if record_uid in uids and record_uid not in record_permissions:
+                                if (change_edit and should_have != rp['can_edit']) or \
+                                        (change_share and should_have != rp['can_share']):
+                                    cmd = {
+                                        'record_uid': record_uid,
+                                        'shared_folder_uid': shared_folder_uid,
+                                        'can_edit': rp['can_edit'],
+                                        'can_share': rp['can_share']
+                                    }
+                                    if team_uid:
+                                        cmd['team_uid'] = team_uid
+                                    if change_edit:
+                                        cmd['can_edit'] = should_have
+                                    if change_share:
+                                        cmd['can_share'] = should_have
+                                    record_permissions[record_uid] = cmd
+
+        if len(shared_folder_update) > 0:
+            uids.clear()
+            uids.update(shared_folder_update.keys())
+            for shared_folder_uid in uids:
+                if len(shared_folder_update[shared_folder_uid]) == 0:
+                    del shared_folder_update[shared_folder_uid]
+
+        if len(shared_folder_skip) > 0:
+            uids.clear()
+            uids.update(shared_folder_skip.keys())
+            for shared_folder_uid in uids:
+                if len(shared_folder_skip[shared_folder_uid]) == 0:
+                    del shared_folder_skip[shared_folder_uid]
+
+        if len(direct_shares_skip) > 0:
+            if kwargs.get('dry_run'):
+                last_record_uid = ''
+                table = []
+                for i, cmd in enumerate(direct_shares_skip):
+                    record_uid = cmd['record_uid']
+                    row = [i + 1, '', '', '']
+                    if record_uid != last_record_uid:
+                        last_record_uid = record_uid
+                        record = params.record_cache[record_uid]
+                        record_owners = [x['username'] for x in record['shares']['user_permissions'] if x['owner']]
+                        record_owner = record_owners[0] if len(record_owners) > 0 else ''
+                        rec = api.get_record(params, record_uid)
+                        row[1] = record_uid
+                        row[2] = rec.title[:32]
+                        row[3] = record_owner
+                    row.append(cmd['to_username'])
+                    table.append(row)
+                headers = ['#', 'Record UID', 'Title', 'Owner', 'Email']
+                logging.info('')
+                title = bcolors.FAIL + ' SKIP ' + bcolors.ENDC + 'Direct Record Share permission(s). Not permitted'
+                dump_report_data(table, headers, title=title)
+                logging.info('')
+                logging.info('')
+
+        if len(shared_folder_skip) > 0:
+            if kwargs.get('dry_run'):
+                table = []
+                for shared_folder_uid in shared_folder_skip:
+                    shared_folder = api.get_shared_folder(params, shared_folder_uid)
+                    uid = shared_folder_uid
+                    name = shared_folder.name[:32]
+                    for record_uid in shared_folder_skip[shared_folder_uid]:
+                        record = api.get_record(params, record_uid)
+                        row = [len(table) + 1, uid, name, record_uid, record.title]
+                        uid = ''
+                        name = ''
+                        table.append(row)
+                if len(table) > 0:
+                    headers = ['#', 'Shared Folder UID', 'Shared Folder Name', 'Record UID', 'Record Title']
+                    logging.info('')
+                    title = (bcolors.FAIL + ' SKIP ' + bcolors.ENDC +
+                             'Shared Folder Record Share permission(s). Not permitted')
+                    dump_report_data(table, headers, title=title)
+                    logging.info('')
+                    logging.info('')
+
+        if len(direct_shares_update) > 0:
+            if not kwargs.get('force'):
+                last_record_uid = ''
+                table = []
+                for i, cmd in enumerate(direct_shares_update):
+                    record_uid = cmd['record_uid']
+                    row = [i + 1, '', '']
+                    if record_uid != last_record_uid:
+                        last_record_uid = record_uid
+                        rec = api.get_record(params, record_uid)
+                        row[1] = record_uid
+                        row[2] = rec.title[:32]
+                    row.append(cmd['to_username'])
+                    if change_edit:
+                        row.append((bcolors.BOLD + '   ' + ('Y' if should_have else 'N') + bcolors.ENDC)
+                                   if 'editable' in cmd else '')
+                    if change_share:
+                        row.append((bcolors.BOLD + '   ' + ('Y' if should_have else 'N') + bcolors.ENDC)
+                                   if 'shareable' in cmd else '')
+                    table.append(row)
+
+                headers = ['#', 'Record UID', 'Title', 'Email']
+                if change_edit:
+                    headers.append('Can Edit')
+                if change_share:
+                    headers.append('Can Share')
+
+                logging.info('')
+                title = (bcolors.OKGREEN + ' {0}' + bcolors.ENDC + ' Direct Record Share permission(s)') \
+                    .format('GRANT' if should_have else 'REVOKE')
+                dump_report_data(table, headers, title=title)
+                logging.info('')
+                logging.info('')
+
+        if len(shared_folder_update) > 0:
+            if not kwargs.get('force'):
+                table = []
+                for shared_folder_uid in shared_folder_update:
+                    commands = shared_folder_update[shared_folder_uid]
+                    shared_folder = api.get_shared_folder(params, shared_folder_uid)
+                    uid = shared_folder_uid
+                    name = shared_folder.name[:32]
+                    for record_uid in commands:
+                        cmd = commands[record_uid]
+                        record = api.get_record(params, record_uid)
+                        row = [len(table) + 1, uid, name, record_uid, record.title[:32]]
+                        if change_edit:
+                            row.append((bcolors.BOLD + '   ' + ('Y' if should_have else 'N') + bcolors.ENDC)
+                                       if 'can_edit' in cmd else '')
+                        if change_share:
+                            row.append((bcolors.BOLD + '   ' + ('Y' if should_have else 'N') + bcolors.ENDC)
+                                       if 'can_share' in cmd else '')
+                        table.append(row)
+                        uid = ''
+                        name = ''
+
+                if len(table) > 0:
+                    headers = ['#', 'Shared Folder UID', 'Shared Folder Name', 'Record UID', 'Record Title']
+                    if change_edit:
+                        headers.append('Can Edit')
+                    if change_share:
+                        headers.append('Can Share')
+                    logging.info('')
+                    title = (bcolors.OKGREEN + ' {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
+                        .format('GRANT' if should_have else 'REVOKE')
+                    dump_report_data(table, headers, title=title)
+                    logging.info('')
+                    logging.info('')
+
+        if not kwargs.get('dry_run') and (len(shared_folder_update) > 0 or len(direct_shares_update) > 0):
+            print('\n\n' +  bcolors.WARNING + bcolors.BOLD + 'ALERT!!!' + bcolors.ENDC)
+            answer = user_choice("Do you want to proceed with these permission changes?", 'yn', 'n') \
+                if not kwargs.get('force') else 'Y'
+            if answer.lower() == 'y':
+                table = []
+                while len(direct_shares_update) > 0:
+                    batch = direct_shares_update[:80]
+                    direct_shares_update = direct_shares_update[80:]
+                    rq = {
+                        'command': 'record_share_update',
+                        'pt': 'Commander',
+                        'update_shares': batch
+                    }
+
+                    rs = api.communicate(params, rq)
+                    if 'update_statuses' in rs:
+                        for i, status in enumerate(rs['update_statuses']):
+                            code = status['status']
+                            if code != 'success':
+                                record_uid = status['record_uid']
+                                table.append([len(table) + 1, record_uid, status['username'], code, rs['message']])
+
+                if len(table) > 0:
+                    headers = ['#', 'Record UID', 'Email', 'Error Code', 'Message']
+                    logging.info('')
+                    title = (bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Direct Record Share permission(s)') \
+                        .format('GRANT' if should_have else 'REVOKE')
+                    dump_report_data(table, headers, title=title)
+                    logging.info('')
+                    logging.info('')
+
+                table = []
+                for shared_folder_uid in shared_folder_update:
+                    updates = list(shared_folder_update[shared_folder_uid].values())
+                    while len(updates) > 0:
+                        batch = updates[:80]
+                        updates = updates[80:]
+                        rq = {
+                            'command': 'shared_folder_update',
+                            'pt': 'Commander',
+                            'operation': 'update',
+                            'shared_folder_uid': shared_folder_uid,
+                            'update_records': batch,
+                            'force_update': True
+                        }
+                        if 'team_uid' in batch[0]:
+                            rq['from_team_uid'] = batch[0]['team_uid']
+                        rs = api.communicate(params, rq)
+                        if 'update_records' in rs:
+                            for status in rs['update_records']:
+                                code = status['status']
+                                if code != 'success':
+                                    table.append([len(table) + 1, shared_folder_uid, status['record_uid'],
+                                                  code, status.get('message')])
+
+                if len(table) > 0:
+                    headers = ['#', 'Shared Folder UID', 'Record UID', 'Error Code', 'Message']
+                    logging.info('')
+                    title = (bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
+                        .format('GRANT' if should_have else 'REVOKE')
+                    dump_report_data(table, headers, title=title)
+                    logging.info('')
+                    logging.info('')
+
+                params.sync_data = True
