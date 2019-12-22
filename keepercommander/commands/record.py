@@ -592,11 +592,21 @@ class SearchCommand(RecordListCommand):
         return cls.PARSER
     
     def execute(self, params, **kwargs):
-        from collections import deque
-        dq = deque()
-        for f in [api.search_records, api.search_shared_folders, api.search_teams]:
-            rt = super().execute(params, api=f, **kwargs)
-            dq += rt if rt else ''
+        dq = {}
+        ap = api.search_records
+        rt = super().execute(params, api=ap, **kwargs)
+        if rt:
+            dq[ap] = rt
+        ap = api.search_shared_folders
+        rt = super().execute(params, api=ap, **kwargs)
+        if rt:
+            print("\nShared folders:")
+            dq[ap] = rt
+        ap = api.search_teams
+        rt = super().execute(params, api=ap, **kwargs)
+        if rt:
+            print("\nTeams:")
+            dq[ap] = rt
         return dq
 
 
