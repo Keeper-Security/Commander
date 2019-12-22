@@ -85,6 +85,9 @@ def user_choice(question, choice, default='', show_choice=True, multi_choice=Fal
 
         logging.error('Error: invalid input')
 
+class ParseException(Exception):
+    """Exceptin class to inform parse fail"""
+    pass
 
 def raise_parse_exception(m):
     raise Exception(m)
