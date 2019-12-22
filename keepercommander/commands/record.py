@@ -66,14 +66,13 @@ def register_command_info(aliases, command_info):
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
 
-class CommandParseException(Exception): pass
 
 record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Record History')
 record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='record history action. \'list\' if omitted')
 record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='history revision')
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-class HistoryException(CommandParseException): pass
-record_history_parser.error = lambda: raise_(HistoryException()) #raise_parse_exception
+class HistoryParseException(ParseException): pass
+record_history_parser.error = lambda: raise_(HistoryParseException()) #raise_parse_exception
 record_history_parser.exit = suppress_exit
 
 
@@ -519,25 +518,18 @@ class SearchCommand(Command):
             display.formatted_teams(results, params=params, skip_details=True)
 '''
 
-class RecordListParserException(Exception): pass
+class RecordListParseException(ParseException): pass
 
 class RecordListCommand(Command):
     """List records"""
     
-    _parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
-    _parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
-    _parser.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-    _parser.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
-    _SORT_ARGUMENTS = {'dest':'sort', 'action':'store', 
-        'choices':['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], 'default':'title', 
-        'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
-    _parser.add_argument('-s', '--sort', **_SORT_ARGUMENTS)
-    _parser.error = lambda: raise_(RecordListParserException()) #raise_parse_exception
-    _parser.exit = suppress_exit 
+    PARSER = argparse.ArgumentParser(parents=[Command.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER.error = lambda: raise_(RecordListParseException()) #raise_parse_exception
+    PARSER.exit = suppress_exit 
 
     @classmethod
     def parser(cls):
-        return cls._parser
+        return cls.PARSER
         
     def get_parser(self):
         return RecordListCommand.parser()
@@ -574,14 +566,10 @@ class RecordListSfCommand(Command):
         if results:
             display.formatted_shared_folders(results)
 
-class SearchCommandParseException(CommandParseException): pass
+class SearchCommandParseException(ParseException): pass
 class SearchCommand(RecordListCommand):
-    PARSER = argparse.ArgumentParser(prog='search|s', description='Search with regular expression')
-    PARSER.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
-    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern: also from shared and teams records.')
-    PARSER.add_argument('-s', '--sort', **RecordListCommand._SORT_ARGUMENTS)
-    PARSER.error = lambda: raise_(SearchCommandParseException("in class var")) #raise_parse_exception
+    PARSER = argparse.ArgumentParser(parents=[Command.PARSER], prog='search|s', description='Search with regular expression')
+    PARSER.error = lambda: raise_(SearchCommandParseException()) #raise_parse_exception
     PARSER.exit = suppress_exit
 
     def get_parser(self):
