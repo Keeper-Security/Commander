@@ -7,12 +7,10 @@
  ## Logger: put info. out into a logging file 'keeper.log'
   - __main__.py : logger = logging.getLogger("logger")
 
-## Module name: keepercommander.commands.record
- - setup.py: 'keepercommander.commands'
- - register.py (29) from .record import RecordAddCommand
- - enterprise.py : from .record import RecordAddCommand
- - base.py
+## keepercommander/commands/record.py is moved to keepercommander/commands/record/command.py and keepercommander/commands/record/__init__.py is added
 
+ - __init__.py : from .commands import *
+ - command.py : change all "from ..(code/module) import" to "from ...(code/module) import" ; 3 dots means 2-level up
   
 
 # How to use:
