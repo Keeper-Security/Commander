@@ -165,7 +165,6 @@ def login(params):
 
             # sync data
             logging.debug('Sync when login:')
-            #import pdb;pdb.set_trace()
             sync_down(params)
             params.sync_data = True
             params.prepare_commands = True
@@ -195,18 +194,20 @@ def login(params):
                             params.mfa_token = signature
                             params.mfa_type = 'u2f'
                     except ImportError as e:
-                        logging.error(e)
+                        logging.error(e, "U2F mfa import failed.")
                         if not warned_on_fido_package:
                             logging.warning(install_fido_package_warning)
                             warned_on_fido_package = True
+                    except OSError as e:
+                        logging.error(e, "OS error in u2f mfa..") # [Errno 2] No such file or directory: '/sys/class/hidraw'
                     except Exception as e:
-                        logging.error(e)
+                        logging.error(e, "u2f mfa failed. Next step is manual mfa code input..")
 
                 while not params.mfa_token:
                     try:
-                        params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
+                        params.mfa_token = getpass.getpass(prompt='Input Two-Factor(mfa) Code: ', stream=None)
                     except KeyboardInterrupt as e:
-                        print('')
+                        print('Breaking by a keyboard interrupte. The session is cleared.')
                         params.clear_session()
                         return
 
