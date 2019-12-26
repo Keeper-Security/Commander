@@ -145,7 +145,7 @@ def main():
 
     #logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s')
     # from https://python.civic-apps.com/logifle-logger/
-    logger = logging.getLogger("logger")    #get logger name
+    logger = logging.getLogger() #"logger")    #get logger name
     logger.setLevel(logging.WARNING if params.batch_mode else logging.INFO)
 
     handler1 = logging.StreamHandler()
