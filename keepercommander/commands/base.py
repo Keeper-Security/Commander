@@ -90,7 +90,7 @@ class ParseException(Exception):
     pass
 
 def raise_parse_exception(m):
-    '''Raise parse exception in Command class'''
+    '''Raise parse exception in Command'''
     raise ParseException(m)
 
 class SupressExitException(Exception):
@@ -177,8 +177,7 @@ class Command:
         except Exception as e:
             logging.error(e)
 
-    def get_parser(self):   # type: () -> argparse.ArgumentParser or None
-        return None
+    #def get_parser(self):   # type: () -> argparse.ArgumentParser or None        return None
 
     def is_authorised(self):
         return True
