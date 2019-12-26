@@ -5,7 +5,7 @@
         sort by any field:
             list_parser.add_argument('-s', '--sort', dest='sort', action='store', choices=['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], default='title', help="Sort records by record_uid, folder, title, login, password, revision, notes or login_url")
  ## Logger: put info. out into a logging file 'keeper.log'
-  - __main__.py : logger = logging.getLogger("logger")
+  - __main__.py : logger = logging.getLogger()
 
 ## keepercommander/commands/record.py is moved to keepercommander/commands/record/command.py and keepercommander/commands/record/__init__.py is added
 
