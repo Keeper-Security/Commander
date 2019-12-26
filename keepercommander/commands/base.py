@@ -132,16 +132,6 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
 parameter_pattern = re.compile(r'\${(\w+)}')
 
 class Command:
-    PARSER = argparse.ArgumentParser(prog='command', add_help=False)
-    PARSER.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort order.')
-    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
-    SORT_ARGUMENTS = {'dest':'sort', 'action':'store', 
-        'choices':['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], 'default':'title', 
-        'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
-    PARSER.add_argument('-s', '--sort', **SORT_ARGUMENTS)
-    PARSER.error = lambda: raise_(ParseException()) #raise_parse_exception
-    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
         raise NotImplemented()
