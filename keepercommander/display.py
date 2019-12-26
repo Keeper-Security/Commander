@@ -47,7 +47,7 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     """
     Display folders/titles/uids for the supplied shared folders
     print : function(*args)
-    append : function(record): returns its header if record==None
+    appends : function(record): returns its header if record==None
     """
     if len(records) == 0:
         return None
@@ -80,25 +80,20 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     shared_folder_records = shared_folder.get('records') if shared_folder else None
     headers = RECORD_HEADER if not shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
     if appends:
-        headers += [x(None) for x in appends] # append field names
+        headers += [appends(None)] #[x(None) for x in appends] # append field names
     table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
     if appends:
         for row in table:
-            from collections import deque
-            dq = deque(row)
-            for app in appends:
-                x = app(row[1])
-                dq += x
-            row += dq
+            x = appends(row[1])
+            row += x
     if shared_folder_records:
         from collections import deque
         for row in table:
-            dq = collections.deque(row)
             flags = collections.deque()
             for sfr in shared_folder_records:
                 if sfr['record_uid'] == row[1]:
-                    flags.append('W' if sfr['can_edit'] else '_')
-                    flags.append('S' if sfr['can_share'] else '_')
+                    flags += 'W' if sfr['can_edit'] else '_'
+                    flags += 'S' if sfr['can_share'] else '_'
                     break
             row += flags
     formatted = tabulate(table, headers=headers)
