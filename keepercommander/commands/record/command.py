@@ -518,18 +518,29 @@ class SearchCommand(Command):
             display.formatted_teams(results, params=params, skip_details=True)
 '''
 
-class RecordListParseException(ParseException): pass
-
-class RecordListCommand(Command):
-    """List records"""
-    
-    PARSER = argparse.ArgumentParser(parents=[Command.PARSER], prog='list|l', description='Display all record UID/titles')
-    PARSER.error = lambda: raise_(RecordListParseException()) #raise_parse_exception
+class SortCommand(Command):
+    """parser sort arguments"""
+    PARSER = argparse.ArgumentParser(prog='sort', add_help=False)
+    PARSER.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort order.')
+    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
+    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
+    SORT_ARGUMENTS = {'dest':'sort', 'action':'store', 'const':'revision', 'nargs':'?',
+        'choices':['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], 'default':'revision', 
+        'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
+    PARSER.add_argument('-s', '--sort', **SORT_ARGUMENTS)
+    PARSER.error = lambda: raise_(ParseException()) #raise_parse_exception
     PARSER.exit = suppress_exit 
 
     @classmethod
     def parser(cls):
         return cls.PARSER
+
+class RecordListCommand(SortCommand):
+    """List records"""
+    PARSER = argparse.ArgumentParser(parents=[SortCommand.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER.error = lambda: raise_(ParseException("RecordList")) #raise_parse_exception
+    PARSER.exit = suppress_exit 
+
         
     def get_parser(self):
         return RecordListCommand.parser()
@@ -546,14 +557,12 @@ class RecordListCommand(Command):
         #if 'time' in kwargs: display.formatted_records(results, time=True) else:
         history = kwargs.get('history')
         get_history = None
-        from collections import deque
-        appends = deque()
         if history:
             history_command = RecordHistoryCommand()
             def get_history(record_uid):
+                import pdb;pdb.set_trace()
                 return history_command.execute(params, print=None, record=record_uid) if record_uid else 'History'
-            appends += get_history
-        formatted = display.formatted_records(results, appends=appends if len(appends) > 0 else None, print=None, **kwargs)
+        formatted = display.formatted_records(results, appends=get_history, print=None, **kwargs)
         if print:
             print(formatted)
         return formatted            
@@ -566,18 +575,14 @@ class RecordListSfCommand(Command):
         if results:
             display.formatted_shared_folders(results)
 
-class SearchCommandParseException(ParseException): pass
 class SearchCommand(RecordListCommand):
-    PARSER = argparse.ArgumentParser(parents=[Command.PARSER], prog='search|s', description='Search with regular expression')
-    PARSER.error = lambda: raise_(SearchCommandParseException()) #raise_parse_exception
+    PARSER = argparse.ArgumentParser(parents=[SortCommand.PARSER], prog='search|s', description='Search with regular expression')
+    PARSER.error = lambda: raise_(ParseException("SearchCommand")) #raise_parse_exception
     PARSER.exit = suppress_exit
 
     def get_parser(self):
         return SearchCommand.PARSER
-    
-    @classmethod
-    def parser(cls):
-        return cls.PARSER
+
     
     def execute(self, params, **kwargs):
         dq = {}
