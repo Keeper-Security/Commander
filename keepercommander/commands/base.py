@@ -90,6 +90,7 @@ class ParseException(Exception):
     pass
 
 def raise_parse_exception(m):
+    '''Raise parse exception in Command class'''
     raise ParseException(m)
 
 class SupressExitException(Exception):
@@ -132,7 +133,16 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
 parameter_pattern = re.compile(r'\${(\w+)}')
 
 class Command:
-
+    """Parent Command class"""
+    PARSER = None
+    
+    @classmethod
+    def parser(cls):
+        return cls.PARSER
+    
+    def get_parser(self):
+        return self.__class__.PARSER
+    
     def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
         raise NotImplemented()
 
