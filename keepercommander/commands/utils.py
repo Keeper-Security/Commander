@@ -120,7 +120,11 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-class SyncDownCommand(Command):
+class SyncDownCommand(Command):    
+    PARSER = argparse.ArgumentParser(prog='sync', description='Sync down vault')
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
+
     def execute(self, params, **kwargs):
         api.sync_down(params)
 

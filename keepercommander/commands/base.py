@@ -18,14 +18,11 @@ import csv
 import sys
 
 from tabulate import tabulate
-
 from ..params import KeeperParams
-
 
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
 enterprise_commands = {}     # type: {str, Command}
-
 
 def register_commands(commands, aliases, command_info):
     from .record import register_commands as record_commands, register_command_info as record_command_info
@@ -93,11 +90,8 @@ def raise_parse_exception(m):
     '''Raise parse exception in Command'''
     raise ParseException(m)
 
-class SupressExitException(Exception):
-    pass
-
 def suppress_exit():
-    raise SupressExitException()
+    logging.info("Supress Exit.")
 
 
 def dump_report_data(data, headers, title=None, is_csv = False, filename=None, append=False):
@@ -134,11 +128,15 @@ parameter_pattern = re.compile(r'\${(\w+)}')
 
 class Command:
     """Parent Command class"""
-    PARSER = None
     
     @classmethod
     def parser(cls):
         return cls.PARSER
+
+    @classmethod
+    def parser_error(cls):
+        '''Raise parse exception'''
+        raise ParseException(f"Parse error in {cls.__name__}.")
     
     def get_parser(self):
         return self.__class__.PARSER
@@ -170,8 +168,8 @@ class Command:
                         else:
                             pos = m.end() + 1
                     args = value
-
-                opts = parser.parse_args(shlex.split(args))
+                shlex_split = shlex.split(args)
+                opts = parser.parse_args(shlex_split)
                 d.update(opts.__dict__)
             return self.execute(params, **d)
         except Exception as e:

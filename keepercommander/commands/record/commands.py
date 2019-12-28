@@ -80,8 +80,8 @@ class RecordAddCommand(Command):
     PARSER.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
     PARSER.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
     PARSER.add_argument('title', type=str, action='store', help='record title')
-    PARSER.error = lambda: raise_parse_exception(RecordAddCommand)
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         title = kwargs['title'] if 'title' in kwargs else None
@@ -212,8 +212,8 @@ class RecordEditCommand(Command):
     PARSER.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
     PARSER.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
     PARSER.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception(RecordEditCommand)
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         name = kwargs['record'] if 'record' in kwargs else None
@@ -323,8 +323,6 @@ class RecordAppendNotesCommand(Command):
     PARSER = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to existing record')
     PARSER.add_argument('--notes', dest='notes', action='store', help='notes')
     PARSER.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception(RecordAppendNotesCommand)
-    PARSER.exit = suppress_exit
 
     def execute(self, params, **kwargs):
         notes = kwargs['notes'] if 'notes' in kwargs else None
@@ -340,8 +338,8 @@ class RecordRemoveCommand(Command):
     PARSER = argparse.ArgumentParser(prog='rm', description='Remove record')
     PARSER.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
     PARSER.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception(RecordRemoveCommand)
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         folder = None
@@ -413,33 +411,6 @@ class RecordRemoveCommand(Command):
                 api.communicate(params, rq)
                 params.sync_data = True
 
-'''
-class SearchCommand(Command):
-    def get_parser(self):
-        return search_parser
-
-    def execute(self, params, **kwargs):
-        pattern = (kwargs['pattern'] if 'pattern' in kwargs else None) or ''
-
-        # Search records
-        results = api.search_records(params, pattern)
-        if results:
-            print('')
-            display.formatted_records(results)
-
-        # Search shared folders
-        results = api.search_shared_folders(params, pattern)
-        if results:
-            print('')
-            display.formatted_shared_folders(results, params=params, skip_details=True)
-
-        # Search teams
-        results = api.search_teams(params, pattern)
-        if results:
-            print('')
-            display.formatted_teams(results, params=params, skip_details=True)
-'''
-
 class SortOption():
     """parser sort arguments"""
     PARSER = argparse.ArgumentParser(prog='sort', add_help=False)
@@ -448,15 +419,13 @@ class SortOption():
         'choices':['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], 'default':'revision', 
         'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
     PARSER.add_argument('-s', '--sort', **SORT_ARGUMENTS)
-    PARSER.error = lambda: raise_parse_exception(SortOption)
-    PARSER.exit = suppress_exit 
 
 class RecordListCommand(Command):
     """List records"""
     PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='list|l', description='Display all record UID/titles')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-    PARSER.error = lambda: raise_parse_exception(RecordListCommand)
+    PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
 
     def execute(self, params, api=api.search_records, print=print, **kwargs):
@@ -483,6 +452,11 @@ class RecordListCommand(Command):
 
 
 class RecordListSfCommand(Command):
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search shared folders with regular expression')
+    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
+
     def execute(self, params, **kwargs):
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_shared_folders(params, pattern or '')
@@ -492,8 +466,8 @@ class RecordListSfCommand(Command):
 class SearchCommand(RecordListCommand):
     PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search with regular expression')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
-    PARSER.error = lambda: raise_(ParseException("SearchCommand")) #raise_parse_exception
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
     
     def execute(self, params, **kwargs):
         dq = {}
@@ -515,6 +489,11 @@ class SearchCommand(RecordListCommand):
 
 
 class RecordListTeamCommand(Command):
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search teams with regular expression')
+    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
+    
     def execute(self, params, **kwargs):
         rq = {
             'command': 'get_available_teams'
@@ -533,8 +512,8 @@ class RecordGetUidCommand(Command):
     PARSER = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
     PARSER.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
     PARSER.add_argument('uid', type=str, action='store', help='UID')
-    PARSER.error = lambda: raise_parse_exception(RecordGetUidCommand)
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         uid = kwargs['uid'] if 'uid' in kwargs else None
@@ -651,8 +630,8 @@ class RecordDownloadAttachmentCommand(Command):
     PARSER = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
     #download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted.')
     PARSER.add_argument('record', action='store', help='record path or UID')
-    PARSER.error = raise_parse_exception
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         name = kwargs['record'] if 'record' in kwargs else None
@@ -742,8 +721,8 @@ class RecordUploadAttachmentCommand(Command):
     PARSER = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
     PARSER.add_argument('--file', dest='file', action='append', required=True, help='file name to upload.')
     PARSER.add_argument('record', action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception(RecordUploadAttachmentCommand)
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         record_name = kwargs['record'] if 'record' in kwargs else None
@@ -894,8 +873,8 @@ class RecordDeleteAttachmentCommand(Command):
     PARSER = argparse.ArgumentParser(prog='delete-attachment', description='Delete attachment file')
     PARSER.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
     PARSER.add_argument('record', action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception(RecordDeleteAttachmentCommand)
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         record_name = kwargs['record'] if 'record' in kwargs else None
@@ -995,8 +974,8 @@ class ClipboardCommand(Command):
     PARSER = argparse.ArgumentParser(prog='clipboard-copy|cc', description='Copy record password to clipboard')
     PARSER.add_argument('-l', '--login', dest='login', action='store_true', help='login name')
     PARSER.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-    PARSER.error = raise_parse_exception
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def get_parser(self):
         return clipboard_copy_parser
@@ -1050,8 +1029,8 @@ class RecordHistoryCommand(Command):
     PARSER.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='record history action. \'list\' if omitted')
     PARSER.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='history revision')
     PARSER.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception("RecordHistoryCommand") #raise_(ParseException("History")) #raise_parse_exception
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def get_parser(self):
         return PARSER
@@ -1342,8 +1321,8 @@ class TotpCommand(Command):
     Endpoints = []          # type: [TotpEndpoint]
     PARSER = argparse.ArgumentParser(prog='totp', description='Display Two Factor Code')
     PARSER.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-    PARSER.error = lambda: raise_parse_exception("TotpCommand")
-    PARSER.exit = suppress_exit
+    PARSER.error = Command.parser_error
+    PARSER.exit = suppress_exit 
 
     def execute(self, params, **kwargs):
         record_name = kwargs['record'] if 'record' in kwargs else None
