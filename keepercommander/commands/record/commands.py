@@ -68,111 +68,6 @@ def register_command_info(aliases, command_info):
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
 
-'''
-record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Record History')
-record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='record history action. \'list\' if omitted')
-record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='history revision')
-record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-record_history_parser.error = lambda: raise_(ParseException("History")) #raise_parse_exception
-record_history_parser.exit = suppress_exit
-'''
-'''
-totp_parser = argparse.ArgumentParser(prog='totp', description='Display Two Factor Code')
-totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-totp_parser.error = raise_parse_exception
-totp_parser.exit = suppress_exit
-'''
-'''
-clipboard_copy_parser = argparse.ArgumentParser(prog='clipboard-copy|cc', description='Copy record password to clipboard')
-clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='login name')
-clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-clipboard_copy_parser.error = raise_parse_exception
-clipboard_copy_parser.exit = suppress_exit
-'''
-'''
-add_parser = argparse.ArgumentParser(prog='add|a', description='Add record')
-add_parser.add_argument('--login', dest='login', action='store', help='login name')
-add_parser.add_argument('--pass', dest='password', action='store', help='password')
-add_parser.add_argument('--url', dest='url', action='store', help='url')
-add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-add_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
-add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
-add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
-add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
-add_parser.add_argument('title', type=str, action='store', help='record title')
-add_parser.error = raise_parse_exception
-add_parser.exit = suppress_exit
-'''
-'''
-edit_parser = argparse.ArgumentParser(prog='edit', description='Edit record')
-edit_parser.add_argument('--login', dest='login', action='store', help='login name')
-edit_parser.add_argument('--pass', dest='password', action='store', help='password')
-edit_parser.add_argument('--url', dest='url', action='store', help='url')
-edit_parser.add_argument('--notes', dest='notes', action='store', help='notes. + in front of notes appends text to existing notes')
-edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
-edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
-edit_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-edit_parser.error = raise_parse_exception
-edit_parser.exit = suppress_exit
-'''
-
-'''
-rm_parser = argparse.ArgumentParser(prog='rm', description='Remove record')
-rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-rm_parser.error = raise_parse_exception
-rm_parser.exit = suppress_exit
-'''
-'''
-list_parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
-list_parser.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort ord.')
-list_parser.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
-list_parser.add_argument('-s', '--sort', dest='sort', action='store', choices=['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], default='title', help="Sort records by record_uid, folder, title, login, password, revision, notes or login_url")
-list_parser.error = raise_parse_exception
-list_parser.exit = suppress_exit
-'''
-'''
-search_parser = argparse.ArgumentParser(prog='search|s', description='Search with regular expression')
-search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
-search_parser.error = raise_parse_exception
-search_parser.exit = suppress_exit
-'''
-'''
-get_info_parser = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
-get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
-get_info_parser.add_argument('uid', type=str, action='store', help='UID')
-get_info_parser.error = raise_parse_exception
-get_info_parser.exit = suppress_exit
-'''
-'''
-append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to existing record')
-append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-append_parser.error = raise_parse_exception
-append_parser.exit = suppress_exit
-'''
-'''
-download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
-#download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted.')
-download_parser.add_argument('record', action='store', help='record path or UID')
-download_parser.error = raise_parse_exception
-download_parser.exit = suppress_exit
-'''
-'''
-upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
-upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload.')
-upload_parser.add_argument('record', action='store', help='record path or UID')
-upload_parser.error = raise_parse_exception
-upload_parser.exit = suppress_exit
-'''
-'''
-delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete attachment file')
-delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
-delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
-delete_attachment_parser.error = raise_parse_exception
-delete_attachment_parser.exit = suppress_exit
-'''
 
 class RecordAddCommand(Command):
     PARSER = argparse.ArgumentParser(prog='add|a', description='Add record')
@@ -545,22 +440,22 @@ class SearchCommand(Command):
             display.formatted_teams(results, params=params, skip_details=True)
 '''
 
-class SortCommand(Command):
+class SortOption():
     """parser sort arguments"""
     PARSER = argparse.ArgumentParser(prog='sort', add_help=False)
     PARSER.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort order.')
-    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
-    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='search regex pattern')
     SORT_ARGUMENTS = {'dest':'sort', 'action':'store', 'const':'revision', 'nargs':'?',
         'choices':['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], 'default':'revision', 
         'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
     PARSER.add_argument('-s', '--sort', **SORT_ARGUMENTS)
-    PARSER.error = lambda: raise_parse_exception(SortCommand)
+    PARSER.error = lambda: raise_parse_exception(SortOption)
     PARSER.exit = suppress_exit 
 
-class RecordListCommand(SortCommand):
+class RecordListCommand(Command):
     """List records"""
-    PARSER = argparse.ArgumentParser(parents=[SortCommand.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
+    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
     PARSER.error = lambda: raise_parse_exception(RecordListCommand)
     PARSER.exit = suppress_exit 
 
@@ -595,13 +490,10 @@ class RecordListSfCommand(Command):
             display.formatted_shared_folders(results)
 
 class SearchCommand(RecordListCommand):
-    PARSER = argparse.ArgumentParser(parents=[SortCommand.PARSER], prog='search|s', description='Search with regular expression')
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search with regular expression')
+    PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = lambda: raise_(ParseException("SearchCommand")) #raise_parse_exception
     PARSER.exit = suppress_exit
-
-    def get_parser(self):
-        return SearchCommand.PARSER
-
     
     def execute(self, params, **kwargs):
         dq = {}
