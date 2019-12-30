@@ -85,7 +85,7 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     if appends:
         for row in table:
             x = appends(row[1])
-            row += x
+            row += [x or '']
     if shared_folder_records:
         from collections import deque
         for row in table:
