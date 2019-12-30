@@ -439,12 +439,12 @@ class RecordListCommand(Command):
         #    api.get_record_shares(params, [x.record_uid for x in results])
         #if 'time' in kwargs: display.formatted_records(results, time=True) else:
         history = kwargs.get('history')
-        get_history = None
         if history:
             history_command = RecordHistoryCommand()
             def get_history(record_uid):
-                import pdb;pdb.set_trace()
                 return history_command.execute(params, print=None, record=record_uid) if record_uid else 'History'
+        else:
+            get_history = None
         formatted = display.formatted_records(results, appends=get_history, print=None, **kwargs)
         if print:
             print(formatted)
@@ -452,7 +452,10 @@ class RecordListCommand(Command):
 
 
 class RecordListSfCommand(Command):
-    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search shared folders with regular expression')
+    """List Shared Folders
+     - execute method sorts records by Title
+    """
+    PARSER = argparse.ArgumentParser(prog='search|s', description='Search shared folders with regular expression')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
@@ -469,23 +472,22 @@ class SearchCommand(RecordListCommand):
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
     
-    def execute(self, params, **kwargs):
-        dq = {}
-        ap = api.search_records
-        rt = super().execute(params, api=ap, **kwargs)
-        if rt:
-            dq[ap] = rt
-        ap = api.search_shared_folders
-        rt = super().execute(params, api=ap, **kwargs)
-        if rt:
+    def execute(self, params, print=print, **kwargs):
+        """Return: (records, shared_folders, team_folders)
+        """
+        pattern = kwargs.get('pattern', '')
+        records = api.search_records(params, pattern)
+        if records and print:
+            display.formatted_records(records, print=print, appends=None, **kwargs)
+        shared_folders = api.search_shared_folders(params, pattern)
+        if shared_folders and print:
             print("\nShared folders:")
-            dq[ap] = rt
-        ap = api.search_teams
-        rt = super().execute(params, api=ap, **kwargs)
-        if rt:
+            display.formatted_shared_folders(shared_folders, print=print, **kwargs)
+        teams = api.search_teams(params, pattern)
+        if teams and print:
             print("\nTeams:")
-            dq[ap] = rt
-        return dq
+            display.formatted_teams(teams, print=print, appends=None, **kwargs)
+        return records, shared_folders, teams
 
 
 class RecordListTeamCommand(Command):
