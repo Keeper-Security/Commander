@@ -53,7 +53,7 @@ def formatted_records(records, print=print, appends=None, **kwargs):
         return None
     
     # Under 5 recs and skip_details then, just display on the screen
-    if len(records) < 5 and 'skip_details' in kwargs:
+    if len(records) < 5 and not 'skip_details' in kwargs:
         for r in records:
             r.display(**kwargs)
         return None    
@@ -103,44 +103,41 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     return formatted
 
 
-def formatted_shared_folders(shared_folders, **kwargs):
-    """Display folders/titles/uids for the supplied records"""
-
-    # Sort by folder+title
-    shared_folders.sort(key=lambda x: (x.name if x.name else ' ').lower(), reverse=False)
-
-    if len(shared_folders) > 0:
-
-        table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(shared_folders)]
-        print(tabulate(table, headers=["#", 'Shared Folder UID', 'Name']))
-
-        print('')
-
-    skip_details = kwargs.get('skip_details') or False
-    # Under 5 recs, just display on the screen
-    if len(shared_folders) < 5 and not skip_details:
-        for sf in shared_folders:
-            sf.display()
+def formatted_shared_folders(shared_folders, print=print, appends=None, **kwargs):
+    """Display folders/titles/uids for the supplied records as:
+    headers=['#', 'Shared Folder UID', 'Name']
+    Params must: len(shared_folders) > 0
+    """
+    # Sort by folder title
+    shared_folders.sort(key=lambda x: (x.name if x.name else '').lower(), reverse=False)
+    # In case items under 5 records and skip_datails option, just display on the screen
+    if print:
+        if len(shared_folders) < 5 and not 'skip_details' in kwargs:
+            for sf in shared_folders:
+                sf.display()
+        else:
+            table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(shared_folders)]
+            print(tabulate(table, headers=["#", 'Shared Folder UID', 'Name']))
+            print('')
 
 
-def formatted_teams(teams, **kwargs):
-    """Display names/uids for the supplied teams"""
+def formatted_teams(teams, print=print, appends=None, **kwargs):
+    """Display names/uids for the supplied teams as:
+    headers=['#', 'Team UID', 'Name']
+    """
 
     # Sort by name
     teams.sort(key=lambda x: (x.name if x.name else ' ').lower(), reverse=False)
-
-    if len(teams) > 0:
-
-        table = [[i + 1, team.team_uid, team.name] for i, team in enumerate(teams)]
-        print(tabulate(table, headers=["#", 'Team UID', 'Name']))
-
-        print('')
-
-    skip_details = kwargs.get('skip_details') or False
     # Under 5 recs, just display on the screen
-    if len(teams) < 5 and not skip_details:
-        for team in teams:
-            team.display()
+    if print:
+        if len(teams) < 5 and not 'skip_details' in kwargs:
+            for team in teams:
+                team.display()
+        else:
+            table = [[i + 1, team.team_uid, team.name] for i, team in enumerate(teams)]
+            print(tabulate(table, headers=['#', 'Team UID', 'Name']))
+            print('')
+
 
 
 def formatted_folders(folders):
