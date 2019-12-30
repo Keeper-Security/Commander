@@ -1,3 +1,5 @@
+# Pending...:
+ - '--history|-his' option is not properly working in List and Search commands.
 # Modified parts
  - cli.py ```print exception location```
   - api.py : sync after login
