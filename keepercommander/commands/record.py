@@ -1017,7 +1017,7 @@ class ClipboardCommand(Command):
 
         user_pattern = None
         if kwargs['username']:
-            user_pattern = re.compile(kwargs['username'].lower())
+            user_pattern = re.compile(kwargs['username'], re.IGNORECASE)
 
         record_uid = None
         if record_name in params.record_cache:
