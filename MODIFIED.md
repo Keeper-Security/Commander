@@ -1,5 +1,10 @@
-# Pending...:
- - '--history|-his' option is not properly working in List and Search commands.
+# How to use:
+ ## List records sorted by date: the last modified record is printed last
+  - list -m 
+  - list -m -r
+ ## Search : use sort by revision
+  - sort **pattern** -s revision
+
 # Modified parts
  - cli.py ```print exception location```
   - api.py : sync after login
@@ -15,8 +20,3 @@
  - commands.py : change all "from ..(file/module) import" to "from ...(file/module) import" ; 3 dots means 2-level up
   
 
-# How to use:
- ## List records sorted by date: the last modified record is printed last
-  - list -s revision
- ## Search is same as List: But it might be better if sort object is selected from fields..
-  - sort **pattern** -s revision

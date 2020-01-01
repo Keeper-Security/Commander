@@ -439,7 +439,7 @@ class RecordHistoryCommand(Command):
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             self.get_parser().print_help()
-            return
+            return None
 
         record_uid = None
         if record_name in params.record_cache:
@@ -459,7 +459,7 @@ class RecordHistoryCommand(Command):
 
         if record_uid is None:
             logging.error('Enter name or uid of existing record')
-            return
+            return None
 
         current_rec = params.record_cache[record_uid]
         if record_uid in params.record_history:
@@ -483,13 +483,13 @@ class RecordHistoryCommand(Command):
             length = len(history)
             if length == 0:
                 logging.info('Record does not have history of edit')
-                return
+                return None
 
             if 'revision' in kwargs and kwargs['revision'] is not None:
                 revision = kwargs['revision']
                 if revision < 1 or revision > length+1:
                     logging.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
-                    return
+                    return None
                 if not kwargs.get('action'):
                     action = 'show'
             else:
@@ -507,7 +507,8 @@ class RecordHistoryCommand(Command):
                         tm = ''
                     rows.append(['V.{}'.format(length-i), revision.get('user_name') or '', tm])
                     raws.append([length-i, revision.get('user_name') or '', dt])
-                print(tabulate(rows, headers=headers))
+                if print:
+                    print(tabulate(rows, headers=headers))
                 return raws
             elif action == 'show':
                 if revision == 0:
@@ -516,8 +517,10 @@ class RecordHistoryCommand(Command):
                 key = current_rec['record_key_unencrypted']
                 rev = history[length - revision]
                 rec = RecordHistoryCommand.load_revision(params, key, rev)
-                print('\n{0:>20s}: V.{1}'.format('Revision', revision))
-                rec.display()
+                if print:
+                    print('\n{0:>20s}: V.{1}'.format('Revision', revision))
+                    rec.display()
+                return revision, rec
             elif action == 'diff':
                 if revision == 0:
                     revision = 1
@@ -539,8 +542,10 @@ class RecordHistoryCommand(Command):
                 for d in RecordHistoryCommand.get_record_diffs(record_next, record_current):
                     rows.append(['V.{}'.format(1) if not added else '', d[0], d[1], d[2]])
                     added = True
-                headers = ('Version', 'Field', 'New Value', 'Old Value')
-                print(tabulate(rows, headers=headers))
+                if print:
+                    headers = ('Version', 'Field', 'New Value', 'Old Value')
+                    print(tabulate(rows, headers=headers))
+                return rows
             elif action == 'restore':
                 ro = api.resolve_record_write_path(params, record_uid)    # type: dict
                 if not ro:
@@ -597,6 +602,7 @@ class RecordHistoryCommand(Command):
                                 logging.error('Failed to restore record revision: {0}'.format(status['status']))
                 else:
                     logging.error('Cannot restore this revision')
+            return None
 
     @staticmethod
     def load_revision(params, record_key, revision):
@@ -707,38 +713,76 @@ class RecordHistoryCommand(Command):
                 for id in s:
                     yield 'Attachment', RecordHistoryCommand.to_attachment_str(att1.get(id)), RecordHistoryCommand.to_attachment_str(att2.get(id))
 
+class ModefiedOption():
+    """parser modefied arguments"""
+    PARSER = argparse.ArgumentParser(prog='modefied', add_help=False)
+    PARSER.add_argument('-m', '--modefied', dest='modefied', action='store_true', help='add modified date time field.')
 
 
 class HistoryOption():
     """parser history arguments"""
     PARSER = argparse.ArgumentParser(prog='history', add_help=False)
-    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List up history.')
+    PARSER.add_argument('-his', '--history', dest='history', action='store_true', help='List only records with history(ever modified).')
     COMMAND = RecordHistoryCommand()
+    ACTION = {'action':'list'}
 
-class RecordListCommand(Command, HistoryOption):
+class RecordListCommand(Command):
     """List records"""
-    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, PagerOption.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER], prog='list|l', description='Display all record UID/titles')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
 
-    def execute(self, params, api=api.search_records, print=print, **kwargs):
+    def execute(self, params, print=print, **kwargs):
         '''List record : history if 'history' in params
         '''
         pattern = kwargs.get('pattern')
-        results = api(params, pattern or '')
-        if not results:
+        records = api.search_records(params, pattern or '')
+        if not records:
             return None
+        append_funcs = []
+        if kwargs.get('modefied'):
+            kwargs.pop('sort', None)
+            def get_modified_time(record_uid):
+                current_rec = params.record_cache[record_uid]
+                if not current_rec:
+                    return None
+                client_modified_time = current_rec.get('client_modified_time')
+                if not client_modified_time:
+                    return None
+                dt = None
+                try:
+                    dt = datetime.datetime.fromtimestamp(client_modified_time / 1000)
+                except OverflowError as e:
+                    logging.error(f"Out of range of datetime timestamp:{e}")
+                except OSError as e:
+                    logging.error(f"getting datetime os call failed.:{e}")
+                finally:
+                    return dt
+            current_time = datetime.datetime.now()
+            modified_times = [get_modified_time(r.record_uid) or current_time for r in records]
+            zipped = list(zip(records, modified_times))
+            sorted_zipped = sorted(zipped, key=lambda z: z[1], reverse=kwargs.get('reverse'))
+            records = [r[0] for r in sorted_zipped]
+            uid_dict_datetime = {r[0].record_uid : r[1] for r in zipped}
+            def get_cmtime(uid):
+                return uid_dict_datetime[uid].isoformat() if uid else "Modefied time"
+            append_funcs += [get_cmtime]
+
+
         #if len(results) < 5:
         #    api.get_record_shares(params, [x.record_uid for x in results])
         #if 'time' in kwargs: display.formatted_records(results, time=True) else:
+        '''
         history = kwargs.get('history')
         if history:
             def get_history(record_uid):
-                return HistoryOption.COMMAND.execute(params, print=None, record=record_uid) if record_uid else 'History'
+                return HistoryOption.COMMAND.execute(params, print=None, record=record_uid, **HistoryOption.ACTION) if record_uid else 'History'
+            modified_records = [x for x in records if get_history(x.record_uid)]
         else:
             get_history = None
-        formatted = display.formatted_records(results, appends=get_history, print=print, **kwargs)
+        '''
+        formatted = display.formatted_records(records, appends=append_funcs, print=print, **kwargs)
         return formatted            
 
 class RecordListSfCommand(Command):
@@ -756,7 +800,7 @@ class RecordListSfCommand(Command):
         if results:
             display.formatted_shared_folders(results)
 
-class SearchCommand(RecordListCommand):
+class SearchCommand(Command):
     PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search with regular expression')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = Command.parser_error

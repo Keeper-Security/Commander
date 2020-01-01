@@ -80,12 +80,8 @@ def formatted_records(records, print=print, appends=None, **kwargs):
     shared_folder_records = shared_folder.get('records') if shared_folder else None
     headers = RECORD_HEADER if not shared_folder_records else RECORD_HEADER + ['Writable', 'Shared']
     if appends:
-        headers += [appends(None)] #[x(None) for x in appends] # append field names
+        headers += [f(None) for f in appends] # append field names
     table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
-    if appends:
-        for row in table:
-            x = appends(row[1])
-            row += [x or '']
     if shared_folder_records:
         from collections import deque
         for row in table:
@@ -96,6 +92,11 @@ def formatted_records(records, print=print, appends=None, **kwargs):
                     flags += 'S' if sfr['can_share'] else '_'
                     break
             row += flags
+    if appends:
+        for row in table:
+            xx = [f(row[1]) for f in appends]
+            row += xx
+    
     formatted = tabulate(table, headers=headers)
     if print:
         print(formatted)
