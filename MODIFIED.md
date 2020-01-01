@@ -3,7 +3,7 @@
   - list -m 
   - list -m -r
  ## Search : use sort by revision
-  - sort **pattern** -s revision
+  - search **pattern** -s revision
  ## Pager (show by page) option
   - list -p
 # Modified parts
