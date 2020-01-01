@@ -13,6 +13,9 @@ from colorama import init
 from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
+from pypager.source import GeneratorSource
+from pypager.pager import Pager
+
 from .subfolder import BaseFolderNode
 
 init()
@@ -98,9 +101,16 @@ def formatted_records(records, print=print, appends=None, **kwargs):
             row += xx
     
     formatted = tabulate(table, headers=headers)
+    import pdb;pdb.set_trace()
     if print:
-        print(formatted)
-        print()
+        if kwargs.get('page'):
+            def generate_a_lot_of_content():
+                yield [('', formatted)]
+            p = Pager()
+            p.add_source(GeneratorSource(generate_a_lot_of_content()))
+            p.run()
+        else:
+            print(formatted)
     return formatted
 
 

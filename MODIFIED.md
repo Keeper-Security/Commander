@@ -4,7 +4,8 @@
   - list -m -r
  ## Search : use sort by revision
   - sort **pattern** -s revision
-
+ ## Pager (show by page) option
+  - list -p
 # Modified parts
  - cli.py ```print exception location```
   - api.py : sync after login

@@ -718,6 +718,10 @@ class ModefiedOption():
     PARSER = argparse.ArgumentParser(prog='modefied', add_help=False)
     PARSER.add_argument('-m', '--modefied', dest='modefied', action='store_true', help='add modified date time field.')
 
+class PagerOption():
+    """parser pager arguments"""
+    PARSER = argparse.ArgumentParser(prog='pager', add_help=False)
+    PARSER.add_argument('-p', '--page', dest='page', action='store_true', help='Show content by page.')
 
 class HistoryOption():
     """parser history arguments"""
@@ -728,7 +732,7 @@ class HistoryOption():
 
 class RecordListCommand(Command):
     """List records"""
-    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER, PagerOption.PARSER], prog='list|l', description='Display all record UID/titles')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 

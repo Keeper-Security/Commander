@@ -18,7 +18,8 @@ install_requires = [
     'prompt_toolkit>=2.0.4',
     'asciitree',
     'protobuf>=3.6.0',
-    'pyperclip'
+    'pyperclip',
+    'pypager'
 ]
 
 setup(name='keepercommander',
