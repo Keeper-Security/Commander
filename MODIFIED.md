@@ -6,6 +6,8 @@
   - search **pattern** -s revision
  ## Pager (show by page) option
   - list -p
+ ## Get command accepts # number by pager as record_uid
+  - get # (# is a number of 1st column shown by pager output of List command)
 # Modified parts
  - cli.py ```print exception location```
   - api.py : sync after login

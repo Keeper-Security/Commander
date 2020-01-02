@@ -15,11 +15,16 @@ from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from pypager.source import GeneratorSource
 from pypager.pager import Pager
+from io import StringIO
 
 from .subfolder import BaseFolderNode
 
 init()
 
+class TablePager(Pager):
+    table = None
+
+pager = None
 
 class bcolors:
     HEADER = '\033[95m'
@@ -46,7 +51,7 @@ def welcome():
 
 RECORD_HEADER = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
 
-def formatted_records(records, print=print, appends=None, **kwargs):
+def formatted_records(records, print_func=print, appends=None, **kwargs):
     """
     Display folders/titles/uids for the supplied shared folders
     print : function(*args)
@@ -101,16 +106,16 @@ def formatted_records(records, print=print, appends=None, **kwargs):
             row += xx
     
     formatted = tabulate(table, headers=headers)
-    import pdb;pdb.set_trace()
-    if print:
-        if kwargs.get('page'):
-            def generate_a_lot_of_content():
-                yield [('', formatted)]
-            p = Pager()
-            p.add_source(GeneratorSource(generate_a_lot_of_content()))
-            p.run()
-        else:
-            print(formatted)
+    if kwargs.get('pager'):
+        def generate_a_lot_of_content():
+            yield [('', formatted)]
+        global pager
+        pager = TablePager()
+        pager.add_source(GeneratorSource(generate_a_lot_of_content()))
+        TablePager.table = table
+        pager.run()
+    else:
+        print_func(formatted)
     return formatted
 
 

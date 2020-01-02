@@ -20,6 +20,8 @@ import logging
 import threading
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
+from pypager.source import GeneratorSource
+from pypager.pager import Pager
 
 from ...team import Team
 from ... import api, display, generator
@@ -72,6 +74,7 @@ class PagerOption():
     """pager option"""
     PARSER = argparse.ArgumentParser(prog='pager', add_help=False)
     PARSER.add_argument('-p', '--pager', dest='pager', action='store_true', help='Show each pages output.')
+    PAGER = Pager()
 
 class RecordAddCommand(Command):
     PARSER = argparse.ArgumentParser(prog='add|a', description='Add record')
@@ -721,7 +724,8 @@ class ModefiedOption():
 class PagerOption():
     """parser pager arguments"""
     PARSER = argparse.ArgumentParser(prog='pager', add_help=False)
-    PARSER.add_argument('-p', '--page', dest='page', action='store_true', help='Show content by page.')
+    PARSER.add_argument('-p', '--pager', dest='pager', action='store_true', help='Show content page by page.')
+    pager = None #Pager()
 
 class HistoryOption():
     """parser history arguments"""
@@ -786,7 +790,11 @@ class RecordListCommand(Command):
         else:
             get_history = None
         '''
-        formatted = display.formatted_records(records, appends=append_funcs, print=print, **kwargs)
+        if kwargs.get('pager'):
+            pgprint = PagerOption.pager = Pager()
+        else:
+            pgprint = print
+        formatted = display.formatted_records(records, appends=append_funcs, print_func=pgprint, **kwargs)
         return formatted            
 
 class RecordListSfCommand(Command):
@@ -851,7 +859,7 @@ class RecordListTeamCommand(Command):
 class RecordGetUidCommand(Command):
     PARSER = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
     PARSER.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
-    PARSER.add_argument('uid', type=str, action='store', help='UID')
+    PARSER.add_argument('uid', type=str, action='store', help='UID or last pager output 1st column number(#)')
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
 
@@ -860,6 +868,21 @@ class RecordGetUidCommand(Command):
         if not uid:
             print('UID parameter is required')
             return
+        import re
+        mt = re.fullmatch(r"(\d+)", uid)
+        if mt:
+            if not display.pager:
+                print("Record number specify needs to be after pager showed records.")
+                return
+            num = int(mt.group(0))
+            if num <= 0:
+                print(f"Specify number 1 or larger.")
+                return
+            lines = display.pager.table
+            if num > len(lines):
+                print(f"Specify (0 < number <= ({len(lines)}).")
+                return
+            uid = lines[num - 1][1]
 
         fmt = kwargs.get('format') or 'detail'
 
