@@ -4,7 +4,7 @@
   - list -m -r
  ## Search : use sort by revision
   - search **pattern** -s revision
- ## Pager (show by page) option
+ ## Pager (show by page) option : no uid is shown in pager view
   - list -p
  ## Get command accepts # number by pager as record_uid
   - get # (# is a number of 1st column shown by pager output of List command)
