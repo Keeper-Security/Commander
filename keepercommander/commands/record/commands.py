@@ -11,7 +11,7 @@
 
 import os
 import argparse
-import datetime
+from datetime import datetime
 import json
 import requests
 import base64
@@ -504,7 +504,7 @@ class RecordHistoryCommand(Command):
                 raws = []
                 for i, revision in enumerate(history):
                     if 'client_modified_time' in revision:
-                        dt = datetime.datetime.fromtimestamp(revision['client_modified_time']/1000.0)
+                        dt = datetime.fromtimestamp(revision['client_modified_time']/1000.0)
                         tm = dt.strftime('%Y-%m-%d %H:%M:%S')
                     else:
                         tm = ''
@@ -752,8 +752,14 @@ class RecordListCommand(Command):
         append_funcs = []
         if kwargs.get('modefied'):
             kwargs.pop('sort', None)
-            current_time = datetime.datetime.now()
-            modified_times = [get_modified_time(params, r.record_uid) or current_time for r in records]
+            current_time = datetime.now()
+            def modified_time(r):
+                mt = get_modified_time(params, r.record_uid)
+                if not mt:
+                    logging.error("Failed in getting record modified time!")
+                    return current_time
+                return mt
+            modified_times = [modified_time(r) for r in records]
             zipped = list(zip(records, modified_times))
             sorted_zipped = sorted(zipped, key=lambda z: z[1], reverse=kwargs.get('reverse'))
             records = [r[0] for r in sorted_zipped]

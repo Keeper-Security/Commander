@@ -90,6 +90,7 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
     if appends:
         headers += [f(None) for f in appends] # append field names
     table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
+
     if shared_folder_records:
         from collections import deque
         for row in table:
@@ -104,7 +105,10 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         for row in table:
             xx = [f(row[1]) for f in appends]
             row += xx
-    
+    if kwargs.get('pager'): # remove uid if pager option
+        TablePager.table = table
+        table = [row[:1]+row[2:] for row in table]
+        del headers[1]    
     formatted = tabulate(table, headers=headers)
     if kwargs.get('pager'):
         def generate_a_lot_of_content():
@@ -112,7 +116,6 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         global pager
         pager = TablePager()
         pager.add_source(GeneratorSource(generate_a_lot_of_content()))
-        TablePager.table = table
         pager.run()
     else:
         print_func(formatted)
