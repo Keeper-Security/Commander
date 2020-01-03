@@ -23,6 +23,8 @@ init()
 
 class TablePager(Pager):
     table = None
+    def __init__(tbl):
+        table = tbl
 
 pager = None
 
@@ -105,8 +107,8 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         for row in table:
             xx = [f(row[1]) for f in appends]
             row += xx
-    if kwargs.get('pager'): # remove uid if pager option
-        TablePager.table = table
+    if kwargs.get('pager') or kwargs.get('web'): # remove uid if pager option
+        TablePager.table = oldtable = table
         table = [row[:1]+row[2:] for row in table]
         del headers[1]    
     formatted = tabulate(table, headers=headers)
@@ -114,11 +116,20 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         def generate_a_lot_of_content():
             yield [('', formatted)]
         global pager
-        pager = TablePager()
+        pager = TablePager(oldtable)
         pager.add_source(GeneratorSource(generate_a_lot_of_content()))
         pager.run()
     else:
         print_func(formatted)
+    if kwargs.get('web'):
+        from wsgiref.simple_server import make_server
+        def helo(env, start_resp):
+            start_resp("200 OK",
+                [("Content-type", "text/plain;charset=utf-8")])
+            return [formatted.encode('utf-8')]
+
+        httpd = make_server('', 3000, helo)
+        httpd.handle_request()
     return formatted
 
 

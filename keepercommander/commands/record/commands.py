@@ -29,7 +29,7 @@ from ...subfolder import BaseFolderNode, find_folders, try_resolve_path, get_fol
 from ..base import raise_parse_exception, suppress_exit, user_choice, Command, ParseException
 from ...record import Record, get_totp_code
 from ...params import KeeperParams, LAST_RECORD_UID
-
+from ...display import TablePager
 
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
@@ -725,7 +725,6 @@ class PagerOption():
     """parser pager arguments"""
     PARSER = argparse.ArgumentParser(prog='pager', add_help=False)
     PARSER.add_argument('-p', '--pager', dest='pager', action='store_true', help='Show content page by page.')
-    pager = None #Pager()
 
 class HistoryOption():
     """parser history arguments"""
@@ -734,10 +733,15 @@ class HistoryOption():
     COMMAND = RecordHistoryCommand()
     ACTION = {'action':'list'}
 
+class WebOption():
+    """parser web arguments"""
+    PARSER = argparse.ArgumentParser(prog='web', add_help=False)
+    PARSER.add_argument('-w', '--web', dest='web', action='store_true', help='Show content page by web.')
+
 
 class RecordListCommand(Command):
     """List records"""
-    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER, PagerOption.PARSER], prog='list|l', description='Display all record UID/titles')
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER, PagerOption.PARSER, WebOption.PARSER], prog='list|l', description='Display all record UID/titles')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
@@ -861,14 +865,14 @@ class RecordGetUidCommand(Command):
         import re
         mt = re.fullmatch(r"(\d+)", uid)
         if mt:
-            if not display.pager:
-                print("Record number specify needs to be after pager showed records.")
+            if not TablePager.table:
+                print("Record number specify needs to be after pager or web showed records.")
                 return
             num = int(mt.group(0))
             if num <= 0:
                 print(f"Specify number 1 or larger.")
                 return
-            lines = display.pager.table
+            lines = TablePager.table
             if num > len(lines):
                 print(f"Specify (0 < number <= ({len(lines)}).")
                 return
