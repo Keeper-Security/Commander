@@ -734,6 +734,7 @@ class HistoryOption():
     COMMAND = RecordHistoryCommand()
     ACTION = {'action':'list'}
 
+
 class RecordListCommand(Command):
     """List records"""
     PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER, PagerOption.PARSER], prog='list|l', description='Display all record UID/titles')
@@ -751,24 +752,8 @@ class RecordListCommand(Command):
         append_funcs = []
         if kwargs.get('modefied'):
             kwargs.pop('sort', None)
-            def get_modified_time(record_uid):
-                current_rec = params.record_cache[record_uid]
-                if not current_rec:
-                    return None
-                client_modified_time = current_rec.get('client_modified_time')
-                if not client_modified_time:
-                    return None
-                dt = None
-                try:
-                    dt = datetime.datetime.fromtimestamp(client_modified_time / 1000)
-                except OverflowError as e:
-                    logging.error(f"Out of range of datetime timestamp:{e}")
-                except OSError as e:
-                    logging.error(f"getting datetime os call failed.:{e}")
-                finally:
-                    return dt
             current_time = datetime.datetime.now()
-            modified_times = [get_modified_time(r.record_uid) or current_time for r in records]
+            modified_times = [get_modified_time(params, r.record_uid) or current_time for r in records]
             zipped = list(zip(records, modified_times))
             sorted_zipped = sorted(zipped, key=lambda z: z[1], reverse=kwargs.get('reverse'))
             records = [r[0] for r in sorted_zipped]
@@ -776,7 +761,6 @@ class RecordListCommand(Command):
             def get_cmtime(uid):
                 return uid_dict_datetime[uid].isoformat() if uid else "Modefied time"
             append_funcs += [get_cmtime]
-
 
         #if len(results) < 5:
         #    api.get_record_shares(params, [x.record_uid for x in results])
@@ -813,7 +797,7 @@ class RecordListSfCommand(Command):
             display.formatted_shared_folders(results)
 
 class SearchCommand(Command):
-    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER], prog='search|s', description='Search with regular expression')
+    PARSER = argparse.ArgumentParser(parents=[SortOption.PARSER, ModefiedOption.PARSER, PagerOption.PARSER], prog='search|s', description='Search with regular expression')
     PARSER.add_argument('pattern', nargs='?', type=str, action='store', help='regex pattern')
     PARSER.error = Command.parser_error
     PARSER.exit = suppress_exit 
@@ -1497,4 +1481,20 @@ class TotpCommand(Command):
                     TotpCommand.Endpoints.append(TotpEndpoint(record_uid, record.title, paths))
 
 
-
+def get_modified_time(params, record_uid):
+    """get modified time from cache in params"""
+    current_rec = params.record_cache[record_uid]
+    if not current_rec:
+        return None
+    client_modified_time = current_rec.get('client_modified_time')
+    if not client_modified_time:
+        return None
+    dt = None
+    try:
+        dt = datetime.fromtimestamp(client_modified_time / 1000)
+    except OverflowError as e:
+        logging.error(f"Out of range of datetime timestamp:{e}")
+    except OSError as e:
+        logging.error(f"getting datetime os call failed.:{e}")
+    finally:
+        return dt
