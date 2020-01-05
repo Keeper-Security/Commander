@@ -96,7 +96,8 @@ connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true',
 connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'],
                             help='sort output')
 connect_parser.add_argument('-f', '--filter', dest='filter_by', action='store', help='filter output')
-connect_parser.add_argument('endpoint', nargs='?', action='store', type=str, help='endpoint')
+connect_parser.add_argument('endpoint', nargs='?', action='store', type=str,
+                            help='endpoint name or full record path to endpoint')
 connect_parser.error = raise_parse_exception
 connect_parser.exit = suppress_exit
 
@@ -411,11 +412,11 @@ class ConnectSshAgent:
 
 class ConnectEndpoint:
     def __init__(self, name, description, record_uid, record_title, paths):
-        self.name = name
-        self.description = description
-        self.record_uid = record_uid
-        self.record_title = record_title
-        self.paths = paths
+        self.name = name                    # type: str
+        self.description = description      # type: str
+        self.record_uid = record_uid        # type: str
+        self.record_title = record_title    # type: str
+        self.paths = paths                  # type: list
 
 
 class ConnectCommand(Command):
@@ -436,19 +437,43 @@ class ConnectCommand(Command):
         if endpoint:
             endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
             if not endpoints:
-                folder = None
-                rpos = endpoint.rfind('/')
+                rpos = endpoint.rfind(':')
                 if rpos > 0:
-                    try_path = endpoint[:rpos+1]
+                    try_path = endpoint[:rpos]
+                    endpoint_name = endpoint[rpos+1:]
+                else:
+                    try_path = endpoint
+                    endpoint_name = ''
+                record_uid = ''
+                if try_path in params.record_cache:
+                    record_uid = try_path
+                else:
                     rs = try_resolve_path(params, try_path)
                     if rs is not None:
-                        if not rs[1]:
-                            folder = rs[0]
-                            endpoint = endpoint[rpos+1:]
-                endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
+                        folder, title = rs
+                        if folder is not None and title is not None:
+                            folder_uid = folder.uid or ''
+                            if folder_uid in params.subfolder_record_cache:
+                                for uid in params.subfolder_record_cache[folder_uid]:
+                                    r = api.get_record(params, uid)
+                                    if r.title.lower() == title.lower():
+                                        record_uid = uid
+                                        break
+                if record_uid:
+                    endpoints = [x for x in ConnectCommand.Endpoints
+                                 if x.record_uid == record_uid and endpoint_name in {'', x.name}]
+
             if len(endpoints) > 0:
-                record = api.get_record(params, endpoints[0].record_uid)
-                ConnectCommand.connect_endpoint(params, endpoint, record, kwargs.get('new_data') or False)
+                if len(endpoints) == 1:
+                    record = api.get_record(params, endpoints[0].record_uid)
+                    ConnectCommand.connect_endpoint(params, endpoints[0].name, record, kwargs.get('new_data') or False)
+                else:
+                    logging.warning("Connect endpoint '{0}' is not unique".format(endpoint))
+                    ConnectCommand.dump_endpoints(endpoints)
+                    logging.info("Use full endpoint path: /<Folder>/<Title>[:<Endpoint>]")
+                    folder = endpoints[0].paths[0] if len(endpoints[0].paths) > 0 else '/'
+                    logging.info('Example: connect "{0}/{1}:{2}"'
+                                 .format(folder, endpoints[0].record_title, endpoints[0].name))
             else:
                 logging.info("Connect endpoint '{0}' not found".format(endpoint))
         else:
@@ -459,25 +484,30 @@ class ConnectCommand(Command):
                 if filter_by:
                     logging.info('Filtered by \"%s\"', filter_by)
                     filter_by = filter_by.lower()
-                logging.info('')
-                headers = ["#", 'Endpoint', 'Description', 'Record Title', 'Folder(s)']
-                table = []
-                for i in range(len(ConnectCommand.Endpoints)):
-                    endpoint = ConnectCommand.Endpoints[i]
-                    title = endpoint.record_title
-                    folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
-                    if filter_by:
-                        if not any([x for x in [endpoint.name.lower(), title.lower(), folder.lower()] if x.find(filter_by) >= 0]):
-                            continue
-                    if len(title) > 23:
-                        title = title[:20] + '...'
-                    table.append([i + 1, endpoint.name, endpoint.description or '', title, folder])
-                table.sort(key=lambda x: x[4] if sorted_by == 'folder' else x[3] if sorted_by == 'title' else x[1])
-                print(tabulate(table, headers=headers))
-                print('')
+                ConnectCommand.dump_endpoints(ConnectCommand.Endpoints, filter_by, sorted_by)
             else:
                 logging.info("No connect endpoints found")
             return
+
+    @staticmethod
+    def dump_endpoints(endpoints, filter_by='', sorted_by=''):
+        logging.info('')
+        headers = ["#", 'Endpoint', 'Description', 'Record Title', 'Folder(s)']
+        table = []
+        for endpoint in endpoints:
+            title = endpoint.record_title
+            folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
+            if filter_by:
+                if not any([x for x in [endpoint.name.lower(), title.lower(), folder.lower()] if x.find(filter_by) >= 0]):
+                    continue
+            if len(title) > 23:
+                title = title[:20] + '...'
+            table.append([0, endpoint.name, endpoint.description or '', title, folder])
+        table.sort(key=lambda x: x[4] if sorted_by == 'folder' else x[3] if sorted_by == 'title' else x[1])
+        for i in range(len(table)):
+            table[i][0] = i + 1
+        print(tabulate(table, headers=headers))
+        print('')
 
     @staticmethod
     def delete_ssh_keys(delete_requests):

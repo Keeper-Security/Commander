@@ -164,7 +164,8 @@ class CommandCompleter(Completer):
                     raw_input = document.text[pos+1:].strip()
                     context = ''
                     extra = dict()
-                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes', 'rm', 'clipboard-copy', 'find-password'} :
+                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
+                               'rm', 'clipboard-copy', 'find-password'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
@@ -240,16 +241,23 @@ class CommandCompleter(Completer):
                                                 yield Completion(n, display=d, start_position=-len(name))
                     elif context == 'command':
                         cmd = extra['prefix']
-                        for c in  itertools.chain(commands.keys(), enterprise_commands.keys()):
+                        for c in itertools.chain(commands.keys(), enterprise_commands.keys()):
                             if c.startswith(cmd):
                                 yield Completion(c, display=c, start_position=-len(cmd))
                     elif context == 'connect':
                         ConnectCommand.find_endpoints(self.params)
                         cmd = extra['prefix']
-                        for ep in ConnectCommand.Endpoints:
-                            c = ep.name or ''
-                            if c.startswith(cmd):
-                                yield Completion(c, display=c, start_position=-len(cmd))
+                        comp = cmd.casefold()
+                        names = []
+                        unique_names = set()
+                        for x in ConnectCommand.Endpoints:
+                            name = (x.name or '').casefold()
+                            if name not in unique_names:
+                                unique_names.add(name)
+                                if name.startswith(comp):
+                                    names.append(x.name)
+                        for name in names:
+                            yield Completion(name, display=name, start_position=-len(cmd))
 
         except Exception as e:
             pass
