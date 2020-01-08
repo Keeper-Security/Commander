@@ -92,7 +92,8 @@ def usage(m):
     cli.display_command_help(show_enterprise=True, show_shell=True)
     sys.exit(1)
 
-parser = argparse.ArgumentParser(prog='keeper', add_help=False)
+
+parser = argparse.ArgumentParser(prog='keeper', add_help=False, allow_abbrev=False)
 parser.add_argument('--server', '-ks', dest='server', action='store', help='Keeper Host address.')
 parser.add_argument('--user', '-ku', dest='user', action='store', help='Email address for the account.')
 parser.add_argument('--password', '-kp', dest='password', action='store', help='Master password for the account.')

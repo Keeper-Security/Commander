@@ -362,8 +362,8 @@ server.pem
 To initiate connection: "connect my_server"
 '''
 
-endpoint_pattern =  re.compile(r'^connect:([^:]+)$')
-endpoint_desc_pattern =  re.compile(r'^connect:([^:]+):description$')
+endpoint_pattern = re.compile(r'^connect:([^:]+)$')
+endpoint_desc_pattern = re.compile(r'^connect:([^:]+):description$')
 endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
 
 
