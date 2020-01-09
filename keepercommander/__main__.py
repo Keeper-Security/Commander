@@ -71,6 +71,9 @@ def get_params_from_config(config_filename):
                     device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
                     params.rest_context.device_id = device_id
 
+                if 'logout_timer' in params.config:
+                    params.logout_timer = params.config['logout_timer']
+
             except:
                 print('Error: Unable to parse JSON file ' + params.config_filename)
                 raise
@@ -92,7 +95,8 @@ def usage(m):
     cli.display_command_help(show_enterprise=True, show_shell=True)
     sys.exit(1)
 
-parser = argparse.ArgumentParser(prog='keeper', add_help=False)
+
+parser = argparse.ArgumentParser(prog='keeper', add_help=False, allow_abbrev=False)
 parser.add_argument('--server', '-ks', dest='server', action='store', help='Keeper Host address.')
 parser.add_argument('--user', '-ku', dest='user', action='store', help='Email address for the account.')
 parser.add_argument('--password', '-kp', dest='password', action='store', help='Master password for the account.')

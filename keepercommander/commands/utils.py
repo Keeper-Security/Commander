@@ -72,7 +72,7 @@ whoami_parser.exit = suppress_exit
 
 
 login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper')
-login_parser.add_argument('-p', '--password', dest='password', action='store', help='master password')
+login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -362,8 +362,8 @@ server.pem
 To initiate connection: "connect my_server"
 '''
 
-endpoint_pattern =  re.compile(r'^connect:([^:]+)$')
-endpoint_desc_pattern =  re.compile(r'^connect:([^:]+):description$')
+endpoint_pattern = re.compile(r'^connect:([^:]+)$')
+endpoint_desc_pattern = re.compile(r'^connect:([^:]+):description$')
 endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
 
 

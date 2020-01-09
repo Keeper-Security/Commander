@@ -14,6 +14,7 @@ import sys
 import getpass
 import datetime
 import time
+import threading
 import functools
 import logging
 
@@ -184,6 +185,10 @@ def prompt_for_credentials(params):
             params.password = getpass.getpass(prompt='Password: ', stream=None)
 
 
+def force_quit():
+    os._exit(0)
+
+
 def loop(params):
     # type: (KeeperParams) -> None
 
@@ -230,7 +235,11 @@ def loop(params):
             params.commands = params.commands[1:]
 
         if not command:
+            tmer = None     # type: threading.Timer or None
             try:
+                if params.session_token and params.logout_timer > 0:
+                    tmer = threading.Timer(params.logout_timer * 60, force_quit)
+                    tmer.start()
                 if prompt_session is not None:
                     if params.enforcements and params.user not in enforcement_checked:
                         enforcement_checked.add(params.user)
@@ -239,11 +248,16 @@ def loop(params):
                     command = prompt_session.prompt(get_prompt(params))
                 else:
                     command = input(get_prompt(params))
+                if tmer:
+                    tmer.cancel()
+                    tmer = None
             except KeyboardInterrupt:
                 pass
             except EOFError:
                 break
-
+            finally:
+                if tmer:
+                    tmer.cancel()
         try:
             if not do_command(params, command):
                 break

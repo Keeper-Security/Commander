@@ -157,6 +157,12 @@ def login(params):
 
             params.license = response_json.get('license')
             params.enforcements = response_json.get('enforcements')
+            if params.enforcements:
+                if 'logout_timer_desktop' in params.enforcements:
+                    logout_timer = params.enforcements['logout_timer_desktop']
+                    if logout_timer > 0:
+                        if params.logout_timer == 0 or logout_timer < params.logout_timer:
+                            params.logout_timer = logout_timer
             params.settings = response_json.get('settings')
 
             if response_json.get('is_enterprise_admin'):
