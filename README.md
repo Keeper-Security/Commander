@@ -1110,7 +1110,7 @@ Notes:
 * ```timedelay``` parameter can be used to automatically run the specified commands every X seconds. For example:
 ```"timedelay":600``` will run the commands every 10 minutes.
 
-* ```challenge``` parameter is the challenge phrase when using a Yubikey device to authenticate. 
+* ```logout_timer``` parameter can be used to logout automatically in shell mode after inactivity period. Time period in minutes
 
 To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a Master Password.
 

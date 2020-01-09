@@ -71,6 +71,9 @@ def get_params_from_config(config_filename):
                     device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
                     params.rest_context.device_id = device_id
 
+                if 'logout_timer' in params.config:
+                    params.logout_timer = params.config['logout_timer']
+
             except:
                 print('Error: Unable to parse JSON file ' + params.config_filename)
                 raise
