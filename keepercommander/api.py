@@ -1237,7 +1237,7 @@ def execute_batch(params, requests):
     if not requests:
         return responses
 
-    chunk_size = 100
+    chunk_size = 80
     queue = requests.copy()
     while len(queue) > 0:
         chunk = queue[:chunk_size]
@@ -1264,6 +1264,8 @@ def execute_batch(params, requests):
 
         except Exception as e:
             logging.error(e)
+        if len(chunk) > 50:
+            time.sleep(5)
 
     return responses
 

@@ -146,7 +146,7 @@ class TestConnectedCommands(TestCase):
             TestConnectedCommands.wipe_out_data()
             cli.do_command(params, 'sync-down')
 
-            with mock.patch('getpass.getpass', return_value='password'):
+            with mock.patch('getpass.getpass', return_value='password'), mock.patch('builtins.input', return_value=''):
                 cli.do_command(params, 'import --format=keepass "{0}"'.format(file))
             cli.do_command(params, 'sync-down')
 

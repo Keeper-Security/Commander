@@ -311,7 +311,7 @@ def upload_attachment(params, attachments):
             if rs['result'] == 'success':
                 uploads = rs['file_uploads']
         except Exception as e:
-            print(e)
+            logging.error(e)
             return
 
         uploaded = {}
@@ -364,7 +364,7 @@ def upload_attachment(params, attachments):
                         print('Failed')
 
             except Exception as e:
-                pass
+                logging.warning(e)
 
         if len(uploaded) > 0:
             rq = {
@@ -410,9 +410,8 @@ def upload_attachment(params, attachments):
                 rs = api.communicate(params, rq)
                 if rs['result'] == 'success':
                     api.sync_down(params)
-
-            except:
-                pass
+            except Exception as e:
+                logging.debug(e)
 
 
 def prepare_shared_folder_add(params, folders):
@@ -564,8 +563,8 @@ def prepare_shared_folder_add(params, folders):
                                         'manage_records': perm.manage_records,
                                         'shared_folder_key': api.encrypt_rsa(parent_key, rsa_key)
                                     })
-                                except:
-                                    pass
+                                except Exception as e:
+                                    logging.debug(e)
             shared_folder_add.append(request)
 
     return shared_folder_add
@@ -652,22 +651,37 @@ def prepare_folder_add(params, records):
 
 
 def prepare_record_add(params, records):
+    record_folders = {}
+    for folder_uid in params.subfolder_record_cache:
+        folder_path = get_folder_path(params, folder_uid)
+        for record_uid in params.subfolder_record_cache[folder_uid]:
+            if record_uid not in record_folders:
+                record_folders[record_uid] = []
+            record_folders[record_uid].append(folder_path)
+
     record_hash = {}
     for r_uid in params.record_cache:
         rec = api.get_record(params, r_uid)
-        h = hashlib.md5()
-        hs = '{0}|{1}|{2}'.format(rec.title or '', rec.login or '', rec.password or '')
-        h.update(hs.encode())
-        record_hash[h.hexdigest()] = r_uid
+        if r_uid in record_folders:
+            for folder_path in record_folders[r_uid]:
+                h = hashlib.md5()
+                hs = '{0}|{1}|{2}|{3}'.format(folder_path or '', rec.title or '', rec.login or '', rec.password or '')
+                h.update(hs.encode())
+                record_hash[h.hexdigest()] = r_uid
 
     record_adds = []
     for rec in records:
-        h = hashlib.md5()
-        hs = '{0}|{1}|{2}'.format(rec.title or '', rec.login or '', rec.password or '')
-        h.update(hs.encode())
-        rec_hash = h.hexdigest()
+        record_uid = None
+        if rec.folders:
+            for folder in rec.folders:
+                h = hashlib.md5()
+                hs = '{0}|{1}|{2}|{3}'.format(folder.get_folder_path(), rec.title or '', rec.login or '', rec.password or '')
+                h.update(hs.encode())
+                rec_hash = h.hexdigest()
+                record_uid = record_hash.get(rec_hash)
+                if record_uid:
+                    break
 
-        record_uid = record_hash.get(rec_hash)
         if record_uid is None:
             record_key = os.urandom(32)
             record_uid = api.generate_record_uid()
@@ -736,7 +750,7 @@ def prepare_record_add(params, records):
                             'data': totp
                         }]
                 }
-                req['extra'] =  api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key)
+                req['extra'] = api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key)
             record_adds.append(req)
 
         rec.uid = record_uid

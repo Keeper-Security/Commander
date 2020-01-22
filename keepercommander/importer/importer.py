@@ -98,13 +98,22 @@ class Attachment:
     def open(self):
         raise NotImplemented
 
+
 class Folder:
     def __init__(self):
         self.uid = None
-        self.domain = None # type: str or None
-        self.path = None # type: str or None
+        self.domain = None   # type: str or None
+        self.path = None     # type: str or None
         self.can_edit = None
         self.can_share = None
+
+    def get_folder_path(self):
+        path = self.domain or ''
+        if self.path:
+            if path:
+                path = path + PathDelimiter
+            path = path + self.path
+        return path
 
 
 class Record:
