@@ -35,10 +35,13 @@ except:
     raise Exception(keepass_instructions)
 
 import os
+import logging
 import base64
 import getpass
 import gzip
 import io
+import re
+import uuid
 
 from contextlib import contextmanager
 
@@ -51,6 +54,8 @@ from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExp
 
 from keepercommander.api import unpad_binary
 
+
+_REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
 
 class KeepassImporter(BaseFileImporter):
 
@@ -129,6 +134,7 @@ class KeepassImporter(BaseFileImporter):
                                                 perm.manage_records = p == True
                                 yield sf
 
+                records = []
                 for group in groups:
                     entries = group.findall('Entry')
                     if len(entries) > 0:
@@ -139,7 +145,7 @@ class KeepassImporter(BaseFileImporter):
                             fol.path = folder
                             record.folders = [fol]
                             if hasattr(entry, 'UUID'):
-                                record.record_uid = base64.urlsafe_b64encode(base64.b64decode(entry.UUID.text)).decode().rstrip('=')
+                                record.uid = base64.urlsafe_b64encode(base64.b64decode(entry.UUID.text)).decode().rstrip('=')
                             if hasattr(entry, 'Keeper'):
                                 for sn in entry.Keeper.iterchildren():
                                     if sn.tag == 'CanEdit':
@@ -194,10 +200,79 @@ class KeepassImporter(BaseFileImporter):
                                                 atta = KeepassAttachment(binary)
                                                 atta.name = bin.Key.text
                                                 record.attachments.append(atta)
-                                    except:
-                                        pass
+                                    except Exception as e:
+                                        logging.debug(e)
+                            records.append(record)
+                id_map = None
+                title_map = None
+                ref_re = re.compile(_REFERENCE, re.IGNORECASE)
 
-                            yield record
+                def resolve_references(text):
+                    nonlocal id_map
+                    nonlocal title_map
+
+                    if not text:
+                        return text
+                    matches = list(ref_re.finditer(text))
+                    if not matches:
+                        return text
+                    values = []
+                    for match in matches:
+                        comps = match.groups()
+                        val = match.group(0)
+                        if len(comps) == 3:
+                            rec = None
+                            if comps[1].upper() == 'I':
+                                if id_map is None:
+                                    id_map = {}
+                                    for r in records:
+                                        if r.uid:
+                                            id_map[r.uid] = r
+                                uid = uuid.UUID(comps[2])
+                                if uid:
+                                    ref_id = base64.urlsafe_b64encode(uid.bytes).decode().rstrip('=')
+                                    rec = id_map.get(ref_id)
+                            elif comps[1].upper() == 'T':
+                                if title_map is None:
+                                    title_map = {}
+                                    for r in records:
+                                        if r.title:
+                                            title_map[r.title] = r
+                                rec = title_map.get(comps[2])
+                            if rec:
+                                field_id = comps[0].upper()
+                                if field_id == 'T':
+                                    val = rec.title
+                                elif field_id == 'U':
+                                    val = rec.login
+                                elif field_id == 'P':
+                                    val = rec.password
+                                elif field_id == 'A':
+                                    val = rec.login_url
+                                elif field_id == 'N':
+                                    val = rec.notes
+                        values.append(val or '')
+
+                        idx = list(range(len(matches)))
+                        idx.reverse()
+                        for index in idx:
+                            match = matches[index]
+                            val = values[index] if index < len(values) else ''
+                            text = text[:match.start()] + val + text[match.end():]
+                        return text
+
+                for record in records:
+                    try:
+                        record.login = resolve_references(record.login)
+                        record.password = resolve_references(record.password)
+                        record.login_url = resolve_references(record.login_url)
+                        record.notes = resolve_references(record.notes)
+                        if record.custom_fields:
+                            for key in record.custom_fields.keys():
+                                record.custom_fields[key] = resolve_references(record.custom_fields[key])
+                    except Exception as e:
+                        logging.debug(e)
+                    yield record
 
     def extension(self):
         return 'kdbx'
@@ -402,7 +477,7 @@ class KeepassExporter(BaseExporter):
                                     msize //= 1024
                                 print('Warning: File \'{0}\' was skipped because it exceeds the {1}{2} file size limit.'.format(atta.name, msize, scale))
                 except Exception as e:
-                    pass
+                    logging.debug(e)
 
             objectify.deannotate(root, xsi_nil=True)
             etree.cleanup_namespaces(root)

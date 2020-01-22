@@ -234,11 +234,12 @@ def v2_execute(context, rq):
     # type: (RestApiContext, dict) -> dict
 
     rs_data = execute_rest(context, 'vault/execute_v2_command', json.dumps(rq).encode('utf-8'))
-    rs = json.loads(rs_data.decode('utf-8'))
-    logger = logging.getLogger()
-    if logger.level <= logging.DEBUG:
-        logger.debug('>>> Request JSON: [%s]', json.dumps(rq, sort_keys=True, indent=4))
-        logger.debug('<<< Response JSON: [%s]', json.dumps(rs, sort_keys=True, indent=4))
+    if rs_data:
+        rs = json.loads(rs_data.decode('utf-8'))
+        logger = logging.getLogger()
+        if logger.level <= logging.DEBUG:
+            logger.debug('>>> Request JSON: [%s]', json.dumps(rq, sort_keys=True, indent=4))
+            logger.debug('<<< Response JSON: [%s]', json.dumps(rs, sort_keys=True, indent=4))
 
-    return rs
+        return rs
 
