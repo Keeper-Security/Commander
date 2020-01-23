@@ -19,6 +19,7 @@ import sys
 
 from tabulate import tabulate
 from ..params import KeeperParams
+from ..subfolder import try_resolve_path
 
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
@@ -126,7 +127,15 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
 
 parameter_pattern = re.compile(r'\${(\w+)}')
 
-class Command:
+class CommandError(Exception):
+    pass
+
+class ArgumentError(CommandError):
+    pass
+
+from abc import ABCMeta,abstractmethod
+
+class Command(metaclass=ABCMeta):
     """Parent Command class"""
     
     @classmethod
@@ -141,10 +150,11 @@ class Command:
     def get_parser(self):
         return self.__class__.PARSER
     
-    def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
+    @abstractmethod
+    def execute(self, params:KeeperParams, **kwargs):# -> List[Record] or None:     # type: (KeeperParams, **any) -> any
         raise NotImplemented()
 
-    def execute_args(self, params, args, **kwargs):
+    def execute_args(self, params:KeeperParams, args:str, **kwargs):
         # type: (Command, KeeperParams, str, dict) -> any
 
         global parameter_pattern
@@ -179,3 +189,45 @@ class Command:
 
     def is_authorised(self):
         return True
+
+    @classmethod
+    def resolve_uid(cls, name, params, **kwargs):
+        '''Resolve uid from name, record_cache or TablePager.table
+            Raise ResolveException if not proper number
+        '''
+        assert len(name) > 0
+
+        if name in params.record_cache:
+            return name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                return uid
+        return None
+    
+    @classmethod
+    def get_uid(cls, uid:str) -> str or None:
+        ''' Resolve uid by line number of previous list command
+            Raise ArgumentError if not proper number
+        '''
+        import re
+        mt = re.fullmatch(r"(\d+)", uid)
+        if mt:
+            if not TablePager.table:
+                raise ArgumentError("Record number specify needs to be after pager or web showed records.")
+            num = int(mt.group(0))
+            if num <= 0:
+                raise ArgumentError(f"Specify number 1 or larger.")
+            lines = TablePager.table
+            if num > len(lines):
+                raise ArgumentError(f"Specify (0 < number <= ({len(lines)}).")
+            return lines[num - 1][1]
+        else:
+            return None

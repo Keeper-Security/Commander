@@ -100,6 +100,7 @@ class KeeperParams:
         self.environment_variables = {}
         self.record_history = {}        # type: dict[str, (list[dict], int)]
         self.event_queue = []
+        self.last_record_table = None #last list command result
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -137,6 +138,7 @@ class KeeperParams:
         self.environment_variables.clear()
         self.record_history.clear()
         self.event_queue.clear()
+        self.last_record_table = None
 
     def __get_rest_context(self):
         return self.__rest_context

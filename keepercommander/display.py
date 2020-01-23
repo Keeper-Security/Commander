@@ -21,10 +21,40 @@ from .subfolder import BaseFolderNode
 
 init()
 
+class TablePagerException(Exception):
+    pass
+class TableNotYetAssignedException(TablePagerException):
+    pass
+
 class TablePager(Pager):
     table = None
-    def __init__(tbl):
-        table = tbl
+    headers = None
+    
+    def __init__(tbl, hdr):
+        TablePager.table = tbl
+        TablePager.headers = hdr
+        super().__init__()
+   
+    @classmethod
+    def get_uid(cls, uid: str) -> str or None:
+        ''' Resolve uid by line number of previous list command
+            Raise TablePagerException if not proper number
+        '''
+        if not cls.table:
+            raise TableNotYetAssignedException("Record number specify needs to be after pager or web showed records.")
+        import re
+        mt = re.fullmatch(r"(\d{1,4})", uid)
+        if mt:
+            num = int(mt.group(0))
+            if not 0 < num < 10000:
+                raise TablePagerException(f"Specify number 1 or less than 10000.")
+            lines = TablePager.table
+            if num > len(lines):
+                raise TablePagerException(f"Specify (0 < number <= ({len(lines)}).")
+            return lines[num - 1][1]
+        else:
+            return None
+
 
 pager = None
 
@@ -68,13 +98,14 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
             r.display(**kwargs)
         return None    
 
-    params = kwargs.get('params')    
     # List or Search: Sort by title or revision
     reverse_sort = kwargs.get('reverse')
     sort_key = kwargs.get('sort')
     sorted_records = sorted(records, key=lambda r: getattr(r, sort_key), reverse=reverse_sort) if sort_key else None
     if sorted_records:
         records = sorted_records
+
+    params = kwargs.get('params')    
     shared_folder = None
     if 'folder' in kwargs and params is not None:
         fuid = kwargs['folder']
@@ -110,6 +141,7 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
     if kwargs.get('pager') or kwargs.get('web'): # remove uid if pager option
         TablePager.table = oldtable = table
         table = [row[:1]+row[2:] for row in table]
+        oldheaders = headers
         del headers[1]    
     formatted = tabulate(table, headers=headers)
     if kwargs.get('pager'):
@@ -122,13 +154,12 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
     else:
         print_func(formatted)
     if kwargs.get('web'):
-        from wsgiref.simple_server import make_server
         def helo(env, start_resp):
             start_resp("200 OK",
                 [("Content-type", "text/plain;charset=utf-8")])
-            return [formatted.encode('utf-8')]
+            return [tabulate(oldtable, headers=oldheaders).encode('utf-8')]
 
-        httpd = make_server('', 3000, helo)
+        httpd = wsgiref.simple_server.make_server('', 3011, helo)
         httpd.handle_request()
     return formatted
 

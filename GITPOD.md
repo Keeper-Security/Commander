@@ -4,7 +4,7 @@
   - File name -> Difference view
   - Open file -> Window([->]) icon
   - Stage (add to commit-booking files) -> '+'
-
+  - Message : for commit -m 
 
 
 #Settings: /File

@@ -22,66 +22,66 @@ import base64
 
 from . import __version__
 from .params import KeeperParams
-
+from .error import InputError, OSException
 from . import cli
 
+#logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s')
+# from https://python.civic-apps.com/logifle-logger/
+global logger
+''' Global Logger for Logging '''
+logger = logging.getLogger("Keeper")    #get logger name
+logger.setLevel(logging.WARNING if params.batch_mode else logging.INFO)
 
-def get_params_from_config(config_filename):
+handler1 = logging.StreamHandler()
+handler1.setFormatter(logging.Formatter("{%(pathname)s:%(lineno)d} %(message)s"))
+
+handler2 = logging.FileHandler(filename="keeper.log")  
+handler2.setLevel(logging.DEBUG)     
+handler2.setFormatter(logging.Formatter("%(asctime)s {%(pathname)s:%(lineno)d} %(levelname)8s %(message)s"))
+
+logger.addHandler(handler1)
+logger.addHandler(handler2)
+
+
+def get_params_from_config(config_filename:str) -> KeeperParams :
+    '''get params from config file'''
+    if not config_filename:
+        msg = "Exit from no config_filename."
+        logger.warn(msg)
+        raise InputError(config_filename, msg)
     params = KeeperParams()
     params.config_filename = config_filename or 'config.json'
-
-    try:
+    key_set = {'user', 'server', 'password', 'timedelay', 'mfa_token', 'mfa_type',
+     'commands', 'plugins', 'debug', 'batch_mode', 'device_id'}
+    try: # pick up keys from params.config[key] to params.key
         with open(params.config_filename) as config_file:
-
             try:
                 params.config = json.load(config_file)
-
-                if 'user' in params.config:
-                    params.user = params.config['user'].lower()
-
-                if 'server' in params.config:
-                    params.server = params.config['server']
-
-                if 'password' in params.config:
-                    params.password = params.config['password']
-
-                if 'timedelay' in params.config:
-                    params.timedelay = params.config['timedelay']
-
-                if 'mfa_token' in params.config:
-                    params.mfa_token = params.config['mfa_token']
-
-                if 'mfa_type' in params.config:
-                    params.mfa_type = params.config['mfa_type']
-
-                if 'commands' in params.config:
-                    if params.config['commands']:
-                        params.commands.extend(params.config['commands'])
-
-                if 'plugins' in params.config:
-                    params.plugins = params.config['plugins']
-
-                if 'debug' in params.config:
-                    logging.getLogger().setLevel(logging.DEBUG)
-
-                if 'batch_mode' in params.config:
-                    params.batch_mode = params.config['batch_mode'] == True
-
-                if 'device_id' in params.config:
-                    device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
-                    params.rest_context.device_id = device_id
-
-            except:
-                print('Error: Unable to parse JSON file ' + params.config_filename)
-                raise
-
-    except IOError:
-        if config_filename:
-            print('Error: Unable to open config file ' + config_filename)
-        pass
-
+                json_set = params.config.keys()
+                for key in key_set:
+                    if key in json_set:
+                        if key == 'debug':
+                            logging.getLogger().setLevel(logging.DEBUG)
+                        elif key == 'commands':
+                            params.commands.extend(params.config[key])
+                        elif key == 'device_id':
+                            params.rest_context.device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')        
+                        else:
+                            setattr(params, key, params.config[key])  # lower()                 
+                for key in json_set:
+                    if key not in key_set:
+                        logger.info(f"{key} in {config_file} is ignored because not supported.")
+            except json.JSONDecodeError as err: #msg, doc, pos:
+                emsg = f"Error: Unable to parse: {doc} ; at {pos} ; in JSON file: {params.config_filename}"
+                logger.warn(f"msg:{err.msg}, doc:{err.doc}, pos:{err.pos}", emsg)
+                raise InputError(msg, emsg) from json.JSONDecodeError
+    except OSError as e:
+        msg = f"Error: Unable to access config file: {params.config_filename}"
+        logger.warn(e, msg)
+        raise OSException(msg) from OSError
     if not params.server:
         params.server = 'https://keepersecurity.com/api/v2/'
+        logger.info(f"params.server is set as {params.server}")
 
     return params
 
@@ -142,21 +142,6 @@ def main():
     if (opts.command or '') in {'?', ''}:
         if opts.command == '?' or not params.commands:
             usage('')
-
-    #logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s')
-    # from https://python.civic-apps.com/logifle-logger/
-    logger = logging.getLogger("Keeper")    #get logger name
-    logger.setLevel(logging.WARNING if params.batch_mode else logging.INFO)
-
-    handler1 = logging.StreamHandler()
-    handler1.setFormatter(logging.Formatter("{%(pathname)s:%(lineno)d} %(message)s"))
-
-    handler2 = logging.FileHandler(filename="keeper.log")  
-    handler2.setLevel(logging.DEBUG)     
-    handler2.setFormatter(logging.Formatter("%(asctime)s {%(pathname)s:%(lineno)d} %(levelname)8s %(message)s"))
-
-    logger.addHandler(handler1)
-    logger.addHandler(handler2)
 
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)

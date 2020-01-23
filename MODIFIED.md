@@ -10,7 +10,15 @@
   - list -w
  ## Get command accepts # number by pager as record_uid
   - get # (# is a number of 1st column shown by pager output of List command)
-# Modified parts
+# Added files:
+ - locale.py under keepercommander
+# Modified files:
+ - setup.py : added modules: ```install_requires = [
+     ...
+    'pypager',
+    'pyicu'
+    ]
+    ```
  - cli.py ```print exception location```
   - api.py : sync after login
   - keepercommander/commands/record.py:
