@@ -20,6 +20,7 @@ import sys
 from tabulate import tabulate
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path
+from ..error import Error
 
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
@@ -127,7 +128,7 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
 
 parameter_pattern = re.compile(r'\${(\w+)}')
 
-class CommandError(Exception):
+class CommandError(Error):
     pass
 
 class ArgumentError(CommandError):
