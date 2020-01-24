@@ -446,15 +446,6 @@ class SortOption():
         'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
     PARSER.add_argument('-s', '--sort', **SORT_ARGUMENTS)
 
-    import unicodedata
-    @staticmethod
-    def normalize_sorted(records:List[Record], key='title', reverse=None) -> List[Record]:
-        '''Sort by language-specifically normalized text. 
-            key=kwargs.get('sort'), reverse=kwargs.get('reverse')
-        '''
-        sort_pairs = [(r, unicodedata.normalize("NFKC", getattr(r, key)) for r in records]
-        sorted_pairs = sorted(sort_pairs, key=lambda r: r[1], reverse=reverse)
-        return [r[0] for r in sorted_pairs]
 
 
 class RecordHistoryCommand(Command):
