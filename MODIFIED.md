@@ -9,6 +9,7 @@
  ## Get command accepts # number by pager as record_uid
   - get # (# is a number of 1st column shown by pager output of List command)
 # Modified parts
+ - requirements.txt += ['pypager']
  - cli.py ```print exception location```
   - api.py : sync after login
   - keepercommander/commands/record.py:

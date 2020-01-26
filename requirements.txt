@@ -7,3 +7,4 @@ asciitree
 pytest
 protobuf
 pyperclip
+pypager
