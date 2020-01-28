@@ -105,16 +105,12 @@ def derive_key_v2(domain, password, salt, iterations):
     return hmac.new(derived_key, domain.encode('utf-8'), digestmod=hashlib.sha256).digest()
 
 
-def execute_rest(context, endpoint, payload):
-    # type: (RestApiContext, str, bytes) -> bytes or dict
+def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Any
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
     if not context.server_key_id:
         context.server_key_id = 1
-
-    api_request_payload = proto.ApiRequestPayload()
-    api_request_payload.payload = payload
 
     run_request = True
     while run_request:
@@ -125,7 +121,7 @@ def execute_rest(context, endpoint, payload):
         api_request.publicKeyId = context.server_key_id
         api_request.locale = context.locale or 'en_US'
 
-        api_request.encryptedPayload = encrypt_aes(api_request_payload.SerializeToString(), context.transmission_key)
+        api_request.encryptedPayload = encrypt_aes(payload.SerializeToString(), context.transmission_key)
 
         request_data = api_request.SerializeToString()
         url = context.server_base + endpoint
@@ -165,7 +161,10 @@ def get_device_token(context):
         rq = proto.DeviceRequest()
         rq.clientVersion = CLIENT_VERSION
         rq.deviceName = ''
-        rs = execute_rest(context, 'authentication/get_device_token', rq.SerializeToString())
+
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        rs = execute_rest(context, 'authentication/get_device_token', api_request_payload)
         if type(rs) == bytes:
             device_rs = proto.DeviceResponse()
             device_rs.ParseFromString(rs)
@@ -191,7 +190,9 @@ def pre_login(context, username, two_factor_token=None):
         if two_factor_token:
             rq.twoFactorToken = two_factor_token
 
-        rs = execute_rest(context, 'authentication/pre_login', rq.SerializeToString())
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        rs = execute_rest(context, 'authentication/pre_login', api_request_payload)
         if type(rs) == bytes:
             pre_login_rs = proto.PreLoginResponse()
             pre_login_rs.ParseFromString(rs)
@@ -220,7 +221,9 @@ def get_new_user_params(context, username):
     rq.username = username.lower()
     rq.encryptedDeviceToken = get_device_token(context)
 
-    rs = execute_rest(context, 'authentication/get_new_user_params', rq.SerializeToString())
+    api_request_payload = proto.ApiRequestPayload()
+    api_request_payload.payload = rq.SerializeToString()
+    rs = execute_rest(context, 'authentication/get_new_user_params', api_request_payload)
     if type(rs) == bytes:
         pre_login_rs = proto.NewUserMinimumParams()
         pre_login_rs.ParseFromString(rs)
@@ -233,7 +236,9 @@ def get_new_user_params(context, username):
 def v2_execute(context, rq):
     # type: (RestApiContext, dict) -> dict
 
-    rs_data = execute_rest(context, 'vault/execute_v2_command', json.dumps(rq).encode('utf-8'))
+    api_request_payload = proto.ApiRequestPayload()
+    api_request_payload.payload = json.dumps(rq).encode('utf-8')
+    rs_data = execute_rest(context, 'vault/execute_v2_command', api_request_payload)
     if rs_data:
         rs = json.loads(rs_data.decode('utf-8'))
         logger = logging.getLogger()
