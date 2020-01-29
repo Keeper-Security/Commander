@@ -110,7 +110,9 @@ def main():
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
     params = get_params_from_config(opts.config)
-
+    logging.basicConfig(
+        level=logging.WARNING if params.batch_mode else logging.INFO,
+        format="%(levelname)s: %(message)s in %(filename)s[%(lineno)d] at %(asctime)s")
     if opts.debug:
         params.debug = opts.debug
 
@@ -142,21 +144,6 @@ def main():
     if (opts.command or '') in {'?', ''}:
         if opts.command == '?' or not params.commands:
             usage('')
-
-    #logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s')
-    # from https://python.civic-apps.com/logifle-logger/
-    logger = logging.getLogger("Keeper")    #get logger name
-    logger.setLevel(logging.WARNING if params.batch_mode else logging.INFO)
-
-    handler1 = logging.StreamHandler()
-    handler1.setFormatter(logging.Formatter("{%(pathname)s:%(lineno)d} %(message)s"))
-
-    handler2 = logging.FileHandler(filename="keeper.log")  
-    handler2.setLevel(logging.DEBUG)     
-    handler2.setFormatter(logging.Formatter("%(asctime)s {%(pathname)s:%(lineno)d} %(levelname)8s %(message)s"))
-
-    logger.addHandler(handler1)
-    logger.addHandler(handler2)
 
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
