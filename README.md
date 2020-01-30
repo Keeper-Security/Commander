@@ -2,6 +2,8 @@
 # Github Keeper-Security/Commander fork
 ----
 ## Aiming to enhance 'list' command prints date fields.
+## Successing pager(terminal scroll) and web(https:// protocol) output.
+## Different features from original one is written in **MODIFIED.md**
 Jump to:
 * [Overview](#password-management-sdk-for-it-admins--developers)
 * [Use Cases](#use-cases)

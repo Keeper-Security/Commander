@@ -19,7 +19,8 @@ install_requires = [
     'asciitree',
     'protobuf>=3.6.0',
     'pyperclip',
-    'pypager'
+    'pypager',
+    'pyicu'
 ]
 
 setup(name='keepercommander',

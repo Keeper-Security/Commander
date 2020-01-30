@@ -66,3 +66,9 @@ class CryptoError(Error):
 
     def __init__(self, message):
         self.message = message
+
+class OSException(Error):
+    """OS or I/O error
+    """
+    def __init__(self, message):
+        self.message = message
