@@ -249,7 +249,8 @@ def loop(params):
             logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            print(f"Type:{exc_type}, File:{fname}, Line:{exc_tb.tb_lineno}")
+            print("Type:{exc_type}, File:{fname}, Line:{tb_lineno}".format(
+                exc_type=exc_type, fname=fname, tb_lineno=exc_tb.tb_lineno))
             raise
 
     logging.info('\nGoodbye.\n')
