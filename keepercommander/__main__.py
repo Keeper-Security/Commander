@@ -92,7 +92,14 @@ def main():
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
-    params = get_params_from_config(opts.config)
+    params = KeeperParams()
+    try:
+        params.set_params_from_config(opts.config)
+    except InputError as e:
+        logging.WARNING('Config file is not proper format: ' + e.message)
+    except OSException as e:
+        logging.info('Config file is not accessible: ' + e.message)
+
     logging.basicConfig(
         level=logging.WARNING if params.batch_mode else logging.INFO,
         format=__logging_format__)
