@@ -9,7 +9,7 @@
 #
 
 from urllib.parse import urlparse, urlunparse
-
+import logging
 
 LAST_RECORD_UID = 'last_record_uid'
 LAST_SHARED_FOLDER_UID = 'last_shared_folder_uid'
@@ -64,6 +64,8 @@ class KeeperParams:
         self.config = config or {}
         self.auth_verifier = None
         self.__server = server
+        self.server = 'https://keepersecurity.com/api/v2/'
+        logging.info("self.server is set as " + self.server)
         self.user = ''
         self.password = ''
         self.mfa_token = ''
@@ -158,6 +160,41 @@ class KeeperParams:
                     'audit_event_type': name,
                     'inputs': {x:[kwargs[x]] for x in kwargs if x in {'record_uid', 'file_format', 'attachment_id', 'to_username'}}
                 })
+
+    def set_params_from_config(config_filename):
+    '''get params from config file
+        if no config_filename:str is given, then use 'config.json'
+        Returns a KeeperParams object.
+    '''
+        self.config_filename = config_filename or 'config.json'
+        key_set = {'user', 'server', 'password', 'timedelay', 'mfa_token', 'mfa_type',
+            'commands', 'plugins', 'debug', 'batch_mode', 'device_id'}
+        try:  # pick up keys from self.config[key] to self.key
+            with open(self.config_filename) as config_file:
+                self.config = json.load(config_file)
+                json_set = self.config.keys()
+                for key in key_set:
+                    if key in json_set:
+                        if key == 'debug':
+                            logging.getlogging().setLevel(logging.DEBUG)
+                        elif key == 'commands':
+                            self.commands.extend(self.config[key])
+                        elif key == 'device_id':
+                            self.rest_context.device_id = base64.urlsafe_b64decode(self.config['device_id'] + '==')        
+                        else:
+                            setattr(self, key, self.config[key])  # lower()                 
+                for key in json_set:
+                    if key not in key_set:
+                        logging.info("{key} in {config_file} is ignored because not supported.".format(key=key, config_file=config_file))
+        except json.JSONDecodeError as err:  # msg, doc, pos:
+            emsg = "Error: Unable to parse: {doc} ; at {pos} ; in JSON file: {self.config_filename}"
+            logging.warn("msg:{msg}, doc:{doc}, pos:{pos}".format(msg=err.msg, doc=err.doc, pos=err.pos), emsg)
+            raise InputError(msg, emsg) from json.JSONDecodeError
+        except OSError as e:
+            msg = "Error: Unable to access config file: {config_filename}".format(config_filename=self.config_filename)
+            logging.warn(e, msg)
+            raise OSException(msg) from OSError
+
 
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
