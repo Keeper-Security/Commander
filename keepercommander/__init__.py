@@ -11,4 +11,4 @@
 #
 
 __version__ = '4.19'
-__logging_format__ = "%(levelname)s: %(message)s in %(module)s.%(funcname) at %(asctime)s"
+__logging_format__ = "%(levelname)s: %(message)s in %(module)s.%(funcName)s at %(asctime)s"
