@@ -16,7 +16,8 @@ from collections import OrderedDict as OD
 from pypager.source import GeneratorSource
 from pypager.pager import Pager
 from io import StringIO
-
+import logging
+from wsgiref.simple_server import make_server
 from .subfolder import BaseFolderNode
 
 init()
@@ -138,7 +139,7 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         for row in table:
             xx = [f(row[1]) for f in appends]
             row += xx
-    if kwargs.get('pager') or kwargs.get('web'): # remove uid if pager option
+    if kwargs.get('pager') or kwargs.get('webview'): # remove uid if pager option
         TablePager.table = oldtable = table
         table = [row[:1]+row[2:] for row in table]
         oldheaders = headers
@@ -153,14 +154,21 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         pager.run()
     else:
         print_func(formatted)
-    if kwargs.get('web'):
-        def helo(env, start_resp):
-            start_resp("200 OK",
-                [("Content-type", "text/plain;charset=utf-8")])
-            return [tabulate(oldtable, headers=oldheaders).encode('utf-8')]
-
-        httpd = wsgiref.simple_server.make_server('', 3011, helo)
-        httpd.handle_request()
+    import pdb;pdb.set_trace()
+    webview = kwargs.get('webview')
+    if webview:
+        try:
+            port = int(webview)
+            
+            def helo(env, start_resp):
+                start_resp("200 OK",
+                    [("Content-type", "text/plain;charset=utf-8")])
+                return [tabulate(oldtable, headers=oldheaders).encode('utf-8')]
+            httpd = make_server('', port, helo) # 3011
+            logging.info('A web view is opened at port %d' % port)
+            httpd.handle_request()
+        except ValueError:
+            logging.info('%s is not for port number' % webview)
     return formatted
 
 
