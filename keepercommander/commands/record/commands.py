@@ -759,7 +759,7 @@ class WebOption():
     """parser web arguments"""
     PARSER = argparse.ArgumentParser(prog='webview', add_help=False)
     PARSER.add_argument('-w', '--webview', dest='webview', action='store', 
-        nargs='?', default='8080', help='Show content page by web(http protocol).')
+        nargs='?', const='8080', default='8080', help='Show content page by web(http protocol).')
 
 
 class RecordListCommand(Command):
