@@ -154,7 +154,6 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         pager.run()
     else:
         print_func(formatted)
-    import pdb;pdb.set_trace()
     webview = kwargs.get('webview')
     if webview:
         try:
