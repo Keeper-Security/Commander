@@ -52,18 +52,18 @@ def get_params_from_config(config_filename):
                             setattr(params, key, params.config[key])  # lower()                 
                 for key in json_set:
                     if key not in key_set:
-                        logging.info(f"{key} in {config_file} is ignored because not supported.")
+                        logging.info("{key} in {config_file} is ignored because not supported.".format(key=key, config_file=config_file))
             except json.JSONDecodeError as err:  # msg, doc, pos:
-                emsg = f"Error: Unable to parse: {doc} ; at {pos} ; in JSON file: {params.config_filename}"
-                logging.warn(f"msg:{err.msg}, doc:{err.doc}, pos:{err.pos}", emsg)
+                emsg = "Error: Unable to parse: {doc} ; at {pos} ; in JSON file: {params.config_filename}"
+                logging.warn("msg:{msg}, doc:{doc}, pos:{pos}".format(msg=err.msg, doc=err.doc, pos=err.pos), emsg)
                 raise InputError(msg, emsg) from json.JSONDecodeError
     except OSError as e:
-        msg = f"Error: Unable to access config file: {params.config_filename}"
+        msg = "Error: Unable to access config file: {config_filename}".format(config_filename=params.config_filename)
         logging.warn(e, msg)
         raise OSException(msg) from OSError
     if not params.server:
         params.server = 'https://keepersecurity.com/api/v2/'
-        logging.info(f"params.server is set as {params.server}")
+        logging.info("params.server is set as " + params.server)
 
     return params
 
