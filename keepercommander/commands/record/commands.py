@@ -22,6 +22,7 @@ from Cryptodome.Cipher import AES
 from tabulate import tabulate
 from pypager.source import GeneratorSource
 from pypager.pager import Pager
+from typing import List
 
 from ...team import Team
 from ... import api, display, generator
@@ -82,7 +83,7 @@ from abc import ABCMeta,abstractmethod
 
 class UidListReturnCommand(metaclass=ABCMeta):
     @abstractmethod
-    def execute(self, params, **kwargs) -> List[record_uid]:
+    def execute(self, params: KeeperParams, **kwargs) -> List[str]: # record_uid
         pass
 
 Command.register(UidListReturnCommand)
