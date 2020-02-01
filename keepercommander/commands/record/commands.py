@@ -16,7 +16,7 @@ import json
 import requests
 import base64
 import tempfile
-#import logging
+import logging
 import threading
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
@@ -31,7 +31,7 @@ from ...record import Record, get_totp_code
 from ...params import KeeperParams, LAST_RECORD_UID
 from ...display import TablePager
 from ...error import KeeperApiError, InputError
-from ...__main__ import logger
+
 
 def register_commands(commands):
     commands['add'] = RecordAddCommand()

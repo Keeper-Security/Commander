@@ -26,17 +26,16 @@ from .error import InputError, OSException
 from . import cli
 
 
-def get_params_from_config(config_filename:str) -> KeeperParams :
-    '''get params from config file'''
-    if not config_filename:
-        msg = "Exit from no config_filename."
-        logger.warn(msg)
-        raise InputError(config_filename, msg)
+def get_params_from_config(config_filename):
+    '''get params from config file
+        if no config_filename:str is given, then use 'config.json'
+        Returns a KeeperParams object.
+    '''
     params = KeeperParams()
     params.config_filename = config_filename or 'config.json'
     key_set = {'user', 'server', 'password', 'timedelay', 'mfa_token', 'mfa_type',
-     'commands', 'plugins', 'debug', 'batch_mode', 'device_id'}
-    try: # pick up keys from params.config[key] to params.key
+        'commands', 'plugins', 'debug', 'batch_mode', 'device_id'}
+    try:  # pick up keys from params.config[key] to params.key
         with open(params.config_filename) as config_file:
             try:
                 params.config = json.load(config_file)
@@ -44,7 +43,7 @@ def get_params_from_config(config_filename:str) -> KeeperParams :
                 for key in key_set:
                     if key in json_set:
                         if key == 'debug':
-                            logging.getLogger().setLevel(logging.DEBUG)
+                            logging.getlogging().setLevel(logging.DEBUG)
                         elif key == 'commands':
                             params.commands.extend(params.config[key])
                         elif key == 'device_id':
@@ -53,18 +52,18 @@ def get_params_from_config(config_filename:str) -> KeeperParams :
                             setattr(params, key, params.config[key])  # lower()                 
                 for key in json_set:
                     if key not in key_set:
-                        logger.info(f"{key} in {config_file} is ignored because not supported.")
-            except json.JSONDecodeError as err: #msg, doc, pos:
+                        logging.info(f"{key} in {config_file} is ignored because not supported.")
+            except json.JSONDecodeError as err:  # msg, doc, pos:
                 emsg = f"Error: Unable to parse: {doc} ; at {pos} ; in JSON file: {params.config_filename}"
-                logger.warn(f"msg:{err.msg}, doc:{err.doc}, pos:{err.pos}", emsg)
+                logging.warn(f"msg:{err.msg}, doc:{err.doc}, pos:{err.pos}", emsg)
                 raise InputError(msg, emsg) from json.JSONDecodeError
     except OSError as e:
         msg = f"Error: Unable to access config file: {params.config_filename}"
-        logger.warn(e, msg)
+        logging.warn(e, msg)
         raise OSException(msg) from OSError
     if not params.server:
         params.server = 'https://keepersecurity.com/api/v2/'
-        logger.info(f"params.server is set as {params.server}")
+        logging.info(f"params.server is set as {params.server}")
 
     return params
 
@@ -74,6 +73,7 @@ def usage(m):
     parser.print_help()
     cli.display_command_help(show_enterprise=True, show_shell=True)
     sys.exit(1)
+
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False)
 parser.add_argument('--server', '-ks', dest='server', action='store', help='Keeper Host address.')
