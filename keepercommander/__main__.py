@@ -24,7 +24,7 @@ from . import __version__
 from .params import KeeperParams
 from .error import InputError, OSException
 from . import cli
-
+from . import __logging_format__
 
 def get_params_from_config(config_filename):
     '''get params from config file
@@ -95,7 +95,7 @@ def main():
     params = get_params_from_config(opts.config)
     logging.basicConfig(
         level=logging.WARNING if params.batch_mode else logging.INFO,
-        format="%(levelname)s: %(message)s in %(filename)s[%(lineno)d] at %(asctime)s")
+        format=__logging_format__)
     if opts.debug:
         params.debug = opts.debug
 

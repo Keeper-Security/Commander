@@ -177,7 +177,7 @@ class RecordAddCommand(Command):
                 for uid in params.subfolder_record_cache[folder_uid]:
                     r = api.get_record(params, uid)
                     if r.title == title:
-                        logger.error('Record with title "%s" already exists', title)
+                        logging.error('Record with title "%s" already exists', title)
                         return
 
         record_key = os.urandom(32)
@@ -220,11 +220,11 @@ class RecordAddCommand(Command):
         try:
             res = api.communicate(params, rq)
         except KeeperApiError as e:
-            logger.error(f"AddRecord API call failed!:{e}")
+            logging.error(f"AddRecord API call failed!:{e}")
             return
 
         params.sync_data = True
-        logger.info('Record UID is added: %s', record_uid)
+        logging.info('Record UID is added: %s', record_uid)
         params.environment_variables[LAST_RECORD_UID] = record_uid
         return record_uid
 
@@ -264,7 +264,7 @@ class RecordEditCommand(Command):
                                 record_uid = uid
                                 break
             if record_uid is None:
-                logger.info('Could not resolve record name(title) or uid. Enter record name(title) or uid of existing record.')
+                logging.info('Could not resolve record name(title) or uid. Enter record name(title) or uid of existing record.')
                 return
         record = api.get_record(params, record_uid)
 
@@ -276,7 +276,7 @@ class RecordEditCommand(Command):
                 record.title = title
                 changed['title'] = title #True
             else:
-                logger.warning('Record title cannot be empty.')
+                logging.warning('Record title cannot be empty.')
         if kwargs.get('login') is not None:
             changed['login'] = record.login = kwargs['login']
             
@@ -377,7 +377,7 @@ class RecordRemoveCommand(Command):
                 folder, name = rs
 
         if folder is None or name is None:
-            logger.warning('Enter name of existing record')
+            logging.warning('Enter name of existing record')
             return
 
         record_uid = None
@@ -397,7 +397,7 @@ class RecordRemoveCommand(Command):
                         break
 
         if record_uid is None:
-            logger.warning('Enter name of existing record')
+            logging.warning('Enter name of existing record')
             return
 
         del_obj = {
@@ -482,7 +482,7 @@ class RecordHistoryCommand(Command):
                                 break
 
         if record_uid is None:
-            logger.error('Enter name or uid of existing record')
+            logging.error('Enter name or uid of existing record')
             return None
 
         current_rec = params.record_cache[record_uid]
@@ -506,13 +506,13 @@ class RecordHistoryCommand(Command):
             history.reverse()
             length = len(history)
             if length == 0:
-                logger.info('Record does not have history of edit')
+                logging.info('Record does not have history of edit')
                 return None
 
             if 'revision' in kwargs and kwargs['revision'] is not None:
                 revision = kwargs['revision']
                 if revision < 1 or revision > length+1:
-                    logger.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
+                    logging.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
                     return None
                 if not kwargs.get('action'):
                     action = 'show'
@@ -573,10 +573,10 @@ class RecordHistoryCommand(Command):
             elif action == 'restore':
                 ro = api.resolve_record_write_path(params, record_uid)    # type: dict
                 if not ro:
-                    logger.error('You do not have permission to modify this record')
+                    logging.error('You do not have permission to modify this record')
                     return
                 if revision == 0:
-                    logger.error('Invalid revision to restore: Revisions: 1-{0}'.format(length))
+                    logging.error('Invalid revision to restore: Revisions: 1-{0}'.format(length))
                     return
                 rev = history[length - revision]
                 if rev['version'] in {1,2}:
@@ -620,12 +620,12 @@ class RecordHistoryCommand(Command):
                         if rs['update_records']:
                             status = rs['update_records'][0]
                             if status['status'] == 'success':
-                                logger.info('Revision V.{0} is restored'.format(revision))
+                                logging.info('Revision V.{0} is restored'.format(revision))
                                 params.queue_audit_event('revision_restored', record_uid=record_uid)
                             else:
-                                logger.error('Failed to restore record revision: {0}'.format(status['status']))
+                                logging.error('Failed to restore record revision: {0}'.format(status['status']))
                 else:
-                    logger.error('Cannot restore this revision')
+                    logging.error('Cannot restore this revision')
             return None
 
     @staticmethod
@@ -781,7 +781,7 @@ class RecordListCommand(Command):
             def modified_time(r):
                 mt = get_modified_time(params, r.record_uid)
                 if not mt:
-                    logger.error("Failed in getting record modified time!")
+                    logging.error("Failed in getting record modified time!")
                     return current_time
                 return mt
             modified_times = [modified_time(r) for r in records]
@@ -1036,7 +1036,7 @@ class RecordDownloadAttachmentCommand(Command):
                                 break
 
         if record_uid is None:
-            logger.warning('Enter name or uid of existing record')
+            logging.warning('Enter name or uid of existing record')
             return
 
         file_ids = []
@@ -1047,7 +1047,7 @@ class RecordDownloadAttachmentCommand(Command):
                 file_ids.append(f_info['id'])
 
         if len(file_ids) == 0:
-            logger.warning('No attachments associated with the record')
+            logging.warning('No attachments associated with the record')
             return
 
         rq = {
@@ -1072,7 +1072,7 @@ class RecordDownloadAttachmentCommand(Command):
                     if file_key:
                         rq_http = requests.get(dl['url'], stream=True)
                         with open(file_name, 'wb') as f:
-                            logger.info('Downloading \'%s\'', os.path.abspath(f.name))
+                            logging.info('Downloading \'%s\'', os.path.abspath(f.name))
                             iv = rq_http.raw.read(16)
                             cipher = AES.new(file_key, AES.MODE_CBC, iv)
                             finished = False
@@ -1091,9 +1091,9 @@ class RecordDownloadAttachmentCommand(Command):
                                 f.write(decrypted)
                             params.queue_audit_event('file_attachment_downloaded', record_uid=record_uid, attachment_id=file_id)
                     else:
-                        logger.error('File "%s": Failed to file encryption key', file_name)
+                        logging.error('File "%s": Failed to file encryption key', file_name)
                 else:
-                    logger.error('File "%s" download error: %s', file_id, dl['message'])
+                    logging.error('File "%s" download error: %s', file_id, dl['message'])
 
 
 class RecordUploadAttachmentCommand(Command):
@@ -1142,7 +1142,7 @@ class RecordUploadAttachmentCommand(Command):
 
         record_update = api.resolve_record_write_path(params, record_uid)
         if record_update is None:
-            logger.error('You do not have edit permissions on this record')
+            logging.error('You do not have edit permissions on this record')
             return
 
         files = []
@@ -1152,9 +1152,9 @@ class RecordUploadAttachmentCommand(Command):
                 if os.path.isfile(file_name):
                     files.append(file_name)
                 else:
-                    logger.error('File %s does not exists', name)
+                    logging.error('File %s does not exists', name)
         if len(files) == 0:
-            logger.error('No files to upload')
+            logging.error('No files to upload')
             return
 
         rq = {
@@ -1174,7 +1174,7 @@ class RecordUploadAttachmentCommand(Command):
                         'file_id': uo['file_id'],
                         'name': os.path.basename(file_path)
                     }
-                    logger.info('Uploading %s ...', a['name'])
+                    logging.info('Uploading %s ...', a['name'])
                     with tempfile.TemporaryFile(mode='w+b') as dst:
                         with open(file_path, mode='r+b') as src:
                             iv = os.urandom(16)
@@ -1201,12 +1201,12 @@ class RecordUploadAttachmentCommand(Command):
                             attachments.append(a)
                             params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
                 else:
-                    logger.error('%s: file size exceeds file plan limits', file_path)
+                    logging.error('%s: file size exceeds file plan limits', file_path)
             except Exception as e:
-                logger.error('%s error: %s', file_path, e)
+                logging.error('%s error: %s', file_path, e)
 
         if len(attachments) == 0:
-            logger.error('No files were successfully uploaded')
+            logging.error('No files were successfully uploaded')
             return
 
         record = params.record_cache[record_uid]
@@ -1279,17 +1279,17 @@ class RecordDeleteAttachmentCommand(Command):
                                 break
 
         if record_uid is None:
-            logger.error('Enter name or uid of existing record')
+            logging.error('Enter name or uid of existing record')
             return
 
         names = kwargs['name'] if 'name' in kwargs else None
         if names is None:
-            logger.error('No file names')
+            logging.error('No file names')
             return
 
         record_update = api.resolve_record_write_path(params, record_uid)
         if record_update is None:
-            logger.error('You do not have edit permissions on this record')
+            logging.error('You do not have edit permissions on this record')
             return
 
         record = params.record_cache[record_uid]
@@ -1323,7 +1323,7 @@ class RecordDeleteAttachmentCommand(Command):
                     file_ids = [x for x in file_ids if x != thumb_uid]
                 params.queue_audit_event('file_attachment_deleted', record_uid=record_uid, attachment_id=file_uid)
             else:
-                logger.info('Attachment \'%s\' is not found.', name)
+                logging.info('Attachment \'%s\' is not found.', name)
 
         if not has_deleted:
             return
@@ -1385,13 +1385,13 @@ class ClipboardCommand(Command):
         if record_uid is None:
             records = api.search_records(params, kwargs['record'])
             if len(records) == 1:
-                logger.info('Record Title: {0}'.format(records[0].title))
+                logging.info('Record Title: {0}'.format(records[0].title))
                 record_uid = records[0].record_uid
             else:
                 if len(records) == 0:
-                    logger.error('Enter name or uid of existing record')
+                    logging.error('Enter name or uid of existing record')
                 else:
-                    logger.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
+                    logging.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
                 return
 
         rec = api.get_record(params, record_uid)
@@ -1399,7 +1399,7 @@ class ClipboardCommand(Command):
         if txt:
             import pyperclip
             pyperclip.copy(txt)
-            logger.info('Copied to clipboard')
+            logging.info('Copied to clipboard')
             if not kwargs.get('login'):
                 params.queue_audit_event('copy_password', record_uid=record_uid)
 
@@ -1442,13 +1442,13 @@ class TotpCommand(Command):
             if record_uid is None:
                 records = api.search_records(params, kwargs['record'])
                 if len(records) == 1:
-                    logger.info('Record Title: {0}'.format(records[0].title))
+                    logging.info('Record Title: {0}'.format(records[0].title))
                     record_uid = records[0].record_uid
                 else:
                     if len(records) == 0:
-                        logger.error('Enter name or uid of existing record')
+                        logging.error('Enter name or uid of existing record')
                     else:
-                        logger.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
+                        logging.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
         if record_uid:
             rec = api.get_record(params, record_uid)
@@ -1469,7 +1469,7 @@ class TotpCommand(Command):
                     tmer.cancel()
         else:
             TotpCommand.find_endpoints(params)
-            logger.info('')
+            logging.info('')
             headers = ["#", 'Record UID', 'Record Title', 'Folder(s)']
             table = []
             for i in range(len(TotpCommand.Endpoints)):
@@ -1525,8 +1525,8 @@ def get_modified_time(params, record_uid):
     try:
         dt = datetime.fromtimestamp(client_modified_time / 1000)
     except OverflowError as e:
-        logger.error(f"Out of range of datetime timestamp:{e}")
+        logging.error(f"Out of range of datetime timestamp:{e}")
     except OSError as e:
-        logger.error(f"getting datetime os call failed.:{e}")
+        logging.error(f"getting datetime os call failed.:{e}")
     finally:
         return dt
