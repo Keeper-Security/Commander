@@ -10,7 +10,9 @@
 
 from urllib.parse import urlparse, urlunparse
 import logging
+import json
 from json import JSONDecodeError
+from base64 import urlsafe_b64decode
 from .error import OSException
 
 LAST_RECORD_UID = 'last_record_uid'
@@ -183,7 +185,7 @@ class KeeperParams:
                         elif key == 'commands':
                             self.commands.extend(self.config[key])
                         elif key == 'device_id':
-                            self.rest_context.device_id = base64.urlsafe_b64decode(self.config['device_id'] + '==')        
+                            self.rest_context.device_id = urlsafe_b64decode(self.config['device_id'] + '==')        
                         else:
                             setattr(self, key, self.config[key])  # lower()                 
                 for key in json_set:
