@@ -161,13 +161,19 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
             
             def helo(env, start_resp):
                 start_resp("200 OK",
-                    [("Content-type", "text/plain;charset=utf-8")])
-                return [tabulate(oldtable, headers=oldheaders).encode('utf-8')]
+                    [("Content-type", 'text/html; charset=utf-8')])
+                text = tabulate(oldtable, headers=oldheaders).encode('utf-8')
+                head = b'<!DOCTYPE html> <html> <head> <meta charset="utf-8"/> </head>'
+                body = b"<body> <pre> <code>"
+                tail = b" </code> </pre> </body> </html>"
+                return [head, body, text, tail]
             httpd = make_server('', port, helo) # 3011
             logging.info('A web view is opened at port %d' % port)
             httpd.handle_request()
         except ValueError:
             logging.info('%s is not for port number' % webview)
+        except OSError as e:
+            logging.error("Making web server failed by " + e.strerror)
     return formatted
 
 
