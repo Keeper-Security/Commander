@@ -167,9 +167,12 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
                 body = b"<body> <pre> <code>"
                 tail = b" </code> </pre> </body> </html>"
                 return [head, body, text, tail]
-            httpd = make_server('', port, helo) # 3011
-            logging.info('A web view is opened at port %d' % port)
-            httpd.handle_request()
+            httpd = make_server('', port, helo)
+            try:
+                logging.info(f'A web view is opened at port {port}; Open browser with address "localhost:{port}" or cntrl-c to quit.')
+                httpd.handle_request()
+            except KeyboardInterrupt:
+                logging.INFO('Quit http server with Keyboard Interrupt')
         except ValueError:
             logging.info('%s is not for port number' % webview)
         except OSError as e:

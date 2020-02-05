@@ -26,47 +26,6 @@ from .error import InputError, OSException
 from . import cli
 from . import __logging_format__
 
-def get_params_from_config(config_filename):
-    '''get params from config file
-        if no config_filename:str is given, then use 'config.json'
-        Returns a KeeperParams object.
-    '''
-    params = KeeperParams()
-    params.config_filename = config_filename or 'config.json'
-    key_set = {'user', 'server', 'password', 'timedelay', 'mfa_token', 'mfa_type',
-        'commands', 'plugins', 'debug', 'batch_mode', 'device_id'}
-    try:  # pick up keys from params.config[key] to params.key
-        with open(params.config_filename) as config_file:
-            try:
-                params.config = json.load(config_file)
-                json_set = params.config.keys()
-                for key in key_set:
-                    if key in json_set:
-                        if key == 'debug':
-                            logging.getlogging().setLevel(logging.DEBUG)
-                        elif key == 'commands':
-                            params.commands.extend(params.config[key])
-                        elif key == 'device_id':
-                            params.rest_context.device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')        
-                        else:
-                            setattr(params, key, params.config[key])  # lower()                 
-                for key in json_set:
-                    if key not in key_set:
-                        logging.info("{key} in {config_file} is ignored because not supported.".format(key=key, config_file=config_file))
-            except json.JSONDecodeError as err:  # msg, doc, pos:
-                emsg = "Error: Unable to parse: {doc} ; at {pos} ; in JSON file: {params.config_filename}"
-                logging.warn("msg:{msg}, doc:{doc}, pos:{pos}".format(msg=err.msg, doc=err.doc, pos=err.pos), emsg)
-                raise InputError(msg, emsg) from json.JSONDecodeError
-    except OSError as e:
-        msg = "Error: Unable to access config file: {config_filename}".format(config_filename=params.config_filename)
-        logging.warn(e, msg)
-        raise OSException(msg) from OSError
-    if not params.server:
-        params.server = 'https://keepersecurity.com/api/v2/'
-        logging.info("params.server is set as " + params.server)
-
-    return params
-
 
 def usage(m):
     print(m)
@@ -83,7 +42,7 @@ parser.add_argument('--version', dest='version', action='store_true', help='Disp
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
 parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
-parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
+parser.add_argument('command', nargs='?', default='shell', const='shell', type=str, action='store', help='Command: default=shell')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
 
@@ -96,9 +55,9 @@ def main():
     try:
         params.set_params_from_config(opts.config)
     except InputError as e:
-        logging.WARNING('Config file is not proper format: ' + e.message)
+        logging.warning('Config file is not proper format: ' + e.message)
     except OSException as e:
-        logging.info('Config file is not accessible: ' + e.message)
+        logging.warning('Config file is not accessible: ' + e.message)
 
     logging.basicConfig(
         level=logging.WARNING if params.batch_mode else logging.INFO,
