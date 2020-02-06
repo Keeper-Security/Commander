@@ -157,8 +157,11 @@ def runcommands(params):
                 logging.error("Communication Error: %s", e.message)
             except AuthenticationError as e:
                 logging.error("AuthenticationError Error: %s", e.message)
+            except KeyboardInterrupt:
+                logging.info("Keyboard interrupt is catched.")
             except:
                 logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
+                raise
 
         if timedelay == 0:
             keep_running = False
