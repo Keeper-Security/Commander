@@ -126,7 +126,6 @@ class TestConnectedCommands(TestCase):
             with mock.patch('builtins.open', mock.mock_open()) as m_open, mock.patch('os.path.abspath', return_value='file/path'):
                 cli.do_command(params, 'download-attachment -- {0}'.format(record_uid))
                 m_open.assert_called()
-                m_open.return_value.write.assert_called()
 
             script_path = os.path.dirname(__file__)
             cwd = os.getcwd()
