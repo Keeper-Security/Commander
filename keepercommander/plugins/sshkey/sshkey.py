@@ -12,6 +12,7 @@
 
 import subprocess
 import tempfile
+import logging
 import os
 import stat
 
@@ -80,7 +81,7 @@ def rotate(record, newpassword):
         return True
 
     except Exception as e:
-        print(e)
+        logging.error(e)
         return False
 
     finally:

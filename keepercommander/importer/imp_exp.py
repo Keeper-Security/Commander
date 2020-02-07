@@ -15,22 +15,25 @@ import hashlib
 import base64
 import requests
 import io
+import re
 import logging
 
 from contextlib import contextmanager
-from email.utils import parseaddr
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
 
 from keepercommander import api
 
+from .. import rest_api
 from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
     Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder,  Permission as ImportPermission,\
     Attachment as ImportAttachment, BaseImporter
 from ..subfolder import BaseFolderNode, find_folders
-
+from .. import APIRequest_pb2 as proto
+from .. import folder_pb2
 
 TWO_FACTOR_CODE = 'TFC:Keeper'
+EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 
 
 def get_import_folder(params, folder_uid, record_uid):
@@ -236,22 +239,21 @@ def _import(params, file_format, filename, **kwargs):
             sf.can_share = can_share
             folders.append(sf)
 
-    if folders:
-        shared_folder_add = prepare_shared_folder_add(params, folders)
-        api.execute_batch(params, shared_folder_add)
+    folder_add = prepare_folder_add(params, folders, records)
+    if folder_add:
+        fol_rs, _ = execute_import_folder_record(params, folder_add, None)
         api.sync_down(params)
 
-    if records:
-        # create folders
-        folder_add = prepare_folder_add(params, records)
-        if folder_add:
-            api.execute_batch(params, folder_add)
+    if folders:
+        permissions = prepare_folder_permission(params, folders)
+        if permissions:
+            api.execute_batch(params, permissions)
             api.sync_down(params)
 
-        # create records
-        record_adds = prepare_record_add(params, records)
-        if record_adds:
-            api.execute_batch(params, record_adds)
+    if records:        # create records
+        record_add = prepare_record_add(params, records)
+        if record_add:
+            _, rec_rs = execute_import_folder_record(params, None, record_add)
             api.sync_down(params)
 
         # ensure records are linked to folders
@@ -280,6 +282,40 @@ def _import(params, file_format, filename, **kwargs):
     if records_after > records_before:
         params.queue_audit_event('imported_records', file_format=file_format)
         logging.info("%d records imported successfully", records_after - records_before)
+
+
+def execute_import_folder_record(params, folders, records):
+    rs_folder = []
+    rs_record = []
+    while folders or records:
+        rq = folder_pb2.ImportFolderRecordRequest()
+        cap = 999
+        if folders:
+            chunk = folders[:cap]
+            folders = folders[cap:]
+            cap = cap - len(folders)
+            for e in chunk:
+                rq.folderRequest.append(e)
+        if records and cap > 0:
+            chunk = records[:cap]
+            records = records[cap:]
+            cap = cap - len(records)
+            for e in chunk:
+                rq.recordRequest.append(e)
+
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+        rs = rest_api.execute_rest(params.rest_context, "folder/import_folders_and_records", api_request_payload)
+        if type(rs) == bytes:
+            import_rs = folder_pb2.ImportFolderRecordResponse()
+            import_rs.ParseFromString(rs)
+            if len(import_rs.folderResponse) > 0:
+                rs_folder.extend(import_rs.folderResponse)
+            if len(import_rs.recordResponse) > 0:
+                rs_record.extend(import_rs.recordResponse)
+
+    return rs_folder, rs_record
 
 
 def upload_attachment(params, attachments):
@@ -414,7 +450,7 @@ def upload_attachment(params, attachments):
                 logging.debug(e)
 
 
-def prepare_shared_folder_add(params, folders):
+def prepare_folder_add(params, folders, records):
     folder_hash = {}
     for f_uid in params.folder_cache:
         fol = params.folder_cache[f_uid]
@@ -428,224 +464,132 @@ def prepare_shared_folder_add(params, folders):
                 shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key_unencrypted']
         folder_hash[h.hexdigest()] = f_uid, fol.type, shared_folder_key
 
-    # public keys
-    emails = {}
-    for fol in folders:
-        if fol.permissions:
-            for perm in fol.permissions:
-                if perm.name not in emails:
-                    _, email = parseaddr(perm.name)
-                    if email:
-                        if email != params.user:
-                            emails[email.lower()] = None
-    if emails:
-        request = {
-            'command': "public_keys",
-            'key_owners': list(emails.keys())
-        }
-        try:
-            rs = api.communicate(params, request)
-            if 'public_keys' in rs:
-                for pk in rs['public_keys']:
-                    if 'public_key' in pk:
-                        emails[pk['key_owner']] = pk['public_key']
-        except Exception as e:
-            logging.debug(e)
+    folder_add = []      # type: [folder_pb2.FolderRequest]
+    if folders:
+        for fol in folders:
+            skip_folder = False
+            parent_uid = ''
+            comps = list(path_components(fol.path))
+            for i in range(len(comps)):
+                comp = comps[i]
+                h = hashlib.md5()
+                hs = '{0}|{1}'.format(comp.lower(), parent_uid)
+                h.update(hs.encode())
+                digest = h.hexdigest()
 
-    shared_folder_add = []
-    for fol in folders:
-        skip_folder = False
-        parent_uid = ''
-        parent_type = ''
-        parent_key = None
-        comps = list(path_components(fol.path))
-        for i in range(len(comps)):
-            comp = comps[i]
-            h = hashlib.md5()
-            hs = '{0}|{1}'.format(comp.lower(), parent_uid)
-            h.update(hs.encode())
-            digest = h.hexdigest()
+                is_last = False
+                if i == len(comps) - 1:
+                    is_last = True
 
-            is_last = False
-            if i == len(comps) - 1:
-                is_last = True
-            if digest not in folder_hash:
-                folder_uid = api.generate_record_uid()
-                request = {
-                    'command': 'folder_add',
-                    'folder_uid': folder_uid
-                }
-                folder_type = 'shared_folder' if is_last else 'user_folder'
-                request['folder_type'] = folder_type
+                if digest not in folder_hash:
+                    folder_uid = api.generate_record_uid()
+                    folder_type = 'shared_folder' if is_last else 'user_folder'
 
-                encryption_key = params.data_key
-                folder_key = os.urandom(32)
-                request['key'] = api.encrypt_aes(folder_key, encryption_key)
-                if parent_uid:
-                    request['parent_uid'] = parent_uid
-                if folder_type == 'shared_folder':
-                    request['name'] = api.encrypt_aes(comp.encode('utf-8'), folder_key)
+                    fol_req = folder_pb2.FolderRequest()
+                    fol_req.folderUid = base64.urlsafe_b64decode(folder_uid + '==')
+                    fol_req.folderType = 2 if folder_type == 'shared_folder' else 1
 
-                data = {'name': comp}
-                request['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
+                    if parent_uid:
+                        fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
 
-                shared_folder_add.append(request)
-                parent_uid = folder_uid
-                parent_type = folder_type
-                parent_key = folder_key
-                folder_hash[digest] = folder_uid, folder_type, folder_key if folder_type == 'shared_folder' else None
-            else:
-                parent_uid, parent_type, parent_key = folder_hash[digest]
-                if is_last:
-                    skip_folder = parent_type != 'shared_folder'
+                    folder_key = os.urandom(32)
+                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, params.data_key) + '==')
+
+                    data = {'name': comp}
+                    fol_req.folderData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key) + '==')
+
+                    if folder_type == 'shared_folder':
+                        fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(api.encrypt_aes(comp.encode('utf-8'), folder_key) + '==')
+                        fol_req.sharedFolderFields.manageUsers = fol.manage_users
+                        fol_req.sharedFolderFields.manageRecords = fol.manage_records
+                        fol_req.sharedFolderFields.canEdit = fol.can_edit
+                        fol_req.sharedFolderFields.canShare = fol.can_share
+
+                    folder_add.append(fol_req)
+                    folder_hash[digest] = folder_uid, folder_type, folder_key if folder_type == 'shared_folder' else None
                 else:
-                    skip_folder = parent_type != 'user_folder'
-            if skip_folder:
-                break
-
-        if not skip_folder and parent_type == 'shared_folder':
-            request = {
-                'command': 'shared_folder_update',
-                'operation': 'update',
-                'pt': 'Commander',
-                'shared_folder_uid': parent_uid,
-                'force_update': True,
-                'default_manage_users': fol.manage_users,
-                'default_manage_records': fol.manage_records,
-                'default_can_edit': fol.can_edit,
-                'default_can_share': fol.can_share
-            }
-            if fol.permissions:
-                for perm in fol.permissions:
-                    is_team = False
-                    if perm.uid and params.team_cache:
-                        is_team = perm.uid in params.team_cache
+                    folder_uid, folder_type, folder_key = folder_hash[digest]
+                    if is_last:
+                        skip_folder = folder_type != 'shared_folder'
                     else:
-                        _, email = parseaddr(perm.name)
-                        if not email:
-                            is_team = True
-                        if is_team:
-                            perm.uid = None
-                            for team in params.team_cache:
-                                if team['name'].lower() == perm.name.lower():
-                                    perm.uid = team['team_uid']
-                                    break
-                    if is_team:
-                        if perm.uid and perm.uid in params.team_cache:
-                            if 'add_teams' not in request:
-                                request['add_teams'] = []
-                            team = params.team_cache[perm.uid]
-                            request['add_teams'].append({
-                                'team_uid': perm.uid,
-                                'manage_users': perm.manage_users,
-                                'manage_records': perm.manage_records,
-                                'shared_folder_key': api.encrypt_aes(parent_key, team['team_key_unencrypted'])
-                            })
-                    else:
-                        if 'add_users' not in request:
-                            request['add_users'] = []
-                        email = perm.name.lower()
-                        if email == params.user.lower():
-                            request['add_users'].append({
-                                'username': email,
-                                'manage_users': perm.manage_users,
-                                'manage_records': perm.manage_records,
-                                'shared_folder_key': api.encrypt_aes(parent_key, params.data_key)
-                            })
-                        elif email in emails:
-                            public_key = emails[email]
-                            if public_key:
-                                try:
-                                    rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key + '=='))
-                                    request['add_users'].append({
-                                        'username': email,
-                                        'manage_users': perm.manage_users,
-                                        'manage_records': perm.manage_records,
-                                        'shared_folder_key': api.encrypt_rsa(parent_key, rsa_key)
-                                    })
-                                except Exception as e:
-                                    logging.debug(e)
-            shared_folder_add.append(request)
+                        skip_folder = folder_type != 'user_folder'
 
-    return shared_folder_add
+                parent_uid = folder_uid
+                if skip_folder:
+                    break
 
+    if records:
+        for rec in records:
+            if rec.folders:
+                for fol in rec.folders:
+                    parent_uid = ''
+                    parent_shared_folder_uid = None
+                    parent_shared_folder_key = None
+                    parent_type = ''
+                    for is_domain in [True, False]:
+                        path = fol.domain if is_domain else fol.path
+                        if not path:
+                            continue
 
-def prepare_folder_add(params, records):
-    folder_hash = {}
-    for f_uid in params.folder_cache:
-        fol = params.folder_cache[f_uid]
-        h = hashlib.md5()
-        hs = '{0}|{1}'.format((fol.name or '').lower(), fol.parent_uid or '')
-        h.update(hs.encode())
-        shared_folder_key = None
-        if fol.type in { BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-            sf_uid = fol.shared_folder_uid if fol.type == BaseFolderNode.SharedFolderFolderType else fol.uid
-            if sf_uid in params.shared_folder_cache:
-                shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key_unencrypted']
-        folder_hash[h.hexdigest()] = f_uid, fol.type, shared_folder_key
+                        comps = list(path_components(path))
+                        for i in range(len(comps)):
+                            comp = comps[i]
+                            h = hashlib.md5()
+                            hs = '{0}|{1}'.format(comp.lower(), parent_uid)
+                            h.update(hs.encode())
+                            digest = h.hexdigest()
 
-    folder_add = []
+                            if digest not in folder_hash:
+                                is_shared = False
+                                if i == len(comps) - 1:
+                                    is_shared = is_domain
 
-    for rec in records:
-        if rec.folders:
-            for fol in rec.folders:
-                parent_uid = ''
-                parent_shared_folder_uid = None
-                parent_shared_folder_key = None
-                parent_type = BaseFolderNode.RootFolderType
-                for is_domain in [True, False]:
-                    path = fol.domain if is_domain else fol.path
-                    if not path:
-                        continue
+                                folder_uid = api.generate_record_uid()
+                                if not parent_type or parent_type == 'user_folder':
+                                    folder_type = 'shared_folder' if is_shared else 'user_folder'
+                                else:
+                                    folder_type = 'shared_folder_folder'
 
-                    comps = list(path_components(path))
-                    for i in range(len(comps)):
-                        comp = comps[i]
-                        h = hashlib.md5()
-                        hs = '{0}|{1}'.format(comp.lower(), parent_uid)
-                        h.update(hs.encode())
-                        digest = h.hexdigest()
-                        if digest not in folder_hash:
-                            is_shared = False
-                            if i == len(comps) - 1:
-                                is_shared = is_domain
-                            folder_uid = api.generate_record_uid()
-                            request = {
-                                'command': 'folder_add',
-                                'folder_uid': folder_uid
-                            }
-                            if parent_type in {BaseFolderNode.UserFolderType, BaseFolderNode.RootFolderType}:
-                                folder_type = 'shared_folder' if is_shared else 'user_folder'
+                                fol_req = folder_pb2.FolderRequest()
+                                fol_req.folderUid = base64.urlsafe_b64decode(folder_uid + '==')
+                                fol_req.folderType = 2 if folder_type == 'shared_folder' else 3 if folder_type == 'shared_folder_folder' else 1
+
+                                if parent_uid:
+                                    fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
+                                    if folder_type == 'shared_folder_folder' and parent_uid == parent_shared_folder_uid:
+                                        fol_req.parentFolderUid = b''
+
+                                folder_key = os.urandom(32)
+                                if folder_type == 'shared_folder_folder':
+                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, parent_shared_folder_key or params.data_key) + '==')
+                                else:
+                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, params.data_key) + '==')
+
+                                data = {'name': comp}
+                                fol_req.folderData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key) + '==')
+
+                                if folder_type == 'shared_folder':
+                                    fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(api.encrypt_aes(comp.encode('utf-8'), folder_key) + '==')
+
+                                    parent_shared_folder_key = folder_key
+                                    parent_shared_folder_uid = folder_uid
+
+                                elif folder_type == 'shared_folder_folder':
+                                    if parent_shared_folder_uid:
+                                        fol_req.sharedFolderFolderFields.sharedFolderUid = base64.urlsafe_b64decode(parent_shared_folder_uid + '==')
+
+                                folder_add.append(fol_req)
+                                folder_hash[digest] = folder_uid, folder_type, parent_shared_folder_key
                             else:
-                                folder_type = 'shared_folder_folder'
-                            request['folder_type'] = folder_type
+                                folder_uid, folder_type, parent_shared_folder_key = folder_hash[digest]
 
-                            encryption_key = params.data_key
-                            if request['folder_type'] == 'shared_folder_folder' and parent_shared_folder_uid and parent_shared_folder_key:
-                                encryption_key = parent_shared_folder_key
-                                request['shared_folder_uid'] = parent_shared_folder_uid
+                            if folder_type == 'shared_folder':
+                                parent_shared_folder_uid = folder_uid
 
-                            folder_key = os.urandom(32)
-                            request['key'] = api.encrypt_aes(folder_key, encryption_key)
-                            if parent_type not in {BaseFolderNode.RootFolderType, BaseFolderNode.SharedFolderType}:
-                                request['parent_uid'] = parent_uid
-
-                            if request['folder_type'] == 'shared_folder':
-                                request['name'] = api.encrypt_aes(comp.encode('utf-8'), folder_key)
-                                parent_shared_folder_key = folder_key
-
-                            data = {'name': comp}
-                            request['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
-                            folder_add.append(request)
                             parent_uid = folder_uid
                             parent_type = folder_type
-                            folder_hash[digest] = parent_uid, parent_type, parent_shared_folder_key
-                        else:
-                            parent_uid, parent_type, parent_shared_folder_key = folder_hash[digest]
 
-                        if parent_type == BaseFolderNode.SharedFolderType:
-                            parent_shared_folder_uid = parent_uid
-                fol.uid = parent_uid
+                    fol.uid = parent_uid
 
     return folder_add
 
@@ -683,40 +627,32 @@ def prepare_record_add(params, records):
                     break
 
         if record_uid is None:
-            record_key = os.urandom(32)
             record_uid = api.generate_record_uid()
-            req = {
-                'command': 'record_add',
-                'record_uid': record_uid,
-                'record_type': 'password',
-                'record_key': api.encrypt_aes(record_key, params.data_key),
-                'how_long_ago': 0,
-                'folder_type': 'user_folder'
-            }
+            record_key = os.urandom(32)
+            rec_req = folder_pb2.RecordRequest()
+            rec_req.recordUid = base64.urlsafe_b64decode(record_uid + '==')
+            rec_req.recordType = 0
+            rec_req.encryptedRecordKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, params.data_key) + '==')
+            rec_req.howLongAgo = 0
+            rec_req.folderType = 1
+
             folder_uid = None
             if rec.folders:
-                if len(rec.folders) > 0:
-                    folder_uid = rec.folders[0].uid
+                folder_uid = rec.folders[0].uid
             if folder_uid:
                 if folder_uid in params.folder_cache:
                     folder = params.folder_cache[folder_uid]
                     if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                        req['folder_uid'] = folder.uid
-                        req['folder_type'] = 'shared_folder' if folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
+                        rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
+                        rec_req.folderType = 2 if folder.type == BaseFolderNode.SharedFolderType else 3
 
                         sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
                         sf = params.shared_folder_cache[sh_uid]
-                        req['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
-                        if 'key_type' not in sf:
-                            if 'teams' in sf:
-                                for team in sf['teams']:
-                                    req['team_uid'] = team['team_uid']
-                                    if team['manage_records']:
-                                        break
+                        rec_req.encryptedRecordFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted']) + '==')
                     else:
-                        req['folder_type'] = 'user_folder'
+                        rec_req.folderType = 1
                         if folder.type != BaseFolderNode.RootFolderType:
-                            req['folder_uid'] = folder.uid
+                            rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
 
             custom_fields = []
             totp = None
@@ -738,7 +674,7 @@ def prepare_record_add(params, records):
                 'notes': rec.notes or '',
                 'custom': custom_fields
             }
-            req['data'] =  api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
+            rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
             if totp:
                 extra = {
                     'fields': [
@@ -750,8 +686,8 @@ def prepare_record_add(params, records):
                             'data': totp
                         }]
                 }
-                req['extra'] = api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key)
-            record_adds.append(req)
+                rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
+            record_adds.append(rec_req)
 
         rec.uid = record_uid
 
@@ -816,6 +752,130 @@ def prepare_record_link(params, records):
                                     })
                                 record_links.append(req)
     return record_links
+
+
+def prepare_folder_permission(params, folders):
+    shared_folder_lookup = {}
+    for shared_folder_uid in params.shared_folder_cache:
+        path = get_folder_path(params, shared_folder_uid)
+        if path:
+            shared_folder_lookup[path] = shared_folder_uid
+
+    email_pattern = re.compile(EMAIL_PATTERN)
+    # public keys
+    emails = {}
+    for fol in folders:
+        if fol.permissions:
+            for perm in fol.permissions:
+                if not perm.uid:
+                    match = email_pattern.match(perm.name)
+                    if match:
+                        if perm.name not in emails:
+                            if perm.name != params.user:
+                                emails[perm.name.lower()] = None
+
+    if emails:
+        request = {
+            'command': "public_keys",
+            'key_owners': list(emails.keys())
+        }
+        try:
+            rs = api.communicate(params, request)
+            if 'public_keys' in rs:
+                for pk in rs['public_keys']:
+                    if 'public_key' in pk:
+                        emails[pk['key_owner']] = pk['public_key']
+        except Exception as e:
+            logging.debug(e)
+
+    folder_permissions = []
+    for fol in folders:
+        shared_folder_uid = shared_folder_lookup.get(fol.path)
+        if not shared_folder_uid:
+            continue
+        shared_folder = params.shared_folder_cache.get(shared_folder_uid)
+        if not shared_folder:
+            continue
+        shared_folder_key = shared_folder.get('shared_folder_key_unencrypted')
+        if not shared_folder_key:
+            continue
+        if fol.permissions:
+            add_users = []
+            add_teams = []
+            for perm in fol.permissions:
+                is_team = False
+                if perm.uid and params.team_cache:
+                    is_team = perm.uid in params.team_cache
+                else:
+                    match = email_pattern.match(perm.name)
+                    if not match:
+                        is_team = True
+                    if is_team:
+                        perm.uid = None
+                        for team_uid in params.team_cache:
+                            team = params.team_cache[team_uid]
+                            if team['name'].lower() == perm.name.lower():
+                                perm.uid = team_uid
+                                break
+                if is_team:
+                    team = params.team_cache.get(perm.uid)
+                    if team:
+                        found = False
+                        if 'teams' in shared_folder:
+                            for team in shared_folder['teams']:
+                                if team['team_uid'] == team['team_uid']:
+                                    found = True
+                                    break
+                        if not found:
+                            add_teams.append({
+                                'team_uid': team['team_uid'],
+                                'manage_users': perm.manage_users,
+                                'manage_records': perm.manage_records,
+                                'shared_folder_key': api.encrypt_aes(shared_folder_key, team['team_key_unencrypted']),
+                            })
+                else:
+                    email = perm.name.lower()
+                    found = False
+                    if 'users' in shared_folder:
+                        for user in shared_folder['users']:
+                            if user['username'] == email:
+                                found = True
+                                break
+                    if not found:
+                        if email == params.user.lower():
+                            add_users.append({
+                                'username': email,
+                                'manage_users': perm.manage_users,
+                                'manage_records': perm.manage_records,
+                                'shared_folder_key': api.encrypt_aes(shared_folder_key, params.data_key)
+                            })
+                        elif email in emails:
+                            public_key = emails[email]
+                            if public_key:
+                                try:
+                                    rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key + '=='))
+                                    add_users.append({
+                                        'username': email,
+                                        'manage_users': perm.manage_users,
+                                        'manage_records': perm.manage_records,
+                                        'shared_folder_key': api.encrypt_rsa(shared_folder_key, rsa_key)
+                                    })
+                                except Exception as e:
+                                    logging.debug(e)
+
+            if add_teams or add_users:
+                request = {
+                    'command': 'shared_folder_update',
+                    'operation': 'update',
+                    'pt': 'Commander',
+                    'shared_folder_uid': shared_folder_uid,
+                    'force_update': True,
+                    'add_teams': add_teams,
+                    'add_users': add_users,
+                }
+                folder_permissions.append(request)
+
+    return folder_permissions
 
 
 def prepare_record_permission(params, records):
