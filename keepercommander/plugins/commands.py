@@ -10,6 +10,7 @@
 #
 
 import argparse
+import datetime
 import logging
 import re
 
@@ -41,6 +42,16 @@ rotate_parser.error = raise_parse_exception
 rotate_parser.exit = suppress_exit
 
 
+def adjust_password(password):   # type: (str) -> str
+    if not password:
+        return password
+    if password[0].isalnum():
+        return password
+    for i in range(1, len(password)):
+        if password[i].isalnum():
+            return password[i] + password[1:i] + password[0] + password[i+1:]
+    return 'a' + password
+
 def rotate_password(params, record_uid, name=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
@@ -54,35 +65,50 @@ def rotate_password(params, record_uid, name=None):
             plugins = [x for x in plugins if x['name'] == 'cmdr:plugin:' + name]
     if plugins:
         plugin_name = plugins[0]['value']
-    if plugin_name:
-        # generate a new password with any specified rules
-        rules = record.get("cmdr:rules")
-        if rules:
-            logging.debug("Rules found for record")
-            new_password = generator.generateFromRules(rules)
-        else:
-            logging.debug("No rules, just generate")
-            new_password = generator.generate()
-
-        # Some plugins might need to change the password in the process of rotation
-        # f.e. windows plugin gets rid of certain characters.
-        plugin = plugin_manager.get_plugin(plugin_name)
-        if plugin:
-            if hasattr(plugin, "adjust"):
-                new_password = plugin.adjust(new_password)
-
-            logging.info("Rotating with plugin %s", plugin_name)
-            success = plugin.rotate(record, new_password)
-            if success:
-                logging.debug("Password rotation is successful for \"%s\".", plugin_name)
-            else:
-                logging.warning("Password rotation failed for \"%s\".", plugin_name)
-                return False
-        else:
-            return False
-    else:
+    if not plugin_name:
         logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
                       'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
+        return False
+
+    plugin = plugin_manager.get_plugin(plugin_name)
+    if not plugin:
+        return False
+
+    # generate a new password with any specified rules
+    rules = record.get("cmdr:rules")
+    if rules:
+        logging.debug("Rules found for record")
+        new_password = generator.generateFromRules(rules)
+    else:
+        logging.debug("No rules, just generate")
+        new_password = generator.generate()
+
+    # ensure password starts with alpha numeric character
+    new_password = adjust_password(new_password)
+
+    # Some plugins might need to change the password in the process of rotation
+    # f.e. windows plugin gets rid of certain characters.
+    if hasattr(plugin, "adjust"):
+        new_password = plugin.adjust(new_password)
+
+    log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
+    if record.notes:
+        record.notes += '\n' + log_message
+    else:
+        record.notes = log_message
+
+    if not api.update_record(params, record, silent=True):
+        return False
+
+    api.sync_down(params)
+    record = api.get_record(params, record_uid)
+
+    logging.info("Rotating with plugin %s", plugin_name)
+    success = plugin.rotate(record, new_password)
+    if success:
+        logging.debug("Password rotation is successful for \"%s\".", plugin_name)
+    else:
+        logging.warning("Password rotation failed for \"%s\".", plugin_name)
         return False
 
     if api.update_record(params, record):

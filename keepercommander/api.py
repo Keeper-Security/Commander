@@ -737,8 +737,11 @@ def sync_down(params):
                             break
 
             if record_key:
-                record['data_unencrypted'] = decrypt_data(record['data'], record_key) if 'data' in record else b'{}'
-                record['extra_unencrypted'] = decrypt_data(record['extra'], record_key) if 'extra' in record else b'{}'
+                try:
+                    record['data_unencrypted'] = decrypt_data(record['data'], record_key) if 'data' in record else b'{}'
+                    record['extra_unencrypted'] = decrypt_data(record['extra'], record_key) if 'extra' in record else b'{}'
+                except Exception as e:
+                    logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
             else:
                 records_to_delete.append(record_uid)
 
