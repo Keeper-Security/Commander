@@ -175,8 +175,8 @@ def login(params):
                     with open(params.config_filename, 'w') as f:
                         json.dump(params.config, f, ensure_ascii=False, indent=2)
                         logging.info('Updated %s', params.config_filename)
-                except Exception as e:
-                    logging.debug('Unable to update %s. %s', params.config_filename, e)
+                except OSError as e:
+                    logging.exception(e, 'Unable to update %s by %s', params.config_filename, e.strerror)
 
         elif response_json['result_code'] in ['need_totp', 'invalid_device_token', 'invalid_totp']:
             try:
@@ -194,22 +194,22 @@ def login(params):
                             params.mfa_token = signature
                             params.mfa_type = 'u2f'
                     except ImportError as e:
-                        logging.error(e, "U2F mfa import failed.")
+                        logging.exception(e, "U2F mfa import failed.")
                         if not warned_on_fido_package:
                             logging.warning(install_fido_package_warning)
                             warned_on_fido_package = True
                     except OSError as e:
-                        logging.error(e, "OS error in u2f mfa..") # [Errno 2] No such file or directory: '/sys/class/hidraw'
+                        logging.exception(e, "OS error in u2f mfa..") # [Errno 2] No such file or directory: '/sys/class/hidraw'
                     except Exception as e:
-                        logging.error(e, "u2f mfa failed. Next step is manual mfa code input..")
+                        logging.exception(e, "u2f mfa failed. Next step is manual mfa code input..")
 
                 while not params.mfa_token:
                     try:
                         params.mfa_token = getpass.getpass(prompt='Input Two-Factor(mfa) Code: ', stream=None)
                     except KeyboardInterrupt as e:
-                        print('Breaking by a keyboard interrupte. The session is cleared.')
+                        logging.exception(e, 'Breaking by a keyboard interrupte. The session is cleared.')
                         params.clear_session()
-                        return
+                        raise
 
             except (EOFError, KeyboardInterrupt, SystemExit):
                 return

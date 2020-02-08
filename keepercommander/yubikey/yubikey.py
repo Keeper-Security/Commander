@@ -107,7 +107,7 @@ def u2f_authenticate(authenticateRequests):
                         if e.code == APDU.USE_NOT_SATISFIED:
                             to_auth.append((u2f_client, client_data, app_id_hash, key_handle))
             except:
-                pass
+                raise
 
     if to_auth:
         u2f_thread = threading.Thread(target=thread_function, args=((to_auth,)))
@@ -117,7 +117,7 @@ def u2f_authenticate(authenticateRequests):
             should_cancel_u2f = True
             u2f_thread.join()
         except KeyboardInterrupt:
-            pass
+            raise
     return u2f_response
 
 
