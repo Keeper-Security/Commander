@@ -442,9 +442,10 @@ class SortOption():
     """parser sort arguments"""
     PARSER = argparse.ArgumentParser(prog='sort', add_help=False)
     PARSER.add_argument('-r', '--reverse', dest='reverse', action='store_true', help='Reverse sort order.')
-    SORT_ARGUMENTS = {'dest':'sort', 'action':'store', 'const':'revision', 'nargs':'?',
-        'choices':['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'], 'default':'revision', 
-        'help':"Sort records by record_uid, folder, title, login, password, revision, notes or login_url"}
+    SORT_CHOICES = ['record_uid', 'folder', 'title', 'login', 'password', 'revision', 'notes', 'login_url'] 
+    SORT_ARGUMENTS = {'dest':'sort', 'action':'store', 'const':'title', 'nargs':'?',
+        'choices':SORT_CHOICES, 
+        'help':f"Sort records by {', '.join(SORT_CHOICES)}"}
     PARSER.add_argument('-s', '--sort', **SORT_ARGUMENTS)
 
 

@@ -72,3 +72,9 @@ class OSException(Error):
     """
     def __init__(self, message):
         self.message = message
+
+class NonSupportedType(Error):
+    """not supported type error
+    """
+    def __init__(self, message):
+        self.message = message
