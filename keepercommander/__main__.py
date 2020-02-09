@@ -20,12 +20,11 @@ import json
 import logging
 import base64
 
-from . import __version__
 from .params import KeeperParams
 from .error import InputError, OSException
 from . import cli
+from . import __version__
 from . import __logging_format__
-
 
 def usage(m):
     print(m)
