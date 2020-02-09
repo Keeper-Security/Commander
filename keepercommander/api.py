@@ -171,6 +171,9 @@ def login(params):
 
             if store_config: # save token to config file if the file exists
                 params.config['user'] = params.user
+                print("Config JSON:")
+                config_params = json.dumps(params.config, ensure_ascii=False)
+                print(config_params)
                 try:
                     with open(params.config_filename, 'w') as f:
                         json.dump(params.config, f, ensure_ascii=False, indent=2)

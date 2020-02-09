@@ -84,6 +84,8 @@ def welcome():
 
 RECORD_HEADER = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
 
+import locale
+
 def formatted_records(records, print_func=print, appends=None, **kwargs):
     """
     Display folders/titles/uids for the supplied shared folders
@@ -102,7 +104,7 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
     # List or Search: Sort by title or revision
     reverse_sort = kwargs.get('reverse')
     sort_key = kwargs.get('sort')
-    sorted_records = sorted(records, key=lambda r: getattr(r, sort_key), reverse=reverse_sort) if sort_key else None
+    sorted_records = sorted(records, key=lambda r: locale.strxfrm(getattr(r, sort_key)), reverse=reverse_sort) if sort_key else None
     if sorted_records:
         records = sorted_records
 
