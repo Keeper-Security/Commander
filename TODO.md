@@ -1,3 +1,10 @@
-# TODO items: what to do and ideas
+# TODO items: what I want to do ideas
+ - Ignore accent characters when search :
+```
+   Use unocodedata.normalize('NFKD', s) and unicodedata.category(c) != 'Mn'
+   ```
+# Done
  - Fix logging : print modules and functions by setting a proper format 
- - Ignore accent characters when search : use unocodedata.normalize('NFKD', s) and unicodedata.catecory(c) != 'Mn'
+```
+    Specify the format by __logging_format__ string in keepercommander/__init__.py
+    ```
