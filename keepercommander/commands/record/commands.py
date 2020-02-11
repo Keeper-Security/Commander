@@ -761,7 +761,7 @@ class WebPortAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         if values < self.__class__.PORT_RANGE[0] or values > self.__class__.PORT_RANGE[-1]: # or values in WebPortAction.INHIBITED_PORTS:
             raise ValueError(f"{values} is an invalid port number!")
-        setattr(namespace, values, self.dest)
+        setattr(namespace, self.dest, values)
 
 
 class WebOption():
