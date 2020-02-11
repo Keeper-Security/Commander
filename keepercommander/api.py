@@ -21,7 +21,7 @@ import logging
 import urllib.parse
 
 
-from . import bcolors
+from .display import bcolors
 
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode

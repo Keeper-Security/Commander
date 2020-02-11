@@ -30,7 +30,7 @@ from .record import RecordAddCommand
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode, try_resolve_path
 from .enterprise import EnterpriseCommand, EnterprisePushCommand
-from .. import bcolors
+from ..display import bcolors
 from ..error import KeeperApiError
 from .base import raise_parse_exception, suppress_exit, Command
 

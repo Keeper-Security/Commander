@@ -40,7 +40,7 @@ from collections import OrderedDict as OD
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .record import RecordAddCommand
 from .. import api, rest_api
-from .. import bcolors
+from ..display import bcolors
 from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate

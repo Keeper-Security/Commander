@@ -19,12 +19,21 @@ import logging
 from wsgiref.simple_server import make_server
 from .subfolder import BaseFolderNode
 from .error import NonSupportedType
-from .commands.record.commands import WebPortAction
-from . import bcolors
 from .pager import TablePager,TablePagerException,TableNotYetAssignedException
 from pypager.source import GeneratorSource
 
 colorama.init()
+
+
+class bcolors:
+    HEADER = '\033[95m' # purple
+    OKBLUE = '\033[94m' # blue
+    OKGREEN = '\033[92m' # green
+    WARNING = '\033[93m' # yellow
+    FAIL = '\033[91m' # red
+    ENDC = '\033[0m' # reset
+    BOLD = '\033[1m' # bold
+    UNDERLINE = '\033[4m' # underline
 
 
 def welcome():
