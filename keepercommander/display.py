@@ -152,10 +152,10 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
             def helo(env, start_resp):
                 start_resp("200 OK",
                     [("Content-type", 'text/html; charset=utf-8')])
-                text = tabulate(oldtable, headers=oldheaders).encode('utf-8')
+                text = tabulate(oldtable, headers=oldheaders, tablefmt='html').encode('utf-8')
                 head = b'<!DOCTYPE html> <html> <head> <meta charset="utf-8"/> </head>'
-                body = b"<body> <pre> <code>"
-                tail = b" </code> </pre> </body> </html>"
+                body = b"<body>" # <pre> <code>"
+                tail = b"</body> </html>" # </code> </pre>
                 return [head, body, text, tail]
             httpd = make_server('', port, helo)
             try:
