@@ -8,3 +8,4 @@
 ```
     Specify the format by __logging_format__ string in keepercommander/__init__.py
     ```
+ - Refuse inproper port number for web view

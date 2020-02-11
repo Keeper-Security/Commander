@@ -21,6 +21,7 @@ from tabulate import tabulate
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path
 from ..error import Error
+from ..pager import TablePager
 
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
@@ -183,6 +184,8 @@ class Command(metaclass=ABCMeta):
                 opts = parser.parse_args(shlex_split)
                 d.update(opts.__dict__)
             return self.execute(params, **d)
+        except ValueError as ve:
+            logging.error(f"{ve} : not a proper value.")
         except Exception as e:
             logging.error(e)
 

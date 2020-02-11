@@ -9,66 +9,22 @@
 #
 import json
 
-from colorama import init
+import colorama 
 from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
-from pypager.source import GeneratorSource
-from pypager.pager import Pager
+
 from io import StringIO
 import logging
 from wsgiref.simple_server import make_server
 from .subfolder import BaseFolderNode
 from .error import NonSupportedType
+from .commands.record.commands import WebPortAction
+from . import bcolors
+from .pager import TablePager,TablePagerException,TableNotYetAssignedException
+from pypager.source import GeneratorSource
 
-init()
-
-class TablePagerException(Exception):
-    pass
-class TableNotYetAssignedException(TablePagerException):
-    pass
-
-class TablePager(Pager):
-    table = None
-    headers = None
-    
-    def __init__(tbl, hdr):
-        TablePager.table = tbl
-        TablePager.headers = hdr
-        super().__init__()
-   
-    @classmethod
-    def get_uid(cls, uid: str) -> str or None:
-        ''' Resolve uid by line number of previous list command
-            Raise TablePagerException if not proper number
-        '''
-        if not cls.table:
-            raise TableNotYetAssignedException("Record number specify needs to be after pager or web showed records.")
-        import re
-        mt = re.fullmatch(r"(\d{1,4})", uid)
-        if mt:
-            num = int(mt.group(0))
-            if not 0 < num < 10000:
-                raise TablePagerException(f"Specify number 1 or less than 10000.")
-            lines = TablePager.table
-            if num > len(lines):
-                raise TablePagerException(f"Specify (0 < number <= ({len(lines)}).")
-            return lines[num - 1][1]
-        else:
-            return None
-
-
-pager = None
-
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+colorama.init()
 
 
 def welcome():
@@ -86,6 +42,11 @@ def welcome():
 RECORD_HEADER = ["#", 'Record UID', 'Title', 'Login', 'URL', 'Revision']
 
 import locale
+
+def is_port_in_use(port):
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
 
 def formatted_records(records, print_func=print, appends=None, **kwargs):
     """
@@ -143,8 +104,8 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         headers += [f(None) for f in appends] # append field names
     table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32], r.revision] for i, r in enumerate(records)]
 
+    import collections
     if shared_folder_records:
-        from collections import deque
         for row in table:
             flags = collections.deque()
             for sfr in shared_folder_records:
@@ -167,7 +128,7 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
         def generate_a_lot_of_content():
             yield [('', formatted)]
         global pager
-        pager = TablePager(oldtable)
+        pager = TablePager(oldtable, oldheaders)
         pager.add_source(GeneratorSource(generate_a_lot_of_content()))
         pager.run()
     else:
@@ -175,8 +136,10 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
     webview = kwargs.get('webview')
     if webview:
         try:
-            port = int(webview)
-            
+            if is_port_in_use(webview): 
+                logging.warning("Port %s is in use." % webview)
+                return formatted
+            port = webview
             def helo(env, start_resp):
                 start_resp("200 OK",
                     [("Content-type", 'text/html; charset=utf-8')])
@@ -190,7 +153,7 @@ def formatted_records(records, print_func=print, appends=None, **kwargs):
                 logging.info(f'A web view is opened at port {port}; Open browser with address "localhost:{port}" or cntrl-c to quit.')
                 httpd.handle_request()
             except KeyboardInterrupt:
-                logging.INFO('Quit http server with Keyboard Interrupt')
+                logging.info('Quit http server with Keyboard Interrupt')
         except ValueError:
             logging.info('%s is not for port number' % webview)
         except OSError as e:

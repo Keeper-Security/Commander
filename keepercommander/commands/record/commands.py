@@ -30,7 +30,7 @@ from ...subfolder import BaseFolderNode, find_folders, try_resolve_path, get_fol
 from ..base import raise_parse_exception, suppress_exit, user_choice, Command, ParseException
 from ...record import Record, get_totp_code
 from ...params import KeeperParams, LAST_RECORD_UID
-from ...display import TablePager
+from ...pager import TablePager
 from ...error import KeeperApiError, InputError
 
 
@@ -744,10 +744,6 @@ class ModefiedOption():
     PARSER = argparse.ArgumentParser(prog='modefied', add_help=False)
     PARSER.add_argument('-m', '--modefied', dest='modefied', action='store_true', help='add modified date time field.')
 
-class PagerOption():
-    """parser pager arguments"""
-    PARSER = argparse.ArgumentParser(prog='pager', add_help=False)
-    PARSER.add_argument('-p', '--pager', dest='pager', action='store_true', help='Show content page by page.')
 
 class HistoryOption():
     """parser history arguments"""
@@ -756,11 +752,24 @@ class HistoryOption():
     COMMAND = RecordHistoryCommand()
     ACTION = {'action':'list'}
 
+class WebPortAction(argparse.Action):
+    '''callback function to check if value is not in {20, 21, 80, 443}.
+        Raises ValueError if any inhibited number.
+    '''
+    INHIBITED_PORTS = {20, 21, 80, 443}
+    PORT_RANGE = range(0,65536)
+    def __call__(self, parser, namespace, values, option_string=None):
+        if values < self.__class__.PORT_RANGE[0] or values > self.__class__.PORT_RANGE[-1]: # or values in WebPortAction.INHIBITED_PORTS:
+            raise ValueError(f"{values} is an invalid port number!")
+        setattr(namespace, values, self.dest)
+
+
 class WebOption():
     """parser web arguments"""
     PARSER = argparse.ArgumentParser(prog='webview', add_help=False)
-    PARSER.add_argument('-w', '--webview', dest='webview', action='store', 
-        nargs='?', const='6080', help='Show content page by web(http/https) protocol with port number WEBVIEW(const=6080)).')
+    DEFAULT_PORT = 6080
+    PARSER.add_argument('-w', '--webview', dest='webview', action=WebPortAction, 
+        nargs='?', type=int, const=DEFAULT_PORT, help=f"Show content page by web(http/https) protocol with a port number (0 to 65535, default port is {DEFAULT_PORT})).")
 
 
 class RecordListCommand(Command):

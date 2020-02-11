@@ -20,6 +20,9 @@ import hashlib
 import logging
 import urllib.parse
 
+
+from . import bcolors
+
 from . import rest_api
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
@@ -27,7 +30,6 @@ from .shared_folder import SharedFolder
 from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
-from .display import bcolors
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
