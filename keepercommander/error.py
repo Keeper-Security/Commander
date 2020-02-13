@@ -10,7 +10,9 @@
 
 class Error(Exception):
     """Base class for exceptions in this module."""
-    pass
+    def __init__(self, message):
+        self.message = message
+
 
 class InputError(Error):
     """Exception raised for errors in the input.
@@ -78,3 +80,19 @@ class NonSupportedType(Error):
     """
     def __init__(self, message):
         self.message = message
+
+class TimestampError(Error):
+    """failed to get timestamp
+    """
+    def __init__(self, message):
+        self.message = message
+
+class RecordError(Error):
+    """Fail in getting data in a record
+    """
+    pass
+
+class ExecutuonError(Error):
+    """Fail in executing a command
+    """
+    pass
