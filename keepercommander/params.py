@@ -13,7 +13,7 @@ import logging
 import json
 from json import JSONDecodeError
 from base64 import urlsafe_b64decode
-from .error import OSException
+from .error import OSException, RecordError
 
 LAST_RECORD_UID = 'last_record_uid'
 LAST_SHARED_FOLDER_UID = 'last_shared_folder_uid'
@@ -165,6 +165,21 @@ class KeeperParams:
 
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
+
+
+    def get_modified_timestamp(self, record_uid):
+      """get modified timestamp from cache in params
+      might cause AttributeError or KeyError"""
+      try:
+        current_rec = self.record_cache[record_uid]
+        ts = current_rec['client_modified_time']
+      except KeyError as k:
+          raise RecordError(f"No {k} key exists!") from KeyError
+      except AttributeError as a:
+          raise RecordError(f"No {a} attribute exists!") from AttributeError
+      if not ts:
+          raise RecordError(f"Client modified timestamp is null!")
+      return ts
     
     def set_params_from_config(self, config_filename):
         '''set params from config file
