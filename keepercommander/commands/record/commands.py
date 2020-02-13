@@ -18,6 +18,7 @@ import base64
 import tempfile
 import logging
 import threading
+from datetime import datetime
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
 from pypager.source import GeneratorSource
@@ -31,7 +32,7 @@ from ..base import raise_parse_exception, suppress_exit, user_choice, Command, P
 from ...record import Record, get_totp_code
 from ...params import KeeperParams, LAST_RECORD_UID
 from ...pager import TablePager
-from ...error import KeeperApiError, InputError
+from ...error import KeeperApiError, InputError, RecordError
 
 
 def register_commands(commands):
@@ -1525,20 +1526,15 @@ class TotpCommand(Command):
                     TotpCommand.Endpoints.append(TotpEndpoint(record_uid, record.title, paths))
 
 
-def get_modified_time(params, record_uid):
-    """get modified time from cache in params"""
-    current_rec = params.record_cache[record_uid]
-    if not current_rec:
-        return None
-    client_modified_time = current_rec.get('client_modified_time')
-    if not client_modified_time:
-        return None
-    dt = None
+def get_modified_time(params: KeeperParams, record_uid) -> datetime :
+    """get modified time from cache in params.
+    This might raise RecordError in case fail to get modified time."""
     try:
-        dt = datetime.fromtimestamp(client_modified_time / 1000)
+      modified_timestamp = params.get_modified_timestamp(record_uid)
+      return datetime.fromtimestamp(modified_timestamp / 1000)
+    except RecordError as re:
+        raise RecordError(f"No {re} timestamp in record_cache.")
     except OverflowError as e:
-        logging.error(f"Out of range of datetime timestamp:{e}")
+        raise RecordError(f"Out of range of datetime timestamp:{e}") from OverflowError
     except OSError as e:
-        logging.error(f"getting datetime os call failed.:{e}")
-    finally:
-        return dt
+        raise RecordError(f"getting datetime os call failed.:{e.strerror}") from OSError
