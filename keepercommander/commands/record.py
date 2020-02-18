@@ -29,7 +29,6 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 
-
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['edit'] = RecordEditCommand()
@@ -201,16 +200,18 @@ class RecordAddCommand(Command):
         custom = []
         if custom_list:
             if type(custom_list) == str:
-                try:
-                    custom_json = json.loads(custom_list)
-                    for k,v in custom_json.items():
-                        custom.append({
-                            'name': k,
-                            'value': str(v)
-                        })
-                except ValueError as e:
-                    pass
-                if len(custom) == 0:
+                if custom_list[0] == '{' and custom_list[-1] == '}':
+                    try:
+                        custom_json = json.loads(custom_list)
+                        for k,v in custom_json.items():
+                            custom.append({
+                                'name': k,
+                                'value': str(v)
+                            })
+                    except ValueError as e:
+                        logging.error('Invalid custom fields JSON input: %s', e)
+                        return
+                else:
                     pairs = custom_list.split(',')
                     for pair in pairs:
                         idx = pair.find(':')
@@ -219,6 +220,10 @@ class RecordAddCommand(Command):
                                 'name': pair[:idx].strip(),
                                 'value': pair[idx+1:].strip()
                             })
+                        else:
+                            logging.error('Invalid custom fields input. Expected: "Key:Value". Got: "%s"', pair)
+                            return
+
             elif type(custom_list) == list:
                 for c in custom_list:
                     if type(c) == dict:
@@ -360,16 +365,18 @@ class RecordEditCommand(Command):
         if custom_list:
             custom = []
             if type(custom_list) == str:
-                try:
-                    custom_json = json.loads(custom_list)
-                    for k,v in custom_json.items():
-                        custom.append({
-                            'name': k,
-                            'value': str(v)
-                        })
-                except ValueError as e:
-                    pass
-                if len(custom) == 0:
+                if custom_list[0] == '{' and custom_list[-1] == '}':
+                    try:
+                        custom_json = json.loads(custom_list)
+                        for k,v in custom_json.items():
+                            custom.append({
+                                'name': k,
+                                'value': str(v)
+                            })
+                    except ValueError as e:
+                        logging.error('Invalid custom fields JSON input: %s', e)
+                        return
+                else:
                     pairs = custom_list.split(',')
                     for pair in pairs:
                         idx = pair.find(':')
@@ -378,6 +385,9 @@ class RecordEditCommand(Command):
                                 'name': pair[:idx].strip(),
                                 'value': pair[idx+1:].strip()
                             })
+                        else:
+                            logging.error('Invalid custom fields input. Expected: "Key:Value". Got: "%s"', pair)
+                            return
             elif type(custom_list) == list:
                 for c in custom_list:
                     if type(c) == dict:
