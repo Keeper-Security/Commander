@@ -176,7 +176,8 @@ class Record:
                         scale = 'Gb'
                 sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
                 print('{0:>21s} {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments:' if i == 0 else '',
-                                                                             atta.get('name'), sz, scale, 'ID',
+                                                                             atta.get('title') or atta.get('name'),
+                                                                             sz, scale, 'ID',
                                                                              atta.get('id')))
 
         if self.totp:

@@ -727,7 +727,7 @@ class RecordDownloadAttachmentCommand(Command):
                         for f_info in extra['files']:
                             if f_info['id'] == file_id:
                                 file_key = base64.urlsafe_b64decode(f_info['key'] + '==')
-                                file_name = f_info['name']
+                                file_name = f_info.get('title') or f_info.get('name') or f_info.get('id')
                                 break
 
                     if file_key:
