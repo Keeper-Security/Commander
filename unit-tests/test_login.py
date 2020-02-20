@@ -93,8 +93,8 @@ class TestLogin(TestCase):
 
     def test_login_auth_expired(self):
         params = get_user_params()
-
         call_no = 0
+
         def return_auth_expired(context, rq):
             nonlocal call_no
             call_no += 1
@@ -195,12 +195,12 @@ class TestLogin(TestCase):
                     elif method == 'device_token':
                         if token != vault_env.device_token:
                             return {
-                                'result' : 'fail',
+                                'result': 'fail',
                                 'result_code': 'invalid_device_token'
                             }
                     else:
                         return {
-                            'result' : 'fail',
+                            'result': 'fail',
                             'result_code': 'need_totp'
                         }
 
@@ -231,14 +231,13 @@ class TestLogin(TestCase):
                 return rs
 
             return {
-                'result' : 'failure',
+                'result': 'failure',
                 'result_code': 'auth_failed',
                 'salt': base64.urlsafe_b64encode(vault_env.salt).decode('utf-8').strip('='),
                 'iterations': vault_env.iterations
             }
 
         return {
-            'result' : 'failure',
+            'result': 'failure',
             'result_code': 'Failed_to_find_user'
         }
-

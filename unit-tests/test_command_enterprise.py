@@ -8,6 +8,7 @@ from unittest import TestCase, mock
 from data_enterprise import get_enterprise_data, EnterpriseEnvironment, enterprise_allocate_ids
 from keepercommander import api
 from keepercommander.record import Record
+from keepercommander.error import CommandError
 from data_vault import VaultEnvironment, get_connected_params
 
 from keepercommander.commands import enterprise
@@ -84,8 +85,9 @@ class TestEnterprise(TestCase):
         api.query_enterprise(params)
 
         cmd = enterprise.EnterpriseUserCommand()
-        with self.assertLogs(level=logging.WARNING):
-            cmd.execute(params, lock=True, email='wrong.user@keepersecurity.com')
+        with self.assertRaises(CommandError):
+            with self.assertLogs(level=logging.WARNING):
+                cmd.execute(params, lock=True, email=['wrong.user@keepersecurity.com'])
 
     def test_enterprise_expire_password(self):
         params = get_connected_params()
@@ -258,7 +260,7 @@ class TestEnterprise(TestCase):
         rng = cmd.get_filter('<= {0}'.format(dt_max.strftime('%Y-%m-%dT%H:%M:%SZ')), cmd.convert_date)
         self.assertTrue(type(rng) == dict)
         self.assertIn('max', rng)
-        self.assertFalse(rng.get('exclude_max') or False )
+        self.assertFalse(rng.get('exclude_max') or False)
         self.assertNotIn('min', rng)
         self.assertEqual(rng['max'], epoch_max)
 
@@ -274,7 +276,7 @@ class TestEnterprise(TestCase):
         arr = cmd.get_filter('In (1,2,3, 4, 6,   5,7, 0)', cmd.convert_int)
         self.assertTrue(type(arr) == list)
         arr.sort()
-        self.assertListEqual(arr, [0,1,2,3,4,5,6,7])
+        self.assertListEqual(arr, [0, 1, 2, 3, 4, 5, 6, 7])
 
     def test_enterprise_push_command(self):
         params = get_connected_params()
@@ -313,10 +315,10 @@ class TestEnterprise(TestCase):
         self.assertEqual(templates[0]['custom_fields']['key2'], values['user_email'])
         self.assertEqual(templates[1]['title'], 'Empty record')
 
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, file='template.json')
 
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, user=[ent_env.user2_email])
 
         def get_public_keys(_params, emails):
@@ -384,4 +386,3 @@ class TestEnterprise(TestCase):
             if cmd == request['command']:
                 return rs
         raise Exception()
-

@@ -28,6 +28,7 @@ from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_fold
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
+from ..error import CommandError
 
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
@@ -209,8 +210,7 @@ class RecordAddCommand(Command):
                                 'value': str(v)
                             })
                     except ValueError as e:
-                        logging.error('Invalid custom fields JSON input: %s', e)
-                        return
+                        raise CommandError('add', 'Invalid custom fields JSON input: {0}'.format(e))
                 else:
                     pairs = custom_list.split(',')
                     for pair in pairs:
@@ -221,8 +221,7 @@ class RecordAddCommand(Command):
                                 'value': pair[idx+1:].strip()
                             })
                         else:
-                            logging.error('Invalid custom fields input. Expected: "Key:Value". Got: "%s"', pair)
-                            return
+                            raise CommandError('add', 'Invalid custom fields input. Expected: "Key:Value". Got: "{0}"'.format(pair))
 
             elif type(custom_list) == list:
                 for c in custom_list:
@@ -253,8 +252,7 @@ class RecordAddCommand(Command):
                 for uid in params.subfolder_record_cache[folder_uid]:
                     r = api.get_record(params, uid)
                     if r.title == title:
-                        logging.error('Record with title "%s" already exists', title)
-                        return
+                        raise CommandError('add', 'Record with title "{0}" already exists'.format(title))
 
         record_key = os.urandom(32)
         record_uid = api.generate_record_uid()
@@ -295,7 +293,6 @@ class RecordAddCommand(Command):
 
         api.communicate(params, rq)
         params.sync_data = True
-        logging.info('Record UID: %s', record_uid)
         params.environment_variables[LAST_RECORD_UID] = record_uid
         return record_uid
 
@@ -328,8 +325,8 @@ class RecordEditCommand(Command):
                                 break
 
         if record_uid is None:
-            logging.warning('Enter name or uid of existing record')
-            return
+            raise CommandError('edit', 'Enter name or uid of existing record')
+
         record = api.get_record(params, record_uid)
 
         changed = False
@@ -374,8 +371,7 @@ class RecordEditCommand(Command):
                                 'value': str(v)
                             })
                     except ValueError as e:
-                        logging.error('Invalid custom fields JSON input: %s', e)
-                        return
+                        raise CommandError('edit', 'Invalid custom fields JSON input: {0}'.format(e))
                 else:
                     pairs = custom_list.split(',')
                     for pair in pairs:
@@ -386,8 +382,7 @@ class RecordEditCommand(Command):
                                 'value': pair[idx+1:].strip()
                             })
                         else:
-                            logging.error('Invalid custom fields input. Expected: "Key:Value". Got: "%s"', pair)
-                            return
+                            raise CommandError('edit', 'Invalid custom fields input. Expected: "Key:Value". Got: "{0}"'.format(pair))
             elif type(custom_list) == list:
                 for c in custom_list:
                     if type(c) == dict:
@@ -461,8 +456,7 @@ class RecordRemoveCommand(Command):
                         break
 
         if record_uid is None:
-            logging.warning('Enter name of existing record')
-            return
+            raise CommandError('rm', 'Enter name of existing record')
 
         del_obj = {
             'delete_resolution': 'unlink',
@@ -567,8 +561,7 @@ class RecordGetUidCommand(Command):
     def execute(self, params, **kwargs):
         uid = kwargs['uid'] if 'uid' in kwargs else None
         if not uid:
-            print('UID parameter is required')
-            return
+            raise CommandError('get', 'UID parameter is required')
 
         fmt = kwargs.get('format') or 'detail'
 
@@ -704,7 +697,7 @@ class RecordGetUidCommand(Command):
                         print('')
                     return
 
-        logging.error('Cannot find any object with UID: %s', uid)
+        raise CommandError('get', 'Cannot find any object with UID: %s'.format(uid))
 
 
 class RecordDownloadAttachmentCommand(Command):
@@ -735,8 +728,7 @@ class RecordDownloadAttachmentCommand(Command):
                                 break
 
         if record_uid is None:
-            logging.warning('Enter name or uid of existing record')
-            return
+            raise CommandError('download-attachment', 'Enter name or uid of existing record')
 
         file_ids = []
         r = params.record_cache[record_uid]
@@ -746,8 +738,7 @@ class RecordDownloadAttachmentCommand(Command):
                 file_ids.append(f_info['id'])
 
         if len(file_ids) == 0:
-            logging.warning('No attachments associated with the record')
-            return
+            raise CommandError('download-attachment', 'No attachments associated with the record')
 
         rq = {
             'command': 'request_download',
@@ -790,9 +781,9 @@ class RecordDownloadAttachmentCommand(Command):
                                 f.write(decrypted)
                             params.queue_audit_event('file_attachment_downloaded', record_uid=record_uid, attachment_id=file_id)
                     else:
-                        logging.error('File "%s": Failed to file encryption key', file_name)
+                        raise CommandError('download-attachment', 'File "{0}": Failed to file encryption key'.format(file_name))
                 else:
-                    logging.error('File "%s" download error: %s', file_id, dl['message'])
+                    raise CommandError('download-attachment', 'File "{0}" download error: {1}'.format(file_id, dl['message']))
 
 
 class RecordUploadAttachmentCommand(Command):
@@ -838,8 +829,7 @@ class RecordUploadAttachmentCommand(Command):
 
         record_update = api.resolve_record_write_path(params, record_uid)
         if record_update is None:
-            logging.error('You do not have edit permissions on this record')
-            return
+            raise CommandError('upload-attachment', 'You do not have edit permissions on this record')
 
         files = []
         if 'file' in kwargs:
@@ -848,9 +838,9 @@ class RecordUploadAttachmentCommand(Command):
                 if os.path.isfile(file_name):
                     files.append(file_name)
                 else:
-                    logging.error('File %s does not exists', name)
+                    raise CommandError('upload-attachment', 'File "{0}" does not exists'.format(name))
         if len(files) == 0:
-            logging.error('No files to upload')
+            raise CommandError('upload-attachment', 'No files to upload')
             return
 
         rq = {
@@ -897,13 +887,12 @@ class RecordUploadAttachmentCommand(Command):
                             attachments.append(a)
                             params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
                 else:
-                    logging.error('%s: file size exceeds file plan limits', file_path)
+                    raise CommandError('upload-attachment', '{0}: file size exceeds file plan limits'.format(file_path))
             except Exception as e:
-                logging.error('%s error: %s', file_path, e)
+                raise CommandError('upload-attachment', '{0} error: {1}'.format(file_path, e))
 
         if len(attachments) == 0:
-            logging.error('No files were successfully uploaded')
-            return
+            raise CommandError('upload-attachment', 'No files were successfully uploaded')
 
         record = params.record_cache[record_uid]
         extra = json.loads(record['extra_unencrypted'].decode('utf-8')) if 'extra_unencrypted' in record else {}
@@ -972,18 +961,15 @@ class RecordDeleteAttachmentCommand(Command):
                                 break
 
         if record_uid is None:
-            logging.error('Enter name or uid of existing record')
-            return
+            raise CommandError('delete-attachment', 'Enter name or uid of existing record')
 
         names = kwargs['name'] if 'name' in kwargs else None
         if names is None:
-            logging.error('No file names')
-            return
+            raise CommandError('delete-attachment', 'No file names')
 
         record_update = api.resolve_record_write_path(params, record_uid)
         if record_update is None:
-            logging.error('You do not have edit permissions on this record')
-            return
+            raise CommandError('delete-attachment', 'You do not have edit permissions on this record')
 
         record = params.record_cache[record_uid]
         extra = json.loads(record['extra_unencrypted'].decode('utf-8')) if 'extra_unencrypted' in record else {}
@@ -1086,10 +1072,9 @@ class ClipboardCommand(Command):
                 record_uid = records[0].record_uid
             else:
                 if len(records) == 0:
-                    logging.error('Enter name or uid of existing record')
+                    raise CommandError('clipboard-copy', 'Enter name or uid of existing record')
                 else:
-                    logging.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
-                return
+                    raise CommandError('clipboard-copy', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
         rec = api.get_record(params, record_uid)
         txt = rec.login if kwargs.get('login') else rec.password
@@ -1131,8 +1116,7 @@ class RecordHistoryCommand(Command):
                                 break
 
         if record_uid is None:
-            logging.error('Enter name or uid of existing record')
-            return
+            raise CommandError('history', 'Enter name or uid of existing record')
 
         current_rec = params.record_cache[record_uid]
         if record_uid in params.record_history:
@@ -1214,11 +1198,10 @@ class RecordHistoryCommand(Command):
             elif action == 'restore':
                 ro = api.resolve_record_write_path(params, record_uid)    # type: dict
                 if not ro:
-                    logging.error('You do not have permission to modify this record')
-                    return
+                    raise CommandError('history', 'You do not have permission to modify this record')
                 if revision == 0:
-                    logging.error('Invalid revision to restore: Revisions: 1-{0}'.format(length))
-                    return
+                    raise CommandError('history', 'Invalid revision to restore: Revisions: 1-{0}'.format(length))
+
                 rev = history[length - revision]
                 if rev['version'] in {1,2}:
                     current_rec = params.record_cache[record_uid]
@@ -1264,9 +1247,9 @@ class RecordHistoryCommand(Command):
                                 logging.info('Revision V.{0} is restored'.format(revision))
                                 params.queue_audit_event('revision_restored', record_uid=record_uid)
                             else:
-                                logging.error('Failed to restore record revision: {0}'.format(status['status']))
+                                raise CommandError('history', 'Failed to restore record revision: {0}'.format(status['status']))
                 else:
-                    logging.error('Cannot restore this revision')
+                    raise CommandError('history', 'Cannot restore this revision')
 
     @staticmethod
     def load_revision(params, record_key, revision):
@@ -1418,9 +1401,9 @@ class TotpCommand(Command):
                     record_uid = records[0].record_uid
                 else:
                     if len(records) == 0:
-                        logging.error('Enter name or uid of existing record')
+                        raise CommandError('totp', 'Enter name or uid of existing record')
                     else:
-                        logging.error('More than one record are found for search criteria: {0}'.format(kwargs['record']))
+                        raise CommandError('totp', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
         if record_uid:
             rec = api.get_record(params, record_uid)

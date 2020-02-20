@@ -17,7 +17,6 @@ import shutil
 import functools
 import os
 import json
-import logging
 
 
 from .. import api, display
@@ -25,6 +24,7 @@ from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
+from ..error import CommandError
 
 
 def register_commands(commands):
@@ -158,7 +158,7 @@ class FolderListCommand(Command):
 
         if len(folders) == 0 and len(records) == 0:
             if pattern:
-                logging.error("ls: %s: No such folder or record", pattern)
+                raise CommandError('ls', '{0}: No such folder or record'.format(pattern))
         else:
             if show_detail:
                 if len(folders) > 0:
@@ -218,7 +218,7 @@ class FolderCdCommand(Command):
                     if len(pattern) == 0:
                         params.current_folder = folder.uid
                     else:
-                        logging.warning('cd: Folder %s not found', folder_name)
+                        raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
 
 
 class FolderTreeCommand(Command):
@@ -236,7 +236,7 @@ class FolderTreeCommand(Command):
                 if len(pattern) == 0:
                     display.formatted_tree(params, folder)
                 else:
-                    logging.warning('Folder %s not found', folder_name)
+                    raise CommandError('tree', 'Folder %s not found'.format(folder_name))
 
 
 class FolderMakeCommand(Command):
@@ -252,8 +252,7 @@ class FolderMakeCommand(Command):
             if rs is not None:
                 base_folder, name = rs
                 if len(name) == 0:
-                    logging.warning('Folder "%s" already exists', kwargs['folder'])
-                    return
+                    raise CommandError('mkdir', 'Folder "{0}" already exists'.format(kwargs['folder']))
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
         user_folder = kwargs['user_folder'] if 'user_folder' in kwargs else None
@@ -267,8 +266,7 @@ class FolderMakeCommand(Command):
                     if grant or (flag in kwargs and kwargs[flag]):
                         request[flag] = True
             else:
-                logging.error('Shared folders cannot be nested')
-                return
+                raise CommandError('mkdir', 'Shared folders cannot be nested')
 
         elif user_folder:
             if base_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
@@ -336,8 +334,7 @@ class FolderMakeCommand(Command):
                 is_slash = not is_slash
             else:
                 if is_slash:
-                    logging.warning('Character "/" is reserved. Use "//" inside folder name')
-                    return
+                    raise CommandError('mkdir', 'Character "/" is reserved. Use "//" inside folder name')
 
         name = name.replace('//', '/')
 
@@ -360,7 +357,7 @@ class FolderRemoveCommand(Command):
 
     def execute(self, params, **kwargs):
         folder = None
-        name = kwargs['folder'] if 'folder' in kwargs else None
+        name = kwargs['folder'] if 'folder' in kwargs else ''
         if name:
             if name in params.folder_cache:
                 folder = params.folder_cache[name]
@@ -374,8 +371,7 @@ class FolderRemoveCommand(Command):
                         folder = None
 
         if folder is None:
-            logging.warning('Enter name of the existing folder')
-            return
+            raise CommandError('rmdir', 'Enter name of the existing folder. ({0})'.format(name))
 
         force = kwargs['force'] if 'force' in kwargs else None
         parent = params.folder_cache[folder.uid] if folder.uid is not None else None
@@ -493,8 +489,7 @@ class FolderMoveCommand(Command):
         else:
             src = try_resolve_path(params, src_path)
             if src is None:
-                logging.warning('Source path should be existing record or folder')
-                return
+                raise CommandError('mv', 'Source path should be existing record or folder')
 
             src_folder, name = src
             if len(name) > 0:
@@ -507,8 +502,7 @@ class FolderMoveCommand(Command):
                             break
 
                 if src_record_uid is None:
-                    logging.warning('Record "%s" not found', name)
-                    return
+                    raise CommandError('mv', 'Record "{0}" not found'.format(name))
 
         dst_folder = None
         if dst_path in params.folder_cache:
@@ -516,12 +510,10 @@ class FolderMoveCommand(Command):
         else:
             dst = try_resolve_path(params, dst_path)
             if dst is None:
-                logging.warning('Destination path should be existing folder')
-                return
+                raise CommandError('mv', 'Destination path should be existing folder')
             dst_folder, name = dst
             if len(name) > 0:
-                logging.warning('Destination path should be existing folder')
-                return
+                raise CommandError('mv', 'Destination path should be existing folder')
 
         rq = {
             'command': 'move',
@@ -537,8 +529,7 @@ class FolderMoveCommand(Command):
         if src_record_uid is None:
             ''' folder '''
             if src_folder.type == BaseFolderNode.RootFolderType:
-                logging.warning('Root folder cannot be a source folder')
-                return
+                raise CommandError('mv', 'Root folder cannot be a source folder')
             dp = set()
             f = dst_folder
             while f is not None:
@@ -546,8 +537,7 @@ class FolderMoveCommand(Command):
                     dp.add(f.uid)
                 f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
             if src_folder.uid in dp:
-                logging.warning('Cannot move/link folder to self or a child')
-                return
+                raise CommandError('mv', 'Cannot move/link folder to self or a child')
 
             parent_folder = params.folder_cache[src_folder.parent_uid] if src_folder.parent_uid is not None else None
             move = {

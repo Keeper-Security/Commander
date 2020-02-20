@@ -33,6 +33,7 @@ from .. import api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
+from ..error import CommandError
 
 
 SSH_AGENT_FAILURE = 5
@@ -154,8 +155,7 @@ class RecordDeleteAllCommand(Command):
         if uc.lower() == 'y':
             api.sync_down(params)
             if len(params.record_cache) == 0:
-                logging.warning('No records to delete')
-                return
+                raise CommandError('delete-all', 'No records to delete')
 
             request = {
                 'command': 'record_update',

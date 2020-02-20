@@ -110,6 +110,8 @@ parser.error = usage
 
 
 def main():
+    errno = 0
+
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
@@ -152,7 +154,7 @@ def main():
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
     else:
-        if opts.command != 'shell':
+        if opts.command not in {'shell', '-'}:
             if opts.command:
                 flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
                 options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
@@ -161,7 +163,14 @@ def main():
                     command += ' -- ' + options
                 params.commands.append(command)
             params.commands.append('q')
-        cli.loop(params)
+            params.batch_mode = True
+        else:
+            if opts.command == '-':
+                params.batch_mode = True
+
+        errno = cli.loop(params)
+
+    sys.exit(errno)
 
 
 if __name__ == '__main__':

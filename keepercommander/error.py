@@ -66,3 +66,9 @@ class CryptoError(Error):
 
     def __init__(self, message):
         self.message = message
+
+
+class CommandError(Error):
+    def __init__(self, command, message):
+        self.command = command
+        self.message = message

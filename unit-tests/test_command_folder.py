@@ -1,10 +1,9 @@
-import logging
-
 from unittest import TestCase, mock
 
 from data_vault import get_synced_params
 from helper import KeeperApiHelper
 from keepercommander.commands import folder
+from keepercommander.error import CommandError
 
 
 class TestFolder(TestCase):
@@ -38,7 +37,7 @@ class TestFolder(TestCase):
 
         with mock.patch('builtins.print'):
             cmd.execute(params)
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, folder='Invalid')
 
     def test_make_folder(self):
@@ -82,7 +81,7 @@ class TestFolder(TestCase):
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         shared_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'shared_folder']))
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, folder=shared_folder.name)
 
         params.current_folder = shared_folder.uid
@@ -94,7 +93,7 @@ class TestFolder(TestCase):
         params = get_synced_params()
         cmd = folder.FolderRemoveCommand()
 
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, folder='Invalid Name')
 
     def test_delete_user_folder(self):
@@ -175,12 +174,11 @@ class TestFolder(TestCase):
         cmd = folder.FolderMoveCommand()
 
         user_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'user_folder']))
-        shared_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'shared_folder']))
+        # shared_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'shared_folder']))
 
         root_record_uid = next(iter(params.subfolder_record_cache['']))
 
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, src='Invalid Record', dst=user_folder.uid)
             cmd.execute(params, src=root_record_uid, dst='Invalid Folder')
             cmd.execute(params, src=user_folder.uid, dst=user_folder.uid)
-

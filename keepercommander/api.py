@@ -1047,6 +1047,7 @@ def load_available_teams(params):
     except Exception as e:
         logging.debug(e)
 
+
 def get_team(params,team_uid):
     """Return the referenced team """
     team_uid = team_uid.strip()
