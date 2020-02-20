@@ -551,16 +551,12 @@ class RecordListSfCommand(Command):
 
 class RecordListTeamCommand(Command):
     def execute(self, params, **kwargs):
-        rq = {
-            'command': 'get_available_teams'
-        }
-
-        rs = api.communicate(params, rq)
+        api.load_available_teams(params)
         result = []
-        for team in rs['teams']:
-            team = Team(team_uid=team['team_uid'], name=team['team_name'])
-            result.append(team)
-
+        if type(params.available_team_cache) == list:
+            for team in params.available_team_cache:
+                team = Team(team_uid=team['team_uid'], name=team['team_name'])
+                result.append(team)
         display.formatted_teams(result, skip_details=True)
 
 
@@ -609,7 +605,9 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(sfo, indent=2))
             else:
                 sf.display()
-        elif api.is_team(params, uid):
+            return
+
+        if api.is_team(params, uid):
             team = api.get_team(params, uid)
             if fmt == 'json':
                 to = {
@@ -622,7 +620,9 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(to, indent=2))
             else:
                 team.display()
-        elif uid in params.folder_cache:
+            return
+
+        if uid in params.folder_cache:
             f = params.folder_cache[uid]
             if fmt == 'json':
                 fo = {
@@ -633,7 +633,9 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(fo, indent=2))
             else:
                 f.display(params=params)
-        else:
+            return
+
+        if uid in params.record_cache:
             api.get_record_shares(params, [uid])
             r = api.get_record(params, uid)
             if r:
@@ -677,6 +679,32 @@ class RecordGetUidCommand(Command):
                     print(r.password)
                 else:
                     r.display(params=params)
+                return
+
+        if params.available_team_cache is None:
+            api.load_available_teams(params)
+
+        if params.available_team_cache:
+            for team in params.available_team_cache:
+                if team.get('team_uid') == uid:
+                    team_uid = team['team_uid']
+                    team_name = team['team_name']
+                    if fmt == 'json':
+                        fo = {
+                            'team_uid': team_uid,
+                            'name': team_name
+                        }
+                        print(json.dumps(fo, indent=2))
+                    else:
+                        print('')
+                        print('User {0} does not belong to team {1}'.format(params.user, team_name))
+                        print('')
+                        print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
+                        print('{0:>20s}: {1}'.format('Name', team_name))
+                        print('')
+                    return
+
+        logging.error('Cannot find any object with UID: %s', uid)
 
 
 class RecordDownloadAttachmentCommand(Command):

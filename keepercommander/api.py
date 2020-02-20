@@ -426,6 +426,7 @@ def sync_down(params):
                     for sfk in team['shared_folder_keys']:
                         delete_shared_folder_key(sfk['shared_folder_uid'])
 
+    params.available_team_cache = None
     if 'full_sync' in response_json:
         if response_json['full_sync']:
             if params.debug: print('Full Sync response')
@@ -434,6 +435,7 @@ def sync_down(params):
             params.meta_data_cache.clear()
             params.shared_folder_cache.clear()
             params.team_cache.clear()
+            params.available_team_cache = None
             params.non_shared_data_cache.clear()
             params.subfolder_cache.clear()
             params.subfolder_record_cache.clear()
@@ -1031,6 +1033,19 @@ def get_shared_folder(params,shared_folder_uid):
 
     return sf
 
+
+def load_available_teams(params):
+    if params.available_team_cache is not None:
+        return
+
+    rq = {
+        'command': 'get_available_teams'
+    }
+    try:
+        rs = communicate(params, rq)
+        params.available_team_cache = rs.get('teams')
+    except Exception as e:
+        logging.debug(e)
 
 def get_team(params,team_uid):
     """Return the referenced team """
