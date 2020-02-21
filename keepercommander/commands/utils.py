@@ -330,9 +330,10 @@ Connect Command Syntax Description:
 
 This command reads the custom fields for names starting with "connect:"
 
-  connect:<name>                        command 
-  connect:<name>:description            command description
-  connect:<name>:ssh-key:<key-comment>  ssh private key to add to ssh-agent
+  connect:<name>                                    command 
+  connect:<name>:description                        command description
+  connect:<name>:ssh-key:<key-comment>              ssh private key to add to ssh-agent
+  connect:<name>:env:<Environment Variable To Set>  sets environment variable
 
 Connection command may contain template parameters.
 Parameter syntax is ${<parameter_name>}
@@ -360,6 +361,17 @@ gateway.pem
 server.pem
 
 To initiate connection: "connect my_server"
+
+Connect to Postgres Example:
+Title:    Postgres
+Login:    PGuser
+Password: **************
+Custom Field 1 Name:  connect:postgres
+Custom Field 1 Value: psql --host=11.22.33.44 --port=3306 --username=${login} --dbname=postgres --no-password
+Custom Field 2 Name:  connect:postgres:env:PGPASSWORD
+Custom Field 2 Value: ${password}
+
+To initiate connection: "connect postgres"
 '''
 
 endpoint_pattern = re.compile(r'^connect:([^:]+)$')

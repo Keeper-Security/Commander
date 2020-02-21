@@ -1130,6 +1130,18 @@ To run this file in a batch mode:
 ```bash
 cat test.cmd | keeper --batch-mode shell
 ```
+or 
+```bash
+cat test.cmd | keeper -
+```
+
+The batch execution is aborted if some command returns failure. 
+Use `@` in front of the command to suppress the possible command error. 
+```
+add --login=blah@gmail.com --pass=somemasterpass --url=https://google.com --force "Some Record Title"
+@upload-attachment --file="/path/to/some/file.txt" "Some Record Title"
+share-record --email="user@company.com" --write "Some Record Title"
+```
 
 ### Enterprise SSO Login
 
@@ -1423,6 +1435,23 @@ craig@example2:~$ logout
 Connection to example2 closed.
 My Vault>                                                                                           
 ```
+
+#### Postgres connection using environment variables capabilities
+
+Commander can set environment variables for the `connect` application.
+
+Custom Field Name          | Custom Field Value             
+-------------------------- | ------------------------------
+connect:xxx:env:PGPASSWORD | ${password}
+
+Here, ```xxx``` is the friendly name of the connection.  
+
+```${password}``` references the value stored in the record's Password field 
+
+Here's a screenshot of a Keeper Vault record:
+
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/connect_postgres_screenshot.png)
+
 
 #### Combining SSH Key Rotation with Connection
 
