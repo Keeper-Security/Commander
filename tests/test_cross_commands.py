@@ -11,6 +11,8 @@ from unittest import TestCase
 
 
 class TestCrossEnterpriseCommands(TestCase):
+    params1 = None
+    params2 = None
 
     @classmethod
     def setUpClass(cls):
@@ -34,8 +36,8 @@ class TestCrossEnterpriseCommands(TestCase):
         api.login(cls.params2)
 
     def test_add_user_to_team(self):
-        param1 = TestCrossEnterpriseCommands.params1 # type: KeeperParams
-        param2 = TestCrossEnterpriseCommands.params2 # type: KeeperParams
+        param1 = TestCrossEnterpriseCommands.params1     # type: KeeperParams
+        param2 = TestCrossEnterpriseCommands.params2     # type: KeeperParams
 
         users = [x for x in param2.enterprise['users'] if x['username'] != param2.user]
         self.assertGreater(len(users), 0, 'cannot resolve user')
@@ -93,8 +95,8 @@ class TestCrossEnterpriseCommands(TestCase):
         self.assertTrue(failed)
 
     def test_add_user_to_role(self):
-        param1 = TestCrossEnterpriseCommands.params1 # type: KeeperParams
-        param2 = TestCrossEnterpriseCommands.params2 # type: KeeperParams
+        param1 = TestCrossEnterpriseCommands.params1     # type: KeeperParams
+        param2 = TestCrossEnterpriseCommands.params2     # type: KeeperParams
 
         users = [x for x in param2.enterprise['users']]
         self.assertGreater(len(users), 0, 'cannot resolve user')
@@ -145,8 +147,8 @@ class TestCrossEnterpriseCommands(TestCase):
         self.assertTrue(failed)
 
     def test_lock_user(self):
-        param1 = TestCrossEnterpriseCommands.params1 # type: KeeperParams
-        param2 = TestCrossEnterpriseCommands.params2 # type: KeeperParams
+        param1 = TestCrossEnterpriseCommands.params1     # type: KeeperParams
+        param2 = TestCrossEnterpriseCommands.params2     # type: KeeperParams
 
         users = [x for x in param2.enterprise['users']]
         self.assertGreater(len(users), 0, 'cannot resolve user')
@@ -180,8 +182,8 @@ class TestCrossEnterpriseCommands(TestCase):
         self.assertTrue(failed)
 
     def test_add_node(self):
-        param1 = TestCrossEnterpriseCommands.params1 # type: KeeperParams
-        param2 = TestCrossEnterpriseCommands.params2 # type: KeeperParams
+        param1 = TestCrossEnterpriseCommands.params1     # type: KeeperParams
+        param2 = TestCrossEnterpriseCommands.params2     # type: KeeperParams
 
         ent1_parent_id = [x['node_id'] for x in param1.enterprise['nodes']][0]
 
@@ -230,8 +232,8 @@ class TestCrossEnterpriseCommands(TestCase):
         self.assertTrue(failed)
 
     def test_team_get_key(self):
-        param1 = TestCrossEnterpriseCommands.params1 # type: KeeperParams
-        param2 = TestCrossEnterpriseCommands.params2 # type: KeeperParams
+        param1 = TestCrossEnterpriseCommands.params1     # type: KeeperParams
+        param2 = TestCrossEnterpriseCommands.params2     # type: KeeperParams
 
         uids = [x['team_uid'] for x in param1.enterprise['teams']]
         self.assertGreater(len(uids), 0, 'cannot resolve team')
@@ -243,4 +245,3 @@ class TestCrossEnterpriseCommands(TestCase):
         }
         rs = api.communicate(param2, rq)
         self.assertEqual(rs['keys'][0]['result_code'], "doesnt_exist")
-

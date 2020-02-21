@@ -27,7 +27,7 @@ from prompt_toolkit.enums import EditingMode
 from .params import KeeperParams
 from . import display
 from .api import sync_down, login, communicate
-from .error import AuthenticationError, CommunicationError
+from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, aliases, commands, enterprise_commands
@@ -65,17 +65,8 @@ def display_command_help(show_enterprise = False, show_shell = False):
     print('Type \'command -h\' to display help on command')
 
 
-def goodbye():
-    logging.info('\nGoodbye.\n')
-    sys.exit()
-
-
 def do_command(params, command_line):
-
-    if command_line == 'q':
-        return False
-
-    elif command_line == 'h':
+    if command_line == 'h':
         display.formatted_history(stack)
 
     elif command_line == 'c':
@@ -113,7 +104,7 @@ def do_command(params, command_line):
                         command = enterprise_commands[cmd]
                     else:
                         logging.error('This command is restricted to Keeper Enterprise administrators.')
-                        return True
+                        return
 
                 if command.is_authorised():
                     if not params.session_token:
@@ -124,10 +115,10 @@ def do_command(params, command_line):
                             sync_down(params)
                         except KeyboardInterrupt as e:
                             logging.info('Canceled')
-                            return True
+                            return
 
                 params.event_queue.clear()
-                command.execute_args(params, args, command=orig_cmd)
+                result = command.execute_args(params, args, command=orig_cmd)
                 if params.session_token:
                     if params.event_queue:
                         try:
@@ -141,14 +132,12 @@ def do_command(params, command_line):
                         params.event_queue.clear()
                     if params.sync_data:
                         sync_down(params)
+                return result
             else:
                 display_command_help(show_enterprise=(params.enterprise is not None))
-                return True
 
             if len(stack) == 0 or stack[0] != command_line:
                 stack.insert(0, command_line)
-
-    return True
 
 
 def runcommands(params):
@@ -179,21 +168,25 @@ def runcommands(params):
 
 
 def prompt_for_credentials(params):
-        while not params.user:
-            params.user = getpass.getpass(prompt='User(Email): ', stream=None)
-        while not params.password:
-            params.password = getpass.getpass(prompt='Password: ', stream=None)
+    while not params.user:
+        params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+    while not params.password:
+        params.password = getpass.getpass(prompt='Password: ', stream=None)
 
 
 def force_quit():
-    os._exit(0)
+    os._exit(1)
 
 
-def loop(params):
-    # type: (KeeperParams) -> None
+prompt_session = None
+
+
+def loop(params):  # type: (KeeperParams) -> int
+    logging.debug('Params: %s', params)
 
     global prompt_session
-    logging.debug('Params: %s', params)
+    error_no = 0
+    suppress_errno = False
 
     enforcement_checked = set()
     prompt_session = None
@@ -206,10 +199,9 @@ def loop(params):
                                            complete_style=CompleteStyle.MULTI_COLUMN,
                                            complete_while_typing=False)
 
-        if len(params.commands) == 0:
-            display.welcome()
-        else:
-            logging.getLogger().setLevel(logging.WARNING)
+        display.welcome()
+    else:
+        logging.getLogger().setLevel(logging.WARNING)
 
     if params.user:
         if len(params.commands) == 0:
@@ -234,47 +226,70 @@ def loop(params):
             command = params.commands[0].strip()
             params.commands = params.commands[1:]
 
-        if not command:
-            tmer = None     # type: threading.Timer or None
-            try:
-                if params.session_token and params.logout_timer > 0:
-                    tmer = threading.Timer(params.logout_timer * 60, force_quit)
-                    tmer.start()
-                if prompt_session is not None:
-                    if params.enforcements and params.user not in enforcement_checked:
-                        enforcement_checked.add(params.user)
-                        do_command(params, 'check-enforcements')
-
-                    command = prompt_session.prompt(get_prompt(params))
-                else:
-                    command = input(get_prompt(params))
-                if tmer:
-                    tmer.cancel()
-                    tmer = None
-            except KeyboardInterrupt:
-                pass
-            except EOFError:
-                break
-            finally:
-                if tmer:
-                    tmer.cancel()
         try:
-            if not do_command(params, command):
+            if not command:
+                tmer = None
+                try:
+                    if params.session_token and params.logout_timer > 0:
+                        tmer = threading.Timer(params.logout_timer * 60, force_quit)
+                        tmer.start()
+                    if prompt_session is not None:
+                        if params.enforcements and params.user not in enforcement_checked:
+                            enforcement_checked.add(params.user)
+                            do_command(params, 'check-enforcements')
+
+                        command = prompt_session.prompt(get_prompt(params))
+                    else:
+                        command = input(get_prompt(params))
+                    if tmer:
+                        tmer.cancel()
+                        tmer = None
+                finally:
+                    if tmer:
+                        tmer.cancel()
+
+            if command == 'q':
                 break
+
+            suppress_errno = False
+            if command.startswith("@"):
+                suppress_errno = True
+                command = command[1:]
+            error_no = 1
+            result = do_command(params, command)
+            error_no = 0
+            if result:
+                logging.warning(result)
+        except EOFError:
+            break
+        except KeyboardInterrupt:
+            pass
+        except CommandError as e:
+            if e.command:
+                logging.warning('%s: %s', e.command, e.message)
+            else:
+                logging.warning('%s', e.message)
         except CommunicationError as e:
             logging.error("Communication Error: %s", e.message)
         except AuthenticationError as e:
             logging.error("AuthenticationError Error: %s", e.message)
-        except KeyboardInterrupt:
-            print('')
         except:
             logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
             raise
 
-    logging.info('\nGoodbye.\n')
+        if params.batch_mode and error_no != 0 and not suppress_errno:
+            break
+
+    if not params.batch_mode:
+        logging.info('\nGoodbye.\n')
+
+    return error_no
 
 
 def get_prompt(params):
+    if params.batch_mode:
+        return ''
+
     if params.session_token:
         if params.current_folder is None:
             if params.root_folder:

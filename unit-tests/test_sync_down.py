@@ -6,6 +6,7 @@ from keepercommander.api import sync_down, convert_to_folders
 
 vault_env = VaultEnvironment()
 
+
 class TestSyncDown(TestCase):
 
     def setUp(self):

@@ -44,6 +44,7 @@ from ..display import bcolors
 from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
+from ..error import CommandError
 
 
 def register_commands(commands):
@@ -226,7 +227,7 @@ class EnterpriseCommand(Command):
         if params.enterprise:
             Command.execute_args(self, params, args, **kwargs)
         else:
-            logging.error('This command  is only available for Administrators of Keeper.')
+            raise CommandError('', 'This command  is only available for Administrators of Keeper.')
 
     def get_public_keys(self, params, emails):
         # type: (EnterpriseCommand, KeeperParams, dict) -> None
@@ -653,8 +654,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         if kwargs.get('delete') and kwargs.get('add'):
-            logging.error("'add' and 'delete' parameters are mutually exclusive.")
-            return
+            raise CommandError('enterprise-node', "'add' and 'delete' parameters are mutually exclusive.")
 
         node_lookup = {}
         if 'nodes' in params.enterprise:
@@ -681,12 +681,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 n = node_lookup.get(parent_name.lower())
             if n:
                 if type(n) == list:
-                    logging.error('Parent node %s in not unique', parent_name)
-                    return
+                    raise CommandError('enterprise-node', 'Parent node %s in not unique'.format(parent_name))
                 parent_id = n['node_id']
             else:
-                logging.error('Cannot resolve parent node %s', parent_name)
-                return
+                raise CommandError('enterprise-node', 'Cannot resolve parent node %s'.format(parent_name))
 
         matched = {}
         unmatched_nodes = set()
@@ -711,8 +709,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 logging.warning('Node \'%s\' already exists: Skipping.', node['data'].get('displayname'))
 
             if not unmatched_nodes:
-                logging.warning('No nodes to add.')
-                return
+                raise CommandError('enterprise-node', 'No nodes to add.')
 
             if parent_id is None:
                 for node in params.enterprise['nodes']:
@@ -760,12 +757,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     request_batch.append(rq)
             elif kwargs.get('wipe_out'):
                 if len(matched_nodes) != 1:
-                    logging.error('Cannot wipe-out more than one node')
-                    return
+                    raise CommandError('enterprise-node', 'Cannot wipe-out more than one node')
                 node = matched_nodes[0]
                 if not node.get('parent_id'):
-                    logging.error('Cannot wipe out root node')
-                    return
+                    raise CommandError('enterprise-node', 'Cannot wipe out root node')
 
                 answer = user_choice(
                     bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
@@ -877,7 +872,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         logging.info('Node is created')
                     else:
                         logging.warning('Failed to create node: %s', rs['message'])
-                elif command in { 'node_delete', 'node_update' }:
+                elif command in {'node_delete', 'node_update'}:
                     node_id = rq['node_id']
                     node_name = str(node_id)
                     node = node_lookup.get(node_name)
@@ -890,7 +885,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         logging.warning('\'%s\' node is not %s. Error: %s', node_name, verb, rs['message'])
                 else:
                     if rs['result'] != 'success':
-                        logging.warning('\'%s\' command error: %s', command,  rs['message'])
+                        raise CommandError('enterprise-node', '\'{0}\' command error: {1}'.format(command,  rs['message']))
             api.query_enterprise(params)
 
 
@@ -900,12 +895,10 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         if kwargs.get('delete') and kwargs.get('add'):
-            logging.error("'add' and 'delete' parameters are mutually exclusive.")
-            return
+            raise CommandError('enterprise-user', "'add' and 'delete' parameters are mutually exclusive.")
 
         if kwargs.get('lock') and kwargs.get('unlock'):
-            logging.error("'lock' and 'unlock' parameters are mutually exclusive.")
-            return
+            raise CommandError('enterprise-user', "'lock' and 'unlock' parameters are mutually exclusive.")
 
         matched_users = []
         unmatched_emails = set()
@@ -944,8 +937,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 logging.warning('User %s already exists: Skipping', user['username'])
 
             if not unmatched_emails:
-                logging.warning('No email address to add.')
-                return
+                raise CommandError('enterprise-user', 'No email address to add.')
 
             dt = {}
             if user_name:
@@ -971,8 +963,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 logging.warning('User %s is not found: Skipping', email)
 
             if not matched_users:
-                logging.warning('No such user(s)')
-                return
+                raise CommandError('enterprise-user', 'No such user(s)')
 
             if kwargs.get('delete'):
                 answer = 'y' if kwargs.get('force') else \
@@ -1115,7 +1106,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     team_uid = team_node['team_uid']
                                     teams[team_uid] = is_add, team_node['name']
                                 else:
-                                    logging.warning('Team %s could be resolved', t)
+                                    raise CommandError('enterprise-user', 'Team {0} could be resolved'.format(t))
 
                     if teams:
                         for team_uid in teams:
@@ -1292,8 +1283,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         if kwargs.get('add') and kwargs.get('remove'):
-            logging.error("'add' and 'delete' parameters are mutually exclusive.")
-            return
+            raise CommandError('enterprise-role', "'add' and 'delete' parameters are mutually exclusive.")
 
         role_lookup = {}
         if 'roles' in params.enterprise:
@@ -1625,8 +1615,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         if (kwargs.get('add') or kwargs.get('approve')) and kwargs.get('remove'):
-            logging.error("'add'/'approve' and 'delete' commands are mutually exclusive.")
-            return
+            raise CommandError('enterprise-team', "'add'/'approve' and 'delete' commands are mutually exclusive.")
 
         team_lookup = {}
         if 'teams' in params.enterprise:
@@ -2349,7 +2338,7 @@ class AuditLogCommand(EnterpriseCommand):
 
         target = kwargs.get('target')
 
-        log_export = None # type: Optional[AuditLogBaseExport]
+        log_export = None        # type: AuditLogBaseExport
         if target == 'splunk':
             log_export = AuditLogSplunkExport()
         elif target == 'syslog':
@@ -2363,8 +2352,7 @@ class AuditLogCommand(EnterpriseCommand):
         elif target == 'azure-la':
             log_export = AuditLogAzureLogAnalyticsExport()
         else:
-            print('Audit log export: unsupported target')
-            return
+            raise CommandError('audit-log', 'Audit log export: unsupported target')
 
         record = None
         record_name = kwargs.get('record') or log_export.default_record_title()
@@ -2385,7 +2373,7 @@ class AuditLogCommand(EnterpriseCommand):
                     api.sync_down(params)
                     record = api.get_record(params, record_uid)
         if record is None:
-            return
+            raise CommandError('audit-log', 'Record not found')
 
         props = {}
         props['enterprise_name'] = params.enterprise['enterprise_name']
@@ -2639,8 +2627,8 @@ class AuditReportCommand(Command):
             logging.info(audit_report_description)
             return
         if not kwargs['report_type']:
-            logging.error('report-type parameter is missing')
-            return
+            raise CommandError('audit-report', 'report-type parameter is missing')
+
         report_type = kwargs['report_type']
         rq = {
             'report_type': report_type,
@@ -2671,8 +2659,7 @@ class AuditReportCommand(Command):
             columns = kwargs['columns']
             rq['columns'] = columns
         if report_type == 'dim' and len(columns) == 0:
-            logging.error("'columns' parameter is missing")
-            return
+            raise CommandError('audit-report', "'columns' parameter is missing")
 
         aggregates = []
         if report_type not in {'raw', 'dim'} and kwargs.get('aggregate'):
@@ -2932,8 +2919,7 @@ class EnterprisePushCommand(EnterpriseCommand):
 
         name = kwargs.get('file') or ''
         if not name:
-            logging.error('The template file name arguments are required')
-            return
+            raise CommandError('audit-push', 'The template file name arguments are required')
 
         template_records = None
         file_name = os.path.abspath(os.path.expanduser(name))
@@ -2941,8 +2927,7 @@ class EnterprisePushCommand(EnterpriseCommand):
             with open(file_name, 'r') as f:
                 template_records = json.load(f)
         else:
-            logging.error('File %s does not exists', name)
-            return
+            raise CommandError('audit-push', 'File {0} does not exists'.format(name))
 
         emails = {}
         users = kwargs.get('user')
@@ -2991,8 +2976,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                     logging.warning('Cannot find team %s', team)
 
         if len(emails) == 0:
-            logging.warning('No users')
-            return
+            raise CommandError('audit-push', 'No users')
 
         self.get_public_keys(params, emails)
         commands = []

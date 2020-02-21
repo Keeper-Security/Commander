@@ -31,7 +31,7 @@ from ..params import KeeperParams
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders
 from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
-from ..error import KeeperApiError
+from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
 from ..importer.imp_exp import get_folder_path
 
@@ -154,8 +154,7 @@ class RegisterCommand(Command):
         if email:
             _, email = parseaddr(email)
         if not email:
-            logging.error('A valid email address is expected.')
-            return
+            raise CommandError('register', 'A valid email address is expected.')
 
         rq = {
             'command': 'pre_register',
@@ -194,8 +193,8 @@ class RegisterCommand(Command):
             if name:
                 data['displayname'] = name
             else:
-                logging.error('\'name\' parameter is required for enterprise users')
-                return
+                raise CommandError('register', '\'name\' parameter is required for enterprise users')
+
             rq = {
                 'command': 'enterprise_user_add',
                 'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
@@ -407,12 +406,10 @@ class ShareFolderCommand(Command):
                         folder = None
 
         if folder is None:
-            logging.error('Enter name of the existing folder')
-            return
+            raise CommandError('share-folder', 'Enter name of the existing folder')
 
         if folder.type not in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-            logging.error('You can change permission of shared folders only')
-            return
+            raise CommandError('share-folder', 'You can change permission of shared folders only')
 
         shared_folder_uid = folder.shared_folder_uid if folder.type == BaseFolderNode.SharedFolderFolderType else folder.uid
         if shared_folder_uid in params.shared_folder_cache:
@@ -694,8 +691,7 @@ class ShareRecordCommand(Command):
     def execute(self, params, **kwargs):
         emails = kwargs.get('email') or []
         if not emails:
-            logging.error('\'email\' parameter is missing')
-            return
+            raise CommandError('share-record', '\'email\' parameter is missing')
 
         action = kwargs.get('action') or 'grant'
 
@@ -743,8 +739,7 @@ class ShareRecordCommand(Command):
                                 break
 
         if record_uid is None:
-            logging.error('Enter name or uid of existing record')
-            return
+            raise CommandError('share-record', 'Enter name or uid of existing record')
 
         public_keys = {}
         rq = {
@@ -761,13 +756,11 @@ class ShareRecordCommand(Command):
                 else:
                     logging.error('\'%s\' is not a known Keeper account', pk['key_owner'])
         if len(public_keys) == 0:
-            logging.error('No existing Keeper accounts provided.')
-            return
+            raise CommandError('share-record', 'No existing Keeper accounts provided.')
 
         record_path = api.resolve_record_share_path(params, record_uid)
         if record_path is None:
-            logging.error('You do not have permissions to share this record.')
-            return
+            raise CommandError('share-record', 'You do not have permissions to share this record.')
 
         rq = {
             'command': 'get_records',
@@ -792,8 +785,7 @@ class ShareRecordCommand(Command):
         }
         if action == 'owner':
             if len(public_keys) > 1:
-                logging.error('You can transfer ownership to a single account only')
-                return
+                raise CommandError('share-record', 'You can transfer ownership to a single account only')
 
         for email in public_keys:
             current = existing_shares.get(email)
@@ -892,8 +884,7 @@ class ShareReportCommand(Command):
                     if r_uid:
                         record_filter.add(r_uid)
                     else:
-                        logging.error('\'%s\' is not an existing record title or UID', r)
-                        return
+                        raise CommandError('share-report', '\'{0}\' is not an existing record title or UID'.format(r))
 
             record_uids = [x for x in record_filter]
         elif kwargs.get('user'):
@@ -1053,8 +1044,7 @@ class RecordPermissionCommand(Command):
                     if len(pattern) == 0:
                         folder_uid = folder.uid
                     else:
-                        logging.warning('Folder %s not found', folder_name)
-                        return
+                        raise CommandError('record-permission', 'Folder {0} not found'.format(folder_name))
 
         if folder_uid:
             folder = params.folder_cache[folder_uid]  # type: BaseFolderNode or SharedFolderFolderNode
@@ -1089,8 +1079,7 @@ class RecordPermissionCommand(Command):
         change_edit = kwargs['can_edit'] or False
 
         if not change_share and not change_edit:
-            logging.error('Please choose at least one on the following options: can-edit, can-share')
-            return
+            raise CommandError('record-permission', 'Please choose at least one on the following options: can-edit, can-share')
 
         if not kwargs.get('force'):
             logging.info('\nRequest to {0} {1}{3}{2} permission(s) in "{4}" folder {5}'

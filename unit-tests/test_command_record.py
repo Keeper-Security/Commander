@@ -10,13 +10,13 @@ from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
 from keepercommander import api
-
 from keepercommander.commands import record
+from keepercommander.error import CommandError
 
 
 class TestRecord(TestCase):
-
     vault_env = VaultEnvironment()
+
     def setUp(self):
         self.communicate_mock = mock.patch('keepercommander.api.communicate').start()
         self.communicate_mock.side_effect = KeeperApiHelper.communicate_command
@@ -201,7 +201,7 @@ class TestRecord(TestCase):
         params = get_synced_params()
         cmd = record.RecordGetUidCommand()
 
-        with self.assertLogs(level=logging.WARNING):
+        with self.assertRaises(CommandError):
             cmd.execute(params, uid='invalid')
 
     def test_append_notes_command(self):
@@ -215,7 +215,7 @@ class TestRecord(TestCase):
             with mock.patch('builtins.input', return_value='data'):
                 cmd.execute(params, record=record_uid)
 
-        with self.assertLogs():
+        with self.assertRaises(CommandError):
             cmd.execute(params, notes='notes', record='invalid')
 
     def test_download_attachment_command(self):
@@ -245,7 +245,8 @@ class TestRecord(TestCase):
             attachment.raw = io.BytesIO(base64.urlsafe_b64decode(attachments[url] + '=='))
             return attachment
 
-        with mock.patch('requests.get', side_effect=request_http_get) as mock_get, mock.patch('builtins.open', mock.mock_open()), mock.patch('os.path.abspath', return_value='/file_name') as mock_abspath:
+        with mock.patch('requests.get', side_effect=request_http_get) as mock_get, \
+                mock.patch('builtins.open', mock.mock_open()), mock.patch('os.path.abspath', return_value='/file_name') as mock_abspath:
             KeeperApiHelper.communicate_expect([request_download])
             cmd.execute(params, record=record_uid)
             self.assertTrue(KeeperApiHelper.is_expect_empty())
@@ -259,7 +260,7 @@ class TestRecord(TestCase):
         record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
         rec = api.get_record(params, record_uid)
 
-        with self.assertLogs():
+        with self.assertRaises(CommandError):
             cmd.execute(params, record=rec.title)
 
         def request_upload(rq):
@@ -287,7 +288,7 @@ class TestRecord(TestCase):
 
             m_open.return_value.tell = lambda: 4
             mock_getsize.return_value = 1000000000
-            with self.assertLogs():
+            with self.assertRaises(CommandError):
                 KeeperApiHelper.communicate_expect([request_upload])
                 cmd.execute(params, file=['file.data'], record=record_uid)
                 self.assertTrue(KeeperApiHelper.is_expect_empty())

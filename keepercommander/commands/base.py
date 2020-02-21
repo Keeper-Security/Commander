@@ -27,6 +27,10 @@ commands = {}       # type: {str, Command}
 enterprise_commands = {}     # type: {str, Command}
 
 
+class ParseError(Exception):
+    pass
+
+
 def register_commands(commands, aliases, command_info):
     from .record import register_commands as record_commands, register_command_info as record_command_info
     record_commands(commands)
@@ -87,11 +91,11 @@ def user_choice(question, choice, default='', show_choice=True, multi_choice=Fal
 
 
 def raise_parse_exception(m):
-    raise Exception(m)
+    raise ParseError(m)
 
 
 def suppress_exit():
-    raise Exception()
+    raise ParseError()
 
 
 def dump_report_data(data, headers, title=None, is_csv = False, filename=None, append=False):
@@ -159,7 +163,7 @@ class Command:
                 opts = parser.parse_args(shlex.split(args))
                 d.update(opts.__dict__)
             return self.execute(params, **d)
-        except Exception as e:
+        except ParseError as e:
             logging.error(e)
 
     def get_parser(self):   # type: () -> argparse.ArgumentParser or None
