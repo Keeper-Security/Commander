@@ -1677,6 +1677,8 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 ### Cross-Platform Desktop App
 
+[Windows PC, 64-bit and 32-bit Recommended Installer](https://www.keepersecurity.com/desktop_electron/packages/KeeperPasswordManager.appinstaller)
+
 [Windows PC, 32-bit](https://keepersecurity.com/desktop_electron/Win32/KeeperSetup32.zip)
 
 [Windows PC, 64-bit](https://keepersecurity.com/desktop_electron/Win64/KeeperSetup64.zip)
