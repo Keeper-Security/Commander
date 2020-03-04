@@ -13,6 +13,8 @@ import importlib
 import logging
 import collections
 
+from ..error import CommandError
+
 PathDelimiter = '\\'
 
 
@@ -154,7 +156,7 @@ class BaseFileImporter(BaseImporter):
                 path = path + '.' + ext
 
         if not os.path.isfile(path):
-            raise Exception('File \'{0}\' does not exist'.format(name))
+            raise CommandError('import', 'File \'{0}\' does not exist'.format(name))
 
         yield from self.do_import(path)
 
