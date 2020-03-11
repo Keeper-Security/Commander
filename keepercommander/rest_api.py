@@ -136,7 +136,10 @@ def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, p
             if content_type == 'application/json':
                 return rs.json()        # type: dict
             else:
-                return decrypt_aes(rs.content, context.transmission_key)    # type: bytes
+                rs_body = rs.content
+                if rs_body:
+                    rs_body = decrypt_aes(rs.content, context.transmission_key)
+                return rs_body
         elif rs.status_code >= 400:
             failure = rs.json() if content_type == 'application/json' else None
             if rs.status_code == 401 and json:

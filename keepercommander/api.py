@@ -20,7 +20,7 @@ import hashlib
 import logging
 import urllib.parse
 
-from . import rest_api
+from . import rest_api, APIRequest_pb2 as proto
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -1213,6 +1213,23 @@ def prepare_record(params, record):
         pass
 
     return record_object
+
+
+def communicate_rest(params, request, endpoint):
+    api_request_payload = proto.ApiRequestPayload()
+    api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+    api_request_payload.payload = request.SerializeToString()
+    rs = None
+    try:
+        rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
+    except Exception as e:
+        raise KeeperApiError('Rest API', str(e))
+    if type(rs) == bytes:
+        return rs
+    elif type(rs) == dict:
+        raise KeeperApiError(rs['error'], rs['message'])
+    raise KeeperApiError('Error', endpoint)
+
 
 
 def communicate(params, request):
