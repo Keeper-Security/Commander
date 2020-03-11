@@ -45,7 +45,7 @@ from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
-
+from .enterprise_pb2 import EnterpriseUserIds
 
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
@@ -105,6 +105,7 @@ enterprise_user_parser.add_argument('--expire', dest='expire', action='store_tru
 enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true', help='extend vault transfer consent by 7 days')
 enterprise_user_parser.add_argument('--lock', dest='lock', action='store_true', help='lock user')
 enterprise_user_parser.add_argument('--unlock', dest='unlock', action='store_true', help='unlock user')
+enterprise_user_parser.add_argument('--disable-2fa', dest='disable_2fa', action='store_true', help='disable 2fa for user')
 enterprise_user_parser.add_argument('--add', dest='add', action='store_true', help='invite user')
 enterprise_user_parser.add_argument('--delete', dest='delete', action='store_true', help='delete user')
 enterprise_user_parser.add_argument('--name', dest='displayname', action='store', help='set user display name')
@@ -931,6 +932,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
         user_name = kwargs.get('displayname')
 
         request_batch = []
+        disable_2fa_ids = []
 
         if kwargs.get('add'):
             for user in matched_users:
@@ -993,6 +995,10 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             })
                         else:
                             logging.warning('%s has not accepted invitation yet: Skipping', user['username'])
+
+                if kwargs.get('disable_2fa'):
+                    for user in matched_users:
+                        disable_2fa_ids.append(user['enterprise_user_id'])
 
                 if kwargs.get('expire'):
                     answer = 'y' if  kwargs.get('force') else \
@@ -1219,7 +1225,13 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             logging.warning('Error: %s', rs['message'])
             api.query_enterprise(params)
 
-        else:
+        if disable_2fa_ids:
+            uids = EnterpriseUserIds()
+            for user_id in disable_2fa_ids:
+                uids.enterpriseUserId.append(user_id)
+            api.communicate_rest(params, uids, 'enterprise/disable_two_fa')
+
+        if not request_batch and not disable_2fa_ids:
             is_verbose = kwargs.get('verbose') or False
             print('\n')
             for user in matched_users:

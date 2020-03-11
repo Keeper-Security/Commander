@@ -299,21 +299,16 @@ def execute_import_folder_record(params, folders, records):
         if records and cap > 0:
             chunk = records[:cap]
             records = records[cap:]
-            cap = cap - len(records)
             for e in chunk:
                 rq.recordRequest.append(e)
 
-        api_request_payload = proto.ApiRequestPayload()
-        api_request_payload.payload = rq.SerializeToString()
-        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-        rs = rest_api.execute_rest(params.rest_context, "folder/import_folders_and_records", api_request_payload)
-        if type(rs) == bytes:
-            import_rs = folder_pb2.ImportFolderRecordResponse()
-            import_rs.ParseFromString(rs)
-            if len(import_rs.folderResponse) > 0:
-                rs_folder.extend(import_rs.folderResponse)
-            if len(import_rs.recordResponse) > 0:
-                rs_record.extend(import_rs.recordResponse)
+        rs = api.communicate_rest(params, rq, "folder/import_folders_and_records")
+        import_rs = folder_pb2.ImportFolderRecordResponse()
+        import_rs.ParseFromString(rs)
+        if len(import_rs.folderResponse) > 0:
+            rs_folder.extend(import_rs.folderResponse)
+        if len(import_rs.recordResponse) > 0:
+            rs_record.extend(import_rs.recordResponse)
 
     return rs_folder, rs_record
 
