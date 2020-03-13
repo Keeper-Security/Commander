@@ -178,7 +178,9 @@ def force_quit():
     try:
         if os.name == 'posix':
             os.system('reset')
-            os.system('echo "Auto-logout timer activated."')
+        elif os.name == 'nt':
+            os.system('cls')
+        os.system('echo Auto-logout timer activated.')
     except:
         pass
     os._exit(0)
