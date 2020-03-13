@@ -217,13 +217,15 @@ def loop(params):  # type: (KeeperParams) -> int
                     params.password = getpass.getpass(prompt='Password: ', stream=None)
                 except KeyboardInterrupt:
                     print('')
+                except EOFError:
+                    return 0
         if params.password:
             logging.info('Logging in...')
             try:
                 login(params)
                 if params.session_token:
                     do_command(params, 'sync-down')
-            except AuthenticationError as e:
+            except Exception as e:
                 logging.error(e)
 
     while True:

@@ -149,6 +149,9 @@ def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, p
                         context.server_key_id = server_key_id
                         run_request = True
                         continue
+            if rs.status_code >= 500:
+                logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
+                raise CommunicationError('Code {0}: {1}'.format(rs.status_code, rs.reason))
 
             if logging.getLogger().level <= logging.DEBUG:
                 if rs.text:
