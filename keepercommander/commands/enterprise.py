@@ -998,7 +998,10 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
                 if kwargs.get('disable_2fa'):
                     for user in matched_users:
-                        disable_2fa_ids.append(user['enterprise_user_id'])
+                        if user['status'] == 'active':
+                            disable_2fa_ids.append(user['enterprise_user_id'])
+                        else:
+                            logging.warning('%s has not accepted invitation yet: Skipping', user['username'])
 
                 if kwargs.get('expire'):
                     answer = 'y' if  kwargs.get('force') else \
