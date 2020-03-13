@@ -175,7 +175,13 @@ def prompt_for_credentials(params):
 
 
 def force_quit():
-    os._exit(1)
+    try:
+        if os.name == 'posix':
+            os.system('reset')
+            os.system('echo "Auto-logout timer activated."')
+    except:
+        pass
+    os._exit(0)
 
 
 prompt_session = None
