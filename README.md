@@ -315,9 +315,10 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 
     Parameters:
     - ```--expire``` Expire the Master Password for the user
+    - ```--extend``` Extend vault transfer consent by 7 days 
     - ```--lock``` Unlock the user account
     - ```--unlock``` Lock the user account 
-    - ```--extend``` Extend vault transfer consent by 7 days 
+    - ```--disable-2fa``` Disable 2FA for a user
     - ```--add``` Invite a new user to join the enterprise
     - ```--delete``` Delete the user and all stored vault records (use with caution)
     - ```--name``` Rename a user's display name
