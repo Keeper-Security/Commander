@@ -932,7 +932,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
         user_name = kwargs.get('displayname')
 
         request_batch = []
-        disable_2fa_ids = []
+        disable_2fa_users = []
 
         if kwargs.get('add'):
             for user in matched_users:
@@ -999,7 +999,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 if kwargs.get('disable_2fa'):
                     for user in matched_users:
                         if user['status'] == 'active':
-                            disable_2fa_ids.append(user['enterprise_user_id'])
+                            disable_2fa_users.append(user)
                         else:
                             logging.warning('%s has not accepted invitation yet: Skipping', user['username'])
 
@@ -1228,13 +1228,15 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             logging.warning('Error: %s', rs['message'])
             api.query_enterprise(params)
 
-        if disable_2fa_ids:
+        if disable_2fa_users:
             uids = EnterpriseUserIds()
-            for user_id in disable_2fa_ids:
-                uids.enterpriseUserId.append(user_id)
+            for user in disable_2fa_users:
+                uids.enterpriseUserId.append(user['enterprise_user_id'])
             api.communicate_rest(params, uids, 'enterprise/disable_two_fa')
+            users = [x['username'] for x in disable_2fa_users]
+            logging.warning("2FA successfully removed for %s", ", ".join(users))
 
-        if not request_batch and not disable_2fa_ids:
+        if not request_batch and not disable_2fa_users:
             is_verbose = kwargs.get('verbose') or False
             print('\n')
             for user in matched_users:
