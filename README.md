@@ -404,8 +404,8 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     Parameters:
     - ```--record``` View share permissions on specific record 
     - ```--email``` View share permissions with specific account. User email or team name
-
-    Unless specified, defaults to all records and users.
+    - ```--owner``` Include the owner information for each record 
+    - ```--verbose``` Include the record title and permission settings for each record 
 
 ### Importing Records into Keeper
 
