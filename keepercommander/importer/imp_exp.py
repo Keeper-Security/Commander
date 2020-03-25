@@ -24,12 +24,10 @@ from Cryptodome.Cipher import AES
 
 from keepercommander import api
 
-from .. import rest_api
 from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
     Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder,  Permission as ImportPermission,\
     Attachment as ImportAttachment, BaseImporter
 from ..subfolder import BaseFolderNode, find_folders
-from .. import APIRequest_pb2 as proto
 from .. import folder_pb2
 
 TWO_FACTOR_CODE = 'TFC:Keeper'
@@ -211,11 +209,12 @@ def _import(params, file_format, filename, **kwargs):
                             f.domain = p_comps[0]
                             p_comps = p_comps[1:]
                         f.path = PathDelimiter.join([x.replace(PathDelimiter, 2*PathDelimiter) for x in p_comps])
-
+            x.validate()
             records.append(x)
         elif type(x) is ImportSharedFolder:
             if shared:
                 continue
+            x.validate()
             folders.append(x)
 
     if shared:
@@ -828,7 +827,7 @@ def prepare_folder_permission(params, folders):
                                 'manage_records': perm.manage_records,
                                 'shared_folder_key': api.encrypt_aes(shared_folder_key, team['team_key_unencrypted']),
                             })
-                else:
+                elif perm.name:
                     email = perm.name.lower()
                     found = False
                     if 'users' in shared_folder:

@@ -70,6 +70,10 @@ def path_components(path, delimiter=PathDelimiter):
                 p = ''
 
 
+def check_if_bool(value):
+    return value is None or type(value) == bool
+
+
 class Permission:
     def __init__(self):
         self.uid = None
@@ -87,6 +91,22 @@ class SharedFolder:
         self.can_edit = None
         self.can_share = None
         self.permissions = None  # type: [Permission]
+
+    def validate(self):
+        if not self.path:
+            raise CommandError('import', 'shared folder. path cannot be empty')
+        for attr in ['manage_users', 'manage_records', 'can_edit', 'can_share']:
+            if hasattr(self, attr):
+                if not check_if_bool(getattr(self, attr)):
+                    raise CommandError('import', 'shared folder. property \'{0}\' should be a boolean'.format(attr))
+        if self.permissions:
+            for p in self.permissions:
+                if not p.name and not p.uid:
+                    raise CommandError('import', 'shared folder permission. property \'name\' cannot be empty'.format(attr))
+                for attr in ['manage_users', 'manage_records']:
+                    if hasattr(p, attr):
+                        if not check_if_bool(getattr(p, attr)):
+                            raise CommandError('import', 'shared folder permission. property \'{0}\' should be a boolean'.format(attr))
 
 
 class Attachment:
@@ -129,6 +149,16 @@ class Record:
         self.custom_fields = {}
         self.folders = None     # type: [Folder]
         self.attachments = None # type: [Attachment]
+
+    def validate(self):
+        if not self.title:
+            raise CommandError('import', 'record. title cannot be empty')
+        if self.folders:
+            for f in self.folders:
+                for attr in ['can_edit', 'can_share']:
+                    if hasattr(f, attr):
+                        if not check_if_bool(getattr(f, attr)):
+                            raise CommandError('import', 'record\'s folder property \'{0}\' should be a boolean'.format(attr))
 
 
 class BaseImporter:

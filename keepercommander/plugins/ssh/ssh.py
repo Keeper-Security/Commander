@@ -11,16 +11,22 @@
 #
 
 import logging
+import os
+from ...error import Error
 
-from pexpect import pxssh, exceptions
+if os.name == 'posix':
+    from pexpect import pxssh, exceptions
+else:
+    raise Exception('Not available on Windows')
 
 """Commander Plugin for SSH Command
-   Dependencies: 
+   Dependencies: s
        pip3 install pexpect
 """
 
 def rotate(record, newpassword):
     """ Grab any required fields from the record """
+
     user = record.login
     oldpassword = record.password
 
@@ -30,12 +36,15 @@ def rotate(record, newpassword):
 
     try:
         s = pxssh.pxssh()
-        s.login(host, user, oldpassword)
+        s.login(host, user, oldpassword, sync_multiplier=3)
         s.sendline('passwd')
         i = s.expect(['[Oo]ld.*[Pp]assword', '[Cc]urrent.*[Pp]assword', '[Nn]ew.*[Pp]assword'])
         if i == 0 or i == 1:
             s.sendline(oldpassword)
-            s.expect('[Nn]ew.*[Pp]assword')
+            i = s.expect(['[Nn]ew.*[Pp]assword', 'password unchanged'])
+            if i != 0:
+                return False
+
         s.sendline(newpassword)
         s.expect("Retype [Nn]ew.*[Pp]assword:")
         s.sendline(newpassword)

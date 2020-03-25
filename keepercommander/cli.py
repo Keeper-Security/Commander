@@ -283,9 +283,9 @@ def loop(params):  # type: (KeeperParams) -> int
             logging.error("Communication Error: %s", e.message)
         except AuthenticationError as e:
             logging.error("AuthenticationError Error: %s", e.message)
-        except:
-            logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
-            raise
+        except Exception as e:
+            logging.debug(e, exc_info=True)
+            logging.error('An unexpected error occurred: %s. Toggle debug to print traceback', e)
 
         if params.batch_mode and error_no != 0 and not suppress_errno:
             break

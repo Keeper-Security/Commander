@@ -116,6 +116,9 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
         if headers:
             csv_writer.writerow(headers)
         for row in data:
+            for i in range(len(row)):
+                if type(row[i]) == list:
+                    row[i] = '\n'.join(row[i])
             csv_writer.writerow(row)
         if filename:
             fd.flush()
@@ -125,7 +128,25 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
             print('\n{0}\n'.format(title))
         elif append:
             print('\n')
-        print(tabulate(data, headers=headers))
+        expanded_data = []
+        for row in data:
+            expanded_rows = 1
+            for column in row:
+                if type(column) == list:
+                    if len(column) > expanded_rows:
+                        expanded_rows = len(column)
+            for i in range(expanded_rows):
+                rowi = []
+                for column in row:
+                    value = ''
+                    if type(column) == list:
+                        if i < len(column):
+                            value = column[i]
+                    elif i == 0:
+                        value = column
+                    rowi.append(value)
+                expanded_data.append(rowi)
+        print(tabulate(expanded_data, headers=headers))
 
 
 parameter_pattern = re.compile(r'\${(\w+)}')

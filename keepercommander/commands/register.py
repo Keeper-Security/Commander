@@ -93,6 +93,8 @@ share_report_parser.add_argument('-r', '--record', dest='record', action='append
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
 share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true',
                                  help='record ownership information')
+share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
+                                 help='display verbose information')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
@@ -859,6 +861,7 @@ class ShareReportCommand(Command):
         return share_report_parser
 
     def execute(self, params, **kwargs):
+        verbose = kwargs.get('verbose') or False
         record_uids = []
         user_filter = set()
         record_filter = set()
@@ -1004,27 +1007,89 @@ class ShareReportCommand(Command):
                     del sf_shares[params.user]
 
                 headers = ['#', 'Shared to', 'Records']
-                table = [(s[0], len(s[1])) for s in record_shares.items()]
-                table.sort(key=lambda x: x[1], reverse=True)
+                table = []
+                for user_name, uids in record_shares.items():
+                    if verbose:
+                        records = []
+                        for uid in uids:
+                            record = api.get_record(params, uid)
+                            records.append('{0}  {1}'.format(uid, record.title if record else ''))
+                        table.append([user_name, records])
+                    else:
+                        table.append([user_name, len(uids)])
+                [(s[0], list(s[1]) if verbose else len(s[1])) for s in record_shares.items()]
+                table.sort(key=lambda x: len(x[1]) if type(x[1]) == list else x[1], reverse=True)
                 table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
         else:
             record_owners = {}
+            record_shared_with = {}
             for uid in record_uids:
                 record = params.record_cache[uid]
                 if 'shares' in record:
+                    record_shared_with[uid] = []
                     if 'user_permissions' in record['shares']:
                         for up in record['shares']['user_permissions']:
+                            user_name = up['username']
                             if up.get('owner'):
-                                user_name = up['username']
                                 record_owners[uid] = user_name
+                            else:
+                                can_edit = up.get('editable') or False
+                                can_share = up.get('shareable') or False
+                                permission = self.get_permission_text(can_edit, can_share)
+                                record_shared_with[uid].append('{0} -> {1}'.format(user_name, permission))
+                    if 'shared_folder_permissions' in record['shares']:
+                        for sfp in record['shares']['shared_folder_permissions']:
+                            shared_folder_uid = sfp['shared_folder_uid']
+                            if shared_folder_uid in params.shared_folder_cache:
+                                shared_folder = params.shared_folder_cache[sfp['shared_folder_uid']]
+                                rp = None
+                                if 'records' in shared_folder:
+                                    for record in shared_folder['records']:
+                                        if record.get('record_uid') == uid:
+                                            rp = record
+                                            break
+                                if rp:
+                                    can_edit = rp.get('can_edit')
+                                    can_share = rp.get('can_share')
+                                    permission = self.get_permission_text(can_edit, can_share)
+                                    if 'users' in shared_folder:
+                                        for u in shared_folder['users']:
+                                            user_name = u['username']
+                                            record_shared_with[uid].append('{0} => {1}'.format(user_name, permission))
+                                    if 'teams' in shared_folder:
+                                        for t in shared_folder['teams']:
+                                            user_name = t['name']
+                                            record_shared_with[uid].append('{0} => {1}'.format(user_name, permission))
+
             if len(record_owners) > 0:
-                headers = ['#', 'Record UID', 'Owner']
-                table = [(s[0], s[1]) for s in record_owners.items()]
-                table.sort(key=lambda x: x[1], reverse=True)
-                table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
+                headers = ['#', 'Record Title', 'Record UID', 'Owner', 'Shared with']
+                table = []
+                for uid, user_name in record_owners.items():
+                    record = api.get_record(params, uid)
+                    row = [record.title[0:32] if record else '', uid, user_name]
+                    share_to = record_shared_with.get(uid)
+                    if verbose:
+                        share_to.sort()
+                        row.append(share_to)
+                    else:
+                        row.append(len(share_to) if share_to else 0)
+                    table.append(row)
+                table.sort(key=lambda x: len(x[3]) if type(x[3]) == list else x[3], reverse=True)
+                table = [[i + 1, s[0], s[1], s[2], s[3]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+
+    @staticmethod
+    def get_permission_text(can_edit, can_share, can_view=True):
+        if can_edit or can_share:
+            if can_edit and can_view:
+                return 'Can Share & Edit'
+            if can_share:
+                return 'Can Share'
+            return 'Can Edit'
+        else:
+            return 'View Only' if can_view else 'Launch Only'
 
 
 class RecordPermissionCommand(Command):

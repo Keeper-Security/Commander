@@ -45,11 +45,11 @@ class KeeperJsonImporter(BaseFileImporter):
             if records:
                 for r in records:
                     record = Record()
-                    record.title = r['title']
-                    record.login = r['login']
-                    record.password = r['password']
-                    record.login_url = r['login_url']
-                    record.notes = r['notes']
+                    record.title = r.get('title')
+                    record.login = r.get('login')
+                    record.password = r.get('password')
+                    record.login_url = r.get('login_url')
+                    record.notes = r.get('notes')
                     if 'custom_fields' in r:
                         custom_fields = r['custom_fields']
                         if custom_fields:

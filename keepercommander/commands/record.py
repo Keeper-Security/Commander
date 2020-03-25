@@ -30,6 +30,7 @@ from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
 
+
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['edit'] = RecordEditCommand()
@@ -243,7 +244,11 @@ class RecordAddCommand(Command):
                 src = try_resolve_path(params, folder_name)
                 if src is not None:
                     folder, name = src
-        if folder is None:
+                    if name:
+                        raise CommandError('add', 'No such folder: {0}'.format(folder_name))
+                else:
+                    raise CommandError('add', 'No such folder: {0}'.format(folder_name))
+        if not folder:
             folder = params.folder_cache[params.current_folder] if params.current_folder else params.root_folder
 
         if not force:
