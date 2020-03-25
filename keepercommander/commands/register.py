@@ -93,6 +93,8 @@ share_report_parser.add_argument('-r', '--record', dest='record', action='append
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
 share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true',
                                  help='record ownership information')
+share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
+                                 help='display verbose information')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
@@ -859,6 +861,7 @@ class ShareReportCommand(Command):
         return share_report_parser
 
     def execute(self, params, **kwargs):
+        verbose = kwargs.get('verbose') or False
         record_uids = []
         user_filter = set()
         record_filter = set()
@@ -1004,26 +1007,40 @@ class ShareReportCommand(Command):
                     del sf_shares[params.user]
 
                 headers = ['#', 'Shared to', 'Records']
-                table = [(s[0], len(s[1])) for s in record_shares.items()]
-                table.sort(key=lambda x: x[1], reverse=True)
+                table = [(s[0], list(s[1]) if verbose else len(s[1])) for s in record_shares.items()]
+                table.sort(key=lambda x: len(x[1]) if verbose else x[1], reverse=True)
                 table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
         else:
             record_owners = {}
+            record_shared_with = {}
             for uid in record_uids:
                 record = params.record_cache[uid]
                 if 'shares' in record:
+                    record_shared_with[uid] = []
                     if 'user_permissions' in record['shares']:
                         for up in record['shares']['user_permissions']:
+                            user_name = up['username']
                             if up.get('owner'):
-                                user_name = up['username']
                                 record_owners[uid] = user_name
+                            else:
+                                record_shared_with[uid].append(user_name)
+
             if len(record_owners) > 0:
-                headers = ['#', 'Record UID', 'Owner']
-                table = [(s[0], s[1]) for s in record_owners.items()]
-                table.sort(key=lambda x: x[1], reverse=True)
-                table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
+                headers = ['#', 'Record UID', 'Owner', 'Shared with']
+                table = []
+                for uid, user_name in record_owners.items():
+                    row = [uid, user_name]
+                    share_to = record_shared_with.get(uid)
+                    if verbose:
+                        share_to.sort()
+                        row.append(share_to)
+                    else:
+                        row.append(len(share_to) if share_to else 0)
+                    table.append(row)
+                table.sort(key=lambda x: len(x[2]) if type(x[2]) == list else x[2], reverse=True)
+                table = [[i + 1, s[0], s[1], s[2]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
 
 
