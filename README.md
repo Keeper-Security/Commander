@@ -330,7 +330,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - If no parameters are provided, displays information about specified email
 
     Multiple emails can be provided, for example: 
-    enterprise-user --lock user1@company.com user2@company.com user3@company.com
+    - ```enterprise-user --lock user1@company.com user2@company.com user3@company.com```
 
 * ```enterprise-role <Role ID>``` or ```er <Role ID>```   Enterprise role management
 
