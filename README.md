@@ -329,9 +329,8 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--remove-team``` Remove a user from a team
     - If no parameters are provided, displays information about specified email
 
-    Note: Multiple emails can be provided, e.g.:
-
-    ```enterprise-user --lock user1@company.com user2@company.com user3@company.com```   
+    Multiple emails can be provided, for example: 
+    enterprise-user --lock user1@company.com user2@company.com user3@company.com
 
 * ```enterprise-role <Role ID>``` or ```er <Role ID>```   Enterprise role management
 
