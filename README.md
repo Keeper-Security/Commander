@@ -311,7 +311,7 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--node``` Specify a single node to limit view
     - ```--v``` Verbose mode 
 
-* ```enterprise-user <email>``` or ```eu <email>```   Enterprise user management
+* ```enterprise-user <email(s)>``` or ```eu <email(s)>```   Enterprise user management
 
     Parameters:
     - ```--expire``` Expire the Master Password for the user
@@ -328,6 +328,10 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--add-team``` Add a user to a team
     - ```--remove-team``` Remove a user from a team
     - If no parameters are provided, displays information about specified email
+
+    Note: Multiple emails can be provided, e.g.:
+
+    ```enterprise-user --lock user1@company.com user2@company.com user3@company.com```   
 
 * ```enterprise-role <Role ID>``` or ```er <Role ID>```   Enterprise role management
 
