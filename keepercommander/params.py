@@ -158,7 +158,7 @@ class KeeperParams:
             if self.license['account_type'] == 2:
                 self.event_queue.append({
                     'audit_event_type': name,
-                    'inputs': {x:[kwargs[x]] for x in kwargs if x in {'record_uid', 'file_format', 'attachment_id', 'to_username'}}
+                    'inputs': {x: kwargs[x] for x in kwargs if x in {'record_uid', 'file_format', 'attachment_id', 'to_username'}}
                 })
 
     server = property(__get_server, __set_server)

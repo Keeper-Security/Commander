@@ -29,6 +29,7 @@ from .importer import importer_for_format, exporter_for_format, path_components,
     Attachment as ImportAttachment, BaseImporter
 from ..subfolder import BaseFolderNode, find_folders
 from .. import folder_pb2
+from ..record import Record
 
 TWO_FACTOR_CODE = 'TFC:Keeper'
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
@@ -279,7 +280,7 @@ def _import(params, file_format, filename, **kwargs):
 
     records_after = len(params.record_cache)
     if records_after > records_before:
-        params.queue_audit_event('imported_records', file_format=file_format)
+        params.queue_audit_event('imported_records', file_format=file_format.upper())
         logging.info("%d records imported successfully", records_after - records_before)
 
 
@@ -588,43 +589,64 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def prepare_record_add(params, records):
-    record_folders = {}
-    for folder_uid in params.subfolder_record_cache:
-        folder_path = get_folder_path(params, folder_uid)
-        for record_uid in params.subfolder_record_cache[folder_uid]:
-            if record_uid not in record_folders:
-                record_folders[record_uid] = []
-            record_folders[record_uid].append(folder_path)
+def tokenize_record(record):   # type: (Record) -> [str]
+    yield record.title or ''
+    yield record.login or ''
+    yield record.password or ''
+    yield record.login_url or ''
+    yield record.notes or ''
 
+    custom = {}
+    if record.custom_fields:
+        for cf in record.custom_fields:
+            if cf.get('name') and cf.get('value'):
+                custom[cf.get('name')] = cf.get('value')
+    if record.totp:
+        custom[TWO_FACTOR_CODE] = record.totp
+    if len(custom) > 0:
+        keys = list(custom.keys())
+        keys.sort()
+        for key in keys:
+            yield key + ':' + custom[key]
+
+
+def tokenize_import_record(record):   # type: (ImportRecord) -> [str]
+    yield record.title or ''
+    yield record.login or ''
+    yield record.password or ''
+    yield record.login_url or ''
+    yield record.notes or ''
+
+    if len(record.custom_fields) > 0:
+        keys = list(record.custom_fields.keys())
+        keys.sort()
+        for key in keys:
+            yield key + ':' + record.custom_fields[key]
+
+
+def prepare_record_add(params, records):
     record_hash = {}
     for r_uid in params.record_cache:
         rec = api.get_record(params, r_uid)
-        if r_uid in record_folders:
-            for folder_path in record_folders[r_uid]:
-                h = hashlib.md5()
-                hs = '{0}|{1}|{2}|{3}'.format(folder_path or '', rec.title or '', rec.login or '', rec.password or '')
-                h.update(hs.encode())
-                record_hash[h.hexdigest()] = r_uid
+        h = hashlib.sha256()
+        for token in tokenize_record(rec):
+            h.update(token.encode())
+        record_hash[h.hexdigest()] = r_uid
 
     record_adds = []
     for rec in records:
-        record_uid = None
-        if rec.folders:
-            for folder in rec.folders:
-                h = hashlib.md5()
-                hs = '{0}|{1}|{2}|{3}'.format(folder.get_folder_path(), rec.title or '', rec.login or '', rec.password or '')
-                h.update(hs.encode())
-                rec_hash = h.hexdigest()
-                record_uid = record_hash.get(rec_hash)
-                if record_uid:
-                    break
-
-        if record_uid is None:
-            record_uid = api.generate_record_uid()
+        h = hashlib.sha256()
+        for token in tokenize_import_record(rec):
+            h.update(token.encode())
+        r_hash = h.hexdigest()
+        if r_hash in record_hash:
+            rec.uid = record_hash[r_hash]
+        else:
+            rec.uid = api.generate_record_uid()
+            record_hash[r_hash] = rec.uid
             record_key = os.urandom(32)
             rec_req = folder_pb2.RecordRequest()
-            rec_req.recordUid = base64.urlsafe_b64decode(record_uid + '==')
+            rec_req.recordUid = base64.urlsafe_b64decode(rec.uid + '==')
             rec_req.recordType = 0
             rec_req.encryptedRecordKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, params.data_key) + '==')
             rec_req.howLongAgo = 0
@@ -683,68 +705,75 @@ def prepare_record_add(params, records):
                 rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
             record_adds.append(rec_req)
 
-        rec.uid = record_uid
-
     return record_adds
 
 
 def prepare_record_link(params, records):
+    record_folders = {}    # type: [str, [str]]
     record_links = []
     for rec in records:
-        if rec.folders and rec.uid:
+        if rec.uid:
             if rec.uid in params.record_cache:
+                if rec.uid in record_folders:
+                    folder_ids = record_folders[rec.uid]
+                else:
+                    folder_ids = list(find_folders(params, rec.uid))
+                    record_folders[rec.uid] = folder_ids
                 record = params.record_cache[rec.uid]
-                folder_ids = list(find_folders(params, rec.uid))
-                for fol in rec.folders:
-                    if fol.uid and fol.uid in params.folder_cache:
-                        if len(folder_ids) > 0:
-                            if fol.uid not in folder_ids:
-                                src_folder =  params.folder_cache[folder_ids[0]]
-                                dst_folder = params.folder_cache[fol.uid]
-                                req = {
-                                    'command': 'move',
-                                    'to_type': dst_folder.type if dst_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType,
-                                    'link': True,
-                                    'move': [],
-                                    'transition_keys': []
-                                }
-                                if dst_folder.type != BaseFolderNode.RootFolderType:
-                                    req['to_uid'] = dst_folder.uid
-                                mo = {
-                                    'type': 'record',
-                                    'uid': rec.uid,
-                                    'from_type': src_folder.type if src_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType,
-                                    'cascade': True
-                                }
-                                if src_folder.type != BaseFolderNode.RootFolderType:
-                                    mo['from_uid'] = src_folder.uid
-                                req['move'].append(mo)
+                for fol in rec.folders or [None]:
+                    folder_uid = fol.uid if fol else ''
+                    if folder_uid and folder_uid not in params.folder_cache:
+                        continue
+                    if folder_uid in folder_ids:
+                        continue
+                    if len(folder_ids) > 0:
+                        folder_ids.append(folder_uid)
+                        src_folder = params.folder_cache[folder_ids[0]]
+                        dst_folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
+                        req = {
+                            'command': 'move',
+                            'to_type': dst_folder.type if dst_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType,
+                            'link': True,
+                            'move': [],
+                            'transition_keys': []
+                        }
+                        if dst_folder.type != BaseFolderNode.RootFolderType:
+                            req['to_uid'] = dst_folder.uid
+                        mo = {
+                            'type': 'record',
+                            'uid': rec.uid,
+                            'from_type': src_folder.type if src_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType,
+                            'cascade': True
+                        }
+                        if src_folder.type != BaseFolderNode.RootFolderType:
+                            mo['from_uid'] = src_folder.uid
+                        req['move'].append(mo)
 
-                                transition_key = None
-                                record_key = record['record_key_unencrypted']
-                                if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                                        ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else \
-                                            src_folder.shared_folder_uid
-                                        dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
-                                            dst_folder.shared_folder_uid
-                                        if ssf_uid != dsf_uid:
-                                            shf = params.shared_folder_cache[dsf_uid]
-                                            transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
-                                    else:
-                                        transition_key = api.encrypt_aes(record_key, params.data_key)
-                                else:
-                                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                                        dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
-                                            dst_folder.shared_folder_uid
-                                        shf = params.shared_folder_cache[dsf_uid]
-                                        transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
-                                if transition_key is not None:
-                                    req['transition_keys'].append({
-                                        'uid': rec.uid,
-                                        'key': transition_key
-                                    })
-                                record_links.append(req)
+                        transition_key = None
+                        record_key = record['record_key_unencrypted']
+                        if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                            if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                                ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else \
+                                    src_folder.shared_folder_uid
+                                dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
+                                    dst_folder.shared_folder_uid
+                                if ssf_uid != dsf_uid:
+                                    shf = params.shared_folder_cache[dsf_uid]
+                                    transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
+                            else:
+                                transition_key = api.encrypt_aes(record_key, params.data_key)
+                        else:
+                            if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                                dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
+                                    dst_folder.shared_folder_uid
+                                shf = params.shared_folder_cache[dsf_uid]
+                                transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
+                        if transition_key is not None:
+                            req['transition_keys'].append({
+                                'uid': rec.uid,
+                                'key': transition_key
+                            })
+                        record_links.append(req)
     return record_links
 
 
