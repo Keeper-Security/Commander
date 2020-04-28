@@ -47,6 +47,7 @@ from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import EnterpriseUserIds
 
+
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
     commands['enterprise-info'] = EnterpriseInfoCommand()
@@ -75,6 +76,8 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
+SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team', 'not-team']
+
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display enterprise information')
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
@@ -82,6 +85,8 @@ enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
+enterprise_info_parser.add_argument('--columns', dest='columns', action='store', help='comma-separated list of columns: ' +
+'--users (%s)' % ', '.join(SUPPORTED_USER_COLUMNS))
 enterprise_info_parser.add_argument('pattern', nargs='?', type=str, help='search pattern. applicable to users, teams, and roles.')
 enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
@@ -184,7 +189,7 @@ audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], action='store', help='report type')
+audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], required=True, action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
 audit_report_parser.add_argument('--aggregate', dest='aggregate', action='append', choices=['occurrences', 'first_created', 'last_created'], help='aggregated value. Can be repeated. (ignored for raw reports)')
@@ -577,29 +582,68 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             print('')
             print(tr(tree))
         else:
+            columns = set()
+            if kwargs.get('columns'):
+                columns.update(kwargs.get('columns').split(','))
             pattern = (kwargs.get('pattern') or '').lower()
             if show_users:
+                supported_columns = ['name', 'status', 'node', 'team', 'not-team']
+                if len(columns) == 0:
+                    columns.update(('name', 'status', 'node'))
+                else:
+                    wc = columns.difference(supported_columns)
+                    if len(wc) > 0:
+                        logging.warning('\n\nSupported user columns: %s\n', ', '.join(supported_columns))
+
+                displayed_columns = [x for x in supported_columns if x in columns]
                 rows = []
                 for u in users.values():
-                    status = lock_text(u['lock'])
-                    if not status:
-                        if 'account_share_expiration' in u:
-                            expire_at = datetime.datetime.fromtimestamp(u['account_share_expiration']/1000.0)
-                            if expire_at < datetime.datetime.now():
-                                status = 'Blocked'
-                            else:
-                                status = 'Transfer Acceptance'
-                        else:
-                            status = u['status'].capitalize()
-                    row = [u['id'], u['username'], u['name'], status, node_path(u['node_id'])]
+                    user_id = u['id']
+                    row = [user_id, u['username']]
+                    for column in displayed_columns:
+                        if column == 'name':
+                            row.append(u['name'])
+                        elif column == 'status':
+                            status = lock_text(u['lock'])
+                            if not status:
+                                if 'account_share_expiration' in u:
+                                    expire_at = datetime.datetime.fromtimestamp(u['account_share_expiration']/1000.0)
+                                    if expire_at < datetime.datetime.now():
+                                        status = 'Blocked'
+                                    else:
+                                        status = 'Transfer Acceptance'
+                                else:
+                                    status = u['status'].capitalize()
+                            row.append(status)
+                        elif column == 'node':
+                            row.append(node_path(u['node_id']))
+                        elif column == 'team':
+                            team_names = [t['name'] for t in teams.values() if t['users'] and user_id in t['users']]
+                            row.append('\n'.join(team_names))
+                        elif column == 'not-team':
+                            team_names = [t['name'] for t in teams.values() if t['users'] and user_id not in t['users']]
+                            row.append('\n'.join(team_names))
+
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["User ID", 'Email', 'Name', 'Status', 'Node']))
+                headers = ['User ID', 'Email']
+                for column in displayed_columns:
+                    if column == 'name':
+                        headers.append('Name')
+                    elif column == 'status':
+                        headers.append('status')
+                    elif column == 'node':
+                        headers.append('Node')
+                    elif column == 'team':
+                        headers.append('Teams')
+                    elif column == 'not-team':
+                        headers.append('Not in Teams')
+                print(tabulate(rows, headers=headers))
 
             if show_teams:
                 rows = []
