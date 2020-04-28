@@ -30,7 +30,7 @@ from ..importer import BaseFileImporter, BaseExporter, Record, Folder
 class KeeperCsvImporter(BaseFileImporter):
 
     def do_import(self, filename):
-        with open(filename, "r", encoding='utf-8') as csvfile:
+        with open(filename, "r", encoding='utf-8-sig') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if len(row) >= 6:

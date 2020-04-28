@@ -126,7 +126,7 @@ class KeeperJsonExporter(BaseExporter):
                         sfo['permissions'].append(po)
                 sfs.append(sfo)
 
-        jo = {'shared_folders': sfs, 'records': rs} if sfs else rs
+        jo = {'shared_folders': sfs, 'records': rs}
         if filename:
             with open(filename, mode="w", encoding='utf-8') as f:
                 json.dump(jo, f, indent=2, ensure_ascii=False)
