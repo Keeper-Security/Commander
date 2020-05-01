@@ -11,8 +11,8 @@
 
 import argparse
 import json
-import csv
 import base64
+import string
 
 import requests
 import logging
@@ -27,13 +27,11 @@ import hashlib
 import hmac
 import copy
 import os
-import sys
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
-from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 
@@ -71,12 +69,15 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['al'] = 'audit-log'
 
-    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
-              team_approve_parser, audit_log_parser, audit_report_parser, user_report_parser]:
+    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
+              enterprise_team_parser, enterprise_push_parser, team_approve_parser,
+              audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
 
-SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team', 'not-team']
+SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team_count', 'teams', 'role_count', 'roles']
+SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
+SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display enterprise information')
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
@@ -85,9 +86,19 @@ enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
-enterprise_info_parser.add_argument('--columns', dest='columns', action='store', help='comma-separated list of columns: ' +
-'--users (%s)' % ', '.join(SUPPORTED_USER_COLUMNS))
-enterprise_info_parser.add_argument('pattern', nargs='?', type=str, help='search pattern. applicable to users, teams, and roles.')
+enterprise_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+                                    default='table', help='output format. applicable to users, teams, and roles.')
+enterprise_info_parser.add_argument('--output', dest='output', action='store',
+                                    help='output file name. (ignored for table format)')
+enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
+                                    help='comma-separated list of columns: ' +
+                                         '--users (%s)' % ', '.join(SUPPORTED_USER_COLUMNS) +
+                                         '--teams (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
+                                         '--roles (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
+                                    )
+
+enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
+                                    help='search pattern. applicable to users, teams, and roles.')
 enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
 
@@ -496,6 +507,12 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     n = None
             return path
 
+        def user_email(user_id):
+            if user_id in users:
+                return users[user_id]['username']
+            else:
+                return str(user_id)
+
         def restricts(team):
             rs = ''
             rs += 'R ' if team['restrict_view'] else '  '
@@ -587,7 +604,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 columns.update(kwargs.get('columns').split(','))
             pattern = (kwargs.get('pattern') or '').lower()
             if show_users:
-                supported_columns = ['name', 'status', 'node', 'team', 'not-team']
+                supported_columns = SUPPORTED_USER_COLUMNS
                 if len(columns) == 0:
                     columns.update(('name', 'status', 'node'))
                 else:
@@ -617,12 +634,16 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             row.append(status)
                         elif column == 'node':
                             row.append(node_path(u['node_id']))
-                        elif column == 'team':
+                        elif column == 'team_count':
+                            row.append(len([1 for t in teams.values() if t['users'] and user_id in t['users']]))
+                        elif column == 'teams':
                             team_names = [t['name'] for t in teams.values() if t['users'] and user_id in t['users']]
-                            row.append('\n'.join(team_names))
-                        elif column == 'not-team':
-                            team_names = [t['name'] for t in teams.values() if t['users'] and user_id not in t['users']]
-                            row.append('\n'.join(team_names))
+                            row.append(team_names)
+                        elif column == 'role_count':
+                            row.append(len([1 for r in roles.values() if r['users'] and user_id in r['users']]))
+                        elif column == 'roles':
+                            role_names = [r['name'] for r in roles.values() if r['users'] and user_id in r['users']]
+                            row.append(role_names)
 
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
@@ -631,54 +652,106 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                headers = ['User ID', 'Email']
-                for column in displayed_columns:
-                    if column == 'name':
-                        headers.append('Name')
-                    elif column == 'status':
-                        headers.append('status')
-                    elif column == 'node':
-                        headers.append('Node')
-                    elif column == 'team':
-                        headers.append('Teams')
-                    elif column == 'not-team':
-                        headers.append('Not in Teams')
-                print(tabulate(rows, headers=headers))
+                headers = ['user_id', 'email']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_teams:
+                supported_columns = SUPPORTED_TEAM_COLUMNS
+                if len(columns) == 0:
+                    columns.update(('restricts', 'node', 'user_count'))
+                else:
+                    wc = columns.difference(supported_columns)
+                    if len(wc) > 0:
+                        logging.warning('\n\nSupported team columns: %s\n', ', '.join(supported_columns))
+
+                displayed_columns = [x for x in supported_columns if x in columns]
                 rows = []
                 for t in teams.values():
-                    row = [t['id'], t['name'], restricts(t), node_path(t['node_id']), len(t['users'])]
+                    row = [t['id'], t['name']]
+                    for column in displayed_columns:
+                        if column == 'restricts':
+                            row.append(restricts(t))
+                        elif column == 'node':
+                            row.append(node_path(t['node_id']))
+                        elif column == 'user_count':
+                            row.append(len(t['users']))
+                        elif column == 'users':
+                            row.append([user_email(x) for x in t['users']])
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
 
                 for t in queued_teams.values():
-                    row = [t['id'], t['name'], 'Queued', node_path(t['node_id']), len(t['users'])]
+                    row = [t['id'], t['name']]
+
+                    for column in displayed_columns:
+                        if column == 'restricts':
+                            row.append('Queued')
+                        elif column == 'node':
+                            row.append(node_path(t['node_id']))
+                        elif column == 'user_count':
+                            row.append(len(t['users']))
+                        elif column == 'users':
+                            row.append([user_email(x) for x in t['users']])
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
 
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["Team ID", 'Name', 'Restricts', 'Node', 'Users']))
+                headers = ['team_uid', 'name']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_roles:
+                supported_columns = SUPPORTED_TEAM_COLUMNS
+                if len(columns) == 0:
+                    columns.update(('is_visible_below', 'is_new_user', 'is_admin','node', 'user_count'))
+                else:
+                    wc = columns.difference(supported_columns)
+                    if len(wc) > 0:
+                        logging.warning('\n\nSupported team columns: %s\n', ', '.join(supported_columns))
+
+                displayed_columns = [x for x in supported_columns if x in columns]
+
                 rows = []
                 for r in roles.values():
-                    row = [r['id'], r['name'], 'Y' if r['visible_below'] else '', 'Y' if r['new_user_inherit'] else '',
-                           'Y' if r['is_admin'] else '', node_path(r['node_id']), len(r['users'])]
+                    row = [r['id'], r['name']]
+                    for column in displayed_columns:
+                        if column == 'is_visible_below':
+                            row.append('Y' if r['visible_below'] else '')
+                        elif column == 'is_new_user':
+                            row.append('Y' if r['new_user_inherit'] else '')
+                        elif column == 'is_admin':
+                            row.append('Y' if r['is_admin'] else '')
+                        elif column == 'node':
+                            row.append(node_path(r['node_id']))
+                        elif column == 'user_count':
+                            row.append(len(r['users']))
+                        elif column == 'users':
+                            row.append([user_email(x) for x in r['users']])
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
+
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["Role ID", 'Name', 'Visible Below?', 'New User?', 'Admin?','Node', 'Users']))
+
+                headers = ['role_id', 'name']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         print('')
 
@@ -2784,7 +2857,7 @@ class AuditReportCommand(Command):
                     value = self.get_value(params, field, event)
                     row.append(self.convert_value(field, value))
                 table.append(row)
-            dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+            dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         elif report_type == 'dim':
             to_append = False
@@ -2804,7 +2877,7 @@ class AuditReportCommand(Command):
                     table = []
                     for row in rs['dimensions'][dim]:
                         table.append([row])
-                dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=to_append)
+                dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'), append=to_append)
                 to_append = True
 
         else:
@@ -2821,7 +2894,7 @@ class AuditReportCommand(Command):
                 for f in fields:
                     row.append(self.convert_value(f, event.get(f), report_type=report_type))
                 table.append(row)
-            dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+            dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def convert_date(value):
@@ -3213,85 +3286,22 @@ class UserReportCommand(Command):
         user_list = list(self.users.values())
         user_list.sort(key=lambda x: x['username'].lower())
 
-        file_name = kwargs['output'] or ''
-        if file_name == '-':
-            file_name = ''
+        rows = []
+        headers = ['email', 'name', 'status', 'last_login', 'node', 'roles', 'teams']
+        for user in user_list:
+            status = UserReportCommand.get_user_status(user)
+            path = self.get_node_path(user['node_id'])
+            teams = self.user_teams.get(user['enterprise_user_id']) or []
+            roles = self.user_roles.get(user['enterprise_user_id']) or []
+            teams.sort(key=str.lower)
+            roles.sort(key=str.lower)
+            ll = user.get('last_login')
+            last_log = str(ll) if ll else ''
+            rows.append([user['username'], user['name'], status, last_log, ' -> '.join(path), roles, teams])
 
-
-        if kwargs.get('format') == 'csv':
-            if file_name:
-                _, ext = os.path.splitext(file_name)
-                if not ext:
-                    file_name += '.csv'
-            fd = open(file_name, 'w') if file_name else sys.stdout
-            csv_writer = csv.writer(fd)
-            csv_writer.writerow(['Email', 'Name', 'Status', 'Last Login', 'Node', 'Roles', 'Teams'])
-            for user in user_list:
-                status = UserReportCommand.get_user_status(user)
-                path = self.get_node_path(user['node_id'])
-                teams = self.user_teams.get(user['enterprise_user_id']) or []
-                roles = self.user_roles.get(user['enterprise_user_id']) or []
-                teams.sort(key=str.lower)
-                roles.sort(key=str.lower)
-                ll = user.get('last_login')
-                las_log = str(ll) if ll else ''
-                csv_writer.writerow([user['username'], user['name'], status, las_log, ' -> '.join(path), ' | '.join(roles), ' | '.join(teams)])
-            if file_name:
-                fd.flush()
-                fd.close()
-
-        elif kwargs.get('format') == 'json':
-            if file_name:
-                _, ext = os.path.splitext(file_name)
-                if not ext:
-                    file_name += '.json'
-            result = []
-            for user in user_list:
-                path = self.get_node_path(user['node_id'])
-                entry = {
-                    'email': user['username'],
-                    'name': user['name'],
-                    'status':  UserReportCommand.get_user_status(user),
-                    'node':  '->'.join(path)
-                }
-                teams = self.user_teams.get(user['enterprise_user_id'])
-                if teams:
-                    teams.sort(key=str.lower)
-                    entry['teams'] = teams
-                roles = self.user_roles.get(user['enterprise_user_id'])
-                if roles:
-                    roles.sort(key=str.lower)
-                    entry['roles'] = roles
-                ll = user.get('last_login')
-                if ll:
-                    ll = ll.astimezone(tz=datetime.timezone.utc)
-                    entry['last_login'] = ll.strftime('%Y-%m-%dT%H:%M:%SZ')
-                result.append(entry)
-            if file_name:
-                with open(file_name, 'w') as jf:
-                    json.dump(result, jf, indent=2)
-            else:
-                print(json.dumps(result, indent=2))
-
-        else:
-            print('')
-            rows = []
-            headers = ['Email', 'Name', 'Status', 'Last Login', 'Node', 'Roles', 'Teams']
-            for user in user_list:
-                status = UserReportCommand.get_user_status(user)
-                path = self.get_node_path(user['node_id'])
-                teams = self.user_teams.get(user['enterprise_user_id']) or []
-                roles = self.user_roles.get(user['enterprise_user_id']) or []
-                team_len = len(teams)
-                role_len = len(roles)
-                teams.sort(key=str.lower)
-                roles.sort(key=str.lower)
-                ll = user.get('last_login')
-                las_log = str(ll) if ll else ''
-                rows.append([user['username'], user['name'], status, las_log, ' -> '.join(path), roles[0] if role_len > 0 else '', teams[0] if team_len > 0 else ''])
-                for i in range(1, max(role_len, team_len)):
-                    rows.append(['', '', '', '', '', roles[i] if i < role_len else '', teams[i] if i < team_len else ''])
-            print(tabulate(rows, headers=headers))
+            if kwargs.get('format') != 'json':
+                headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+            dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     def get_node_path(self, node_id):
         path = []

@@ -33,7 +33,6 @@ from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
-from ..importer.imp_exp import get_folder_path
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 
@@ -987,7 +986,7 @@ class ShareReportCommand(Command):
                         records.sort(key=lambda x: x.title.lower())
                         table = [[i + 1, r.record_uid, r.title] for i, r in enumerate(records)]
                         title = 'Records shared with: {0}'.format(user)
-                        dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
+                        dump_report_data(table, headers, title=title, fmt=kwargs.get('format'), filename=kwargs.get('output'), append=True)
 
                 if len(sf_shares) > 0:
                     user_names = [x for x in sf_shares.keys()]
@@ -999,7 +998,7 @@ class ShareReportCommand(Command):
                         sfs.sort(key=lambda x: x.name.lower())
                         table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
                         title = 'Folders shared with: {0}'.format(user)
-                        dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
+                        dump_report_data(table, headers, title=title, fmt=kwargs.get('format'), filename=kwargs.get('output'), append=True)
             else:
                 if params.user in record_shares:
                     del record_shares[params.user]
@@ -1020,7 +1019,7 @@ class ShareReportCommand(Command):
                 [(s[0], list(s[1]) if verbose else len(s[1])) for s in record_shares.items()]
                 table.sort(key=lambda x: len(x[1]) if type(x[1]) == list else x[1], reverse=True)
                 table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
-                dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+                dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         else:
             record_owners = {}
@@ -1078,7 +1077,7 @@ class ShareReportCommand(Command):
                     table.append(row)
                 table.sort(key=lambda x: len(x[3]) if type(x[3]) == list else x[3], reverse=True)
                 table = [[i + 1, s[0], s[1], s[2], s[3]] for i, s in enumerate(table)]
-                dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+                dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def get_permission_text(can_edit, can_share, can_view=True):
