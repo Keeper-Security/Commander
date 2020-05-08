@@ -9,8 +9,10 @@
 # Contact: ops@keepersecurity.com
 #
 
+import getpass
 import time
 import threading
+import logging
 import os
 import signal
 import base64
@@ -66,7 +68,7 @@ def get_input_interrupted(prompt):
             raise KeyboardInterrupt()
         return result.decode()
     else:
-        return input(prompt)
+        return getpass.getpass(prompt=prompt)
 
 
 def u2f_authenticate(authenticateRequests):
@@ -153,7 +155,7 @@ def thread_function(auth_requests):
         time.sleep(0.25)
 
     if u2f_response:
-        print('OK')
+        logging.info('OK')
     if os.name == 'nt':
         global win_cancel_getch
         win_cancel_getch = True
