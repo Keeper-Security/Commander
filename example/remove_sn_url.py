@@ -39,9 +39,8 @@ if __name__ == '__main__':
     params.user = user
     params.password = password
     session_token = api.login(params)
-    TABLE_NAME = 'sn_url'
+    api.sync_down(params)
     sn_url = 'http://sn'
-    # params.sync_data = True # to update
     MAX_REPEAT = 999
     logger.setLevel(logging.INFO)
     for repeat, uid in enumerate(params.record_cache):
