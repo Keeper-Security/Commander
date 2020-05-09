@@ -109,7 +109,7 @@ parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
 
 
-def main():
+def main(from_package=False):
     errno = 0
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
@@ -144,6 +144,9 @@ def main():
         if flags[0] == '-h':
             flags.clear()
             opts.command = '?'
+
+    if not opts.command and from_package:
+        opts.command = 'shell'
 
     if (opts.command or '') in {'?', ''}:
         if opts.command == '?' or not params.commands:
