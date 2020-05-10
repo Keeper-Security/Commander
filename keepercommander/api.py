@@ -235,6 +235,7 @@ def login(params):
 
         elif response_json['result_code'] == 'auth_failed':
             params.password = ''
+            params.auth_verifier = None
             raise AuthenticationError('Authentication failed.')
 
         elif response_json['result_code'] == 'throttled':
