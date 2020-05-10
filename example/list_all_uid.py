@@ -1,42 +1,32 @@
 # Show all UIDs in Vault
 import sys
 import os
+import getpass
 sys.path.append("..")
 from keepercommander import api, params
-import getpass
+
 
 class KeeperLogin(object):
     ''' Login and sync_down automatically 
         user-ID is gotten from $KEEPER_USER
         user password if from $KEEPER_PASSWORD
-        or parameters as with(user, password) ''' 
-        
+        or parameters as with(user, password) '''
+
     USER = 'KEEPER_USER'
     PASSWORD = 'KEEPER_PASSWORD'
-    
+
     def __enter__(self, user=None, password=None, user_prompt='User:', password_prompt='Password:'):
         self.params = params.KeeperParams()
-        if user:
-            self.user = user
-        else: 
-            try:
-                self.params.user = os.environ[KeeperLogin.USER] # getpass.getuser()
-            except:
-                self.params.user = input(user_prompt)
-        if password:
-            self.params.password = password
-        else:
-            try:
-                self.params.password = os.environ[KeeperLogin.PASSWORD]
-            except:
-                self.params.password = getpass.getpass(password_prompt)
+        self.params.user = user or os.getenv(KeeperLogin.USER) or input(user_prompt)
+        self.params.password = password or os.getenv(KeeperLogin.PASSWORD) or getpass.getpass(password_prompt)
         api.login(self.params)
         api.sync_down(self.params)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        pass
-    
+        self.params.clear_session()  # clear internal variables
+
+  
 if __name__ == '__main__':
     import logging
     logger = logging.getLogger(__file__)
