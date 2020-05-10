@@ -2,8 +2,9 @@
 import sys
 import os
 import getpass
-sys.path.append("..")
-from keepercommander import api, params
+sys.path.append(".")
+sys.path.append("../.venv/lib/python3.6/dist-packages")
+from keepercommander import api, params # set PYTHONPATH=<absolute path to keepercommander>
 
 
 class KeeperLogin(object):
@@ -26,15 +27,19 @@ class KeeperLogin(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.params.clear_session()  # clear internal variables
 
-  
+def check_record_cache_with_list_command():
+    pass
+
 if __name__ == '__main__':
     import logging
     logger = logging.getLogger(__file__)
     logger.setLevel(logging.INFO)
-
+    inspects = [] # put UID to inspect as string literal like 'abc', comma separated 
     with KeeperLogin() as keeper_login:
         for uid in keeper_login.params.record_cache:
             record = api.get_record(keeper_login.params, uid) 
-            print(f"{uid}\t{record.title}")
+            print(f"{uid}\t{record.title}\t{record.login_url.split('?')[0]}")  # cut ?-trailing parameter
+            if uid in inspects:
+                pass # breakpoint
 
     exit(0)
