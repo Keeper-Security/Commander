@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import getpass
 import time
 import threading
 import logging
@@ -49,7 +48,8 @@ if os.name == 'nt':
     win_cancel_getch = False
 
 def get_input_interrupted(prompt):
-    # type: (str) -> str
+    # TODO: refactor to use interruptable prompt from prompt_toolkit in api.py:193 (login: process 2fa error codes).
+    #  This method to be removed.
     if os.name == 'nt':
         global win_cancel_getch
 
@@ -68,7 +68,7 @@ def get_input_interrupted(prompt):
             raise KeyboardInterrupt()
         return result.decode()
     else:
-        return getpass.getpass(prompt=prompt)
+        return input(prompt)
 
 
 def u2f_authenticate(authenticateRequests):
