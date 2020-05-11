@@ -40,5 +40,4 @@ exe = EXE(pyz,
           upx=False,
           upx_exclude=[],
           runtime_tmpdir=None,
-          icon='lock.ico',
           console=True )

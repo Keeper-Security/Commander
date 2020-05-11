@@ -36,8 +36,7 @@ exe = EXE(pyz,
           bootloader_ignore_signals=False,
           strip=False,
           upx=False,
-          console=True,
-          icon='lock.ico')
+          console=True)
 coll = COLLECT(exe,
                a.binaries,
                a.zipfiles,
