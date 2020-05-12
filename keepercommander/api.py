@@ -235,6 +235,7 @@ def login(params):
 
         elif response_json['result_code'] == 'auth_failed':
             params.password = ''
+            params.auth_verifier = None
             raise AuthenticationError('Authentication failed.')
 
         elif response_json['result_code'] == 'throttled':
@@ -480,6 +481,8 @@ def sync_down(params):
         for sf_uid in response_json['removed_shared_folders']:
             if sf_uid in params.shared_folder_cache:
                 delete_shared_folder_key(sf_uid)
+                if sf_uid in params.subfolder_record_cache:
+                    del params.subfolder_record_cache[sf_uid]
                 shared_folder = params.shared_folder_cache[sf_uid]
                 if 'shared_folder_key' in shared_folder:
                     del shared_folder['shared_folder_key']

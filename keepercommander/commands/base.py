@@ -12,6 +12,7 @@
 import argparse
 import shlex
 import logging
+import json
 import os
 import re
 import csv
@@ -98,9 +99,9 @@ def suppress_exit():
     raise ParseError()
 
 
-def dump_report_data(data, headers, title=None, is_csv = False, filename=None, append=False):
-    # type: (list, list, str, bool, str, bool) -> None
-    if is_csv:
+def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False):
+    # type: (list, list, str, str, str, bool) -> None
+    if fmt == 'csv':
         if filename:
             _, ext = os.path.splitext(filename)
             if not ext:
@@ -120,6 +121,20 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
                 if type(row[i]) == list:
                     row[i] = '\n'.join(row[i])
             csv_writer.writerow(row)
+        if filename:
+            fd.flush()
+            fd.close()
+    elif fmt == 'json':
+        data_list = []
+        for row in data:
+            obj = {}
+            for index, column in filter(lambda x: x[1], enumerate(row)):
+                name = headers[index] if headers and index < len(headers) else "#{:0>2}".format(index)
+                if name != '#':
+                    obj[name] = column
+            data_list.append(obj)
+        fd = open(filename, 'a' if append else 'w') if filename else sys.stdout
+        json.dump(data_list, fd, indent=2)
         if filename:
             fd.flush()
             fd.close()

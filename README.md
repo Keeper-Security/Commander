@@ -26,6 +26,7 @@ Jump to:
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
+* [Build Commander binary package](#binary-builds)
 
 ### Password Management SDK for IT Admins & Developers
 
@@ -1716,3 +1717,35 @@ Keeper is free for local password management on your device.  Premium subscripti
 [Contact Sales or Support](https://keepersecurity.com/contact.html)
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at commander@keepersecurity.com.
+
+### Build Commander binary package
+
+Commander can be bundled with [PyInstaller](https://pyinstaller.readthedocs.io/en/stable/) as a single package.
+There are two PyInstaller configuration files `keeper_folder.spec` and `keeper_file.spec` that build
+["One-Folder"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-folder-program-works) and 
+["One-File"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-file-program-works) packages accordingly.
+To build a binary package:
+```shell script
+# create Python environment
+python -m venv installer
+
+# activate environment
+. installer/bin/activate
+cd Commander
+
+# install base Commander packages
+pip install -r requirements.txt
+
+# install optional packages 
+pip install -r extra_dependencies.txt
+
+# build one-folder package
+pyinstaller keeper-folder.spec
+
+# or build one-file package
+pyinstaller keeper-file.spec
+
+# your packages are in dist/ folder
+``` 
+- MacOS Note: Commander package may not run on MacOS version older than the one on a build machine.
+- Windows Note: There are issues when building a package on Python 3.8.2. 

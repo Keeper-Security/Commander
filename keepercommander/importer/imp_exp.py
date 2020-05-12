@@ -188,6 +188,9 @@ def _import(params, file_format, filename, **kwargs):
     api.sync_down(params)
 
     shared = kwargs.get('shared') or False
+    import_into = kwargs.get('import_into') or ''
+    if import_into:
+        import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
 
     importer = importer_for_format(file_format)()
     # type: BaseImporter
@@ -198,9 +201,11 @@ def _import(params, file_format, filename, **kwargs):
     records = []  # type: [ImportRecord]
     for x in importer.execute(filename):
         if type(x) is ImportRecord:
-            if shared:
-                if x.folders:
-                    for f in x.folders:
+            if shared or import_into:
+                if not x.folders:
+                    x.folders = [ImportFolder()]
+                for f in x.folders:
+                    if shared:
                         d_comps = list(path_components(f.domain)) if f.domain else []
                         p_comps = list(path_components(f.path)) if f.path else []
                         if len(d_comps) > 0:
@@ -210,12 +215,24 @@ def _import(params, file_format, filename, **kwargs):
                             f.domain = p_comps[0]
                             p_comps = p_comps[1:]
                         f.path = PathDelimiter.join([x.replace(PathDelimiter, 2*PathDelimiter) for x in p_comps])
+                    if import_into:
+                        if f.domain:
+                            f.domain = PathDelimiter.join([import_into, f.domain])
+                        elif f.path:
+                            f.path = PathDelimiter.join([import_into, f.path])
+                        else:
+                            f.path = import_into
+
             x.validate()
             records.append(x)
         elif type(x) is ImportSharedFolder:
             if shared:
                 continue
             x.validate()
+            if import_into:
+                if x.path:
+                    x.path = PathDelimiter.join([import_into, x.path])
+
             folders.append(x)
 
     if shared:

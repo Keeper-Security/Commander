@@ -35,6 +35,7 @@ import_parser = argparse.ArgumentParser(prog='import', description='Import data 
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',  help='display Keeper JSON import instructions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass'], required=True, help='file format')
+import_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
@@ -148,7 +149,7 @@ class RecordImportCommand(ImporterCommand):
                         can_share = True
 
             logging.info('Processing... please wait.')
-            imp_exp._import(params, import_format, import_name, shared=shared,
+            imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
                             manage_users=manage_users, manage_records=manage_records,
                             can_edit=can_edit, can_share=can_share)
         else:
