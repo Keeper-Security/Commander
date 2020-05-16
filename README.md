@@ -26,7 +26,7 @@ Jump to:
 * [Password Rotation](#targeted-password-rotations--plugins)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
-* [Build Commander binary package](#binary-builds)
+* [Binary Package](#build-binary-package)
 
 ### Password Management SDK for IT Admins & Developers
 
@@ -1706,11 +1706,13 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [KeeperFill for Edge](https://www.microsoft.com/en-us/store/p/keeper-password-manager-digital-vault/9n0mnnslfz1t)
 
+### Enterprise Resources
+
 [Enterprise Admin Console](https://keepersecurity.com/console)
 
-### Sales & Support 
-
 [Enterprise Guide](https://docs.keeper.io/enterprise-guide/)
+
+### Sales & Support 
 
 [White Papers & Data Sheets](https://keepersecurity.com/enterprise-resources.html)
 
@@ -1718,7 +1720,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at commander@keepersecurity.com.
 
-### Build Commander binary package
+### Build Binary Package
 
 Commander can be bundled with [PyInstaller](https://pyinstaller.readthedocs.io/en/stable/) as a single package.
 There are two PyInstaller configuration files `keeper_folder.spec` and `keeper_file.spec` that build
@@ -1747,5 +1749,6 @@ pyinstaller keeper-file.spec
 
 # your packages are in dist/ folder
 ``` 
-- MacOS Note: Commander package may not run on MacOS version older than the one on a build machine.
-- Windows Note: There are issues when building a package on Python 3.8.2. 
+You can download prebuilt packages for:
+- [Microsoft Windows](https://keepersecurity.com/commander/Commander.msi)
+- [Apple Mac OS](https://keepersecurity.com/commander/Commander.dmg) 
