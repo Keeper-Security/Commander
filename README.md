@@ -1749,6 +1749,3 @@ pyinstaller keeper-file.spec
 
 # your packages are in dist/ folder
 ``` 
-You can download prebuilt packages for:
-- [Microsoft Windows](https://keepersecurity.com/commander/Commander.msi)
-- [Apple Mac OS](https://keepersecurity.com/commander/Commander.dmg) 
