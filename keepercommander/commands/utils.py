@@ -53,6 +53,7 @@ def register_commands(commands):
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
     commands['connect'] = ConnectCommand()
+    commands['delete-corrupted'] = DeleteCorruptedCommand()
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
@@ -866,3 +867,32 @@ class HelpCommand(Command):
 
     def is_authorised(self):
         return False
+
+
+class DeleteCorruptedCommand(Command):
+    def execute(self, params, **kwargs):
+        bad_records = set()
+        for record_uid in params.record_cache:
+            record = params.record_cache[record_uid]
+            if not record.get('data_unencrypted'):
+                if record_uid in params.meta_data_cache:
+                    meta_data = params.meta_data_cache[record_uid];
+                    if meta_data.get('owner'):
+                        bad_records.add(record_uid)
+        if len(bad_records) > 0:
+            uc = user_choice('Do you want to delete {0} corrupted records?'.format(len(bad_records)), 'yn', default='n')
+            if uc.lower() == 'y':
+                request = {
+                    'command': 'record_update',
+                    'delete_records': list(bad_records)
+                }
+                logging.info('Deleting %s records from Keeper', len(params.record_cache))
+                response_json = api.communicate(params, request)
+                success = [info for info in response_json['delete_records'] if info['status'] == 'success']
+                if len(success) > 0:
+                    logging.info("%s records deleted successfully", len(success))
+                failures = [info for info in response_json['delete_records'] if info['status'] != 'success']
+                if len(failures) > 0:
+                    logging.warning("%s records failed to delete", len(failures))
+        else:
+            logging.info('No corrupted records are found.')
