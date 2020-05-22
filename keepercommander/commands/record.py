@@ -702,7 +702,7 @@ class RecordGetUidCommand(Command):
                         print('')
                     return
 
-        raise CommandError('get', 'Cannot find any object with UID: %s'.format(uid))
+        raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 
 
 class RecordDownloadAttachmentCommand(Command):
