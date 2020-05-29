@@ -757,7 +757,7 @@ class ConnectCommand(Command):
         elif parameter == 'login':
             return record.login
         elif parameter == 'password':
-            return record.password
+            return record.unmasked_password or record.password
         else:
             value = record.get(parameter)
             if value:

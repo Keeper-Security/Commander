@@ -200,6 +200,7 @@ audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+audit_report_parser.add_argument('--details', dest='details', action='store_true', help='lookup column details')
 audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], required=True, action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
@@ -2654,6 +2655,7 @@ class AuditReportCommand(Command):
         self.team_lookup = None
         self.role_lookup = None
         self.node_lookup = None
+        self._detail_lookup = None
 
     def get_value(self, params, field, event):
         if field == 'message':
@@ -2733,8 +2735,13 @@ class AuditReportCommand(Command):
     def get_parser(self):
         return audit_report_parser
 
-    @staticmethod
-    def convert_value(field, value, **kwargs):
+    @property
+    def detail_lookup(self):
+        if self._detail_lookup is None:
+            self._detail_lookup = {}
+        return self._detail_lookup
+
+    def convert_value(self, field, value, **kwargs):
         if not value:
             return ''
 
@@ -2751,8 +2758,40 @@ class AuditReportCommand(Command):
             return dt
         elif field in {"first_created", "last_created"}:
             return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-        else:
-            return value
+        elif field in {'record_uid', 'shared_folder_uid', 'team_uid', 'node'}:
+            if kwargs.get('details') and kwargs.get('params'):
+                params = kwargs['params']
+                if value not in self.detail_lookup:
+                    self.detail_lookup[value] = ''
+                    if field == 'record_uid':
+                        if value in params.record_cache:
+                            r = api.get_record(params, value)
+                            if r:
+                                self.detail_lookup[value] = r.title or ''
+                    elif field == 'shared_folder_uid':
+                        if value in params.shared_folder_cache:
+                            sf = api.get_shared_folder(params, value)
+                            if sf:
+                                self.detail_lookup[value] = sf.name or ''
+                    elif field == 'team_uid' and params.enterprise:
+                        team = None
+                        if 'teams' in params.enterprise:
+                            team = next((x for x in params.enterprise['teams'] if x['team_uid'] == value), None)
+                        if not team and 'queued_teams' in params.enterprise:
+                            team = next((x for x in params.enterprise['queued_teams'] if x['team_uid'] == value), None)
+                        if team and 'name' in team:
+                            self.detail_lookup[value] = team['name'] or ''
+                    elif field == 'node' and params.enterprise:
+                        node = None
+                        if 'nodes' in params.enterprise:
+                            node = next((x for x in params.enterprise['nodes'] if str(x['node_id']) == value), None)
+                        if node and 'data' in node:
+                            self.detail_lookup[value] = node['data'].get('displayname') or ''
+
+                detail_value = self.detail_lookup.get(value)
+                if detail_value:
+                    return '{1} ({0})'.format(value, detail_value)
+        return value
 
     def execute(self, params, **kwargs):
         loadSyslogTemplates(params)
@@ -2833,6 +2872,7 @@ class AuditReportCommand(Command):
         fields = []
         table = []
 
+        details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
             misc_fields = ['to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node',
@@ -2855,7 +2895,7 @@ class AuditReportCommand(Command):
                 row = []
                 for field in fields:
                     value = self.get_value(params, field, event)
-                    row.append(self.convert_value(field, value))
+                    row.append(self.convert_value(field, value, details=details, params=params))
                 table.append(row)
             dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
@@ -2892,7 +2932,7 @@ class AuditReportCommand(Command):
             for event in rs['audit_event_overview_report_rows']:
                 row = []
                 for f in fields:
-                    row.append(self.convert_value(f, event.get(f), report_type=report_type))
+                    row.append(self.convert_value(f, event.get(f), report_type=report_type, details=details, params=params))
                 table.append(row)
             dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
