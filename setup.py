@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 from os import path
 
 import keepercommander
@@ -37,26 +37,7 @@ setup(name='keepercommander',
                    "Topic :: Security"],
       keywords='security password',
 
-      packages=['keepercommander',
-                'keepercommander.commands',
-                'keepercommander.importer',
-                'keepercommander.importer.json',
-                'keepercommander.importer.csv',
-                'keepercommander.importer.keepass',
-                'keepercommander.plugins',
-                'keepercommander.plugins.adpasswd',
-                'keepercommander.plugins.awskey',
-                'keepercommander.plugins.mssql',
-                'keepercommander.plugins.mysql',
-                'keepercommander.plugins.oracle',
-                'keepercommander.plugins.postgresql',
-                'keepercommander.plugins.ssh',
-                'keepercommander.plugins.sshkey',
-                'keepercommander.plugins.unixpasswd',
-                'keepercommander.plugins.windows',
-                'keepercommander.plugins.pspasswd',
-                'keepercommander.yubikey',
-                ],
+      packages=find_packages(),
       include_package_data=True,
       python_requires='>=3.4',
       entry_points={
