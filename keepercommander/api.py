@@ -105,7 +105,8 @@ def login(params):
             'include': ['keys', 'license', 'settings', 'enforcements', 'is_enterprise_admin'],
             'version': 2,
             'auth_response': params.auth_verifier,
-            'username': params.user.lower()
+            'username': params.user.lower(),
+            'platform_device_token': base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
         }
 
         if params.mfa_token:
@@ -238,11 +239,8 @@ def login(params):
             params.auth_verifier = None
             raise AuthenticationError('Authentication failed.')
 
-        elif response_json['result_code'] == 'throttled':
-            raise AuthenticationError(response_json['message'])
-
         elif response_json['result_code']:
-            raise AuthenticationError(response_json['result_code'])
+            raise KeeperApiError(response_json['result_code'], response_json['message'])
 
         else:
             raise CommunicationError('Unknown problem')
