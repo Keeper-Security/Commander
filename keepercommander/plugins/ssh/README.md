@@ -7,12 +7,12 @@ The SSH plugin for Keeper Commander gives you the ability to rotate any local or
 
 1) Install the below modules
 
-If Keeper Commander running in Unix based OS
+  
 ```
+# For Keeper Commander running in Unix based OS
 pip3 install pexpect
-```
-If in Windows OS
-```
+
+# For Windows OS
 pip3 install paramiko
 ```
 
