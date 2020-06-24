@@ -6,7 +6,7 @@
 #
 # Keeper Commander
 # Copyright 2018 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Contact: commander@keepersecurity.com
 #
 # Example showing how to add a new or existing record 
 # to an existing shared folder. 
