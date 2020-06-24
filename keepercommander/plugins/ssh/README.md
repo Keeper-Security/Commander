@@ -6,9 +6,13 @@ The SSH plugin for Keeper Commander gives you the ability to rotate any local or
 ### Dependencies 
 
 1) Install the below modules
-
+If Keeper Commander running in Unix based OS
 ```
 pip3 install pexpect
+```
+For Windows OS
+```
+pip3 install paramiko
 ```
 
 2) Add the following Custom Fields to the record that you want to rotate within Keeper
