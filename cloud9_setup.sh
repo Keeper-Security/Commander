@@ -6,11 +6,12 @@ if [ ! -e "$HOME/environment" ]; then
   exit 1;
 fi
 
+CODE_DIR="$HOME/environment";
 GIT_CONFIG_PATH="$HOME/.gitconfig"
 SSH_CONFIG_PATH="$HOME/.ssh/config"
 SSH_GIT_PRV_KEY_PATH="$HOME/.ssh/id_rsa"
 SSH_GIT_PRV_KEY_CHECK='BEGIN RSA PRIVATE KEY'
-GIT_KCMD_PATH="$HOME/environment/Commander"
+GIT_KCMD_PATH="$CODE_DIR/Commander"
 KC_INIT="$HOME/.bash_kc"
 
 GIT_KCMD_SSL='github:Keeper-Security/Commander.git'
@@ -57,9 +58,9 @@ else
 fi
 
 if [ ! -e "${GIT_KCMD_PATH}" ]; then
-  cd $HOME/environment
+  cd $CODE_DIR
   git clone ${GIT_KCMD_SSL}
-  cd $HOME/environment/Commander
+  cd $GIT_KCMD_PATH
   virtualenv -p python3 venv
   source venv/bin/activate
   pip install -r requirements.txt
@@ -69,16 +70,21 @@ else
 fi
 
 if [ ! -e "${KC_INIT}" ]; then
+  echo 'Setting up dev alias KC.'
   cat > ${KC_INIT} <<EOF
-alias dev='cd $HOME/environment/Commander && source venv/bin/activate'
+alias KC='cd $GIT_KCMD_PATH && source venv/bin/activate ; echo "Cmd to exit: deactivate!"'
 EOF
+else
+  echo 'Dev alias KC already exists.'
 fi
 
 if [ -z $(grep -o "$KC_INIT" ~/.bashrc) ] ; then
+  echo 'Initalizing dev alias KC.'
   echo "source $KC_INIT" >> ~/.bashrc
 fi
 
 echo '######################################################'
+echo 'Logout and back in'
 echo 'To start Keeper Command Python virtualenv, type "KC"'
 echo 'To exit type "deactivate"'
 echo '######################################################'
