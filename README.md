@@ -78,9 +78,9 @@ $ pip3 install --upgrade keepercommander
 
 Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
 
-### .Net SDK
+### .Net SDK and PowerShell Module
 
-We are in active development of a .Net SDK that covers the core use cases of accessing and updating vault records.  See the [.Net SDK](https://github.com/Keeper-Security/Commander/tree/master/dotnet-keeper-sdk) for source code and sample Commander project of the latest version.
+We are in active development of a .Net SDK and PowerShell that covers the core use cases of accessing and updating vault records.  See the [.Net SDK](https://github.com/Keeper-Security/keeper-sdk-dotnet) for sample code and PowerShell modules.
 
 ### Developer Mode
 
