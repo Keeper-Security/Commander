@@ -421,6 +421,14 @@ class ShareFolderCommand(Command):
 
             public_keys = {}
             team_keys = {}
+            available_teams = []
+            try:
+                rs = api.communicate(params, {'command': 'get_available_teams'})
+                if 'teams' in rs:
+                    available_teams.extend(rs['teams'])
+            except Exception as e:
+                logging.debug(e)
+
             default_account = False
             if 'user' in kwargs:
                 emails = []
@@ -430,15 +438,14 @@ class ShareFolderCommand(Command):
                         default_account = True
                     else:
                         em = re.match(EMAIL_PATTERN, u)
-                        if not em is None:
+                        if em is not None:
                             emails.append(u)
                         else:
-                            team_uid = None
-                            for tid in params.team_cache:
-                                if tid == u or params.team_cache[tid]['name'].lower() == u.lower():
-                                    team_uid = params.team_cache[tid]['team_uid']
-                                    break
-                            if team_uid:
+                            team = next((x for x in available_teams
+                                         if u == x.get('team_uid') or
+                                         u.lower() == (x.get('team_name') or '').lower()), None)
+                            if team:
+                                team_uid = team['team_uid']
                                 teams.append(team_uid)
                             else:
                                 logging.warning('User %s could not be resolved as email or team', u)
@@ -472,7 +479,8 @@ class ShareFolderCommand(Command):
                                 elif tk['type'] == 2:
                                     team_keys[team_uid] = api.decrypt_rsa(tk['key'], params.rsa_key)
                                 elif tk['type'] == 3:
-                                    team_keys[team_uid] = base64.urlsafe_b64decode(tk['key'] + '==')
+                                    public_key = base64.urlsafe_b64decode(tk['key'] + '==')
+                                    team_keys[team_uid] = RSA.importKey(public_key)
 
             record_uids = []
             default_record = False
@@ -593,7 +601,12 @@ class ShareFolderCommand(Command):
                     elif action == 'grant':
                         to['manage_records'] = mr
                         to['manage_users'] = mu
-                        to['shared_folder_key'] = api.encrypt_aes(sh_fol['shared_folder_key_unencrypted'], team_keys[team_uid])
+                        team_key = team_keys[team_uid]
+                        shared_folder_key = sh_fol['shared_folder_key_unencrypted']
+                        if type(team_key) == bytes:
+                            to['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
+                        else:
+                            to['shared_folder_key'] = api.encrypt_rsa(shared_folder_key, team_key)
                         share_action = 'add_teams'
 
                     if share_action:
@@ -659,17 +672,25 @@ class ShareFolderCommand(Command):
             for node in ['add_teams', 'update_teams', 'remove_teams']:
                 if node in response:
                     for t in response[node]:
-                        team = api.get_team(params, t['team_uid'])
-                        if t['status'] == 'success':
-                            logging.warning('Team share \'%s\' %s', team.name, 'added' if node == 'add_teams' else 'updated' if node == 'update_teams' else 'removed')
-                        else:
-                            logging.error('Team share \'%s\' failed', team.name)
+                        team_uid = t['team_uid']
+                        team = next((x for x in available_teams if x.get('team_uid') == team_uid), None)
+                        if team:
+                            if t['status'] == 'success':
+                                logging.warning('Team share \'%s\' %s', team['team_name'],
+                                                'added' if node == 'add_teams' else
+                                                'updated' if node == 'update_teams' else
+                                                'removed')
+                            else:
+                                logging.error('Team share \'%s\' failed', team['team_name'])
 
             for node in ['add_users', 'update_users', 'remove_users']:
                 if node in response:
                     for s in response[node]:
                         if s['status'] == 'success':
-                            logging.warning('User share \'%s\' %s', s['username'], 'added' if node == 'add_users' else 'updated' if node == 'update_users' else 'removed')
+                            logging.warning('User share \'%s\' %s', s['username'],
+                                            'added' if node == 'add_users' else
+                                            'updated' if node == 'update_users' else
+                                            'removed')
                         elif s['status'] == 'invited':
                             logging.warning('User \'%s\' invited', s['username'])
                         else:
@@ -680,7 +701,10 @@ class ShareFolderCommand(Command):
                     for r in response[node]:
                         rec = api.get_record(params, r['record_uid'])
                         if r['status'] == 'success':
-                            logging.warning('Record share \'%s\' %s', rec.title, 'added' if node == 'add_records' else 'updated' if node == 'update_records' else 'removed')
+                            logging.warning('Record share \'%s\' %s', rec.title,
+                                            'added' if node == 'add_records' else
+                                            'updated' if node == 'update_records' else
+                                            'removed')
                         else:
                             logging.error('Record share \'%s\' failed', rec.title)
 
@@ -1392,7 +1416,7 @@ class RecordPermissionCommand(Command):
                     logging.info('')
 
         if not kwargs.get('dry_run') and (len(shared_folder_update) > 0 or len(direct_shares_update) > 0):
-            print('\n\n' +  bcolors.WARNING + bcolors.BOLD + 'ALERT!!!' + bcolors.ENDC)
+            print('\n\n' + bcolors.WARNING + bcolors.BOLD + 'ALERT!!!' + bcolors.ENDC)
             answer = user_choice("Do you want to proceed with these permission changes?", 'yn', 'n') \
                 if not kwargs.get('force') else 'Y'
             if answer.lower() == 'y':
