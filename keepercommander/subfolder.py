@@ -66,8 +66,9 @@ def try_resolve_path(params, path):
             else:
                 for uid in folder.subfolders:
                     sf = params.folder_cache[uid]
-                    if sf.name.strip() == path_component:
+                    if sf.name.strip().casefold() == path_component.casefold():
                         folder_uid = uid
+                        break
             if folder_uid:
                 folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
             else:
