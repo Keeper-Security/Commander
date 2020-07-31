@@ -926,6 +926,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         'role_id': r['role_id']
                     }
                     request_batch.append(rq)
+
                 users = [x for x in params.enterprise['users'] if x['node_id'] in nodes]
                 for u in users:
                     rq = {
@@ -934,13 +935,14 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     }
                     request_batch.append(rq)
 
-                teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
-                for t in teams:
-                    rq = {
-                        'command': 'team_delete',
-                        'team_uid': t['team_uid']
-                    }
-                    request_batch.append(rq)
+                if 'teams' in params.enterprise:
+                    teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
+                    for t in teams:
+                        rq = {
+                            'command': 'team_delete',
+                            'team_uid': t['team_uid']
+                        }
+                        request_batch.append(rq)
 
                 sub_nodes.pop(0)
                 sub_nodes.reverse()
