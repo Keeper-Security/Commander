@@ -87,6 +87,10 @@ class TestRegister(TestCase):
             rs['records'] = [{'record_uid': x, 'user_permissions': [], 'shared_folder_permissions': []} for x in request['records']]
             return rs
 
+        if request['command'] == 'get_available_teams':
+            rs['teams'] = []
+            return rs
+
         if request['command'] == 'pre_register':
             rs['result'] = 'fail'
             rs['result_code'] = 'Failed_to_find_user'
