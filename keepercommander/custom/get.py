@@ -9,7 +9,26 @@
 # Contact: commander@keepersecurity.com
 #
 # Example code to retrieve the password for a record
-# stored in the vault.  This example also pulls configuration
+# stored in the vault.  
+# 
+# This example shows how to get the record from UID
+# or from the full path.  For example:
+# 
+# By UID:
+# -----------
+# $ python get.py 
+# User(Email): mydemo@company.com
+# Master Password: *******
+# Enter record UID or full record path: InS1KiJBf1XGK16itcLnyA
+#
+# By Path:
+# -----------
+# $ python get.py 
+# User(Email): mydemo@company.com
+# Master Password: *******
+# Enter record UID or full record path: Docs/Customer Data/Hubspot
+#
+# This code also pulls configuration
 # from config.json or writes the config file if it does not exist.
 #
 # Usage:
