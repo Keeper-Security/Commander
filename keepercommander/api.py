@@ -1096,6 +1096,13 @@ def load_available_teams(params):
     try:
         rs = communicate(params, rq)
         params.available_team_cache = rs.get('teams')
+        for t in params.available_team_cache:
+            team_uid = t['team_uid']
+            if team_uid in params.team_cache:
+                team = params.team_cache[team_uid]
+                if 'team_key_unencrypted' in team:
+                    params.key_cache[team_uid] = team['team_key_unencrypted']
+
     except Exception as e:
         logging.debug(e)
 
