@@ -17,7 +17,7 @@ install_requires = [
     'tabulate',
     'prompt_toolkit>=2.0.4,<=2.0.10',
     'asciitree',
-    'protobuf>=3.6.0',
+    'protobuf>=3.10.0',
     'pyperclip'
 ]
 
