@@ -120,6 +120,7 @@ edit_parser.exit = suppress_exit
 
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove record')
+rm_parser.add_argument('--purge', dest='purge', action='store_true', help='remove owned record from all folders')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 rm_parser.error = raise_parse_exception
@@ -448,7 +449,6 @@ class RecordRemoveCommand(Command):
         if name in params.record_cache:
             record_uid = name
             folders = list(find_folders(params, record_uid))
-            #TODO support multiple folders
             if len(folders) > 0:
                 folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
         else:
@@ -463,42 +463,68 @@ class RecordRemoveCommand(Command):
         if record_uid is None:
             raise CommandError('rm', 'Enter name of existing record')
 
-        del_obj = {
-            'delete_resolution': 'unlink',
-            'object_uid': record_uid,
-            'object_type': 'record'
-        }
-        if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-            del_obj['from_type'] = 'user_folder'
-            if folder.type == BaseFolderNode.UserFolderType:
-                del_obj['from_uid'] = folder.uid
+        if kwargs.get('purge'):
+            is_owner = False
+            if record_uid in params.meta_data_cache:
+                md = params.meta_data_cache[record_uid]
+                is_owner = md.get('owner') or False
+            if not is_owner:
+                logging.warning('Record purge error: Not an owner')
+                return
+
+            rq = {
+                'command': 'record_update',
+                'pt': 'Commander',
+                'device_id': 'Commander',
+                'client_time': api.current_milli_time(),
+                'delete_records': [record_uid]
+            }
+            if not kwargs.get('force'):
+                answer = user_choice('Do you want to proceed with record purge?', 'yn', default='n')
+                if answer.lower() != 'y':
+                    return
+            rs = api.communicate(params, rq)
+            if 'delete_records' in rs:
+                for status in rs['delete_records']:
+                    if status['status'] != 'success':
+                        logging.warning('Record purge error: %s', status.get('status'))
         else:
-            del_obj['from_type'] = 'shared_folder_folder'
-            del_obj['from_uid'] = folder.uid
+            del_obj = {
+                'delete_resolution': 'unlink',
+                'object_uid': record_uid,
+                'object_type': 'record'
+            }
+            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                del_obj['from_type'] = 'user_folder'
+                if folder.type == BaseFolderNode.UserFolderType:
+                    del_obj['from_uid'] = folder.uid
+            else:
+                del_obj['from_type'] = 'shared_folder_folder'
+                del_obj['from_uid'] = folder.uid
 
-        rq = {
-            'command': 'pre_delete',
-            'objects': [del_obj]
-        }
+            rq = {
+                'command': 'pre_delete',
+                'objects': [del_obj]
+            }
 
-        rs = api.communicate(params, rq)
-        if rs['result'] == 'success':
-            pdr = rs['pre_delete_response']
+            rs = api.communicate(params, rq)
+            if rs['result'] == 'success':
+                pdr = rs['pre_delete_response']
 
-            force = kwargs['force'] if 'force' in kwargs else None
-            np = 'y'
-            if not force:
-                summary = pdr['would_delete']['deletion_summary']
-                for x in summary:
-                    print(x)
-                np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-            if np.lower() == 'y':
-                rq = {
-                    'command': 'delete',
-                    'pre_delete_token': pdr['pre_delete_token']
-                }
-                api.communicate(params, rq)
-                params.sync_data = True
+                force = kwargs['force'] if 'force' in kwargs else None
+                np = 'y'
+                if not force:
+                    summary = pdr['would_delete']['deletion_summary']
+                    for x in summary:
+                        print(x)
+                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                if np.lower() == 'y':
+                    rq = {
+                        'command': 'delete',
+                        'pre_delete_token': pdr['pre_delete_token']
+                    }
+                    api.communicate(params, rq)
+                    params.sync_data = True
 
 
 class SearchCommand(Command):
