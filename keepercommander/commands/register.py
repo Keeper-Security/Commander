@@ -664,37 +664,37 @@ class ShareFolderCommand(Command):
                             team = next((x for x in params.available_team_cache if x.get('team_uid') == team_uid), None)
                             if team:
                                 if t['status'] == 'success':
-                                    logging.warning('Team share \'%s\' %s', team['team_name'],
+                                    logging.info('Team share \'%s\' %s', team['team_name'],
                                                     'added' if node == 'add_teams' else
                                                     'updated' if node == 'update_teams' else
                                                     'removed')
                                 else:
-                                    logging.error('Team share \'%s\' failed', team['team_name'])
+                                    logging.warning('Team share \'%s\' failed', team['team_name'])
 
                 for node in ['add_users', 'update_users', 'remove_users']:
                     if node in response:
                         for s in response[node]:
                             if s['status'] == 'success':
-                                logging.warning('User share \'%s\' %s', s['username'],
+                                logging.info('User share \'%s\' %s', s['username'],
                                                 'added' if node == 'add_users' else
                                                 'updated' if node == 'update_users' else
                                                 'removed')
                             elif s['status'] == 'invited':
-                                logging.warning('User \'%s\' invited', s['username'])
+                                logging.info('User \'%s\' invited', s['username'])
                             else:
-                                logging.error('User share \'%s\' failed', s['username'])
+                                logging.warning('User share \'%s\' failed', s['username'])
 
                 for node in ['add_records', 'update_records', 'remove_records']:
                     if node in response:
                         for r in response[node]:
                             rec = api.get_record(params, r['record_uid'])
                             if r['status'] == 'success':
-                                logging.warning('Record share \'%s\' %s', rec.title,
+                                logging.info('Record share \'%s\' %s', rec.title,
                                                 'added' if node == 'add_records' else
                                                 'updated' if node == 'update_records' else
                                                 'removed')
                             else:
-                                logging.error('Record share \'%s\' failed', rec.title)
+                                logging.warning('Record share \'%s\' failed', rec.title)
 
             except KeeperApiError as kae:
                 if kae.result_code != 'bad_inputs_nothing_to_do':
