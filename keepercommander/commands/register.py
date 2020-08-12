@@ -52,7 +52,8 @@ def register_command_info(aliases, command_info):
     aliases['sf'] = 'share-folder'
     aliases['cu'] = 'create-user'
 
-    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser, register_parser]:
+    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
+              file_report_parser, register_parser]:
         command_info[p.prog] = p.description
 
 
@@ -120,7 +121,7 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper User')
+register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper user')
 register_parser.add_argument('--store-record', dest='store', action='store_true',
                              help='store credentials into Keeper record (must be logged in)')
 register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
@@ -140,8 +141,9 @@ register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
 
 
-file_report_parser = argparse.ArgumentParser(prog='file_report', description='File Attachment Report')
-file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true', help='try download attachment')
+file_report_parser = argparse.ArgumentParser(prog='file_report', description='File attachment report')
+file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
+                                help='try downloading the attachments')
 file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
