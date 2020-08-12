@@ -141,7 +141,7 @@ register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
 
 
-file_report_parser = argparse.ArgumentParser(prog='file_report', description='File attachment report')
+file_report_parser = argparse.ArgumentParser(prog='file-report', description='File attachment report')
 file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
                                 help='try downloading the attachments')
 file_report_parser.error = raise_parse_exception
