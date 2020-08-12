@@ -16,6 +16,7 @@ import os
 import base64
 import json
 import logging
+import requests
 
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
@@ -43,6 +44,7 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['create-user'] = RegisterCommand()
+    commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -136,6 +138,12 @@ register_parser.add_argument('--answer', dest='answer', action='store', help='se
 register_parser.add_argument('email', action='store', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
+
+
+file_report_parser = argparse.ArgumentParser(prog='file_report', description='File Attachment Report')
+file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true', help='try download attachment')
+file_report_parser.error = raise_parse_exception
+file_report_parser.exit = suppress_exit
 
 
 class RegisterCommand(Command):
@@ -1479,3 +1487,51 @@ class RecordPermissionCommand(Command):
                     logging.info('')
 
                 params.sync_data = True
+
+
+class FileReportCommand(Command):
+    def get_parser(self):
+        return file_report_parser
+
+    def execute(self, params, **kwargs):
+        headers = ['#', 'Title', 'Record UID', 'File ID']
+        if kwargs.get('try_download'):
+            headers.append('Downloadable')
+        table = []
+        for record_uid in params.record_cache:
+            r = api.get_record(params, record_uid)
+            if not r.attachments:
+                continue
+            file_ids = {}
+            for atta in r.attachments:
+                file_id = atta.get('id')
+                file_ids[file_id] = ''
+            if kwargs.get('try_download'):
+                ids = [x for x in file_ids]
+                rq = {
+                    'command': 'request_download',
+                    'file_ids': ids,
+                }
+                api.resolve_record_access_path(params, r.record_uid, path=rq)
+                logging.info('Downloading attachments for record %s', r.title)
+                try:
+                    rs = api.communicate(params, rq)
+                    urls = {}
+                    for file_id, dl in zip(ids, rs['downloads']):
+                        if 'url' in dl:
+                            urls[file_id] = dl['url']
+                        elif 'error_code' in dl:
+                            file_ids[file_id] = dl['error_code']
+                    for file_id in urls:
+                        url = urls[file_id]
+                        opt_rs = requests.get(url, headers={"Range": "bytes=0-1"})
+                        file_ids[file_id] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
+                except Exception as e:
+                    logging.debug(e)
+            for file_id in file_ids:
+                row = [len(table) + 1, r.title, r.record_uid, file_id]
+                if kwargs.get('try_download'):
+                    row.append(file_ids[file_id] or '-')
+                table.append(row)
+
+        dump_report_data(table, headers)
