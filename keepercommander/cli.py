@@ -100,11 +100,7 @@ def do_command(params, command_line):
                 if cmd in commands:
                     command = commands[cmd]
                 else:
-                    if params.enterprise:
-                        command = enterprise_commands[cmd]
-                    else:
-                        logging.error('This command is restricted to Keeper Enterprise administrators.')
-                        return
+                    command = enterprise_commands[cmd]
 
                 if command.is_authorised():
                     if not params.session_token:
@@ -116,6 +112,10 @@ def do_command(params, command_line):
                         except KeyboardInterrupt as e:
                             logging.info('Canceled')
                             return
+
+                    if cmd in enterprise_commands and not params.enterprise:
+                        logging.error('This command is restricted to Keeper Enterprise administrators.')
+                        return
 
                 params.event_queue.clear()
                 result = command.execute_args(params, args, command=orig_cmd)
