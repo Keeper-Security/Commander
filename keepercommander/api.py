@@ -168,6 +168,7 @@ def login(params):
 
             if response_json.get('is_enterprise_admin'):
                 query_enterprise(params)
+                query_msp(params)
 
             params.sync_data = True
             params.prepare_commands = True
@@ -1622,6 +1623,57 @@ def get_record_shares(params, record_uids):
 
         except Exception as e:
             logging.error(e)
+
+
+def query_msp(params):
+    def fix_data(d):
+        idx = d.rfind(b'}')
+        if idx < len(d) - 1:
+            d = d[:idx+1]
+        return d
+
+    request = {
+        'command': 'get_enterprise_data',
+        'include': ['managed_companies', 'licenses', 'nodes']
+    }
+
+    try:
+        response = communicate(params, request)
+        if response['result'] == 'success':
+            if 'key_type_id' in response:
+                tree_key = None
+                if response['key_type_id'] == 1:
+                    tree_key = decrypt_data(response['tree_key'], params.data_key)
+                elif response['key_type_id'] == 2:
+                    tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
+                if not tree_key is None:
+                    tree_key = tree_key[:32]
+                    response['unencrypted_tree_key'] = tree_key
+                    if 'managed_companies' in response:
+                        for mc in response['managed_companies']:
+                            mc['data'] = {}
+                            if 'encrypted_data' in mc:
+                                try:
+                                    data = decrypt_data(mc['encrypted_data'], tree_key)
+                                    data = fix_data(data)
+                                    mc['data'] = json.loads(data.decode('utf-8'))
+                                except Exception as e:
+                                    pass
+                    if 'nodes' in response:
+                        for node in response['nodes']:
+                            node['data'] = {}
+                            if 'encrypted_data' in node:
+                                try:
+                                    data = decrypt_data(node['encrypted_data'], tree_key)
+                                    data = fix_data(data)
+                                    node['data'] = json.loads(data.decode('utf-8'))
+                                except Exception as e:
+                                    pass
+
+                    params.enterprise = response
+
+    except:
+        params.enterprise = None
 
 
 def query_enterprise(params):
