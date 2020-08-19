@@ -80,6 +80,7 @@ class KeeperParams:
         self.meta_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
+        self.key_cache = {}    # team or user
         self.available_team_cache = None
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}
@@ -121,6 +122,7 @@ class KeeperParams:
         self.shared_folder_cache.clear()
         self.team_cache.clear()
         self.available_team_cache = None
+        self.key_cache.clear()
         self.subfolder_cache .clear()
         self.subfolder_record_cache.clear()
         self.non_shared_data_cache.clear()
