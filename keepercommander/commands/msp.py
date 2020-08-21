@@ -11,7 +11,8 @@
 import argparse
 import os
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise import EnterpriseCommand
@@ -53,15 +54,27 @@ msp_info_parser.exit = suppress_exit
 
 msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='MSP License Management', usage='msp-license --add --seats=4')
 msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['list', 'add', 'reduce', 'usage'], help='Action to perform on the licenses')
-msp_license_parser.add_argument('--mc', dest='mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc.')
+msp_license_parser.add_argument('--mc', dest='mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 # msp_license_parser.add_argument('--product_id', dest='product_id', action='store', choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'], help='Plan Id.')
-msp_license_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, help='Seats to add or reduce.')
+msp_license_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, help='Number of seats to add or reduce.')
 msp_license_parser.error = raise_parse_exception
 msp_license_parser.exit = suppress_exit
 
-msp_license_report_parser = argparse.ArgumentParser(prog='msp-license-report', description='MSP License Reports')
-msp_license_report_parser.add_argument('--type', dest='report_type', choices=['allocation', 'audit'], help='Type of the report', default='allocation')
+ranges = ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']
+
+msp_license_report_parser = argparse.ArgumentParser(prog='msp-license-report',
+                                                    description='MSP License Reports. Use pre-defined data ranges or custom date range')
+msp_license_report_parser.add_argument('--type',
+                                       dest='report_type',
+                                       choices=['allocation', 'audit'],
+                                       help='Type of the report',
+                                       default='allocation')
 msp_license_report_parser.add_argument('--format', dest='report_format', choices=['table', 'csv', 'json'], help='Format of the report output', default='table')
+msp_license_report_parser.add_argument('--range',
+                                       dest='range',
+                                       choices=ranges,
+                                       help="pre-defined data ranges to run the report.",
+                                       default='last_30_days')
 msp_license_report_parser.add_argument('--from', dest='from_date', help='Run report from this date. Example: 08/16/2020')   # TODO: Change format to YYYY-mm-dd
 msp_license_report_parser.add_argument('--to', dest='to_date', help='Run report until this date. Example: 08/18/2020')      # TODO: Change format to YYYY-mm-dd
 msp_license_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
@@ -185,13 +198,22 @@ class MSPLicensesReportCommand(EnterpriseCommand):
                 for i, lic in enumerate(licenses):
                     rows = [[ml['product_id'], ml['availableSeats'], ml['seats'], ml['stash']] for j, ml in enumerate(lic['msp_pool'])]
         else:
-            if not from_date_str and not to_date_str:
-                raise CommandError('msp-license-report', "to and from are required to run the report.")
 
-            from_date = datetime.strptime(from_date_str + " 00:00:00", "%m/%d/%Y %H:%M:%S")
+            if not from_date_str or not to_date_str:
+                # will use data range to query
+                # raise CommandError('msp-license-report', "to and from are required to run the report.")
+
+                rng = kwargs['range']
+                from_date1, end_date1 = date_range_str_to_dates(rng)
+
+                from_date = from_date1
+                to_date = end_date1
+            else:
+                # will use start and end data
+                from_date = datetime.strptime(from_date_str + " 00:00:00", "%m/%d/%Y %H:%M:%S")
+                to_date = datetime.strptime(to_date_str + " 11:59:59", "%m/%d/%Y %H:%M:%S")
+
             from_date_timestamp = int(from_date.timestamp() * 1000)
-
-            to_date = datetime.strptime(to_date_str + " 11:59:59", "%m/%d/%Y %H:%M:%S")
             to_date_timestamp = int(to_date.timestamp() * 1000)
 
             rq = {
@@ -261,3 +283,64 @@ def check_int(s):
     if s[0] in ('-', '+'):
         return s[1:].isdigit()
     return s.isdigit()
+
+
+def date_range_str_to_dates(range_str):
+
+    if range_str not in ranges:
+        raise CommandError('', "Given range %s is not supported. Supported ranges: %s" % (range_str, ranges))
+
+    current_time = datetime.now()
+
+    today_start_dt = current_time.replace(hour=0, minute=0, second=0)
+    today_end_dt = current_time.replace(hour=11, minute=59, second=59)
+
+    start_date = None
+    end_date = None
+
+    def last_day_of_month(dt):
+        year = dt.strftime("%Y")                       # get the year
+        month = str(int(dt.strftime("%m")) % 12 + 1)   # get month, watch rollover
+
+        ldom = calendar.monthrange(int(year), int(month))[1]  # get num of days in this month
+
+        last_date_of_month = dt.replace(hour=11, minute=59, second=59, day=ldom)
+
+        return last_date_of_month
+
+    if range_str == 'today':
+        start_date = today_start_dt
+        end_date = today_end_dt
+
+    elif range_str == 'yesterday':
+        start_date = today_start_dt - timedelta(1)
+        end_date = today_end_dt - timedelta(1)
+
+    elif range_str == 'last_7_days':
+        start_date = today_start_dt - timedelta(7)
+        end_date = today_end_dt
+
+    elif range_str == 'last_30_days':
+        start_date = today_start_dt - timedelta(30)
+        end_date = today_end_dt
+
+    elif range_str == 'month_to_date':
+        start_date = today_start_dt.replace(hour=0, minute=0, second=0, day=1)
+        end_date = today_end_dt
+
+    elif range_str == 'last_month':
+        last_month_num = current_time.month - 1 if current_time.month > 1 else 12
+        last_month_dt = current_time.replace(month=last_month_num)
+
+        start_date = current_time.replace(month=last_month_num, day=1, hour=0, minute=0, second=0)
+        end_date = last_day_of_month(last_month_dt)
+
+    elif range_str == 'year_to_date':
+        start_date = today_start_dt.replace(day=1, month=1, hour=0, minute=0, second=0)
+        end_date = today_end_dt
+
+    elif range_str == 'last_year':
+        start_date = today_start_dt.replace(year=(today_start_dt.year - 1), day=1,  month=1,  hour=0,  minute=0,  second=0)
+        end_date = today_start_dt.replace(year=(today_start_dt.year - 1), day=31, month=12, hour=11, minute=59, second=59)
+
+    return start_date, end_date
