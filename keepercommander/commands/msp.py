@@ -75,8 +75,13 @@ msp_license_report_parser.add_argument('--range',
                                        choices=ranges,
                                        help="pre-defined data ranges to run the report.",
                                        default='last_30_days')
-msp_license_report_parser.add_argument('--from', dest='from_date', help='Run report from this date. Example: 08/16/2020')   # TODO: Change format to YYYY-mm-dd
-msp_license_report_parser.add_argument('--to', dest='to_date', help='Run report until this date. Example: 08/18/2020')      # TODO: Change format to YYYY-mm-dd
+msp_license_report_parser.add_argument('--from', dest='from_date',
+                                       help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) '
+                                            'or Unix timestamp format. Example: 2020-08-18 or 1596265200')   # TODO: Change format to YYYY-mm-dd
+msp_license_report_parser.add_argument('--to',
+                                       dest='to_date',
+                                       help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) '
+                                            'or Unix timestamp format. Example: 2020-08-18 or 1596265200')      # TODO: Change format to YYYY-mm-dd
 msp_license_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
@@ -127,7 +132,7 @@ class MSPLicenseCommand(EnterpriseCommand):
                 format_msp_licenses(licenses)
             return
 
-        elif action is 'add' or 'reduce':
+        elif action == 'add' | action == 'reduce':
             seats = kwargs['seats']
 
             mc_input = kwargs['mc'] if kwargs['mc'] else -1
@@ -210,8 +215,15 @@ class MSPLicensesReportCommand(EnterpriseCommand):
                 to_date = end_date1
             else:
                 # will use start and end data
-                from_date = datetime.strptime(from_date_str + " 00:00:00", "%m/%d/%Y %H:%M:%S")
-                to_date = datetime.strptime(to_date_str + " 11:59:59", "%m/%d/%Y %H:%M:%S")
+                if check_int(from_date_str):
+                    from_date = datetime.fromtimestamp(int(from_date_str))
+                else:
+                    from_date = datetime.strptime(from_date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")
+
+                if check_int(to_date_str):
+                    to_date = datetime.fromtimestamp(int(to_date_str))
+                else:
+                    to_date = datetime.strptime(to_date_str + " 11:59:59", "%Y-%m-%d %H:%M:%S")
 
             from_date_timestamp = int(from_date.timestamp() * 1000)
             to_date_timestamp = int(to_date.timestamp() * 1000)
