@@ -1643,6 +1643,7 @@ Keeper has partnered with Bugcrowd to manage our vulnerability disclosure progra
 ### Troubleshooting 
 
 **SSL Certificate Errors**
+
 When running Commander or related Keeper SDK code, if you receive SSL certificate errors such as:
 
 ```bash
