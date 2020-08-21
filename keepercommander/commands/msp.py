@@ -52,18 +52,18 @@ msp_info_parser.error = raise_parse_exception
 msp_info_parser.exit = suppress_exit
 
 msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='MSP License Management', usage='msp-license --add --seats=4')
-msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['list', 'add', 'revoke', 'usage'], help='Action to perform on the licenses')
-msp_license_parser.add_argument('--mc_id', dest='mc_id', action='store', help='Numerical ID of the Managed Company. Ex. 3862')
+msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['list', 'add', 'reduce', 'usage'], help='Action to perform on the licenses')
+msp_license_parser.add_argument('--mc', dest='mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc.')
 # msp_license_parser.add_argument('--product_id', dest='product_id', action='store', choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'], help='Plan Id.')
-msp_license_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, help='Seats to add or revoke.')
+msp_license_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, help='Seats to add or reduce.')
 msp_license_parser.error = raise_parse_exception
 msp_license_parser.exit = suppress_exit
 
 msp_license_report_parser = argparse.ArgumentParser(prog='msp-license-report', description='MSP License Reports')
 msp_license_report_parser.add_argument('--type', dest='report_type', choices=['allocation', 'audit'], help='Type of the report', default='allocation')
 msp_license_report_parser.add_argument('--format', dest='report_format', choices=['table', 'csv', 'json'], help='Format of the report output', default='table')
-msp_license_report_parser.add_argument('--from', dest='from_date', help='Run report from this date. Example: 08/16/2020')
-msp_license_report_parser.add_argument('--to', dest='to_date', help='Run report until this date. Example: 08/18/2020')
+msp_license_report_parser.add_argument('--from', dest='from_date', help='Run report from this date. Example: 08/16/2020')   # TODO: Change format to YYYY-mm-dd
+msp_license_report_parser.add_argument('--to', dest='to_date', help='Run report until this date. Example: 08/18/2020')      # TODO: Change format to YYYY-mm-dd
 msp_license_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
@@ -114,15 +114,19 @@ class MSPLicenseCommand(EnterpriseCommand):
                 format_msp_licenses(licenses)
             return
 
-        elif action is 'add' or 'revoke':
+        elif action is 'add' or 'reduce':
             seats = kwargs['seats']
 
-            mc_id = int(kwargs['mc_id']) if kwargs['mc_id'] else -1
+            mc_input = kwargs['mc'] if kwargs['mc'] else -1
 
             msp_license_pool = enterprise['licenses'][0]['msp_pool']
             managed_companies = enterprise['managed_companies']
 
-            current_mc = find(lambda mc: mc['mc_enterprise_id'] == mc_id, managed_companies)
+            current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
+
+            if current_mc is None:
+                raise CommandError('msp-license', 'No managed company was found for given company id or name')
+
             current_product_id = current_mc['product_id']
             seats_to_set = 0
 
@@ -134,7 +138,7 @@ class MSPLicenseCommand(EnterpriseCommand):
                     raise CommandError('msp-license', error_message)
                 else:
                     seats_to_set = current_mc['number_of_seats'] + seats
-            elif action == 'revoke':
+            elif action == 'reduce':
                 seats_to_set = current_mc['number_of_seats'] - seats
 
                 if seats_to_set < 0:
@@ -142,7 +146,7 @@ class MSPLicenseCommand(EnterpriseCommand):
 
             rq = {
                 'command': 'enterprise_update_by_msp',
-                'enterprise_id': mc_id,                     # --mc_id=3862
+                'enterprise_id': current_mc['mc_enterprise_id'],
                 'enterprise_name': current_mc['mc_enterprise_name'],
                 'product_id': current_mc['product_id'],
                 'seats': seats_to_set
@@ -212,14 +216,28 @@ class MSPLicensesReportCommand(EnterpriseCommand):
                              log['note'],
                              log['price']])
 
-        # if kwargs.get('format') != 'json':
-        #     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+        if kwargs.get('format') != 'json':
+            headers = [string.capwords(x.replace('_', ' ')) for x in headers]
 
         dump_report_data(rows, headers, fmt=report_format, filename=report_output_file, append=to_append)
 
         if report_format != 'table':
             print("Successfully saved report to", report_generation_message(report_output_file, report_format))
             print()
+
+
+def get_mc_by_name_or_id(msc, name_or_id):
+
+    found_mc = None
+    if check_int(name_or_id):
+        # get by id
+        found_mc = find(lambda mc: mc['mc_enterprise_id'] == int(name_or_id), msc)
+
+    else:
+        # get by company name (all lower case)
+        found_mc = find(lambda mc: mc['mc_enterprise_name'].lower() == name_or_id.lower(), msc)
+
+    return found_mc
 
 
 def find(f, seq):
@@ -236,3 +254,10 @@ def report_generation_message(filename, filetype):
             filename += '.'+filetype
 
     return filename
+
+
+def check_int(s):
+    # check if string is an integer
+    if s[0] in ('-', '+'):
+        return s[1:].isdigit()
+    return s.isdigit()
