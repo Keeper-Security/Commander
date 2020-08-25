@@ -24,6 +24,7 @@ Jump to:
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
+* [Troubleshooting](#troubleshooting)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
 * [Binary Package](#build-binary-package)
@@ -237,6 +238,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```upload-attachment``` Upload file attachments to the specified record
 
 * ```delete-attachment``` Delete a file attachment from the specified record.  Specify Record UID and Filename (or Attachment ID)
+
+* ```file-report``` File attachment report
 
 * ```list-sf``` or ```lsf``` Display all shared folders
 
@@ -1705,6 +1708,18 @@ For more details on Keeper's security architecture, certifications and implement
 ### Vulnerability Disclosure Program
 
 Keeper has partnered with Bugcrowd to manage our vulnerability disclosure program. Please submit reports through https://bugcrowd.com/keepersecurity or send an email to security@keepersecurity.com.
+
+### Troubleshooting 
+
+**SSL Certificate Errors**
+
+When running Commander or related Keeper SDK code, if you receive SSL certificate errors such as:
+
+```bash
+requests.exceptions.SSLError: HTTPSConnectionPool(host='keepersecurity.com', port=443): Max retries exceeded with url: /api/rest/authentication/get_device_token (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1108)')))
+```
+
+If you receive this message, please make sure that your network is not attempting to do packet inspection with a proxy.  Due to our advanced encryption, Keeper traffic cannot be intercepted by a network proxy device.  Consult with your IT team to allow traffic to keepersecurity.com on the firewall outbound.
 
 ### About Keeper
 

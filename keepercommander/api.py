@@ -1036,6 +1036,51 @@ def get_shared_folder(params,shared_folder_uid):
     return sf
 
 
+def load_user_public_keys(params, emails):  # type: (KeeperParams, list) -> None
+    emails_to_load = [x for x in emails if x.lower() not in params.key_cache]
+    if not emails_to_load:
+        return
+    rq = {
+        'command': 'public_keys',
+        'key_owners': emails
+    }
+    rs = communicate(params, rq)
+    if 'public_keys' in rs:
+        for pk in rs['public_keys']:
+            if 'public_key' in pk:
+                email = pk['key_owner']
+                public_key = base64.urlsafe_b64decode(pk['public_key'] + '==')
+                try:
+                    params.key_cache[email] = RSA.importKey(public_key)
+                except Exception as e:
+                    logging.debug(e)
+
+
+def load_team_keys(params, team_uids):          # type: (KeeperParams, list) -> None
+    uids_to_load = [x for x in team_uids if x not in params.key_cache]
+    if not uids_to_load:
+        return
+    rq = {
+        'command': 'team_get_keys',
+        'teams': uids_to_load
+    }
+    rs = communicate(params, rq)
+    if 'keys' in rs:
+        for tk in rs['keys']:
+            if 'key' in tk:
+                team_uid = tk['team_uid']
+                try:
+                    if tk['type'] == 1:
+                        params.key_cache[team_uid] = decrypt_data(tk['key'], params.data_key)
+                    elif tk['type'] == 2:
+                        params.key_cache[team_uid] = decrypt_rsa(tk['key'], params.rsa_key)
+                    elif tk['type'] == 3:
+                        public_key = base64.urlsafe_b64decode(tk['key'] + '==')
+                        params.key_cache[team_uid] = RSA.importKey(public_key)
+                except Exception as e:
+                    logging.debug(e)
+
+
 def load_available_teams(params):
     if params.available_team_cache is not None:
         return
