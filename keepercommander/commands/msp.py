@@ -13,10 +13,13 @@ import os
 import string
 from datetime import datetime, timedelta
 import calendar
+from .. import APIRequest_pb2 as proto
+import base64
+from ..params import KeeperParams
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise import EnterpriseCommand
-from .. import api
+from .. import api, rest_api
 from ..display import format_managed_company, format_msp_licenses
 from ..error import CommandError
 
@@ -26,6 +29,7 @@ def register_commands(commands):
     commands['msp-info'] = MSPInfoCommand()
     commands['msp-license'] = MSPLicenseCommand()
     commands['msp-license-report'] = MSPLicensesReportCommand()
+    commands['msp-login-to-mc'] = MSPLoginToMCCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -33,6 +37,7 @@ def register_command_info(aliases, command_info):
     aliases['mi'] = 'msp-info'
     aliases['ml'] = 'msp-license'
     aliases['mlr'] = 'msp-license-report'
+    aliases['mltm'] = 'msp-login-to-mc'
 
     for p in [msp_data_parser, msp_info_parser, msp_license_parser, msp_license_report_parser]:
         command_info[p.prog] = p.description
@@ -87,6 +92,10 @@ msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
 
 
+
+msp_login_to_mc_parser = argparse.ArgumentParser(prog='msp-login-to_mc_parser',
+                                                    description='MSP License Reports. Use pre-defined data ranges or custom date range')
+
 class GetMSPDataCommand(Command):
 
     def get_parser(self):
@@ -132,7 +141,7 @@ class MSPLicenseCommand(EnterpriseCommand):
                 format_msp_licenses(licenses)
             return
 
-        elif action == 'add' | action == 'reduce':
+        elif action == 'add' or action == 'reduce':
             seats = kwargs['seats']
 
             mc_input = kwargs['mc'] if kwargs['mc'] else -1
@@ -258,6 +267,59 @@ class MSPLicensesReportCommand(EnterpriseCommand):
         if report_format != 'table':
             print("Successfully saved report to", report_generation_message(report_output_file, report_format))
             print()
+
+
+class MSPLoginToMCCommand(EnterpriseCommand):
+    def get_parser(self):
+        return msp_login_to_mc_parser
+
+    def execute(self, params, **kwargs):
+        print("Login")
+
+        rq = proto.LoginToMcRequest()   # type: proto.LoginToMcRequest
+        rq.mcEnterpriseId = 3900
+
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+        api_request_payload.payload = rq.SerializeToString()
+
+        rs = rest_api.execute_rest(params.rest_context, 'authentication/login_to_mc', api_request_payload)
+
+
+        if type(rs) is bytes:
+            login_to_mc_rs = proto.LoginToMcResponse()
+            login_to_mc_rs.ParseFromString(rs)
+
+
+            encrypted_session_token = login_to_mc_rs.encryptedSessionToken
+            encrypted_tree_key = login_to_mc_rs.encryptedTreeKey
+
+            print("encrypted_session_token:", encrypted_session_token)
+            print("encrypted_tree_key:", encrypted_tree_key)
+
+            mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
+            mc_params.user = params.user
+            # mc_params.rest_context = params.rest_context
+            # mc_params.session_token = params.session_token
+            mc_params.session_token = (base64.urlsafe_b64encode(encrypted_session_token).decode()).rstrip('=')
+            # mc_params.session_token = "d5WVDqFIy0GT5wjoFhEGNjaUWeewqnpkML7OC0HpwOGFZLmfjlFYjGLG8B4bE8V-Vd7Eo2IyP_DWawkF3r8JuJ_l7Thk_93gno6YT4YE5jw4-bdNXQ"
+            # rest_api.CLIENT_VERSION = 'c15.0.0'
+
+            request = {
+                'command': 'get_enterprise_data',
+                'include': ['licenses']
+            }
+
+            response = api.communicate(mc_params, request)
+
+            # api.query_enterprise(mc_params)
+
+            print("Hi mom", response)
+
+        # elif type(rs) is dict:
+            # raise KeeperApiError(rs['error'], rs['message'])
+
+        # api.login_to_mc(params, 3900)
 
 
 def get_mc_by_name_or_id(msc, name_or_id):

@@ -43,7 +43,7 @@ from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
-from .enterprise_pb2 import EnterpriseUserIds
+from ..enterprise_pb2 import EnterpriseUserIds
 
 
 def register_commands(commands):
