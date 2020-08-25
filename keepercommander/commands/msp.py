@@ -1,4 +1,4 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -57,8 +57,8 @@ msp_info_parser = argparse.ArgumentParser(prog='msp-info|mi',
 msp_info_parser.error = raise_parse_exception
 msp_info_parser.exit = suppress_exit
 
-msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='MSP License Management', usage='msp-license --add --seats=4')
-msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['list', 'add', 'reduce', 'usage'], help='Action to perform on the licenses')
+msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='View and Manage MSP licenses', usage='msp-license --add --seats=4')
+msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'reduce', 'usage'], help='Action to perform on the licenses', default='usage')
 msp_license_parser.add_argument('--mc', dest='mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 # msp_license_parser.add_argument('--product_id', dest='product_id', action='store', choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'], help='Plan Id.')
 msp_license_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, help='Number of seats to add or reduce.')
@@ -78,16 +78,14 @@ msp_license_report_parser.add_argument('--format', dest='report_format', choices
 msp_license_report_parser.add_argument('--range',
                                        dest='range',
                                        choices=ranges,
-                                       help="pre-defined data ranges to run the report.",
+                                       help="Pre-defined data ranges to run the report.",
                                        default='last_30_days')
 msp_license_report_parser.add_argument('--from', dest='from_date',
-                                       help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) '
-                                            'or Unix timestamp format. Example: 2020-08-18 or 1596265200')   # TODO: Change format to YYYY-mm-dd
+                                       help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
 msp_license_report_parser.add_argument('--to',
                                        dest='to_date',
-                                       help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) '
-                                            'or Unix timestamp format. Example: 2020-08-18 or 1596265200')      # TODO: Change format to YYYY-mm-dd
-msp_license_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+                                       help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
+msp_license_report_parser.add_argument('--output', dest='output', action='store', help='Output file name. (ignored for table format)')
 msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
 

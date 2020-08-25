@@ -24,6 +24,7 @@ Jump to:
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
+* [Troubleshooting](#troubleshooting)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
 * [Binary Package](#build-binary-package)
@@ -238,6 +239,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```delete-attachment``` Delete a file attachment from the specified record.  Specify Record UID and Filename (or Attachment ID)
 
+* ```file-report``` File attachment report
+
 * ```list-sf``` or ```lsf``` Display all shared folders
 
 * ```create-user``` Create Keeper vault account.
@@ -410,6 +413,75 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--email``` View share permissions with specific account. User email or team name
     - ```--owner``` Include the owner information for each record 
     - ```--verbose``` Include the record title and permission settings for each record 
+
+**MSP Console Management Commands**
+
+* ```msp-info``` or ```mi``` Display MSP details, such as licenses and managed companies
+
+    Sample Output:
+    
+    ```
+      MSP Plans and Licenses
+    -----------------------
+      #  Plan Id           Available Licenses    Total Licenses    Stash
+    ---  --------------  --------------------  ----------------  -------
+      1  business                           6                10       10
+      2  businessPlus                       8                10       10
+      3  enterprise                         2                10       10
+      4  enterprisePlus                     6                10       10
+  
+      #    ID  Name         Plan              Allocated    Active
+    ---  ----  -----------  --------------  -----------  --------
+      1  3861  Company 1     businessPlus              2         2
+      2  3862  Company 2     enterprise                0         0
+      3  3900  Company 3     business                  2         0
+      4  3877  Company 4     enterprisePlus            4         0
+      5  3863  Company 5     enterprise                8         0
+      6  3875  Company 6     business                  2         0
+
+  ```
+  
+* ```msp-down``` or ```md``` Refresh local MSP data from the server. Useful in case when there was an update made on 
+the font end and user wants to retrieve current configurations without re-login to the commander  
+
+* ```msp-license``` or ```ml``` View and Manage MSP licenses
+
+    Usage example:
+    ```
+  msp-license --add --seats=4 --mc 3984
+  ```
+    Parameters:
+    
+    - ```-h```, ```--help``` Show help message
+    - ```-a {add,reduce,usage}```, ```--action {add,reduce,usage}``` Action to perform on the licenses. Default: `usage`
+        
+        Options:
+        - `usage` - View current usage of licenses given to the MSP. Will print the table listing License Plan ID, available license, total allocated licenses, and Stash
+        - `add` - Add licenses to the managed company
+        - `reduce` - Reduce licenses from the managed company
+    - ```--mc MC```  Managed Company identifier (managed company name or ID). Example: `3862` OR `"Keeper Security, Inc."`. ID of the company can be located by running `msp-info` command
+    - ```-s SEATS```, ```--seats SEATS``` - Number of seats to add or reduce.
+
+
+* ```msp-license-report``` or ```mlr``` MSP License Reports
+
+    Usage example:
+    ```
+    msp-license-report [-h] [--type {allocation,audit}]
+                      [--format {table,csv,json}]
+                      [--range {today,yesterday,last_7_days,last_30_days,month_to_date,last_month,year_to_date,last_year}]
+                      [--from FROM_DATE] [--to TO_DATE] [--output OUTPUT]
+
+     ```
+    Parameters:
+    - ```-h``` or ```--help``` Show help message
+    - ```--type {allocation,audit}``` Type of the report. Default `allocation`
+    - ```--format {table,csv,json}``` Format of the report output. 
+    - ```--range {today,yesterday,last_7_days,last_30_days,month_to_date,last_month,year_to_date,last_year}``` Pre-defined data ranges to run the report.
+     Only application to the `audit` report. Default `last_30_days`
+    - ```--from FROM_DATE``` Run report from this date.  Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
+    - ```--to TO_DATE```     Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
+    - ```--output OUTPUT``` Output file name. (ignored for table format)
 
 ### Importing Records into Keeper
 
@@ -1636,6 +1708,18 @@ For more details on Keeper's security architecture, certifications and implement
 ### Vulnerability Disclosure Program
 
 Keeper has partnered with Bugcrowd to manage our vulnerability disclosure program. Please submit reports through https://bugcrowd.com/keepersecurity or send an email to security@keepersecurity.com.
+
+### Troubleshooting 
+
+**SSL Certificate Errors**
+
+When running Commander or related Keeper SDK code, if you receive SSL certificate errors such as:
+
+```bash
+requests.exceptions.SSLError: HTTPSConnectionPool(host='keepersecurity.com', port=443): Max retries exceeded with url: /api/rest/authentication/get_device_token (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1108)')))
+```
+
+If you receive this message, please make sure that your network is not attempting to do packet inspection with a proxy.  Due to our advanced encryption, Keeper traffic cannot be intercepted by a network proxy device.  Consult with your IT team to allow traffic to keepersecurity.com on the firewall outbound.
 
 ### About Keeper
 
