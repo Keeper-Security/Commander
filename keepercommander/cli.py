@@ -30,14 +30,16 @@ from .api import sync_down, login, communicate
 from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
-from .commands import register_commands, register_enterprise_commands, aliases, commands, enterprise_commands
+from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
 
 
 stack = []
 command_info = OrderedDict()
 register_commands(commands, aliases, command_info)
 enterprise_command_info = OrderedDict()
+msp_command_info = OrderedDict()
 register_enterprise_commands(enterprise_commands, aliases, enterprise_command_info)
+register_msp_commands(msp_commands, aliases, msp_command_info)
 
 
 def display_command_help(show_enterprise = False, show_shell = False):
@@ -53,6 +55,9 @@ def display_command_help(show_enterprise = False, show_shell = False):
     if show_enterprise:
         for cmd in enterprise_command_info:
             print('  ' + cmd.ljust(max_length + 2) + '... ' + enterprise_command_info[cmd])
+
+        for cmd in msp_command_info:
+            print('  ' + cmd.ljust(max_length + 2) + '... ' + msp_command_info[cmd])
 
     if show_shell:
         print('  ' + 'shell'.ljust(max_length + 2) + '... ' + 'Use Keeper interactive shell')
@@ -87,7 +92,7 @@ def do_command(params, command_line):
 
         if cmd:
             orig_cmd = cmd
-            if cmd in aliases and cmd not in commands and cmd not in enterprise_commands:
+            if cmd in aliases and cmd not in commands and cmd not in enterprise_commands and cmd not in msp_commands:
                 ali = aliases[cmd]
                 if type(ali) == tuple:
                     cmd = ali[0]
@@ -96,11 +101,14 @@ def do_command(params, command_line):
                 else:
                     cmd = ali
 
-            if cmd in commands or cmd in enterprise_commands:
+            if cmd in commands or cmd in enterprise_commands or cmd in msp_commands:
                 if cmd in commands:
                     command = commands[cmd]
                 else:
-                    command = enterprise_commands[cmd]
+                    if cmd in enterprise_commands:
+                        command = enterprise_commands[cmd]
+                    elif cmd in msp_commands:
+                        command = msp_commands[cmd]
 
                 if command.is_authorised():
                     if not params.session_token:

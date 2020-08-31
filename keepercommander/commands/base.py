@@ -26,6 +26,7 @@ from ..params import KeeperParams
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
 enterprise_commands = {}     # type: {str, Command}
+msp_commands = {}   # type: {str, Command}
 
 
 class ParseError(Exception):
@@ -62,6 +63,12 @@ def register_enterprise_commands(commands, aliases, command_info):
     from .enterprise import register_commands as enterprise_commands, register_command_info as enterprise_command_info
     enterprise_commands(commands)
     enterprise_command_info(aliases, command_info)
+
+
+def register_msp_commands(commands, aliases, command_info):
+    from .msp import register_commands as msp_commands, register_command_info as msp_command_info
+    msp_commands(commands)
+    msp_command_info(aliases, command_info)
 
 
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
@@ -133,6 +140,10 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                 if name != '#':
                     obj[name] = column
             data_list.append(obj)
+        if filename:
+            _, ext = os.path.splitext(filename)
+            if not ext:
+                filename += '.json'
         fd = open(filename, 'a' if append else 'w') if filename else sys.stdout
         json.dump(data_list, fd, indent=2)
         if filename:
