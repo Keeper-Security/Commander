@@ -209,7 +209,14 @@ def format_msp_licenses(licenses):
 
             msp_license_pool = lic['msp_pool']
 
-            table = [[j + 1, ml['product_id'], ml['availableSeats'], ml['seats'], ml['stash']] for j, ml in enumerate(msp_license_pool)]
+            table = [
+                [
+                    j + 1,
+                    ml['product_id'],
+                    ml['availableSeats'],
+                    ml['seats'],
+                    ml['stash'] if 'stash' in ml else ' -'   # sometimes stash won't be returned from the backend
+                ] for j, ml in enumerate(msp_license_pool)]
             print(tabulate(table, headers=["#", 'Plan Id', 'Available Licenses', 'Total Licenses', 'Stash']))
             print('')
 

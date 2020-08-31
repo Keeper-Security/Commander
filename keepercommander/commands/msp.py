@@ -68,7 +68,7 @@ msp_license_parser.exit = suppress_exit
 ranges = ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']
 
 msp_license_report_parser = argparse.ArgumentParser(prog='msp-license-report',
-                                                    description='MSP License Reports. Use pre-defined data ranges or custom date range')
+                                                    description='MSP License Reports. Use pre-defined date ranges or custom date range')
 msp_license_report_parser.add_argument('--type',
                                        dest='report_type',
                                        choices=['allocation', 'audit'],
@@ -81,10 +81,10 @@ msp_license_report_parser.add_argument('--range',
                                        help="Pre-defined data ranges to run the report.",
                                        default='last_30_days')
 msp_license_report_parser.add_argument('--from', dest='from_date',
-                                       help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
+                                       help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only applicable to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
 msp_license_report_parser.add_argument('--to',
                                        dest='to_date',
-                                       help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
+                                       help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only applicable to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
 msp_license_report_parser.add_argument('--output', dest='output', action='store', help='Output file name. (ignored for table format)')
 msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
@@ -100,7 +100,6 @@ class GetMSPDataCommand(Command):
         return msp_data_parser
 
     def execute(self, params, **kwargs):
-        print("In GetMSPDataCommand()", kwargs)
         api.query_msp(params)
 
 
@@ -150,7 +149,7 @@ class MSPLicenseCommand(EnterpriseCommand):
             current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
 
             if current_mc is None:
-                raise CommandError('msp-license', 'No managed company was found for given company id or name')
+                raise CommandError('msp-license', 'No managed company found for given company id or name')
 
             current_product_id = current_mc['product_id']
             seats_to_set = 0
@@ -213,7 +212,6 @@ class MSPLicensesReportCommand(EnterpriseCommand):
 
             if not from_date_str or not to_date_str:
                 # will use data range to query
-                # raise CommandError('msp-license-report', "to and from are required to run the report.")
 
                 rng = kwargs['range']
                 from_date1, end_date1 = date_range_str_to_dates(rng)
