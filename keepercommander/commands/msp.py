@@ -29,7 +29,6 @@ def register_commands(commands):
     commands['msp-info'] = MSPInfoCommand()
     commands['msp-license'] = MSPLicenseCommand()
     commands['msp-license-report'] = MSPLicensesReportCommand()
-    commands['msp-login-to-mc'] = MSPLoginToMCCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -265,59 +264,6 @@ class MSPLicensesReportCommand(EnterpriseCommand):
             print()
 
 
-class MSPLoginToMCCommand(EnterpriseCommand):
-    def get_parser(self):
-        return msp_login_to_mc_parser
-
-    def execute(self, params, **kwargs):
-        print("Login")
-
-        rq = proto.LoginToMcRequest()   # type: proto.LoginToMcRequest
-        rq.mcEnterpriseId = 3900
-
-        api_request_payload = proto.ApiRequestPayload()
-        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-        api_request_payload.payload = rq.SerializeToString()
-
-        rs = rest_api.execute_rest(params.rest_context, 'authentication/login_to_mc', api_request_payload)
-
-
-        if type(rs) is bytes:
-            login_to_mc_rs = proto.LoginToMcResponse()
-            login_to_mc_rs.ParseFromString(rs)
-
-
-            encrypted_session_token = login_to_mc_rs.encryptedSessionToken
-            encrypted_tree_key = login_to_mc_rs.encryptedTreeKey
-
-            print("encrypted_session_token:", encrypted_session_token)
-            print("encrypted_tree_key:", encrypted_tree_key)
-
-            mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
-            mc_params.user = params.user
-            # mc_params.rest_context = params.rest_context
-            # mc_params.session_token = params.session_token
-            mc_params.session_token = (base64.urlsafe_b64encode(encrypted_session_token).decode()).rstrip('=')
-            # mc_params.session_token = "d5WVDqFIy0GT5wjoFhEGNjaUWeewqnpkML7OC0HpwOGFZLmfjlFYjGLG8B4bE8V-Vd7Eo2IyP_DWawkF3r8JuJ_l7Thk_93gno6YT4YE5jw4-bdNXQ"
-            # rest_api.CLIENT_VERSION = 'c15.0.0'
-
-            request = {
-                'command': 'get_enterprise_data',
-                'include': ['licenses']
-            }
-
-            response = api.communicate(mc_params, request)
-
-            # api.query_enterprise(mc_params)
-
-            print("Hi mom", response)
-
-        # elif type(rs) is dict:
-            # raise KeeperApiError(rs['error'], rs['message'])
-
-        # api.login_to_mc(params, 3900)
-
-
 def get_mc_by_name_or_id(msc, name_or_id):
 
     found_mc = None
@@ -350,9 +296,11 @@ def report_generation_message(filename, filetype):
 
 def check_int(s):
     # check if string is an integer
-    if s[0] in ('-', '+'):
-        return s[1:].isdigit()
-    return s.isdigit()
+    num_str = str(s)
+
+    if num_str[0] in ('-', '+'):
+        return num_str[1:].isdigit()
+    return num_str.isdigit()
 
 
 def date_range_str_to_dates(range_str):

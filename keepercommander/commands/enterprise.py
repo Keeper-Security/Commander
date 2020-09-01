@@ -242,7 +242,7 @@ class EnterpriseCommand(Command):
         self.team_keys = {}
 
     def execute_args(self, params, args, **kwargs):
-        if params.enterprise:
+        if params.enterprise or params.is_msp_admin:
             Command.execute_args(self, params, args, **kwargs)
         else:
             raise CommandError('', 'This command  is only available for Administrators of Keeper.')

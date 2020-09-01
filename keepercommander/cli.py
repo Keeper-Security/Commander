@@ -17,6 +17,7 @@ import time
 import threading
 import functools
 import logging
+import re
 
 from collections import OrderedDict
 
@@ -24,9 +25,10 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
+from .commands.msp import get_mc_by_name_or_id
 from .params import KeeperParams
 from . import display
-from .api import sync_down, login, communicate
+from .api import sync_down, login, communicate, query_enterprise, query_msp, login_and_get_mc_params
 from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
@@ -70,6 +72,63 @@ def display_command_help(show_enterprise = False, show_shell = False):
     print('Type \'command -h\' to display help on command')
 
 
+msp_params = None
+mc_params_dict = {}
+
+
+def is_executing_as_msp_admin():
+    return msp_params is not None
+
+
+def check_if_running_as_mc(params, args):
+    login_as_mc_args_regex = "--mc?\\s\\d+"
+
+    global msp_params
+
+    if "--mc" in args:                                   # Impersonating as Managed Company (MC)
+
+        mc_id = -9
+        try:
+            mc_id = re.search(login_as_mc_args_regex, args).group(0)  # get id of the MC from args  '--as-mc 4532'
+
+            mc_id = int(mc_id.split()[1])                                 # get just ID: '4532'
+        except AttributeError:
+            logging.error("No Managed company provided")  # apply your error handling
+            raise
+
+        cur_msp_params = params if msp_params is None else params
+
+        query_enterprise(cur_msp_params)
+        query_msp(cur_msp_params)
+
+        managed_companies = cur_msp_params.enterprise['managed_companies']
+        found_mc = get_mc_by_name_or_id(managed_companies, mc_id)
+
+        if found_mc is None:
+            can_manage_mcs = ', '.join(str(mc['mc_enterprise_id']) for mc in managed_companies)
+
+            raise CommandError('', "You do not have permission to manage company %s. MCs able to manage: %s" % (mc_id, can_manage_mcs))
+
+        if mc_id not in mc_params_dict:
+            mc_params = login_and_get_mc_params(params, mc_id)
+            mc_params.is_msp_admin = True
+            mc_params_dict[mc_id] = mc_params
+
+        if msp_params is None:
+            msp_params = params
+
+        params = mc_params_dict[mc_id]
+
+        args = re.sub(login_as_mc_args_regex, '', args)         # to remove impersonation args
+
+    else:                                                       # Not impersonating
+        if msp_params is not None:
+            params = msp_params
+            msp_params = None
+
+    return params, args
+
+
 def do_command(params, command_line):
     if command_line == 'h':
         display.formatted_history(stack)
@@ -89,6 +148,8 @@ def do_command(params, command_line):
             args = command_line[pos+1:].strip()
         else:
             cmd = command_line
+
+        params, args = check_if_running_as_mc(params, args)
 
         if cmd:
             orig_cmd = cmd
@@ -122,8 +183,11 @@ def do_command(params, command_line):
                             return
 
                     if cmd in enterprise_commands and not params.enterprise:
-                        logging.error('This command is restricted to Keeper Enterprise administrators.')
-                        return
+                        if is_executing_as_msp_admin():
+                            logging.debug("OK to execute command: %s", cmd)
+                        else:
+                            logging.error('This command is restricted to Keeper Enterprise administrators.')
+                            return
 
                 params.event_queue.clear()
                 result = command.execute_args(params, args, command=orig_cmd)

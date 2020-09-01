@@ -483,6 +483,19 @@ the font end and user wants to retrieve current configurations without re-login 
     - ```--to TO_DATE```     Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
     - ```--output OUTPUT``` Output file name. (ignored for table format)
 
+**Running commands as Managed Company administrator**
+
+In the Web Console interface MSP users have ability to login to the managed company and perform actions as an admin of the Managed Company.
+
+In Commander interface the same can be achieved by adding Managed Company ID (ex. `--mc 45287`) to the command. ID of the Managed Company can
+be found by running `msp-info` command.
+
+Example to add user as an admin of Managed Company with id 3900:
+
+```
+enterprise-user --add user@example.com --mc 3900
+```
+
 ### Importing Records into Keeper
 
 To import records into your vault, use the ```import``` command.  Supported import formats:

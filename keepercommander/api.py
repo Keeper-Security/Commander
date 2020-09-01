@@ -109,6 +109,9 @@ def login(params):
             'platform_device_token': base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
         }
 
+        if params.enterprise_id > 0:
+            rq['enterprise_id'] = params.enterprise_id
+
         if params.mfa_token:
             rq['2fa_token'] = params.mfa_token
             rq['2fa_type'] = params.mfa_type or 'device_token'
@@ -175,12 +178,14 @@ def login(params):
 
             if store_config: # save token to config file if the file exists
                 params.config['user'] = params.user
-                try:
-                    with open(params.config_filename, 'w') as f:
-                        json.dump(params.config, f, ensure_ascii=False, indent=2)
-                        logging.info('Updated %s', params.config_filename)
-                except Exception as e:
-                    logging.debug('Unable to update %s. %s', params.config_filename, e)
+
+                if params.config_filename:
+                    try:
+                        with open(params.config_filename, 'w') as f:
+                            json.dump(params.config, f, ensure_ascii=False, indent=2)
+                            logging.info('Updated %s', params.config_filename)
+                    except Exception as e:
+                        logging.debug('Unable to update %s. %s', params.config_filename, e)
 
         elif response_json['result_code'] in ['need_totp', 'invalid_device_token', 'invalid_totp']:
             try:
@@ -1739,9 +1744,16 @@ def query_enterprise(params):
             if 'key_type_id' in response:
                 tree_key = None
                 if response['key_type_id'] == 1:
-                    tree_key = decrypt_data(response['tree_key'], params.data_key)
+                    tree_key = decrypt_data(response['tree_key'], params.data_key)  # old AES
                 elif response['key_type_id'] == 2:
-                    tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
+                    if params.enterprise_id > 0:
+
+                        decoded_data = base64.urlsafe_b64decode(response['tree_key'] + '==')
+
+                        tree_key = rest_api.decrypt_aes(decoded_data, params.msp_tree_key)  # new AES
+                        # tree_key = decrypt_data(response['tree_key'], msp_tree_key)
+                    else:
+                        tree_key = decrypt_rsa(response['tree_key'], params.rsa_key) # old RSA
                 if not tree_key is None:
                     tree_key = tree_key[:32]
                     response['unencrypted_tree_key'] = tree_key
@@ -1777,5 +1789,27 @@ def query_enterprise(params):
                                     pass
 
                     params.enterprise = response
-    except:
+    except Exception as e:
+        logging.debug(e)
         params.enterprise = None
+
+
+def login_and_get_mc_params(params, mc_id):
+
+    mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
+
+    mc_params.config = params.config
+    mc_params.auth_verifier = params.auth_verifier
+    mc_params.mfa_token = params.mfa_token
+    mc_params.salt = params.salt
+    mc_params.iterations = params.iterations
+    mc_params.user = params.user
+    mc_params.password = params.password
+    mc_params.enterprise_id = mc_id
+    mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
+    mc_params.session_token = None
+
+    login(mc_params)
+    query_enterprise(mc_params)
+
+    return mc_params
