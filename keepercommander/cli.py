@@ -25,7 +25,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
-from .commands.msp import get_mc_by_name_or_id
+from .commands.msp import get_mc_by_name_or_id, check_int
 from .params import KeeperParams
 from . import display
 from .api import sync_down, login, communicate, query_enterprise, query_msp, login_and_get_mc_params
@@ -74,6 +74,7 @@ def display_command_help(show_enterprise = False, show_shell = False):
 
 msp_params = None
 mc_params_dict = {}
+current_mc_id = None
 
 
 def is_executing_as_msp_admin():
@@ -81,7 +82,7 @@ def is_executing_as_msp_admin():
 
 
 def check_if_running_as_mc(params, args):
-    login_as_mc_args_regex = "--mc?\\s\\d+"
+    has_mc_id_regex = "--mc?\\s\\d+"
 
     global msp_params
 
@@ -89,7 +90,7 @@ def check_if_running_as_mc(params, args):
 
         mc_id = -9
         try:
-            mc_id = re.search(login_as_mc_args_regex, args).group(0)  # get id of the MC from args  '--as-mc 4532'
+            mc_id = re.search(has_mc_id_regex, args).group(0)  # get id of the MC from args  '--as-mc 4532'
 
             mc_id = int(mc_id.split()[1])                                 # get just ID: '4532'
         except AttributeError:
@@ -119,7 +120,17 @@ def check_if_running_as_mc(params, args):
 
         params = mc_params_dict[mc_id]
 
-        args = re.sub(login_as_mc_args_regex, '', args)         # to remove impersonation args
+        args = re.sub(has_mc_id_regex, '', args)         # to remove impersonation args
+
+    elif current_mc_id is not None:
+        # Running commands as Managed Company admin via MSP
+
+        if current_mc_id not in mc_params_dict:
+            mc_params = login_and_get_mc_params(params, current_mc_id)
+            mc_params.is_msp_admin = True
+            mc_params_dict[current_mc_id] = mc_params
+
+        params = mc_params_dict[current_mc_id]
 
     else:                                                       # Not impersonating
         if msp_params is not None:
@@ -129,7 +140,21 @@ def check_if_running_as_mc(params, args):
     return params, args
 
 
+def command_and_args_from_cmd(command_line):
+    args = ''
+    pos = command_line.find(' ')
+    if pos > 0:
+        cmd = command_line[:pos]
+        args = command_line[pos + 1:].strip()
+    else:
+        cmd = command_line
+
+    return cmd, args
+
+
 def do_command(params, command_line):
+    global current_mc_id
+
     if command_line == 'h':
         display.formatted_history(stack)
 
@@ -140,14 +165,41 @@ def do_command(params, command_line):
         is_debug = logging.getLogger().level <= logging.DEBUG
         logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
         logging.info('Debug %s', 'OFF' if is_debug else 'ON')
+
+    elif 'switch-to-mc' in command_line:
+
+        if current_mc_id is not None:
+            raise CommandError('switch-to-mc', "Already switch to Managed Company id= %s" % current_mc_id)
+
+        cmd, args = command_and_args_from_cmd(command_line)
+
+        if not check_int(args):
+            raise CommandError('switch-to-mc', "Please provide Managed Company ID as integer. Your input was '%s'" % args)
+
+        query_enterprise(params)
+        query_msp(params)
+
+        managed_companies = params.enterprise['managed_companies']
+        found_mc = get_mc_by_name_or_id(managed_companies, int(args))
+
+        if found_mc is None:
+            can_manage_mcs = ', '.join(str(mc['mc_enterprise_id']) for mc in managed_companies)
+            raise CommandError('', "You do not have permission to manage company %s. MCs able to manage: %s" % (current_mc_id, can_manage_mcs))
+
+        print("Switched to MC '%s'" % found_mc['mc_enterprise_name'])
+
+        current_mc_id = int(args)
+
+    elif command_line == 'switch-to-msp':
+
+        if current_mc_id is None:
+            raise CommandError('switch-to-mc', "Already MSP")
+
+        print("Switching back to MSP")
+        current_mc_id = None
+
     else:
-        args = ''
-        pos = command_line.find(' ')
-        if pos > 0:
-            cmd = command_line[:pos]
-            args = command_line[pos+1:].strip()
-        else:
-            cmd = command_line
+        cmd, args = command_and_args_from_cmd(command_line)
 
         params, args = check_if_running_as_mc(params, args)
 
@@ -187,6 +239,13 @@ def do_command(params, command_line):
                             logging.debug("OK to execute command: %s", cmd)
                         else:
                             logging.error('This command is restricted to Keeper Enterprise administrators.')
+                            return
+
+                    if cmd in msp_commands and params.enterprise:
+                        if 'managed_companies' not in params.enterprise:
+                            logging.error('This command is restricted to Keeper MSP administrators logged in to MSP '
+                                          'Company. \nIf you are are MSP administrator then try to run `switch-to-msp` '
+                                          'command before executing this command.')
                             return
 
                 params.event_queue.clear()

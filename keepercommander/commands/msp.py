@@ -13,9 +13,6 @@ import os
 import string
 from datetime import datetime, timedelta
 import calendar
-from .. import APIRequest_pb2 as proto
-import base64
-from ..params import KeeperParams
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise import EnterpriseCommand
@@ -93,7 +90,8 @@ msp_license_report_parser.exit = suppress_exit
 msp_login_to_mc_parser = argparse.ArgumentParser(prog='msp-login-to_mc_parser',
                                                     description='MSP License Reports. Use pre-defined data ranges or custom date range')
 
-class GetMSPDataCommand(Command):
+
+class GetMSPDataCommand(EnterpriseCommand):
 
     def get_parser(self):
         return msp_data_parser
@@ -102,7 +100,7 @@ class GetMSPDataCommand(Command):
         api.query_msp(params)
 
 
-class MSPInfoCommand(Command):
+class MSPInfoCommand(EnterpriseCommand):
     def get_parser(self):
         return msp_info_parser
 
