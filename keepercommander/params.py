@@ -95,6 +95,8 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.enterprise = None
+        self.enterprise_id = 0
+        self.msp_tree_key = None
         self.msp = None
         self.prepare_commands = False
         self.batch_mode = False
@@ -137,6 +139,8 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.enterprise = None
+        self.enterprise_id = 0
+        self.msp_tree_key = None
         self.msp = None
         self.prepare_commands = True
         self.batch_mode = False

@@ -213,7 +213,7 @@ class WhoamiCommand(Command):
                     storage_bytes = params.license['bytes_total']
                     storage_gb = storage_bytes >> 30
                     print('{0:>20s} {1:>20s}: {2}GB'.format('Storage', 'Capacity', storage_gb))
-                    storage_usage = params.license['bytes_used'] * 100 // storage_bytes
+                    storage_usage = (params.license['bytes_used'] * 100 // storage_bytes) if storage_bytes != 0 else 0
                     print('{0:>20s} {1:>20s}: {2}%'.format('', 'Usage', storage_usage))
                     print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['storage_expiration_date']))
 

@@ -16,7 +16,7 @@ import calendar
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise import EnterpriseCommand
-from .. import api
+from .. import api, rest_api
 from ..display import format_managed_company, format_msp_licenses
 from ..error import CommandError
 
@@ -33,6 +33,7 @@ def register_command_info(aliases, command_info):
     aliases['mi'] = 'msp-info'
     aliases['ml'] = 'msp-license'
     aliases['mlr'] = 'msp-license-report'
+    aliases['mltm'] = 'msp-login-to-mc'
 
     for p in [msp_data_parser, msp_info_parser, msp_license_parser, msp_license_report_parser]:
         command_info[p.prog] = p.description
@@ -85,7 +86,12 @@ msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
 
 
-class GetMSPDataCommand(Command):
+
+msp_login_to_mc_parser = argparse.ArgumentParser(prog='msp-login-to_mc_parser',
+                                                    description='MSP License Reports. Use pre-defined data ranges or custom date range')
+
+
+class GetMSPDataCommand(EnterpriseCommand):
 
     def get_parser(self):
         return msp_data_parser
@@ -94,7 +100,7 @@ class GetMSPDataCommand(Command):
         api.query_msp(params)
 
 
-class MSPInfoCommand(Command):
+class MSPInfoCommand(EnterpriseCommand):
     def get_parser(self):
         return msp_info_parser
 
@@ -288,9 +294,11 @@ def report_generation_message(filename, filetype):
 
 def check_int(s):
     # check if string is an integer
-    if s[0] in ('-', '+'):
-        return s[1:].isdigit()
-    return s.isdigit()
+    num_str = str(s)
+
+    if num_str[0] in ('-', '+'):
+        return num_str[1:].isdigit()
+    return num_str.isdigit()
 
 
 def date_range_str_to_dates(range_str):
