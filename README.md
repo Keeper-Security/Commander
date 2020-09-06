@@ -483,6 +483,42 @@ the font end and user wants to retrieve current configurations without re-login 
     - ```--to TO_DATE```     Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
     - ```--output OUTPUT``` Output file name. (ignored for table format)
 
+#### Running commands as Managed Company (MC) administrator
+
+In the Web Console interface MSP users have ability to login to the managed company and perform actions as an admin of the Managed Company.
+
+In Commander's command line interface the same can be achieved by running one command as MC or switching the context to MC and running all following commands 
+under that particular company.
+
+##### One-off Command as MC Administrator
+
+To run one-off command w/o switching context from MSP can be achieved by adding MS ID as one of the arguments to the command (ex. `--mc 12345`). The ID of the MC can
+be found by running `msp-info` command.
+
+Example to add user as an admin of MC with id 3900:
+
+```
+$ enterprise-user --add user@example.com --mc 3900
+```
+
+##### Switching to MC
+
+To switch the context to run all commands as MC administrator, use the `switch-to-mc [MC ID]` command. The ID of the MC can be found by running `msp-info` command.
+
+Example:
+
+```
+$ switch-to-mc 3900
+```
+
+To switch the context back to MSP, use the `switch-to-msp` command.
+
+Example: 
+
+```
+switch-to-msp
+```
+
 ### Importing Records into Keeper
 
 To import records into your vault, use the ```import``` command.  Supported import formats:
