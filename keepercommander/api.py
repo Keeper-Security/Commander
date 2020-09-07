@@ -147,6 +147,7 @@ def login(params):
         if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
             success = True
             logging.debug('Auth Success')
+            store_config = not params.config or params.config.get('user') != params.user
 
             params.session_token = response_json['session_token']
 
@@ -176,7 +177,7 @@ def login(params):
             params.sync_data = True
             params.prepare_commands = True
 
-            if store_config: # save token to config file if the file exists
+            if store_config:    # save token to config file if the file exists
                 params.config['user'] = params.user
 
                 if params.config_filename:
@@ -1691,7 +1692,7 @@ def query_msp(params):
 
     request = {
         'command': 'get_enterprise_data',
-        'include': ['managed_companies', 'licenses', 'nodes']
+        'include': ['managed_companies']
     }
 
     try:
@@ -1716,21 +1717,10 @@ def query_msp(params):
                                     mc['data'] = json.loads(data.decode('utf-8'))
                                 except Exception as e:
                                     pass
-                    if 'nodes' in response:
-                        for node in response['nodes']:
-                            node['data'] = {}
-                            if 'encrypted_data' in node:
-                                try:
-                                    data = decrypt_data(node['encrypted_data'], tree_key)
-                                    data = fix_data(data)
-                                    node['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
-                                    pass
-
-                    params.enterprise = response
-
+                        if params.enterprise:
+                            params.enterprise['managed_companies'] = response['managed_companies']
     except:
-        params.enterprise = None
+        pass
 
 
 def query_enterprise(params):
@@ -1743,7 +1733,8 @@ def query_enterprise(params):
     request = {
         'command': 'get_enterprise_data',
         'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
-                    'role_users', 'managed_nodes', 'role_keys', 'licenses', 'queued_teams', 'queued_team_users']
+                    'role_users', 'managed_nodes', 'role_keys', 'licenses', 'queued_teams', 'queued_team_users',
+                    'licenses']
     }
     try:
         response = communicate(params, request)

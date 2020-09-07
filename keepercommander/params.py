@@ -97,7 +97,6 @@ class KeeperParams:
         self.enterprise = None
         self.enterprise_id = 0
         self.msp_tree_key = None
-        self.msp = None
         self.prepare_commands = False
         self.batch_mode = False
         self.__rest_context = RestApiContext(server=server, device_id=device_id)
@@ -141,7 +140,6 @@ class KeeperParams:
         self.enterprise = None
         self.enterprise_id = 0
         self.msp_tree_key = None
-        self.msp = None
         self.prepare_commands = True
         self.batch_mode = False
         self.pending_share_requests.clear()

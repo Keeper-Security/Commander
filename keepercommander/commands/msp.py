@@ -14,9 +14,9 @@ import string
 from datetime import datetime, timedelta
 import calendar
 
-from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
+from .base import suppress_exit, raise_parse_exception, dump_report_data
 from .enterprise import EnterpriseCommand
-from .. import api, rest_api
+from .. import api
 from ..display import format_managed_company, format_msp_licenses
 from ..error import CommandError
 

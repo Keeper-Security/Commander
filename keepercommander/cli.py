@@ -47,6 +47,7 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'Company. \nIf you are an MSP administrator then try to run `switch-to-msp` ' \
                           'command before executing this command.'
 
+
 def display_command_help(show_enterprise = False, show_shell = False):
     max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info.keys(), 0)
 
