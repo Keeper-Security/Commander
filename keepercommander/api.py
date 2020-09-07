@@ -117,7 +117,7 @@ def login(params):
             rq['2fa_type'] = params.mfa_type or 'device_token'
             if params.mfa_type == 'one_time':
                 expire_token = params.config.get('device_token_expiration') or False
-                expire_days = 0 if expire_token else 30
+                expire_days = 0 if expire_token else 9999
                 rq['device_token_expire_days'] = expire_days
 
         response_json = run_command(params, rq)
