@@ -1227,7 +1227,7 @@ Notes:
 
 To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a Master Password.
 
-* ```device_token_expiration``` can be set to ```true``` to require 2FA every login.  Otherwise, the 2FA token will not expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices.
+* ```device_token_expiration``` can be set to ```true``` to require 2FA every login.  Otherwise, the 2FA token will not expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices. Note: if a Security Key is attached to an account, this will require prompt every time currently.
 
 ### Batch Mode 
 
