@@ -19,7 +19,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   package='Enterprise',
   syntax='proto3',
   serialized_options=b'\n\030com.keepersecurity.protoB\nEnterprise',
-  serialized_pb=b'\n\x10\x65nterprise.proto\x12\nEnterprise\"^\n\x18\x45nterpriseKeyPairRequest\x12\x1b\n\x13\x65nterprisePublicKey\x18\x01 \x01(\x0c\x12%\n\x1d\x65ncryptedEnterprisePrivateKey\x18\x02 \x01(\x0c\"\'\n\x14GetTeamMemberRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\"U\n\x0e\x45nterpriseUser\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x65mail\x18\x02 \x01(\t\x12\x1a\n\x12\x65nterpriseUsername\x18\x03 \x01(\t\"K\n\x15GetTeamMemberResponse\x12\x32\n\x0e\x65nterpriseUser\x18\x01 \x03(\x0b\x32\x1a.Enterprise.EnterpriseUser\"-\n\x11\x45nterpriseUserIds\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"B\n\x19\x45nterprisePersonalAccount\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x16\n\x0eOBSOLETE_FIELD\x18\x02 \x01(\x0c\"S\n\x17\x45ncryptedTeamKeyRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedTeamKey\x18\x02 \x01(\x0c\x12\r\n\x05\x66orce\x18\x03 \x01(\x08\"+\n\x0fReEncryptedData\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\t\"?\n\x12ReEncryptedRoleKey\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedRoleKey\x18\x02 \x01(\x0c\"\x9d\x02\n\x1bNodeToManagedCompanyRequest\x12\x11\n\tcompanyId\x18\x01 \x01(\x05\x12*\n\x05nodes\x18\x02 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05roles\x18\x03 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05users\x18\x04 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12\x30\n\x08roleKeys\x18\x05 \x03(\x0b\x32\x1e.Enterprise.ReEncryptedRoleKey\x12\x35\n\x08teamKeys\x18\x06 \x03(\x0b\x32#.Enterprise.EncryptedTeamKeyRequest\",\n\x08RoleTeam\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x0f\n\x07teamUid\x18\x02 \x01(\x0c\"4\n\tRoleTeams\x12\'\n\trole_team\x18\x01 \x03(\x0b\x32\x14.Enterprise.RoleTeam\"\x87\x03\n\x16\x45nterpriseRegistration\x12\x18\n\x10\x65ncryptedTreeKey\x18\x01 \x01(\x0c\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\x12\x14\n\x0crootNodeData\x18\x03 \x01(\x0c\x12\x15\n\radminUserData\x18\x04 \x01(\x0c\x12\x11\n\tadminName\x18\x05 \x01(\t\x12\x10\n\x08roleData\x18\x06 \x01(\x0c\x12\x38\n\nrsaKeyPair\x18\x07 \x01(\x0b\x32$.Enterprise.EnterpriseKeyPairRequest\x12\x13\n\x0bnumberSeats\x18\x08 \x01(\x05\x12\x32\n\x0e\x65nterpriseType\x18\t \x01(\x0e\x32\x1a.Enterprise.EnterpriseType\x12\x15\n\rrolePublicKey\x18\n \x01(\x0c\x12*\n\"rolePrivateKeyEncryptedWithRoleKey\x18\x0b \x01(\x0c\x12#\n\x1broleKeyEncryptedWithTreeKey\x18\x0c \x01(\x0c\".\n\x1a\x44omainPasswordRulesRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"\\\n\x19\x44omainPasswordRulesFields\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x0f\n\x07minimum\x18\x02 \x01(\x05\x12\x0f\n\x07maximum\x18\x03 \x01(\x05\x12\x0f\n\x07\x61llowed\x18\x04 \x01(\x08\"g\n\x1b\x44omainPasswordRulesResponse\x12H\n\x19\x64omainPasswordRulesFields\x18\x01 \x03(\x0b\x32%.Enterprise.DomainPasswordRulesFields\"\x88\x01\n\x18\x41pproveUserDeviceRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x03 \x01(\x0c\x12\x14\n\x0c\x64\x65nyApproval\x18\x04 \x01(\x08\"t\n\x19\x41pproveUserDeviceResponse\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x0e\n\x06\x66\x61iled\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\"Y\n\x19\x41pproveUserDevicesRequest\x12<\n\x0e\x64\x65viceRequests\x18\x01 \x03(\x0b\x32$.Enterprise.ApproveUserDeviceRequest\"\\\n\x1a\x41pproveUserDevicesResponse\x12>\n\x0f\x64\x65viceResponses\x18\x01 \x03(\x0b\x32%.Enterprise.ApproveUserDeviceResponse*=\n\x0e\x45nterpriseType\x12\x17\n\x13\x45NTERPRISE_STANDARD\x10\x00\x12\x12\n\x0e\x45NTERPRISE_MSP\x10\x01\x42&\n\x18\x63om.keepersecurity.protoB\nEnterpriseb\x06proto3'
+  serialized_pb=b'\n\x10\x65nterprise.proto\x12\nEnterprise\"^\n\x18\x45nterpriseKeyPairRequest\x12\x1b\n\x13\x65nterprisePublicKey\x18\x01 \x01(\x0c\x12%\n\x1d\x65ncryptedEnterprisePrivateKey\x18\x02 \x01(\x0c\"\'\n\x14GetTeamMemberRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\"U\n\x0e\x45nterpriseUser\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x65mail\x18\x02 \x01(\t\x12\x1a\n\x12\x65nterpriseUsername\x18\x03 \x01(\t\"K\n\x15GetTeamMemberResponse\x12\x32\n\x0e\x65nterpriseUser\x18\x01 \x03(\x0b\x32\x1a.Enterprise.EnterpriseUser\"-\n\x11\x45nterpriseUserIds\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"B\n\x19\x45nterprisePersonalAccount\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x16\n\x0eOBSOLETE_FIELD\x18\x02 \x01(\x0c\"S\n\x17\x45ncryptedTeamKeyRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedTeamKey\x18\x02 \x01(\x0c\x12\r\n\x05\x66orce\x18\x03 \x01(\x08\"+\n\x0fReEncryptedData\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\t\"?\n\x12ReEncryptedRoleKey\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedRoleKey\x18\x02 \x01(\x0c\"\x9d\x02\n\x1bNodeToManagedCompanyRequest\x12\x11\n\tcompanyId\x18\x01 \x01(\x05\x12*\n\x05nodes\x18\x02 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05roles\x18\x03 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05users\x18\x04 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12\x30\n\x08roleKeys\x18\x05 \x03(\x0b\x32\x1e.Enterprise.ReEncryptedRoleKey\x12\x35\n\x08teamKeys\x18\x06 \x03(\x0b\x32#.Enterprise.EncryptedTeamKeyRequest\",\n\x08RoleTeam\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x0f\n\x07teamUid\x18\x02 \x01(\x0c\"4\n\tRoleTeams\x12\'\n\trole_team\x18\x01 \x03(\x0b\x32\x14.Enterprise.RoleTeam\"\x87\x03\n\x16\x45nterpriseRegistration\x12\x18\n\x10\x65ncryptedTreeKey\x18\x01 \x01(\x0c\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\x12\x14\n\x0crootNodeData\x18\x03 \x01(\x0c\x12\x15\n\radminUserData\x18\x04 \x01(\x0c\x12\x11\n\tadminName\x18\x05 \x01(\t\x12\x10\n\x08roleData\x18\x06 \x01(\x0c\x12\x38\n\nrsaKeyPair\x18\x07 \x01(\x0b\x32$.Enterprise.EnterpriseKeyPairRequest\x12\x13\n\x0bnumberSeats\x18\x08 \x01(\x05\x12\x32\n\x0e\x65nterpriseType\x18\t \x01(\x0e\x32\x1a.Enterprise.EnterpriseType\x12\x15\n\rrolePublicKey\x18\n \x01(\x0c\x12*\n\"rolePrivateKeyEncryptedWithRoleKey\x18\x0b \x01(\x0c\x12#\n\x1broleKeyEncryptedWithTreeKey\x18\x0c \x01(\x0c\".\n\x1a\x44omainPasswordRulesRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"\\\n\x19\x44omainPasswordRulesFields\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x0f\n\x07minimum\x18\x02 \x01(\x05\x12\x0f\n\x07maximum\x18\x03 \x01(\x05\x12\x0f\n\x07\x61llowed\x18\x04 \x01(\x08\"g\n\x1b\x44omainPasswordRulesResponse\x12H\n\x19\x64omainPasswordRulesFields\x18\x01 \x03(\x0b\x32%.Enterprise.DomainPasswordRulesFields\"\x88\x01\n\x18\x41pproveUserDeviceRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x03 \x01(\x0c\x12\x14\n\x0c\x64\x65nyApproval\x18\x04 \x01(\x08\"t\n\x19\x41pproveUserDeviceResponse\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x0e\n\x06\x66\x61iled\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\"Y\n\x19\x41pproveUserDevicesRequest\x12<\n\x0e\x64\x65viceRequests\x18\x01 \x03(\x0b\x32$.Enterprise.ApproveUserDeviceRequest\"\\\n\x1a\x41pproveUserDevicesResponse\x12>\n\x0f\x64\x65viceResponses\x18\x01 \x03(\x0b\x32%.Enterprise.ApproveUserDeviceResponse\".\n\x12UserDataKeyRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"Q\n\x1b\x45nterpriseUserIdDataKeyPair\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedDataKey\x18\x02 \x01(\x0c\"\x91\x01\n\x0bUserDataKey\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x0f\n\x07roleKey\x18\x02 \x01(\x0c\x12\x12\n\nprivateKey\x18\x03 \x01(\t\x12M\n\x1c\x65nterpriseUserIdDataKeyPairs\x18\x04 \x03(\x0b\x32\'.Enterprise.EnterpriseUserIdDataKeyPair\"v\n\x13UserDataKeyResponse\x12-\n\x0cuserDataKeys\x18\x01 \x03(\x0b\x32\x17.Enterprise.UserDataKey\x12\x14\n\x0c\x61\x63\x63\x65ssDenied\x18\x02 \x03(\x03\x12\x1a\n\x12noEncryptedDataKey\x18\x03 \x03(\x03*=\n\x0e\x45nterpriseType\x12\x17\n\x13\x45NTERPRISE_STANDARD\x10\x00\x12\x12\n\x0e\x45NTERPRISE_MSP\x10\x01\x42&\n\x18\x63om.keepersecurity.protoB\nEnterpriseb\x06proto3'
 )
 
 _ENTERPRISETYPE = _descriptor.EnumDescriptor(
@@ -39,8 +39,8 @@ _ENTERPRISETYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=2114,
-  serialized_end=2175,
+  serialized_start=2513,
+  serialized_end=2574,
 )
 _sym_db.RegisterEnumDescriptor(_ENTERPRISETYPE)
 
@@ -907,6 +907,172 @@ _APPROVEUSERDEVICESRESPONSE = _descriptor.Descriptor(
   serialized_end=2112,
 )
 
+
+_USERDATAKEYREQUEST = _descriptor.Descriptor(
+  name='UserDataKeyRequest',
+  full_name='Enterprise.UserDataKeyRequest',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='enterpriseUserId', full_name='Enterprise.UserDataKeyRequest.enterpriseUserId', index=0,
+      number=1, type=3, cpp_type=2, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=2114,
+  serialized_end=2160,
+)
+
+
+_ENTERPRISEUSERIDDATAKEYPAIR = _descriptor.Descriptor(
+  name='EnterpriseUserIdDataKeyPair',
+  full_name='Enterprise.EnterpriseUserIdDataKeyPair',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='enterpriseUserId', full_name='Enterprise.EnterpriseUserIdDataKeyPair.enterpriseUserId', index=0,
+      number=1, type=3, cpp_type=2, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='encryptedDataKey', full_name='Enterprise.EnterpriseUserIdDataKeyPair.encryptedDataKey', index=1,
+      number=2, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=2162,
+  serialized_end=2243,
+)
+
+
+_USERDATAKEY = _descriptor.Descriptor(
+  name='UserDataKey',
+  full_name='Enterprise.UserDataKey',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='roleId', full_name='Enterprise.UserDataKey.roleId', index=0,
+      number=1, type=3, cpp_type=2, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='roleKey', full_name='Enterprise.UserDataKey.roleKey', index=1,
+      number=2, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='privateKey', full_name='Enterprise.UserDataKey.privateKey', index=2,
+      number=3, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"".decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='enterpriseUserIdDataKeyPairs', full_name='Enterprise.UserDataKey.enterpriseUserIdDataKeyPairs', index=3,
+      number=4, type=11, cpp_type=10, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=2246,
+  serialized_end=2391,
+)
+
+
+_USERDATAKEYRESPONSE = _descriptor.Descriptor(
+  name='UserDataKeyResponse',
+  full_name='Enterprise.UserDataKeyResponse',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='userDataKeys', full_name='Enterprise.UserDataKeyResponse.userDataKeys', index=0,
+      number=1, type=11, cpp_type=10, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='accessDenied', full_name='Enterprise.UserDataKeyResponse.accessDenied', index=1,
+      number=2, type=3, cpp_type=2, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='noEncryptedDataKey', full_name='Enterprise.UserDataKeyResponse.noEncryptedDataKey', index=2,
+      number=3, type=3, cpp_type=2, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=2393,
+  serialized_end=2511,
+)
+
 _GETTEAMMEMBERRESPONSE.fields_by_name['enterpriseUser'].message_type = _ENTERPRISEUSER
 _NODETOMANAGEDCOMPANYREQUEST.fields_by_name['nodes'].message_type = _REENCRYPTEDDATA
 _NODETOMANAGEDCOMPANYREQUEST.fields_by_name['roles'].message_type = _REENCRYPTEDDATA
@@ -919,6 +1085,8 @@ _ENTERPRISEREGISTRATION.fields_by_name['enterpriseType'].enum_type = _ENTERPRISE
 _DOMAINPASSWORDRULESRESPONSE.fields_by_name['domainPasswordRulesFields'].message_type = _DOMAINPASSWORDRULESFIELDS
 _APPROVEUSERDEVICESREQUEST.fields_by_name['deviceRequests'].message_type = _APPROVEUSERDEVICEREQUEST
 _APPROVEUSERDEVICESRESPONSE.fields_by_name['deviceResponses'].message_type = _APPROVEUSERDEVICERESPONSE
+_USERDATAKEY.fields_by_name['enterpriseUserIdDataKeyPairs'].message_type = _ENTERPRISEUSERIDDATAKEYPAIR
+_USERDATAKEYRESPONSE.fields_by_name['userDataKeys'].message_type = _USERDATAKEY
 DESCRIPTOR.message_types_by_name['EnterpriseKeyPairRequest'] = _ENTERPRISEKEYPAIRREQUEST
 DESCRIPTOR.message_types_by_name['GetTeamMemberRequest'] = _GETTEAMMEMBERREQUEST
 DESCRIPTOR.message_types_by_name['EnterpriseUser'] = _ENTERPRISEUSER
@@ -939,6 +1107,10 @@ DESCRIPTOR.message_types_by_name['ApproveUserDeviceRequest'] = _APPROVEUSERDEVIC
 DESCRIPTOR.message_types_by_name['ApproveUserDeviceResponse'] = _APPROVEUSERDEVICERESPONSE
 DESCRIPTOR.message_types_by_name['ApproveUserDevicesRequest'] = _APPROVEUSERDEVICESREQUEST
 DESCRIPTOR.message_types_by_name['ApproveUserDevicesResponse'] = _APPROVEUSERDEVICESRESPONSE
+DESCRIPTOR.message_types_by_name['UserDataKeyRequest'] = _USERDATAKEYREQUEST
+DESCRIPTOR.message_types_by_name['EnterpriseUserIdDataKeyPair'] = _ENTERPRISEUSERIDDATAKEYPAIR
+DESCRIPTOR.message_types_by_name['UserDataKey'] = _USERDATAKEY
+DESCRIPTOR.message_types_by_name['UserDataKeyResponse'] = _USERDATAKEYRESPONSE
 DESCRIPTOR.enum_types_by_name['EnterpriseType'] = _ENTERPRISETYPE
 _sym_db.RegisterFileDescriptor(DESCRIPTOR)
 
@@ -1081,6 +1253,34 @@ ApproveUserDevicesResponse = _reflection.GeneratedProtocolMessageType('ApproveUs
   # @@protoc_insertion_point(class_scope:Enterprise.ApproveUserDevicesResponse)
   })
 _sym_db.RegisterMessage(ApproveUserDevicesResponse)
+
+UserDataKeyRequest = _reflection.GeneratedProtocolMessageType('UserDataKeyRequest', (_message.Message,), {
+  'DESCRIPTOR' : _USERDATAKEYREQUEST,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.UserDataKeyRequest)
+  })
+_sym_db.RegisterMessage(UserDataKeyRequest)
+
+EnterpriseUserIdDataKeyPair = _reflection.GeneratedProtocolMessageType('EnterpriseUserIdDataKeyPair', (_message.Message,), {
+  'DESCRIPTOR' : _ENTERPRISEUSERIDDATAKEYPAIR,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.EnterpriseUserIdDataKeyPair)
+  })
+_sym_db.RegisterMessage(EnterpriseUserIdDataKeyPair)
+
+UserDataKey = _reflection.GeneratedProtocolMessageType('UserDataKey', (_message.Message,), {
+  'DESCRIPTOR' : _USERDATAKEY,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.UserDataKey)
+  })
+_sym_db.RegisterMessage(UserDataKey)
+
+UserDataKeyResponse = _reflection.GeneratedProtocolMessageType('UserDataKeyResponse', (_message.Message,), {
+  'DESCRIPTOR' : _USERDATAKEYRESPONSE,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.UserDataKeyResponse)
+  })
+_sym_db.RegisterMessage(UserDataKeyResponse)
 
 
 DESCRIPTOR._options = None

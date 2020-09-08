@@ -44,7 +44,7 @@ from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, ApproveUserDeviceResponse)
+                             ApproveUserDevicesResponse, UserDataKeyRequest, UserDataKeyResponse)
 from ..APIRequest_pb2 import ApiRequestPayload
 
 from cryptography.hazmat.backends import default_backend
@@ -3536,22 +3536,25 @@ class DeviceApproveCommand(EnterpriseCommand):
         devices = kwargs['device']
         matching_devices = {}
         for device in DeviceApproveCommand.DevicesToApprove:
-            found = False
             device_id = device.get('encrypted_device_token')
             if not device_id:
                 continue
             device_id = DeviceApproveCommand.token_to_string(base64.urlsafe_b64decode(device_id + '=='))
+            found = False
             if devices:
                 for name in devices:
-                    if device_id.startswith(name):
-                        found = True
-                        break
-                    ent_user_id = device.get('enterprise_user_id')
-                    u = next((x for x in params.enterprise['users'] if x.get('enterprise_user_id') == ent_user_id), None)
-                    if u:
-                        if u.get('username') == name:
+                    if name:
+                        if device_id.startswith(name):
                             found = True
                             break
+                        ent_user_id = device.get('enterprise_user_id')
+                        u = next((x for x in params.enterprise['users'] if x.get('enterprise_user_id') == ent_user_id), None)
+                        if u:
+                            if u.get('username') == name:
+                                found = True
+                                break
+                    else:
+                        found = True
             else:
                 found = True
             if found:
@@ -3601,11 +3604,51 @@ class DeviceApproveCommand(EnterpriseCommand):
                 if not keep:
                     del matching_devices[k]
 
+        if len(matching_devices) == 0:
+            logging.info('No matching devices found')
+            return
+
         if kwargs.get('approve') or kwargs.get('deny'):
             approve_rq = ApproveUserDevicesRequest()
+            data_keys = {}
+            if kwargs.get('approve'):
+                user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
+                data_key_rq = UserDataKeyRequest()
+                data_key_rq.enterpriseUserId.extend(user_ids)
+                api_request_payload = ApiRequestPayload()
+                api_request_payload.payload = data_key_rq.SerializeToString()
+                api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+                rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/get_user_data_key_shared_to_enterprise', api_request_payload)
+                if type(rs) is bytes:
+                    data_key_rs = UserDataKeyResponse()
+                    data_key_rs.ParseFromString(rs)
+                    if data_key_rs.noEncryptedDataKey:
+                        user_ids = set(data_key_rs.noEncryptedDataKey)
+                        usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                        if usernames:
+                            logging.info('User(s) \"%s\" have no accepted account transfers', ', '.join(usernames))
+                    if data_key_rs.accessDenied:
+                        user_ids = set(data_key_rs.noEncryptedDataKey)
+                        usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                        if usernames:
+                            logging.info('You cannot manage these user(s): %s', ', '.join(usernames))
+                    if data_key_rs.userDataKeys:
+                        for dk in data_key_rs.userDataKeys:
+                            try:
+                                role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
+                                private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
+                                for user_dk in dk.enterpriseUserIdDataKeyPairs:
+                                    if user_dk.enterpriseUserId not in data_keys:
+                                        data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
+                                        data_key = api.decrypt_rsa(data_key_str, private_key)
+                                        data_keys[user_dk.enterpriseUserId] = data_key
+                            except Exception as ex:
+                                logging.debug(ex)
+                else:
+                    logging.warning(rs)
+
             for device in matching_devices.values():
                 ent_user_id = device['enterprise_user_id']
-
                 device_rq = ApproveUserDeviceRequest()
                 device_rq.enterpriseUserId = ent_user_id
                 device_rq.encryptedDeviceToken = base64.urlsafe_b64decode(device['encrypted_device_token'] + '==')
@@ -3615,45 +3658,29 @@ class DeviceApproveCommand(EnterpriseCommand):
                 public_key = device['device_public_key']
                 if not public_key or len(public_key) == 0:
                     continue
-                data_key = None
-                user = next((x for x in params.enterprise['users'] if x.get('enterprise_user_id') == ent_user_id), None)
-                if not user:
+                data_key = data_keys.get(ent_user_id)
+                if not data_key:
                     continue
-                pre_transfer_rq = {
-                    'command': 'pre_account_transfer',
-                    'target_username': user['username']
-                }
                 try:
-                    pre_transfer_rs = api.communicate(params, pre_transfer_rq)
-                    role_key = None
-                    if 'role_key_id' in pre_transfer_rs:
-                        role_id = pre_transfer_rs['role_key_id']
-                        role_key2 = next((x for x in params.enterprise['role_keys2'] if x['role_id'] == role_id), None)
-                        if role_key2:
-                            tree_key = params.enterprise['unencrypted_tree_key']
-                            role_key = rest_api.decrypt_aes(base64.urlsafe_b64decode(role_key2['role_key'] + '=='), tree_key)
-                    elif 'role_key' in pre_transfer_rs:
-                        role_key = api.decrypt_rsa(pre_transfer_rs['role_key'], params.rsa_key)
-                    if role_key:
-                        role_pk = api.decrypt_rsa_key(pre_transfer_rs['role_private_key'], role_key)
-                        data_key = api.decrypt_rsa(pre_transfer_rs['transfer_key'], role_pk)
-                    if data_key:
-                        curve = ec.SECP256R1()
-                        ephemeral_key = ec.generate_private_key(curve,  default_backend())
-                        device_public_key = ec.EllipticCurvePublicKey. \
-                            from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
-                        shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
-                        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-                        digest.update(shared_key)
-                        key = digest.finalize()
-                        encrypted_data_key = rest_api.encrypt_aes(data_key, key)
-                        eph_public_key = ephemeral_key.public_key().public_bytes(
-                            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-                        device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
+                    curve = ec.SECP256R1()
+                    ephemeral_key = ec.generate_private_key(curve,  default_backend())
+                    device_public_key = ec.EllipticCurvePublicKey. \
+                        from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
+                    shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
+                    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                    digest.update(shared_key)
+                    key = digest.finalize()
+                    encrypted_data_key = rest_api.encrypt_aes(data_key, key)
+                    eph_public_key = ephemeral_key.public_key().public_bytes(
+                        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+                    device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
                 except Exception as e:
-                    logging.debug(e)
-
+                    logging.info(e)
+                    return
                 approve_rq.deviceRequests.append(device_rq)
+
+            if len(approve_rq.deviceRequests) == 0:
+                return
 
             api_request_payload = ApiRequestPayload()
             api_request_payload.payload = approve_rq.SerializeToString()
@@ -3665,7 +3692,6 @@ class DeviceApproveCommand(EnterpriseCommand):
                 DeviceApproveCommand.DevicesToApprove = None
             else:
                 logging.warning(rs)
-
         else:
             print('')
             headers = ['Email', 'Device ID', 'Device Name', 'Client Version']
@@ -3679,4 +3705,3 @@ class DeviceApproveCommand(EnterpriseCommand):
             rows.sort(key=lambda x: x[0])
             dump_report_data(rows, headers)
             print('')
-
