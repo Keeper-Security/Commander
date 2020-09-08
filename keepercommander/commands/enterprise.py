@@ -43,7 +43,15 @@ from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
-from .enterprise_pb2 import EnterpriseUserIds
+from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
+                             ApproveUserDevicesResponse, UserDataKeyRequest, UserDataKeyResponse)
+from ..APIRequest_pb2 import ApiRequestPayload
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
 
 
 def register_commands(commands):
@@ -55,6 +63,8 @@ def register_commands(commands):
     commands['enterprise-team'] = EnterpriseTeamCommand()
     commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
+    commands['device-approve'] = DeviceApproveCommand()
+
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
     commands['user-report'] = UserReportCommand()
@@ -70,7 +80,7 @@ def register_command_info(aliases, command_info):
     aliases['al'] = 'audit-log'
 
     for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
-              enterprise_team_parser, enterprise_push_parser, team_approve_parser,
+              enterprise_team_parser, enterprise_push_parser, team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
@@ -179,6 +189,15 @@ team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choi
 team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
 team_approve_parser.error = raise_parse_exception
 team_approve_parser.exit = suppress_exit
+
+device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices')
+device_approve_parser.add_argument('--reload', dest='reload', action='store_true', help='reload list of pending approval requests')
+device_approve_parser.add_argument('--approve', dest='approve', action='store_true', help='approve user devices')
+device_approve_parser.add_argument('--deny', dest='deny', action='store_true', help='deny user devices')
+device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
+device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
+device_approve_parser.error = raise_parse_exception
+device_approve_parser.exit = suppress_exit
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on file format and template parameters')
@@ -3485,3 +3504,204 @@ class TeamApproveCommand(EnterpriseCommand):
                         logging.info('Team User approval: success %s; failure %s', success, failure)
                 api.query_enterprise(params)
 
+
+class DeviceApproveCommand(EnterpriseCommand):
+    def get_parser(self):
+        return device_approve_parser
+
+    DevicesToApprove = None
+
+    @staticmethod
+    def token_to_string(token): # type: (bytes) -> str
+        src = token[0:10]
+        if src.hex:
+            return src.hex()
+        return ''.join('{:02x}'.format(x) for x in src)
+
+    def execute(self, params, **kwargs):
+        if DeviceApproveCommand.DevicesToApprove is None or kwargs.get('reload'):
+            request = {
+                'command': 'get_enterprise_data',
+                'include': ['devices_request_for_admin_approval']
+            }
+            response = api.communicate(params, request)
+            DeviceApproveCommand.DevicesToApprove = response.get('devices_request_for_admin_approval') or []
+        if not DeviceApproveCommand.DevicesToApprove:
+            logging.info('There are no pending devices to approve')
+            return
+
+        if kwargs.get('approve') and kwargs.get('deny'):
+            raise CommandError('device-approve', "'approve' and 'deny' parameters are mutually exclusive.")
+
+        devices = kwargs['device']
+        matching_devices = {}
+        for device in DeviceApproveCommand.DevicesToApprove:
+            device_id = device.get('encrypted_device_token')
+            if not device_id:
+                continue
+            device_id = DeviceApproveCommand.token_to_string(base64.urlsafe_b64decode(device_id + '=='))
+            found = False
+            if devices:
+                for name in devices:
+                    if name:
+                        if device_id.startswith(name):
+                            found = True
+                            break
+                        ent_user_id = device.get('enterprise_user_id')
+                        u = next((x for x in params.enterprise['users'] if x.get('enterprise_user_id') == ent_user_id), None)
+                        if u:
+                            if u.get('username') == name:
+                                found = True
+                                break
+                    else:
+                        found = True
+            else:
+                found = True
+            if found:
+                matching_devices[device_id] = device
+
+        if len(matching_devices) == 0:
+            logging.info('No matching devices found')
+            return
+
+        if kwargs.get('approve') and kwargs.get('check_ip'):
+            user_ids = set([x['enterprise_user_id'] for x in matching_devices.values() if 'enterprise_user_id' in x])
+            emails = {}
+            for u in params.enterprise['users']:
+                user_id = u['enterprise_user_id']
+                if user_id in user_ids:
+                    emails[user_id] = u['username']
+
+            last_year = datetime.datetime.now() - datetime.timedelta(days=365)
+            rq = {
+                'command': 'get_audit_event_reports',
+                'report_type': 'span',
+                'scope': 'enterprise',
+                'columns': ['ip_address', 'username'],
+                'filter': {
+                    'audit_event_type': 'login',
+                    'created': {
+                        "min": int(last_year.timestamp())
+                    },
+                    'username': list(emails.values())
+                },
+                'limit': 1000
+            }
+            rs = api.communicate(params, rq)
+            ip_map = {}
+            if 'audit_event_overview_report_rows' in rs:
+                for row in rs['audit_event_overview_report_rows']:
+                    if 'username' in row and 'ip_address' in row:
+                        uname = row['username']
+                        if uname not in ip_map:
+                            ip_map[uname] = set()
+                        ip_map[uname].add(row['ip_address'])
+
+            for k, v in matching_devices.items():
+                p_uname = emails.get(v.get('enterprise_user_id'))
+                p_ip_addr = v.get('ip_address')
+                keep = p_uname and p_ip_addr and p_uname in ip_map and p_ip_addr in ip_map[p_uname]
+                if not keep:
+                    del matching_devices[k]
+
+        if len(matching_devices) == 0:
+            logging.info('No matching devices found')
+            return
+
+        if kwargs.get('approve') or kwargs.get('deny'):
+            approve_rq = ApproveUserDevicesRequest()
+            data_keys = {}
+            if kwargs.get('approve'):
+                user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
+                data_key_rq = UserDataKeyRequest()
+                data_key_rq.enterpriseUserId.extend(user_ids)
+                api_request_payload = ApiRequestPayload()
+                api_request_payload.payload = data_key_rq.SerializeToString()
+                api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+                rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/get_user_data_key_shared_to_enterprise', api_request_payload)
+                if type(rs) is bytes:
+                    data_key_rs = UserDataKeyResponse()
+                    data_key_rs.ParseFromString(rs)
+                    if data_key_rs.noEncryptedDataKey:
+                        user_ids = set(data_key_rs.noEncryptedDataKey)
+                        usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                        if usernames:
+                            logging.info('User(s) \"%s\" have no accepted account transfers', ', '.join(usernames))
+                    if data_key_rs.accessDenied:
+                        user_ids = set(data_key_rs.noEncryptedDataKey)
+                        usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                        if usernames:
+                            logging.info('You cannot manage these user(s): %s', ', '.join(usernames))
+                    if data_key_rs.userDataKeys:
+                        for dk in data_key_rs.userDataKeys:
+                            try:
+                                role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
+                                private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
+                                for user_dk in dk.enterpriseUserIdDataKeyPairs:
+                                    if user_dk.enterpriseUserId not in data_keys:
+                                        data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
+                                        data_key = api.decrypt_rsa(data_key_str, private_key)
+                                        data_keys[user_dk.enterpriseUserId] = data_key
+                            except Exception as ex:
+                                logging.debug(ex)
+                else:
+                    logging.warning(rs)
+
+            for device in matching_devices.values():
+                ent_user_id = device['enterprise_user_id']
+                device_rq = ApproveUserDeviceRequest()
+                device_rq.enterpriseUserId = ent_user_id
+                device_rq.encryptedDeviceToken = base64.urlsafe_b64decode(device['encrypted_device_token'] + '==')
+                device_rq.denyApproval = True if kwargs.get('deny') else False
+                if not kwargs.get('approve'):
+                    continue
+                public_key = device['device_public_key']
+                if not public_key or len(public_key) == 0:
+                    continue
+                data_key = data_keys.get(ent_user_id)
+                if not data_key:
+                    continue
+                try:
+                    curve = ec.SECP256R1()
+                    ephemeral_key = ec.generate_private_key(curve,  default_backend())
+                    device_public_key = ec.EllipticCurvePublicKey. \
+                        from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
+                    shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
+                    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                    digest.update(shared_key)
+                    key = digest.finalize()
+                    encrypted_data_key = rest_api.encrypt_aes(data_key, key)
+                    eph_public_key = ephemeral_key.public_key().public_bytes(
+                        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+                    device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
+                except Exception as e:
+                    logging.info(e)
+                    return
+                approve_rq.deviceRequests.append(device_rq)
+
+            if len(approve_rq.deviceRequests) == 0:
+                return
+
+            api_request_payload = ApiRequestPayload()
+            api_request_payload.payload = approve_rq.SerializeToString()
+            api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+            rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/approve_user_devices', api_request_payload)
+            if type(rs) is bytes:
+                approve_rs = ApproveUserDevicesResponse()
+                approve_rs.ParseFromString(rs)
+                DeviceApproveCommand.DevicesToApprove = None
+            else:
+                logging.warning(rs)
+        else:
+            print('')
+            headers = ['Email', 'Device ID', 'Device Name', 'Client Version']
+            rows = []
+            for k, v in matching_devices.items():
+                user = next((x for x in params.enterprise['users']
+                             if x.get('enterprise_user_id') == v.get('enterprise_user_id')), None)
+                if not user:
+                    continue
+                rows.append([user.get('username'), k, v.get('device_name'), v.get('client_version')])
+            rows.sort(key=lambda x: x[0])
+            dump_report_data(rows, headers)
+            print('')
