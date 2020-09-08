@@ -111,10 +111,15 @@ class MSPInfoCommand(EnterpriseCommand):
         if licenses:
             format_msp_licenses(licenses)
 
-        mcs = params.enterprise['managed_companies']
+        mcs = None
+
+        if 'managed_companies' in params.enterprise:
+            mcs = params.enterprise['managed_companies']
 
         if mcs:
             format_managed_company(mcs)
+        else:
+            print("No Managed Companies\n")
 
 
 class MSPLicenseCommand(EnterpriseCommand):
