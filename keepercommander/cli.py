@@ -47,6 +47,7 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'Company. \nIf you are an MSP administrator then try to run `switch-to-msp` ' \
                           'command before executing this command.'
 
+
 def display_command_help(show_enterprise = False, show_shell = False):
     max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info.keys(), 0)
 
@@ -155,6 +156,15 @@ def command_and_args_from_cmd(command_line):
 def do_command(params, command_line):
     global current_mc_id
 
+    def is_msp(params_local):
+        if params_local.enterprise:
+            if 'licenses' in params_local.enterprise:
+                msp_license = next((x for x in params_local.enterprise['licenses'] if x['lic_status'].startswith('msp')),
+                                   None)
+                if msp_license:
+                    return True
+        return False
+
     if command_line == 'h':
         display.formatted_history(stack)
 
@@ -180,7 +190,7 @@ def do_command(params, command_line):
             logging.error('This command is restricted to Keeper Enterprise administrators.')
             return
 
-        if 'managed_companies' not in params.enterprise:
+        if not is_msp(params):
             logging.error(not_msp_admin_error_msg)
             return
 
@@ -201,7 +211,7 @@ def do_command(params, command_line):
             logging.error('This command is restricted to Keeper Enterprise administrators.')
             return
 
-        if 'managed_companies' not in params.enterprise:
+        if not is_msp(params):
             logging.error(not_msp_admin_error_msg)
             return
 
@@ -257,8 +267,8 @@ def do_command(params, command_line):
                             logging.error('This command is restricted to Keeper Enterprise administrators.')
                             return
 
-                    if cmd in msp_commands and params.enterprise:
-                        if 'managed_companies' not in params.enterprise:
+                    if cmd in msp_commands:
+                        if not is_msp(params):
                             logging.error(not_msp_admin_error_msg)
                             return
 
@@ -293,8 +303,7 @@ def runcommands(params):
         for command in params.commands:
             logging.info('Executing [%s]...', command)
             try:
-                if not do_command(params, command):
-                    logging.warning('Command %s failed.', command)
+                do_command(params, command)
             except CommunicationError as e:
                 logging.error("Communication Error: %s", e.message)
             except AuthenticationError as e:
