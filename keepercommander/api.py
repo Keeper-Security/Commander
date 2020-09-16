@@ -1291,7 +1291,6 @@ def communicate_rest(params, request, endpoint):
     raise KeeperApiError('Error', endpoint)
 
 
-
 def communicate(params, request):
     # type: (KeeperParams, dict) -> dict
 
@@ -1559,13 +1558,16 @@ def resolve_record_write_path(params, record_uid):
     # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_edit')
 
+
 def resolve_record_share_path(params, record_uid):
     # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_share')
 
+
 def resolve_record_view_path(params, record_uid):
     # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_view')
+
 
 def resolve_record_access_path(params, record_uid, path=None):
     # type: (KeeperParams, str, dict or None) -> dict
@@ -1734,7 +1736,7 @@ def query_enterprise(params):
         'command': 'get_enterprise_data',
         'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
                     'role_users', 'managed_nodes', 'role_keys', 'licenses', 'queued_teams', 'queued_team_users',
-                    'licenses']
+                    'licenses', 'keys']
     }
     try:
         response = communicate(params, request)
