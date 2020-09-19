@@ -11,6 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 install_requires = [
     'colorama',
+    'cryptography',
     'pycryptodomex>=3.7.2',
     'libkeepass',
     'requests',
