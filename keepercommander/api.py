@@ -87,7 +87,7 @@ def login(params):
             logging.debug('No auth verifier, sending pre-auth request')
             try:
                 pre_login_rs = rest_api.pre_login(params.rest_context, params.user)
-                auth_params = pre_login_rs.salt[0]
+                auth_params = get_correct_salt(pre_login_rs.salt)
                 params.iterations = auth_params.iterations
                 params.salt = auth_params.salt
                 params.auth_verifier = auth_verifier(params.password, params.salt, params.iterations)
@@ -1813,3 +1813,11 @@ def login_and_get_mc_params(params, mc_id):
     query_enterprise(mc_params)
 
     return mc_params
+
+
+def get_correct_salt(salts):
+    if len(salts) > 1:
+        salt = next((s for s in salts if s.name.lower() == 'alternate'), salts[0])
+    else:
+        salt = salts[0]
+    return salt
