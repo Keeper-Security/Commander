@@ -366,6 +366,14 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-share {on,off}``` disable record re-shares
     - ```--restrict-view {on,off}``` disable view/copy passwords
 
+* ```device-approve``` Approve SSO Cloud devices that are pending from end-users
+
+    Parameters:
+    - ```--reload``` Get the latest devices that require approval 
+    - ```--approve <device ID>``` Approve the specific device or all devices 
+    - ```--deny <device ID>``` Deny specific device
+    - ```--trusted-ip``` When supplied with --approve, will only approve devices from a recognized IP address
+
 * ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
 
     Parameters:
@@ -912,7 +920,7 @@ To automate the syslog event export every 5 minutes, create a JSON configuration
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=syslog"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -984,7 +992,7 @@ To automate the push of Splunk events every 5 minutes, create a JSON configurati
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=splunk"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -1052,7 +1060,7 @@ To automate the push of Sumo Logic events every 5 minutes, create a JSON configu
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=sumo"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -1110,7 +1118,7 @@ To automate the JSON event export every 5 minutes, create a JSON configuration f
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=json"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -1176,7 +1184,7 @@ To automate the push of events to Azure Log Analytics every 5 minutes, create a 
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=azure-la"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
