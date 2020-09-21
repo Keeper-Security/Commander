@@ -3697,30 +3697,29 @@ class DeviceApproveCommand(EnterpriseCommand):
                 device_rq.enterpriseUserId = ent_user_id
                 device_rq.encryptedDeviceToken = base64.urlsafe_b64decode(device['encrypted_device_token'] + '==')
                 device_rq.denyApproval = True if kwargs.get('deny') else False
-                if not kwargs.get('approve'):
-                    continue
-                public_key = device['device_public_key']
-                if not public_key or len(public_key) == 0:
-                    continue
-                data_key = data_keys.get(ent_user_id)
-                if not data_key:
-                    continue
-                try:
-                    curve = ec.SECP256R1()
-                    ephemeral_key = ec.generate_private_key(curve,  default_backend())
-                    device_public_key = ec.EllipticCurvePublicKey. \
-                        from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
-                    shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
-                    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-                    digest.update(shared_key)
-                    enc_key = digest.finalize()
-                    encrypted_data_key = rest_api.encrypt_aes(data_key, enc_key)
-                    eph_public_key = ephemeral_key.public_key().public_bytes(
-                        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-                    device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
-                except Exception as e:
-                    logging.info(e)
-                    return
+                if kwargs.get('approve'):
+                    public_key = device['device_public_key']
+                    if not public_key or len(public_key) == 0:
+                        continue
+                    data_key = data_keys.get(ent_user_id)
+                    if not data_key:
+                        continue
+                    try:
+                        curve = ec.SECP256R1()
+                        ephemeral_key = ec.generate_private_key(curve,  default_backend())
+                        device_public_key = ec.EllipticCurvePublicKey. \
+                            from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
+                        shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
+                        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                        digest.update(shared_key)
+                        enc_key = digest.finalize()
+                        encrypted_data_key = rest_api.encrypt_aes(data_key, enc_key)
+                        eph_public_key = ephemeral_key.public_key().public_bytes(
+                            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+                        device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
+                    except Exception as e:
+                        logging.info(e)
+                        return
                 approve_rq.deviceRequests.append(device_rq)
 
             if len(approve_rq.deviceRequests) == 0:
@@ -3738,14 +3737,14 @@ class DeviceApproveCommand(EnterpriseCommand):
                 logging.warning(rs)
         else:
             print('')
-            headers = ['Email', 'Device ID', 'Device Name', 'Client Version']
+            headers = ['Email', 'Device ID', 'Device Name', 'IP Address', 'Client Version']
             rows = []
             for k, v in matching_devices.items():
                 user = next((x for x in params.enterprise['users']
                              if x.get('enterprise_user_id') == v.get('enterprise_user_id')), None)
                 if not user:
                     continue
-                rows.append([user.get('username'), k, v.get('device_name'), v.get('client_version')])
+                rows.append([user.get('username'), k, v.get('device_name'), v.get('ip_address'), v.get('client_version')])
             rows.sort(key=lambda x: x[0])
             dump_report_data(rows, headers)
             print('')
