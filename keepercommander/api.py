@@ -28,6 +28,7 @@ from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
+from .loginv3 import LoginV3Flow as loginv3, LoginV3API, CommonHelperMethods
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -48,7 +49,9 @@ unpad_char = lambda s: s[0:-ord(s[-1])]
 
 def run_command(params, request):
     # type: (KeeperParams, dict) -> dict
-    request['client_version'] = rest_api.CLIENT_VERSION
+    if 'client_version' not in request:
+        request['client_version'] = rest_api.CLIENT_VERSION
+
     return rest_api.v2_execute(params.rest_context, request)
 
 
@@ -72,6 +75,14 @@ install_fido_package_warning = 'You can use Security Key with Commander:\n' +\
 
 def login(params):
     # type: (KeeperParams) -> None
+
+    if params.login_v3:
+        logging.info('Logging in using Login v3...')
+        loginv3.login(params)
+        return
+
+    logging.info("Logging in...")
+
     global should_cancel_u2f
     global u2f_response
     global warned_on_fido_package
@@ -119,6 +130,8 @@ def login(params):
                 expire_token = params.config.get('device_token_expiration') or False
                 expire_days = 0 if expire_token else 9999
                 rq['device_token_expire_days'] = expire_days
+
+        rq['client_version'] = rest_api.LEGACY_CLIENT_VERSION   # this login only supports up to v14 clients.
 
         response_json = run_command(params, rq)
 
@@ -315,6 +328,11 @@ def accept_account_transfer_consent(params, share_account_to):
     return False
 
 
+def decrypt_aes_plain(data: bytes, key: bytes):
+    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=data[:12])
+    return cipher.decrypt_and_verify(data[12:-16], data[-16:])
+
+
 def decrypt_aes(data, key):
     # type: (str, bytes) -> bytes
     decoded_data = base64.urlsafe_b64decode(data + '==')
@@ -329,6 +347,13 @@ def decrypt_data(data, key):
     return unpad_binary(decrypt_aes(data, key))
 
 
+def encrypt_aes_plain(data: bytes, key: bytes):
+    iv = os.urandom(12)
+    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=iv)
+    enc_data, tag = cipher.encrypt_and_digest(data)
+    return iv + enc_data + tag
+
+
 def encrypt_aes(data, key):
     iv = os.urandom(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -341,6 +366,11 @@ def encrypt_aes_key(key_to_encrypt, encryption_key):
     cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
     encrypted_data = iv + cipher.encrypt(key_to_encrypt)
     return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
+
+
+def encrypt_rsa_plain(data, rsa_key):
+    cipher = PKCS1_v1_5.new(rsa_key)
+    return cipher.encrypt(data)
 
 
 def encrypt_rsa(data, rsa_public_key):
@@ -540,12 +570,13 @@ def sync_down(params):
 
     if 'non_shared_data' in response_json:
         for non_shared_data in response_json['non_shared_data']:
-            try:
-                decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
-                non_shared_data['data_unencrypted'] = decrypted_data
-                params.non_shared_data_cache[non_shared_data['record_uid']] = non_shared_data
-            except:
-                logging.debug('Non-shared data for record %s could not be decrypted', non_shared_data['record_uid'])
+            if 'data' in non_shared_data and non_shared_data['data']:
+                try:
+                    decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
+                    non_shared_data['data_unencrypted'] = decrypted_data
+                    params.non_shared_data_cache[non_shared_data['record_uid']] = non_shared_data
+                except:
+                    logging.debug('Non-shared data for record %s could not be decrypted', non_shared_data['record_uid'])
 
     # convert record keys from RSA to AES-256
     if 'record_meta_data' in response_json:
@@ -889,7 +920,7 @@ def create_auth_verifier(password, salt, iterations):
     derived_key = derive_key(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
-    return base64.urlsafe_b64encode(auth_ver).decode().strip('=')
+    return CommonHelperMethods.bytes_to_url_safe_str(auth_ver)
 
 
 def create_encryption_params(password, salt, iterations, data_key):
@@ -901,7 +932,7 @@ def create_encryption_params(password, salt, iterations, data_key):
     cipher = AES.new(derived_key, AES.MODE_CBC, enc_iv)
     enc_data_key = cipher.encrypt(data_key + data_key)
     enc_params = b'\x01' + enc_iter + salt + enc_iv + enc_data_key
-    return base64.urlsafe_b64encode(enc_params).decode().strip('=')
+    return CommonHelperMethods.bytes_to_url_safe_str(enc_params)
 
 
 def decrypt_encryption_params(encryption_params, password):
@@ -1792,6 +1823,32 @@ def query_enterprise(params):
     except Exception as e:
         logging.debug(e)
         params.enterprise = None
+
+
+def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
+
+    resp = LoginV3API.loginToMc(params.rest_context, params.session_token, mc_id)
+
+    mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
+
+    mc_params.config = params.config
+    mc_params.auth_verifier = params.auth_verifier
+    mc_params.mfa_token = params.mfa_token
+    mc_params.salt = params.salt
+    mc_params.iterations = params.iterations
+    mc_params.user = params.user
+    mc_params.password = params.password
+    mc_params.enterprise_id = mc_id
+    mc_params.session_token = params.session_token
+    mc_params.login_v3 = params.login_v3
+    mc_params.data_key = params.data_key
+
+    mc_params.session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
+    mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
+
+    query_enterprise(mc_params)
+
+    return mc_params
 
 
 def login_and_get_mc_params(params, mc_id):

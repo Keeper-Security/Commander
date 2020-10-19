@@ -261,7 +261,6 @@ class LoginCommand(Command):
         params.user = user.lower()
         params.password = password
 
-        logging.info('Logging in...')
         api.login(params)
 
 

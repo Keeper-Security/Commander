@@ -20,6 +20,8 @@ from .. import api
 from ..display import format_managed_company, format_msp_licenses
 from ..error import CommandError
 
+from keepercommander.loginv3 import CommonHelperMethods
+
 
 def register_commands(commands):
     commands['msp-down'] = GetMSPDataCommand()
@@ -222,12 +224,12 @@ class MSPLicensesReportCommand(EnterpriseCommand):
                 to_date = end_date1
             else:
                 # will use start and end data
-                if check_int(from_date_str):
+                if CommonHelperMethods.check_int(from_date_str):
                     from_date = datetime.fromtimestamp(int(from_date_str))
                 else:
                     from_date = datetime.strptime(from_date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")
 
-                if check_int(to_date_str):
+                if CommonHelperMethods.check_int(to_date_str):
                     to_date = datetime.fromtimestamp(int(to_date_str))
                 else:
                     to_date = datetime.strptime(to_date_str + " 11:59:59", "%Y-%m-%d %H:%M:%S")
@@ -270,7 +272,7 @@ class MSPLicensesReportCommand(EnterpriseCommand):
 def get_mc_by_name_or_id(msc, name_or_id):
 
     found_mc = None
-    if check_int(name_or_id):
+    if CommonHelperMethods.check_int(name_or_id):
         # get by id
         found_mc = find(lambda mc: mc['mc_enterprise_id'] == int(name_or_id), msc)
 
@@ -295,15 +297,6 @@ def report_generation_message(filename, filetype):
             filename += '.'+filetype
 
     return filename
-
-
-def check_int(s):
-    # check if string is an integer
-    num_str = str(s)
-
-    if num_str[0] in ('-', '+'):
-        return num_str[1:].isdigit()
-    return num_str.isdigit()
 
 
 def date_range_str_to_dates(range_str):
