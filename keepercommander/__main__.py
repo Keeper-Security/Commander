@@ -74,6 +74,12 @@ def get_params_from_config(config_filename):
                     if 'logout_timer' in params.config:
                         params.logout_timer = params.config['logout_timer']
 
+                    if 'login_v3' in params.config:
+                        params.login_v3 = params.config['login_v3']
+
+                    if 'private_key' in params.config:
+                        params.device_private_key = params.config['private_key']
+
             except Exception as e:
                 logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
                 answer = input('Do you want to delete it (y/N): ')
@@ -105,6 +111,7 @@ parser.add_argument('--version', dest='version', action='store_true', help='Disp
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
 parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
+parser.add_argument('--login-v3', '-lv3', dest='login_v3', action='store', help='Use Login v3 to login to Keeper')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
@@ -133,6 +140,13 @@ def main(from_package=False):
 
     if opts.batch_mode:
         params.batch_mode = True
+
+    if opts.login_v3:
+        params.login_v3 = 'TRUE'.startswith(str(opts.login_v3).upper())
+
+    if not opts.login_v3 and not params.login_v3:
+        # if nothing is setup in params and config then the default is to use Login V3
+        params.login_v3 = True
 
     if opts.server:
         params.server = 'https://{0}/api/v2/'.format(opts.server)

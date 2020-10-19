@@ -25,7 +25,8 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 
-CLIENT_VERSION = 'c14.0.0'
+LEGACY_CLIENT_VERSION = 'c14.0.0'
+CLIENT_VERSION = 'c15.0.0'
 
 
 SERVER_PUBLIC_KEYS = {
@@ -173,7 +174,7 @@ def get_device_token(context):
         if type(rs) is bytes:
             device_rs = proto.DeviceResponse()
             device_rs.ParseFromString(rs)
-            if proto.DeviceStatus.Name(device_rs.status) == 'OK':
+            if proto.DeviceStatus.Name(device_rs.status) == 'DEVICE_OK':
                 context.device_id = device_rs.encryptedDeviceToken
         elif type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])

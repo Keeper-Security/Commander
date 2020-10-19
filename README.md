@@ -8,6 +8,7 @@ Jump to:
 * [Installation](#python-installation---linux-and-mac)
 * [Developer Setup](#developer-mode)
 * [Command-line Usage](#command-line-usage)
+* [Login V3](#login-v3)
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
 * [Importing Data](#importing-records-into-keeper)
@@ -132,6 +133,75 @@ optional arguments:
   --version             Display version
   --config CONFIG       Config file to use
   --debug               Turn on debug mode
+```
+
+### Login V3
+
+Current login mechanism is by default uses new Login V3 flow. This login flow includes following features:
+- Now all devices that access Keeper require to be registered using email, sms push, or security key
+- Ability to use SSO login. At this time Commander only supports login with alternate master password.
+
+##### Disabling Login V3
+If you need to disable Login V3 flow for any reason (ex. issue with automation) there are two way of doing that:
+
+1. Setting `login_v3` flag to `false` in the configuration file
+    
+    Example configuration file:
+    ```json
+   {
+        "login_v3": false
+   }
+    ```
+2. Passing command line argument `--login-v3=false` or `-lv3=false`
+    
+    Example command:
+    ```shell script
+   keeper --lv3 false
+   ```
+
+
+##### Device approval
+
+Login V3 now by default requires all devices to be approved before authenticating a user. On the first run Commander
+will present user with the options to approve this device. Below are the available options that will be presented:
+
+- `email_send` - Send email to the user with instructions to approve this device.
+- `email_code=<code>` - This option allows user to manually enter the code that was sent in the device approval email
+- `keeper_push` - Sends push notification to the approved device where Keeper app is already installed and the same user is logged in
+- `2fa_send` - Sends 2FA code to SMS, TOTP (Google Authenticator), DUO, etc.
+- `2fa_code=<code>` - Ability to enter 2FA code to validate a code supplied by 2FA application used in `2fa_send` command
+- `approval_check` Check or refresh login state to check current state of the device approval. Can be used when user clicks on the email link send after running command `email_send`
+
+Example output screen:
+
+```shell script
+Device Approval Required
+Approve by selecting a method below:
+	"email_send" to send email
+	"email_code=<code>" to validate verification code sent via email
+	"keeper_push" to send Keeper Push notification
+	"2fa_send" to send 2FA code
+	"2fa_code=<code>" to validate a code provided by 2FA application
+	"approval_check" check for device approval
+Type your selection: email_send
+```
+
+##### Authentication
+Once devices is approved user will be presented with the authentication flow. If user's configurations have 2FA enabled
+then user will be presented with the available options to authorize and then authenticate with the master password.
+
+
+
+##### SSO Accounts
+Even though Login V3 supports SSO login, Commander at this point does not support this ability.
+Accounts with SSO authentication must setup and login using alternate master password.
+
+```shell script
+This account requires 2FA Authentication
+        1: Enter received 2FA code (Email, SMS, TOTP, RSA, or DUO)
+        2: Send SMS Code
+        3: U2F (FIDO Security Key)
+Selection (ex. 2):
 ```
 
 ### Interactive Shell

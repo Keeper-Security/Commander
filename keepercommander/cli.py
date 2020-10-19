@@ -25,10 +25,12 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
-from .commands.msp import get_mc_by_name_or_id, check_int
+from .commands.msp import get_mc_by_name_or_id
+from keepercommander.loginv3 import CommonHelperMethods
+
 from .params import KeeperParams
 from . import display
-from .api import sync_down, login, communicate, query_enterprise, query_msp, login_and_get_mc_params
+from .api import sync_down, login, communicate, query_enterprise, query_msp, login_and_get_mc_params, login_and_get_mc_params_login_v3
 from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
@@ -128,7 +130,10 @@ def check_if_running_as_mc(params, args):
         # Running commands as Managed Company admin via MSP
 
         if current_mc_id not in mc_params_dict:
-            mc_params = login_and_get_mc_params(params, current_mc_id)
+            if params.login_v3:
+                mc_params = login_and_get_mc_params_login_v3(params, current_mc_id)
+            else:
+                mc_params = login_and_get_mc_params(params, current_mc_id)
             mc_params_dict[current_mc_id] = mc_params
 
         params = mc_params_dict[current_mc_id]
@@ -183,7 +188,7 @@ def do_command(params, command_line):
 
         cmd, args = command_and_args_from_cmd(command_line)
 
-        if not args or not check_int(args):
+        if not args or not CommonHelperMethods.check_int(args):
             raise CommandError('switch-to-mc', "Please provide Managed Company ID as integer. Your input was '%s'" % args)
 
         if not params.enterprise:
@@ -253,7 +258,6 @@ def do_command(params, command_line):
                     if not params.session_token:
                         try:
                             prompt_for_credentials(params)
-                            logging.info('Logging in...')
                             login(params)
                             sync_down(params)
                         except KeyboardInterrupt as e:
@@ -324,8 +328,15 @@ def runcommands(params):
 def prompt_for_credentials(params):
     while not params.user:
         params.user = getpass.getpass(prompt='User(Email): ', stream=None)
-    while not params.password:
-        params.password = getpass.getpass(prompt='Password: ', stream=None)
+
+    if not params.login_v3:
+        while not params.password:
+            try:
+                params.password = getpass.getpass(prompt='Password: ', stream=None)
+            except KeyboardInterrupt:
+                print('')
+            except EOFError:
+                return 0
 
 
 def force_quit():
@@ -367,22 +378,22 @@ def loop(params):  # type: (KeeperParams) -> int
 
     if params.user:
         if len(params.commands) == 0:
-            if not params.password:
+            if not params.login_v3 and not params.password:
                 logging.info('Enter password for {0}'.format(params.user))
                 try:
-                    params.password = getpass.getpass(prompt='Password: ', stream=None)
+                    if not params.login_v3:
+                        params.password = getpass.getpass(prompt='Password: ', stream=None)
                 except KeyboardInterrupt:
                     print('')
                 except EOFError:
                     return 0
-        if params.password:
-            logging.info('Logging in...')
-            try:
-                login(params)
-                if params.session_token:
-                    do_command(params, 'sync-down')
-            except Exception as e:
-                logging.error(e)
+    # if params.password:
+        try:
+            login(params)
+            if params.session_token:
+                do_command(params, 'sync-down')
+        except Exception as e:
+            logging.error(e)
 
     while True:
         command = ''

@@ -105,6 +105,9 @@ class KeeperParams:
         self.record_history = {}        # type: dict[str, (list[dict], int)]
         self.event_queue = []
         self.logout_timer = 0
+        self.login_v3 = False
+        self.clone_code = None
+        self.device_private_key = None
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -147,6 +150,9 @@ class KeeperParams:
         self.record_history.clear()
         self.event_queue.clear()
         self.logout_timer = self.config.get('logout_timer') or 0
+        self.login_v3 = self.config.get('login_v3') or False
+        self.clone_code = None
+        self.device_private_key = None
 
     def __get_rest_context(self):
         return self.__rest_context

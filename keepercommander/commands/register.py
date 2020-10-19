@@ -34,6 +34,9 @@ from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
+from ..loginv3 import LoginV3API
+
+from .. import loginv3
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 
@@ -160,6 +163,12 @@ class RegisterCommand(Command):
         return 100000
 
     def execute(self, params, **kwargs):
+
+        if params.login_v3:
+            logging.debug("Registering user using Login V3 flow to add users")
+            LoginV3API.register_for_login_v3(params, kwargs)
+            return
+
         email = kwargs['email'] if 'email' in kwargs else None
 
         if email:
@@ -178,9 +187,9 @@ class RegisterCommand(Command):
                 logging.warning('User \'%s\' already exists in Keeper', email)
             else:
                 logging.error(rs['message'])
-            return
-
-        password_rules = rs['password_rules']
+            # return
+        else:
+            password_rules = rs['password_rules']
 
         # check enterprise
         verification_code = None
@@ -227,8 +236,8 @@ class RegisterCommand(Command):
                     rs = api.run_command(params, rq)
                     if 'password_rules' in rs:
                         password_rules = rs['password_rules']
-            except:
-                pass
+            except Exception as e:
+                logging.warning(e["message"])
 
         password = kwargs['password'] if 'password' in kwargs else None
         generate = kwargs['generate'] if 'generate' in kwargs else None
@@ -238,14 +247,15 @@ class RegisterCommand(Command):
             while not password:
                 pwd = getpass.getpass(prompt='Password: ', stream=None)
                 failed_rules = []
-                for r in password_rules:
-                    m = re.match(r['pattern'], pwd)
-                    if r['match']:
-                        if m is None:
-                            failed_rules.append(r['description'])
-                    else:
-                        if m is not None:
-                            failed_rules.append(r['description'])
+                if password_rules:
+                    for r in password_rules:
+                        m = re.match(r['pattern'], pwd)
+                        if r['match']:
+                            if m is None:
+                                failed_rules.append(r['description'])
+                        else:
+                            if m is not None:
+                                failed_rules.append(r['description'])
                 if len(failed_rules) == 0:
                     password = pwd
                 else:
@@ -278,21 +288,7 @@ class RegisterCommand(Command):
         enc_salt = os.urandom(16)
         backup_salt = os.urandom(16)
 
-        rsa_key = RSA.generate(2048)
-        private_key = DerSequence([0,
-                                   rsa_key.n,
-                                   rsa_key.e,
-                                   rsa_key.d,
-                                   rsa_key.p,
-                                   rsa_key.q,
-                                   rsa_key.d % (rsa_key.p - 1),
-                                   rsa_key.d % (rsa_key.q - 1),
-                                   Integer(rsa_key.q).inverse(rsa_key.p)
-                                   ]).encode()
-        pub_key = rsa_key.publickey()
-        public_key = DerSequence([pub_key.n,
-                                  pub_key.e
-                                  ]).encode()
+        private_key, public_key = loginv3.CommonHelperMethods.generate_rsa_key_pair()
 
         rq = {
             'command': 'register',
