@@ -359,8 +359,49 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 **Folder and Record Sharing Commands**
 
 * ```share-record``` or ```sr``` Grant or revoke record's user access
+    
+    Usage:
+    ```shell script
+    share-record|sr -e EMAIL [-a {grant,revoke,owner,cancel}] [-s] [-w] [record]
+    ```
+    
+    Parameters:
+    - `--email` or `-e` Account email
+    - `--action` or `-a` User share action.
+        
+        Available actions:
+        - `grant` - Grant read-only access to the record. Default value if omitted.
+        - `revoke` - Revoke edit permissions to this record.
+        - `owner` - Make user an owner of this record.
+        - `cancel` - Remove access to this record.
+    - `--share` or `-s` Grant permission to re-share record
+    - `--write` or `-w` Grant permission to modify record
 
-* ```share-folder``` or ```sf``` Grant or revoke shared folder's user access or record permission
+    Usage examples:
+    
+    - Grant edit and share access to one record: `share-record -a grant -e db-admin@keepersecurity.com -w "Prod MySQL"`
+    - Revoke access to the shared record: `share-record -a revoke -e db-admin@keepersecurity.com -w "Prod MySQL"`
+    
+* `share-folder` or `sf` Grant or revoke shared folder's user or teams access or record permission
+
+    Usage:
+    ```shell script
+    share-folder|sf [-a {grant,revoke}] [-e USER] [-r RECORD] [-p] [-o] [-s] [-d] [folder]
+    ```
+    Parameters:
+    
+    - `--action` or `-a` Shared Folder action. Available options: `grant`, `revoke`. Default is `grant` if omitted.
+    - `--email` or `-e` Account email, team name, or '*' as default folder permission
+    - `--record` or `-r` Record name, record UID, or '*' as default folder permission
+    - `--manage-records` or `-p` Allows user or team to manage records in this Shared Folder
+    - `--manage-users` or `-o` Allows user or team to manage users' access to this Shared Folder.
+    - `--can-share` or `-s` Enables user or team to shared this Shared Folder
+    - `--can-edit` or `-d` Enables user or team to modified this Shared Folder
+
+    Usage examples:
+    
+    - Grant read-only access for the team to records in the Shared Folder: `share-folder -a grant -e DB_ADMINS TestDBs`
+    - Revoke access for the team to the Shared Folder: `share-folder -a revoke -e DB_ADMINS TestDBs`
 
 * ```record-permission``` Changes record permissions inside the folder or folder tree. 
 
@@ -443,14 +484,6 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--approve <device ID>``` Approve the specific device or all devices 
     - ```--deny <device ID>``` Deny specific device
     - ```--trusted-ip``` When supplied with --approve, will only approve devices from a recognized IP address
-
-* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
-
-    Parameters:
-    - ```--syntax-help``` Displays information of record template file format
-    - ```--team TEAM_NAME or TEAM UID``` Populate all team users' vaults
-    - ```--email USER_EMAIL``` Populate user's vault
-    - ```file``` JSON file name containing template records
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
@@ -1350,55 +1383,6 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 5. Visit the Settings > General screen and setup a Master Password
 
 After the Master Password is created, you are now able to login to Keeper Commander.
-
-### Pushing Records to Users and Teams
-
-The Keeper Admin can push vault records automatically to any user or team vault in their organization using the "enterprise-push" command.
-
-Examples:
-
-```
-enterprise-push --team "Engineering Admins" push.json
-```
-
-```
-enterprise-push --email user@company.com push.json
-```
-
-The "push.json" file is structured an an array of password objects.  For example:
-
-```json
-[
-    {
-        "title": "Google",
-        "login": "${user_email}",
-        "password": "${generate_password}",
-        "login_url": "https://google.com",
-        "notes": "",
-        "custom_fields": {
-            "Name 1": "Value 1",
-            "Name 2": "Value 2"
-        }
-    },
-    {
-        "title": "Admin Tool",
-        "login": "${user_email}",
-        "password": "",
-        "login_url": "https://192.168.1.1",
-        "notes": "",
-        "custom_fields": {
-        }
-    }
-]
-```
-
-Supported template parameters:
-
-```
-${user_email}          User email address
-${generate_password}   Generate random password
-${user_name}           User full name
-```
 
 ### Creating and Pre-Populating Vaults
 
