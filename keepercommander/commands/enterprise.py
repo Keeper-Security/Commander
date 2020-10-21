@@ -54,7 +54,7 @@ def register_commands(commands):
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
-    commands['enterprise-push'] = EnterprisePushCommand()
+    # commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
 
@@ -73,7 +73,9 @@ def register_command_info(aliases, command_info):
     aliases['al'] = 'audit-log'
 
     for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
-              enterprise_team_parser, enterprise_push_parser, team_approve_parser, device_approve_parser,
+              enterprise_team_parser,
+              # enterprise_push_parser,
+              team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
@@ -2014,7 +2016,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         if 'team_users' in params.enterprise:
             user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
-            user_ids.sort(key=lambda x: user_names.get(x))
+            # user_ids.sort(key=lambda x: user_names.get(x))
             for i in range(len(user_ids)):
                 print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
 
