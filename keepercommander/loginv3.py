@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from google.protobuf.json_format import MessageToDict, MessageToJson
 
-import keepercommander.commands.enterprise as enterprise_command
-import keepercommander.plugins.humps.humps as capitalization_util
+from .commands import enterprise as enterprise_command
+from .plugins import humps as humps
 from . import api
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .display import bcolors
@@ -199,7 +199,7 @@ class LoginV3Flow:
         # Loading summary as dictionary for backwards compatibility
         acct_summary_json = MessageToJson(acct_summary, preserving_proto_field_name=False)
         acct_summary_dict = json.loads(acct_summary_json)
-        acct_summary_dict_snake_case = capitalization_util.decamelize(acct_summary_dict)
+        acct_summary_dict_snake_case = humps.humps.decamelize(acct_summary_dict)
 
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
