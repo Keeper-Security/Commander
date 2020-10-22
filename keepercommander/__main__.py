@@ -144,10 +144,6 @@ def main(from_package=False):
     if opts.login_v3:
         params.login_v3 = 'TRUE'.startswith(str(opts.login_v3).upper())
 
-    if not opts.login_v3 and not params.login_v3:
-        # if nothing is setup in params and config then the default is to use Login V3
-        params.login_v3 = True
-
     if opts.server:
         params.server = 'https://{0}/api/v2/'.format(opts.server)
 
