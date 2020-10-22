@@ -250,10 +250,10 @@ class LoginCommand(Command):
             if not user:
                 return
 
-            if not password:
+            if not password and not params.login_v3:
                 password = getpass.getpass(prompt='... {0:>16}: '.format('Password'), stream=None).strip()
-            if not password:
-                return
+                if not password:
+                    return
         except KeyboardInterrupt as e:
             logging.info('Canceled')
             return
