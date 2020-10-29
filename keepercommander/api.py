@@ -77,7 +77,7 @@ def login(params):
     # type: (KeeperParams) -> None
 
     if params.login_v3:
-        logging.info('Logging in using Login v3...')
+        logging.info('Logging in to Keeper Commander')
         loginv3.login(params)
         return
 
@@ -942,8 +942,8 @@ def decrypt_encryption_params(encryption_params, password):
     3 bytes: Iterations, unsigned integer, big endian
     16 bytes: salt
     80 bytes: encrypted data key (broken down further below)
-    16 bytes: IV
-    64 bytes: ciphertextIn
+        16 bytes: IV
+        64 bytes: ciphertextIn
     Key for encrypting the data key: 
         PBKDF2_with_HMAC_SHA256(iterations, salt, master password, 256-bit)
     Encryption method: 256-bit AES, CBC mode, no padding
@@ -981,6 +981,22 @@ def decrypt_encryption_params(encryption_params, password):
 
     # save the encryption params 
     return decrypted_data_key[:32]
+
+
+def decrypt_data_key(params: KeeperParams, encrypted_data_key):
+
+    encrypted_data_key_len = len(encrypted_data_key)
+
+    # [12 bytes: nonce / iv]
+    # [32 bytes: ciphertext]
+    # [16 bytes: auth - tag]
+
+    if encrypted_data_key_len != 60:
+        raise CryptoError('Invalid encryption params: Encrypted data key was unexpected length ' + str(encrypted_data_key_len))
+
+    decryption_key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
+
+    return rest_api.decrypt_aes(encrypted_data_key, decryption_key)
 
 
 def get_record(params,record_uid):

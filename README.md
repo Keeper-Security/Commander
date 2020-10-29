@@ -152,11 +152,11 @@ If you need to disable Login V3 flow for any reason (ex. issue with automation) 
         "login_v3": false
    }
     ```
-2. Passing command line argument `--login-v3=false` or `-lv3=false`
+2. Passing command line argument `--login-v3 false` or `-lv3 false`
     
     Example command:
     ```shell script
-   keeper --lv3 false
+   keeper -lv3 false
    ```
 
 
