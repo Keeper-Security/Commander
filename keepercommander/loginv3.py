@@ -75,11 +75,12 @@ class LoginV3Flow:
             elif resp.loginState == proto.REQUIRES_USERNAME:
                 raise Exception('Username is required.')
 
-            elif resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                raise Exception('Cloud SSO login is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION)
+            elif resp.loginState == proto.REDIRECT_ONSITE_SSO \
+                    or resp.loginState == proto.REDIRECT_CLOUD_SSO:
+                print(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
+                print(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
 
-            elif resp.loginState == proto.REDIRECT_ONSITE_SSO:
-                raise Exception('Onsite SSO login is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION)
+                resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
 
             elif resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY:
                 # TODO: Restart login
@@ -143,7 +144,8 @@ class LoginV3Flow:
                         params.password)
 
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_ALTERNATE"):
-                    raise Exception("Alternate data key encryption is not supported by Commander")
+                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
+                    # raise Exception("Alternate data key encryption is not supported by Commander")
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_BIO"):
                     raise Exception("Biometrics encryption is not supported by Commander")
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("NO_KEY"):
@@ -171,16 +173,16 @@ class LoginV3Flow:
                 if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
                     print("BY_DEVICE_PUBLIC_KEY")
                 elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
-                    # print("BY_PASSWORD")
 
                     params.data_key = api.decrypt_encryption_params(
                         CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
                         params.password)
 
                     # params.clone_code = resp.cloneCode
+                elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
+                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
 
                 elif resp.encryptedDataKeyType == proto.NO_KEY \
-                        or resp.encryptedDataKeyType == proto.BY_ALTERNATE \
                         or resp.encryptedDataKeyType == proto.BY_BIO:
                     raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
 
@@ -204,17 +206,19 @@ class LoginV3Flow:
 
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
-            if 'encryption_params' in keys:
-                params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
-            elif 'encrypted_data_key' in keys:
-                encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
-                key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
-                params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
+            if not params.data_key:
+                if 'encryption_params' in keys:
+                    params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
+                elif 'encrypted_data_key' in keys:
+                    encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
+                    key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
+                    params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
 
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
 
-        if 'session_token' in acct_summary_dict_snake_case:
-            params.session_token = acct_summary_dict_snake_case['session_token']
+        if not params.session_token:
+            if 'session_token' in acct_summary_dict_snake_case:
+                params.session_token = acct_summary_dict_snake_case['session_token']
 
         # enforcements
         if 'enforcements' in acct_summary_dict_snake_case:
@@ -615,13 +619,13 @@ class LoginV3API:
                 raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
-    def startLoginMessage(params: KeeperParams, encryptedDeviceToken):
+    def startLoginMessage(params: KeeperParams, encryptedDeviceToken, loginType: str = 'NORMAL'):
 
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.username = params.user.lower()
         rq.encryptedDeviceToken = encryptedDeviceToken
-        rq.loginType = proto.LoginType.Value('NORMAL')
+        rq.loginType = proto.LoginType.Value(loginType)
         rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
 
         api_request_payload = proto.ApiRequestPayload()
