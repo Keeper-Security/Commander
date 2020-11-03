@@ -20,6 +20,7 @@ from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
 from . import api
+from . import cli
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .display import bcolors
 from .error import KeeperApiError, CommandError
@@ -39,7 +40,9 @@ class LoginV3Flow:
 
         encryptedDeviceToken = LoginV3API.get_device_id(params)
 
-        resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
+        clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
+
+        resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
         while True:
 
@@ -73,13 +76,21 @@ class LoginV3Flow:
                     resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_USERNAME:
-                raise Exception('Username is required.')
 
-            elif resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                raise Exception('Cloud SSO login is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION)
+                cli.prompt_for_username_if_needed(params)
+                encryptedLoginToken = resp.encryptedLoginToken
+                if encryptedLoginToken:
+                    # Successfully completed 2FA. Re-login
+                    resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken, clone_code_bytes)
 
-            elif resp.loginState == proto.REDIRECT_ONSITE_SSO:
-                raise Exception('Onsite SSO login is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION)
+                # raise Exception('Username is required.')
+
+            elif resp.loginState == proto.REDIRECT_ONSITE_SSO \
+                    or resp.loginState == proto.REDIRECT_CLOUD_SSO:
+                print(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
+                print(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
+
+                resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
 
             elif resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY:
                 # TODO: Restart login
@@ -126,7 +137,7 @@ class LoginV3Flow:
                 params.account_uid_bytes = resp.accountUid
                 params.session_token_bytes = resp.encryptedSessionToken
                 params.session_token_restriction = resp.sessionTokenType  # getSessionTokenScope(login_resp.sessionTokenType)
-                params.clone_code_bytes = resp.cloneCode
+                params.clone_code = resp.cloneCode
                 params.device_token_bytes = encryptedDeviceToken
                 # auth_context.message_session_uid = login_resp.messageSessionUid
 
@@ -135,7 +146,7 @@ class LoginV3Flow:
 
                 if resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_DEVICE_PUBLIC_KEY"):
                     params.data_key = resp.encryptedDataKey
-                    raise Exception("Encrypted device public key is not supported by Commander")
+                    # raise Exception("Encrypted device public key is not supported by Commander")
 
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_PASSWORD"):
                     params.data_key = api.decrypt_encryption_params(
@@ -143,13 +154,16 @@ class LoginV3Flow:
                         params.password)
 
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_ALTERNATE"):
-                    raise Exception("Alternate data key encryption is not supported by Commander")
+                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
+                    # raise Exception("Alternate data key encryption is not supported by Commander")
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_BIO"):
                     raise Exception("Biometrics encryption is not supported by Commander")
                 elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("NO_KEY"):
                     raise Exception("No key encryption is not supported by Commander")
                 else:
                     raise Exception("Unhandled encryption data key ''" % resp.encryptedDataKeyType)
+
+                CommonHelperMethods.persist_state_data(params)
 
             elif resp.loginState == proto.DEVICE_ACCOUNT_LOCKED:
                 params.clear_session()
@@ -169,31 +183,38 @@ class LoginV3Flow:
                 params.session_token = session_token
 
                 if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
-                    print("BY_DEVICE_PUBLIC_KEY")
+                    decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
+                    params.data_key = decrypted_data_key
+                    login_type_message = bcolors.UNDERLINE + "Persistent Login"
+
                 elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
-                    # print("BY_PASSWORD")
 
                     params.data_key = api.decrypt_encryption_params(
                         CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
                         params.password)
 
-                    # params.clone_code = resp.cloneCode
+                    login_type_message = bcolors.UNDERLINE + "Password"
+
+                elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
+                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
 
                 elif resp.encryptedDataKeyType == proto.NO_KEY \
-                        or resp.encryptedDataKeyType == proto.BY_ALTERNATE \
                         or resp.encryptedDataKeyType == proto.BY_BIO:
                     raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
 
-                LoginV3Flow.populateAccountSummary(params, encryptedDeviceToken)
+                params.clone_code = resp.cloneCode
+                CommonHelperMethods.persist_state_data(params)
 
-                print(bcolors.OKGREEN + "Successfully authenticated with Login V3" + bcolors.ENDC)
+                LoginV3Flow.populateAccountSummary(params)
+
+                print(bcolors.OKGREEN + "Successfully authenticated with Login V3 (" + login_type_message + ")" + bcolors.ENDC)
 
                 return
             else:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
 
     @staticmethod
-    def populateAccountSummary(params: KeeperParams, encryptedDeviceToken):
+    def populateAccountSummary(params: KeeperParams):
 
         acct_summary = LoginV3API.accountSummary(params)
 
@@ -204,17 +225,19 @@ class LoginV3Flow:
 
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
-            if 'encryption_params' in keys:
-                params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
-            elif 'encrypted_data_key' in keys:
-                encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
-                key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
-                params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
+
+            # if 'encrypted_data_key' in keys:
+            #     encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
+            #     key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
+            #     params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
+            # elif 'encryption_params' in keys:
+            #     params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
 
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
 
-        if 'session_token' in acct_summary_dict_snake_case:
-            params.session_token = acct_summary_dict_snake_case['session_token']
+        if not params.session_token:
+            if 'session_token' in acct_summary_dict_snake_case:
+                params.session_token = acct_summary_dict_snake_case['session_token']
 
         # enforcements
         if 'enforcements' in acct_summary_dict_snake_case:
@@ -533,15 +556,7 @@ class LoginV3API:
             # Get or save key from file
             encrypted_device_token_str = CommonHelperMethods.bytes_to_url_safe_str(encrypted_device_token_bytes)
 
-            config_file = params.config_filename
-
-            with open(config_file) as json_file:
-                config_data = json.load(json_file)
-
-            with open(params.config_filename, 'w') as json_file:
-                config_data['device_token'] = encrypted_device_token_str
-                json.dump(config_data, json_file, sort_keys=False, indent=4)
-                json_file.close()
+            CommonHelperMethods.config_file_set_property(params, "device_token", encrypted_device_token_str)
 
         encrypted_device_token_bytes = CommonHelperMethods.url_safe_str_to_bytes(encrypted_device_token_str)
 
@@ -582,13 +597,16 @@ class LoginV3API:
         return rest_api.execute_rest(params.rest_context, 'authentication/validate_device_verification_code', api_request_payload)
 
     @staticmethod
-    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken):
+    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None):
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.encryptedLoginToken = encryptedLoginToken
         rq.encryptedDeviceToken = encryptedDeviceToken
+        rq.username = params.user.lower()
         # rq.loginType = proto.LoginType.Value('NORMAL')
-        # rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
+        if cloneCode:
+            rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
+            rq.cloneCode = cloneCode
 
         api_request_payload = proto.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
@@ -615,14 +633,18 @@ class LoginV3API:
                 raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
-    def startLoginMessage(params: KeeperParams, encryptedDeviceToken):
+    def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
 
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.username = params.user.lower()
         rq.encryptedDeviceToken = encryptedDeviceToken
-        rq.loginType = proto.LoginType.Value('NORMAL')
+        rq.loginType = proto.LoginType.Value(loginType)
         rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
+
+        if cloneCode:
+            rq.cloneCode = cloneCode
+            rq.username = ''
 
         api_request_payload = proto.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
@@ -728,6 +750,52 @@ class LoginV3API:
         api_request_payload.payload = rq.SerializeToString()
 
         return rest_api.execute_rest(params.rest_context, 'authentication/2fa_send_push', api_request_payload)
+
+    @staticmethod
+    def rename_device(params: KeeperParams, new_name):
+
+        rq = proto.DeviceUpdateRequest()
+        rq.clientVersion = rest_api.CLIENT_VERSION
+        # rq.deviceStatus = proto.DEVICE_OK
+        rq.deviceName = new_name
+        rq.encryptedDeviceToken = params.device_token_bytes
+
+        api.communicate_rest(params, rq, 'authentication/update_device')
+
+    @staticmethod
+    def register_encrypted_data_key_for_device(params: KeeperParams):
+        rq = proto.RegisterDeviceDataKeyRequest()
+
+        rq.encryptedDeviceToken = params.device_token_bytes
+        rq.encryptedDeviceDataKey = CommonHelperMethods.get_encrypted_device_data_key(params)
+
+        try:
+            rs = api.communicate_rest(params, rq, 'authentication/register_encrypted_data_key_for_device')
+        except Exception as e:
+            if e.result_code == 'device_data_key_exists':
+                return False
+            raise e
+
+        return True
+
+    @staticmethod
+    def set_user_setting(params: KeeperParams, name: str, value: str):
+
+        # Available setting names:
+        #   - logout_timer
+        #   - persistent_login
+        #   - ip_disable_auto_approve
+
+        rq = proto.UserSettingRequest()
+        rq.setting = name
+        rq.value = value
+
+        try:
+            rs = api.communicate_rest(params, rq, 'setting/set_user_setting')
+        except Exception as e:
+            raise e
+
+        return True
 
     @staticmethod
     def accountSummary(params: KeeperParams):
@@ -962,6 +1030,23 @@ class CommonHelperMethods:
         return ephemeral_key
 
     @staticmethod
+    def decrypt_ec(params: KeeperParams, encrypted_data_bag: bytes):
+        curve = ec.SECP256R1()
+
+        ecc_private_key = CommonHelperMethods.get_private_key_ecc(params)
+
+        server_public_key = encrypted_data_bag[:65]
+        encrypted_data = encrypted_data_bag[65:]
+
+        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, server_public_key)
+        shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(shared_key)
+        enc_key = digest.finalize()
+        decrypted_data = rest_api.decrypt_aes(encrypted_data, enc_key)
+        return decrypted_data
+
+    @staticmethod
     def startup_check(params: KeeperParams):
         if os.path.isfile(params.config_filename) and os.access(params.config_filename, os.R_OK):
             # checks if file exists
@@ -981,14 +1066,8 @@ class CommonHelperMethods:
 
             params.config['private_key'] = private_key_str
 
-            with open(params.config_filename, 'r') as json_file:
-                config_data = json.load(json_file)
+            CommonHelperMethods.config_file_set_property(params, 'private_key', private_key_str)
 
-            config_data['private_key'] = private_key_str
-
-            with open(params.config_filename, 'w') as json_file:
-                json.dump(config_data, json_file, sort_keys=False, indent=4)
-                json_file.close()
         else:
             private_key_str = params.config['private_key']
 
@@ -997,6 +1076,84 @@ class CommonHelperMethods:
         private_key = ec.derive_private_key(encryption_key_int, ec.SECP256R1(), default_backend())
 
         return private_key
+
+    @staticmethod
+    def config_file_get_property_as_str(params: KeeperParams, key):
+
+        if os.path.exists(params.config_filename):
+            try:
+                try:
+                    with open(params.config_filename) as config_file:
+                        config_data = json.load(config_file)
+
+                        if key in config_data:
+                            return config_data[key]
+
+                        else:
+                            return None
+
+                except Exception as e:
+                    logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
+                    answer = input('Do you want to delete it (y/N): ')
+                    if answer in ['y', 'Y']:
+                        os.remove(params.config_filename)
+                    else:
+                        raise e
+            except IOError as ioe:
+                logging.warning('Error: Unable to open config file %s: %s', params.config_filename, ioe)
+
+
+    @staticmethod
+    def config_file_get_property_as_bytes(params: KeeperParams, key):
+        val_str = CommonHelperMethods.config_file_get_property_as_str(params, key)
+        if val_str:
+            val_bytes = CommonHelperMethods.url_safe_str_to_bytes(val_str)
+            return val_bytes
+        else:
+            return None
+
+
+    @staticmethod
+    def config_file_set_property(params: KeeperParams, key: str, val: str):
+        with open(params.config_filename, 'r') as json_file:
+            config_data = json.load(json_file)
+            json_file.close()
+        config_data[key] = val
+
+        with open(params.config_filename, 'w') as json_file:
+            json.dump(config_data, json_file, sort_keys=False, indent=4)
+            json_file.close()
+
+        params.config[key] = val
+
+        logging.debug("set property: " + key + ":"+val + ".\t Conf. file: " + params.config_filename)
+
+
+    @staticmethod
+    def get_encrypted_device_data_key(params: KeeperParams):
+        try:
+            device_public_key = CommonHelperMethods.get_private_key_ecc(params).public_key()
+            ephemeral_key2 = CommonHelperMethods.generate_new_ecc_key()
+            shared_key = ephemeral_key2.exchange(ec.ECDH(), device_public_key)
+            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+            digest.update(shared_key)
+            enc_key = digest.finalize()
+            encrypted_data_key = rest_api.encrypt_aes(params.data_key, enc_key)
+            eph_public_key = ephemeral_key2.public_key().public_bytes(serialization.Encoding.X962,
+                                                                      serialization.PublicFormat.UncompressedPoint)
+
+            return eph_public_key + encrypted_data_key
+
+        except Exception as e:
+            logging.warning(e)
+            return
+
+    @staticmethod
+    def persist_state_data(params: KeeperParams):
+
+        clone_code_str = CommonHelperMethods.bytes_to_url_safe_str(params.clone_code)
+        CommonHelperMethods.config_file_set_property(params, "clone_code", clone_code_str)
+
 
     @staticmethod
     def generate_random_bytes(length):

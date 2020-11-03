@@ -325,11 +325,19 @@ def runcommands(params):
                 keep_running = False
 
 
-def prompt_for_credentials(params):
-    while not params.user:
+def prompt_for_username_if_needed(params):
+    if not params.user:
         params.user = getpass.getpass(prompt='User(Email): ', stream=None)
 
+        while not params.user:
+            params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+
+
+def prompt_for_credentials(params):
+
     if not params.login_v3:
+        prompt_for_username_if_needed(params)
+
         while not params.password:
             try:
                 params.password = getpass.getpass(prompt='Password: ', stream=None)
