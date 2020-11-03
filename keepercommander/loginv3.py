@@ -198,6 +198,8 @@ class LoginV3Flow:
                 elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
                     params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
 
+                    login_type_message = bcolors.UNDERLINE + "Alternate Master Password"
+
                 elif resp.encryptedDataKeyType == proto.NO_KEY \
                         or resp.encryptedDataKeyType == proto.BY_BIO:
                     raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
