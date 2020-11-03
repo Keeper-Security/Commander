@@ -7,6 +7,7 @@ from google.protobuf import message as _message
 from google.protobuf import reflection as _reflection
 from google.protobuf import symbol_database as _symbol_database
 # @@protoc_insertion_point(imports)
+
 from . import APIRequest_pb2 as APIRequest__pb2
 
 _sym_db = _symbol_database.Default()
@@ -17,7 +18,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   syntax='proto3',
   serialized_options=b'\n\030com.keepersecurity.protoB\016AccountSummary',
   create_key=_descriptor._internal_create_key,
-  serialized_pb=b'\n\x14\x41\x63\x63ountSummary.proto\x12\x0e\x41\x63\x63ountSummary\x1a\x10\x41PIRequest.proto\"/\n\x15\x41\x63\x63ountSummaryRequest\x12\x16\n\x0esummaryVersion\x18\x01 \x01(\x05\"\x89\x04\n\x16\x41\x63\x63ountSummaryElements\x12\x11\n\tclientKey\x18\x01 \x01(\x0c\x12*\n\x08settings\x18\x02 \x01(\x0b\x32\x18.AccountSummary.Settings\x12*\n\x08keysInfo\x18\x03 \x01(\x0b\x32\x18.AccountSummary.KeysInfo\x12)\n\x08syncLogs\x18\x04 \x03(\x0b\x32\x17.AccountSummary.SyncLog\x12\x19\n\x11isEnterpriseAdmin\x18\x05 \x01(\x08\x12(\n\x07license\x18\x06 \x01(\x0b\x32\x17.AccountSummary.License\x12$\n\x05group\x18\x07 \x01(\x0b\x32\x15.AccountSummary.Group\x12\x32\n\x0c\x45nforcements\x18\x08 \x01(\x0b\x32\x1c.AccountSummary.Enforcements\x12(\n\x06Images\x18\t \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x30\n\x0fpersonalLicense\x18\n \x01(\x0b\x32\x17.AccountSummary.License\x12\x1e\n\x16\x66ixSharedFolderRecords\x18\x0b \x01(\x08\x12\x11\n\tusernames\x18\x0c \x03(\t\x12+\n\x07\x64\x65vices\x18\r \x03(\x0b\x32\x1a.AccountSummary.DeviceInfo\"\xfd\x01\n\nDeviceInfo\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x32\n\x0c\x64\x65viceStatus\x18\x03 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\x12\x18\n\x10\x65ncryptedDataKey\x18\x05 \x01(\x0c\x12\x15\n\rclientVersion\x18\x06 \x01(\t\x12\x10\n\x08username\x18\x07 \x01(\t\x12\x11\n\tipAddress\x18\x08 \x01(\t\x12\x1a\n\x12\x61pproveRequestTime\x18\t \x01(\x03\"\x8b\x01\n\x08KeysInfo\x12\x18\n\x10\x65ncryptionParams\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedDataKey\x18\x02 \x01(\x0c\x12\x19\n\x11\x64\x61taKeyBackupDate\x18\x03 \x01(\x01\x12\x13\n\x0buserAuthUid\x18\x04 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x05 \x01(\x0c\"\x81\x01\n\x07SyncLog\x12\x13\n\x0b\x63ountryName\x18\x01 \x01(\t\x12\x12\n\nsecondsAgo\x18\x02 \x01(\x03\x12\x12\n\ndeviceName\x18\x03 \x01(\t\x12\x13\n\x0b\x63ountryCode\x18\x04 \x01(\t\x12\x11\n\tdeviceUID\x18\x05 \x01(\x0c\x12\x11\n\tipAddress\x18\x06 \x01(\t\"\xe2\x05\n\x07License\x12\x18\n\x10subscriptionCode\x18\x01 \x01(\t\x12\x15\n\rproductTypeId\x18\x02 \x01(\x05\x12\x17\n\x0fproductTypeName\x18\x03 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x04 \x01(\t\x12\x1e\n\x16secondsUntilExpiration\x18\x05 \x01(\x03\x12\x12\n\nmaxDevices\x18\x06 \x01(\x05\x12\x14\n\x0c\x66ilePlanType\x18\x07 \x01(\x05\x12\x11\n\tbytesUsed\x18\x08 \x01(\x03\x12\x12\n\nbytesTotal\x18\t \x01(\x03\x12%\n\x1dsecondsUntilStorageExpiration\x18\n \x01(\x03\x12\x1d\n\x15storageExpirationDate\x18\x0b \x01(\t\x12,\n$hasAutoRenewableAppstoreSubscription\x18\x0c \x01(\x08\x12\x13\n\x0b\x61\x63\x63ountType\x18\r \x01(\x05\x12\x18\n\x10uploadsRemaining\x18\x0e \x01(\x05\x12\x14\n\x0c\x65nterpriseId\x18\x0f \x01(\x05\x12\x13\n\x0b\x63hatEnabled\x18\x10 \x01(\x08\x12 \n\x18\x61uditAndReportingEnabled\x18\x11 \x01(\x08\x12!\n\x19\x62reachWatchFeatureDisable\x18\x12 \x01(\x08\x12\x12\n\naccountUid\x18\x13 \x01(\x0c\x12\x1c\n\x14\x61llowPersonalLicense\x18\x14 \x01(\x08\x12\x12\n\nlicensedBy\x18\x15 \x01(\t\x12\r\n\x05\x65mail\x18\x16 \x01(\t\x12\x1a\n\x12\x62reachWatchEnabled\x18\x17 \x01(\x08\x12\x1a\n\x12\x62reachWatchScanned\x18\x18 \x01(\x08\x12\x1d\n\x15\x62reachWatchExpiration\x18\x19 \x01(\x03\x12\x1e\n\x16\x62reachWatchDateCreated\x18\x1a \x01(\x03\x12%\n\x05\x65rror\x18\x1b \x01(\x0b\x32\x16.AccountSummary.Result\"\xa3\x01\n\x05\x41\x64\x64On\x12\x14\n\x0clicenseKeyId\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x03 \x01(\x03\x12\x13\n\x0b\x63reatedDate\x18\x04 \x01(\x03\x12\x0f\n\x07isTrial\x18\x05 \x01(\x08\x12\x0f\n\x07\x65nabled\x18\x06 \x01(\x08\x12\x0f\n\x07scanned\x18\x07 \x01(\x08\x12\x16\n\x0e\x66\x65\x61tureDisable\x18\x08 \x01(\x08\"\xe8\x06\n\x08Settings\x12\r\n\x05\x61udit\x18\x01 \x01(\x08\x12!\n\x19mustPerformAccountShareBy\x18\x02 \x01(\x03\x12>\n\x0eshareAccountTo\x18\x03 \x03(\x0b\x32&.AccountSummary.MissingAccountShareKey\x12+\n\x05rules\x18\x04 \x03(\x0b\x32\x1c.AccountSummary.PasswordRule\x12\x1a\n\x12passwordRulesIntro\x18\x05 \x01(\t\x12\x16\n\x0e\x61utoBackupDays\x18\x06 \x01(\x05\x12\r\n\x05theme\x18\x07 \x01(\t\x12\x0f\n\x07\x63hannel\x18\x08 \x01(\t\x12\x14\n\x0c\x63hannelValue\x18\t \x01(\t\x12\x15\n\rrsaConfigured\x18\n \x01(\x08\x12\x15\n\remailVerified\x18\x0b \x01(\x08\x12\"\n\x1amasterPasswordLastModified\x18\x0c \x01(\x01\x12\x18\n\x10\x61\x63\x63ountFolderKey\x18\r \x01(\x0c\x12\x31\n\x0csecurityKeys\x18\x0e \x03(\x0b\x32\x1b.AccountSummary.SecurityKey\x12+\n\tkeyValues\x18\x0f \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x0f\n\x07ssoUser\x18\x10 \x01(\x08\x12\x18\n\x10onlineAccessOnly\x18\x11 \x01(\x08\x12\x1c\n\x14masterPasswordExpiry\x18\x12 \x01(\x05\x12\x19\n\x11twoFactorRequired\x18\x13 \x01(\x08\x12\x16\n\x0e\x64isallowExport\x18\x14 \x01(\x08\x12\x15\n\rrestrictFiles\x18\x15 \x01(\x08\x12\x1a\n\x12restrictAllSharing\x18\x16 \x01(\x08\x12\x17\n\x0frestrictSharing\x18\x17 \x01(\x08\x12\"\n\x1arestrictSharingIncomingAll\x18\x18 \x01(\x08\x12)\n!restrictSharingIncomingEnterprise\x18\x19 \x01(\x08\x12\x13\n\x0blogoutTimer\x18\x1a \x01(\x03\x12\x17\n\x0fpersistentLogin\x18\x1b \x01(\x08\x12\x1c\n\x14ipDisableAutoApprove\x18\x1c \x01(\x08\x12$\n\x1cshareDataKeyWithEccPublicKey\x18\x1d \x01(\x08\"&\n\x08KeyValue\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"-\n\x0fKeyValueBoolean\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x08\"*\n\x0cKeyValueLong\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x03\"=\n\x06Result\x12\x12\n\nresultCode\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x0e\n\x06result\x18\x03 \x01(\t\"\xc2\x01\n\x0c\x45nforcements\x12)\n\x07strings\x18\x01 \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x31\n\x08\x62ooleans\x18\x02 \x03(\x0b\x32\x1f.AccountSummary.KeyValueBoolean\x12+\n\x05longs\x18\x03 \x03(\x0b\x32\x1c.AccountSummary.KeyValueLong\x12\'\n\x05jsons\x18\x04 \x03(\x0b\x32\x18.AccountSummary.KeyValue\"<\n\x16MissingAccountShareKey\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\"u\n\x0cPasswordRule\x12\x10\n\x08ruleType\x18\x01 \x01(\t\x12\x0f\n\x07pattern\x18\x02 \x01(\t\x12\r\n\x05match\x18\x03 \x01(\x08\x12\x0f\n\x07minimum\x18\x04 \x01(\x05\x12\x13\n\x0b\x64\x65scription\x18\x05 \x01(\t\x12\r\n\x05value\x18\x06 \x01(\t\"\x97\x01\n\x0bSecurityKey\x12\x10\n\x08\x64\x65viceId\x18\x01 \x01(\x03\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x11\n\tdateAdded\x18\x03 \x01(\x03\x12\x0f\n\x07isValid\x18\x04 \x01(\x08\x12>\n\x12\x64\x65viceRegistration\x18\x05 \x01(\x0b\x32\".AccountSummary.DeviceRegistration\"y\n\x12\x44\x65viceRegistration\x12\x11\n\tkeyHandle\x18\x01 \x01(\t\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x17\n\x0f\x61ttestationCert\x18\x03 \x01(\t\x12\x0f\n\x07\x63ounter\x18\x04 \x01(\x03\x12\x13\n\x0b\x63ompromised\x18\x05 \x01(\x08\"\xc8\x02\n\x05Group\x12\r\n\x05\x61\x64min\x18\x01 \x01(\x08\x12\x1d\n\x15groupVerificationCode\x18\x02 \x01(\t\x12/\n\rgroupSettings\x18\x03 \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x34\n\radministrator\x18\x04 \x01(\x0b\x32\x1d.AccountSummary.Administrator\x12%\n\x05\x65rror\x18\x05 \x01(\x0b\x32\x16.AccountSummary.Result\x12\x19\n\x11twoFactorRequired\x18\x06 \x01(\x08\x12\x17\n\x0frestrictSharing\x18\x07 \x01(\x08\x12\x1a\n\x12restrictAllSharing\x18\x08 \x01(\x08\x12\x16\n\x0e\x61utoBackupDays\x18\t \x01(\x05\x12\x1b\n\x13\x61\x64minAccountSharing\x18\n \x01(\x08\"\xe8\x01\n\rAdministrator\x12\x11\n\tfirstName\x18\x01 \x01(\t\x12\x10\n\x08lastName\x18\x02 \x01(\t\x12\r\n\x05\x65mail\x18\x03 \x01(\t\x12\x1c\n\x14\x63urrentNumberOfUsers\x18\x04 \x01(\x05\x12\x15\n\rnumberOfUsers\x18\x05 \x01(\x05\x12\x17\n\x0fnumberOfDevices\x18\x06 \x01(\x05\x12\x18\n\x10subscriptionCode\x18\x07 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x08 \x01(\t\x12\x14\n\x0cpurchaseDate\x18\t \x01(\t\x12\r\n\x05total\x18\n \x01(\tB*\n\x18\x63om.keepersecurity.protoB\x0e\x41\x63\x63ountSummaryb\x06proto3'
+  serialized_pb=b'\n\x14\x41\x63\x63ountSummary.proto\x12\x0e\x41\x63\x63ountSummary\x1a\x10\x41PIRequest.proto\"/\n\x15\x41\x63\x63ountSummaryRequest\x12\x16\n\x0esummaryVersion\x18\x01 \x01(\x05\"\x89\x04\n\x16\x41\x63\x63ountSummaryElements\x12\x11\n\tclientKey\x18\x01 \x01(\x0c\x12*\n\x08settings\x18\x02 \x01(\x0b\x32\x18.AccountSummary.Settings\x12*\n\x08keysInfo\x18\x03 \x01(\x0b\x32\x18.AccountSummary.KeysInfo\x12)\n\x08syncLogs\x18\x04 \x03(\x0b\x32\x17.AccountSummary.SyncLog\x12\x19\n\x11isEnterpriseAdmin\x18\x05 \x01(\x08\x12(\n\x07license\x18\x06 \x01(\x0b\x32\x17.AccountSummary.License\x12$\n\x05group\x18\x07 \x01(\x0b\x32\x15.AccountSummary.Group\x12\x32\n\x0c\x45nforcements\x18\x08 \x01(\x0b\x32\x1c.AccountSummary.Enforcements\x12(\n\x06Images\x18\t \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x30\n\x0fpersonalLicense\x18\n \x01(\x0b\x32\x17.AccountSummary.License\x12\x1e\n\x16\x66ixSharedFolderRecords\x18\x0b \x01(\x08\x12\x11\n\tusernames\x18\x0c \x03(\t\x12+\n\x07\x64\x65vices\x18\r \x03(\x0b\x32\x1a.AccountSummary.DeviceInfo\"\xb7\x02\n\nDeviceInfo\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x32\n\x0c\x64\x65viceStatus\x18\x03 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\x12 \n\x18\x65ncryptedDataKeyDoNotUse\x18\x05 \x01(\x0c\x12\x15\n\rclientVersion\x18\x06 \x01(\t\x12\x10\n\x08username\x18\x07 \x01(\t\x12\x11\n\tipAddress\x18\x08 \x01(\t\x12\x1a\n\x12\x61pproveRequestTime\x18\t \x01(\x03\x12\x1f\n\x17\x65ncryptedDataKeyPresent\x18\n \x01(\x08\x12\x0f\n\x07groupId\x18\x0b \x01(\x03\"\x8b\x01\n\x08KeysInfo\x12\x18\n\x10\x65ncryptionParams\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedDataKey\x18\x02 \x01(\x0c\x12\x19\n\x11\x64\x61taKeyBackupDate\x18\x03 \x01(\x01\x12\x13\n\x0buserAuthUid\x18\x04 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x05 \x01(\x0c\"\x81\x01\n\x07SyncLog\x12\x13\n\x0b\x63ountryName\x18\x01 \x01(\t\x12\x12\n\nsecondsAgo\x18\x02 \x01(\x03\x12\x12\n\ndeviceName\x18\x03 \x01(\t\x12\x13\n\x0b\x63ountryCode\x18\x04 \x01(\t\x12\x11\n\tdeviceUID\x18\x05 \x01(\x0c\x12\x11\n\tipAddress\x18\x06 \x01(\t\"\xe2\x05\n\x07License\x12\x18\n\x10subscriptionCode\x18\x01 \x01(\t\x12\x15\n\rproductTypeId\x18\x02 \x01(\x05\x12\x17\n\x0fproductTypeName\x18\x03 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x04 \x01(\t\x12\x1e\n\x16secondsUntilExpiration\x18\x05 \x01(\x03\x12\x12\n\nmaxDevices\x18\x06 \x01(\x05\x12\x14\n\x0c\x66ilePlanType\x18\x07 \x01(\x05\x12\x11\n\tbytesUsed\x18\x08 \x01(\x03\x12\x12\n\nbytesTotal\x18\t \x01(\x03\x12%\n\x1dsecondsUntilStorageExpiration\x18\n \x01(\x03\x12\x1d\n\x15storageExpirationDate\x18\x0b \x01(\t\x12,\n$hasAutoRenewableAppstoreSubscription\x18\x0c \x01(\x08\x12\x13\n\x0b\x61\x63\x63ountType\x18\r \x01(\x05\x12\x18\n\x10uploadsRemaining\x18\x0e \x01(\x05\x12\x14\n\x0c\x65nterpriseId\x18\x0f \x01(\x05\x12\x13\n\x0b\x63hatEnabled\x18\x10 \x01(\x08\x12 \n\x18\x61uditAndReportingEnabled\x18\x11 \x01(\x08\x12!\n\x19\x62reachWatchFeatureDisable\x18\x12 \x01(\x08\x12\x12\n\naccountUid\x18\x13 \x01(\x0c\x12\x1c\n\x14\x61llowPersonalLicense\x18\x14 \x01(\x08\x12\x12\n\nlicensedBy\x18\x15 \x01(\t\x12\r\n\x05\x65mail\x18\x16 \x01(\t\x12\x1a\n\x12\x62reachWatchEnabled\x18\x17 \x01(\x08\x12\x1a\n\x12\x62reachWatchScanned\x18\x18 \x01(\x08\x12\x1d\n\x15\x62reachWatchExpiration\x18\x19 \x01(\x03\x12\x1e\n\x16\x62reachWatchDateCreated\x18\x1a \x01(\x03\x12%\n\x05\x65rror\x18\x1b \x01(\x0b\x32\x16.AccountSummary.Result\"\xa3\x01\n\x05\x41\x64\x64On\x12\x14\n\x0clicenseKeyId\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x03 \x01(\x03\x12\x13\n\x0b\x63reatedDate\x18\x04 \x01(\x03\x12\x0f\n\x07isTrial\x18\x05 \x01(\x08\x12\x0f\n\x07\x65nabled\x18\x06 \x01(\x08\x12\x0f\n\x07scanned\x18\x07 \x01(\x08\x12\x16\n\x0e\x66\x65\x61tureDisable\x18\x08 \x01(\x08\"\x91\x07\n\x08Settings\x12\r\n\x05\x61udit\x18\x01 \x01(\x08\x12!\n\x19mustPerformAccountShareBy\x18\x02 \x01(\x03\x12>\n\x0eshareAccountTo\x18\x03 \x03(\x0b\x32&.AccountSummary.MissingAccountShareKey\x12+\n\x05rules\x18\x04 \x03(\x0b\x32\x1c.AccountSummary.PasswordRule\x12\x1a\n\x12passwordRulesIntro\x18\x05 \x01(\t\x12\x16\n\x0e\x61utoBackupDays\x18\x06 \x01(\x05\x12\r\n\x05theme\x18\x07 \x01(\t\x12\x0f\n\x07\x63hannel\x18\x08 \x01(\t\x12\x14\n\x0c\x63hannelValue\x18\t \x01(\t\x12\x15\n\rrsaConfigured\x18\n \x01(\x08\x12\x15\n\remailVerified\x18\x0b \x01(\x08\x12\"\n\x1amasterPasswordLastModified\x18\x0c \x01(\x01\x12\x18\n\x10\x61\x63\x63ountFolderKey\x18\r \x01(\x0c\x12\x31\n\x0csecurityKeys\x18\x0e \x03(\x0b\x32\x1b.AccountSummary.SecurityKey\x12+\n\tkeyValues\x18\x0f \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x0f\n\x07ssoUser\x18\x10 \x01(\x08\x12\x18\n\x10onlineAccessOnly\x18\x11 \x01(\x08\x12\x1c\n\x14masterPasswordExpiry\x18\x12 \x01(\x05\x12\x19\n\x11twoFactorRequired\x18\x13 \x01(\x08\x12\x16\n\x0e\x64isallowExport\x18\x14 \x01(\x08\x12\x15\n\rrestrictFiles\x18\x15 \x01(\x08\x12\x1a\n\x12restrictAllSharing\x18\x16 \x01(\x08\x12\x17\n\x0frestrictSharing\x18\x17 \x01(\x08\x12\"\n\x1arestrictSharingIncomingAll\x18\x18 \x01(\x08\x12)\n!restrictSharingIncomingEnterprise\x18\x19 \x01(\x08\x12\x13\n\x0blogoutTimer\x18\x1a \x01(\x03\x12\x17\n\x0fpersistentLogin\x18\x1b \x01(\x08\x12\x1c\n\x14ipDisableAutoApprove\x18\x1c \x01(\x08\x12$\n\x1cshareDataKeyWithEccPublicKey\x18\x1d \x01(\x08\x12\'\n\x1fshareDataKeyWithDevicePublicKey\x18\x1e \x01(\x08\"&\n\x08KeyValue\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"-\n\x0fKeyValueBoolean\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x08\"*\n\x0cKeyValueLong\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x03\"=\n\x06Result\x12\x12\n\nresultCode\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x0e\n\x06result\x18\x03 \x01(\t\"\xc2\x01\n\x0c\x45nforcements\x12)\n\x07strings\x18\x01 \x03(\x0b\x32\x18.AccountSummary.KeyValue\x12\x31\n\x08\x62ooleans\x18\x02 \x03(\x0b\x32\x1f.AccountSummary.KeyValueBoolean\x12+\n\x05longs\x18\x03 \x03(\x0b\x32\x1c.AccountSummary.KeyValueLong\x12\'\n\x05jsons\x18\x04 \x03(\x0b\x32\x18.AccountSummary.KeyValue\"<\n\x16MissingAccountShareKey\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\"u\n\x0cPasswordRule\x12\x10\n\x08ruleType\x18\x01 \x01(\t\x12\x0f\n\x07pattern\x18\x02 \x01(\t\x12\r\n\x05match\x18\x03 \x01(\x08\x12\x0f\n\x07minimum\x18\x04 \x01(\x05\x12\x13\n\x0b\x64\x65scription\x18\x05 \x01(\t\x12\r\n\x05value\x18\x06 \x01(\t\"\x97\x01\n\x0bSecurityKey\x12\x10\n\x08\x64\x65viceId\x18\x01 \x01(\x03\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x11\n\tdateAdded\x18\x03 \x01(\x03\x12\x0f\n\x07isValid\x18\x04 \x01(\x08\x12>\n\x12\x64\x65viceRegistration\x18\x05 \x01(\x0b\x32\".AccountSummary.DeviceRegistration\"y\n\x12\x44\x65viceRegistration\x12\x11\n\tkeyHandle\x18\x01 \x01(\t\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x17\n\x0f\x61ttestationCert\x18\x03 \x01(\t\x12\x0f\n\x07\x63ounter\x18\x04 \x01(\x03\x12\x13\n\x0b\x63ompromised\x18\x05 \x01(\x08\"k\n\x05Group\x12\r\n\x05\x61\x64min\x18\x01 \x01(\x08\x12\x1d\n\x15groupVerificationCode\x18\x02 \x01(\t\x12\x34\n\radministrator\x18\x04 \x01(\x0b\x32\x1d.AccountSummary.Administrator\"\xc0\x01\n\rAdministrator\x12\x11\n\tfirstName\x18\x01 \x01(\t\x12\x10\n\x08lastName\x18\x02 \x01(\t\x12\r\n\x05\x65mail\x18\x03 \x01(\t\x12\x1c\n\x14\x63urrentNumberOfUsers\x18\x04 \x01(\x05\x12\x15\n\rnumberOfUsers\x18\x05 \x01(\x05\x12\x18\n\x10subscriptionCode\x18\x07 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x08 \x01(\t\x12\x14\n\x0cpurchaseDate\x18\t \x01(\tB*\n\x18\x63om.keepersecurity.protoB\x0e\x41\x63\x63ountSummaryb\x06proto3'
   ,
   dependencies=[APIRequest__pb2.DESCRIPTOR,])
 
@@ -209,7 +210,7 @@ _DEVICEINFO = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
     _descriptor.FieldDescriptor(
-      name='encryptedDataKey', full_name='AccountSummary.DeviceInfo.encryptedDataKey', index=4,
+      name='encryptedDataKeyDoNotUse', full_name='AccountSummary.DeviceInfo.encryptedDataKeyDoNotUse', index=4,
       number=5, type=12, cpp_type=9, label=1,
       has_default_value=False, default_value=b"",
       message_type=None, enum_type=None, containing_type=None,
@@ -243,6 +244,20 @@ _DEVICEINFO = _descriptor.Descriptor(
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='encryptedDataKeyPresent', full_name='AccountSummary.DeviceInfo.encryptedDataKeyPresent', index=9,
+      number=10, type=8, cpp_type=7, label=1,
+      has_default_value=False, default_value=False,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='groupId', full_name='AccountSummary.DeviceInfo.groupId', index=10,
+      number=11, type=3, cpp_type=2, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
   ],
   extensions=[
   ],
@@ -256,7 +271,7 @@ _DEVICEINFO = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=632,
-  serialized_end=885,
+  serialized_end=943,
 )
 
 
@@ -315,8 +330,8 @@ _KEYSINFO = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=888,
-  serialized_end=1027,
+  serialized_start=946,
+  serialized_end=1085,
 )
 
 
@@ -382,8 +397,8 @@ _SYNCLOG = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=1030,
-  serialized_end=1159,
+  serialized_start=1088,
+  serialized_end=1217,
 )
 
 
@@ -596,8 +611,8 @@ _LICENSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=1162,
-  serialized_end=1900,
+  serialized_start=1220,
+  serialized_end=1958,
 )
 
 
@@ -677,8 +692,8 @@ _ADDON = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=1903,
-  serialized_end=2066,
+  serialized_start=1961,
+  serialized_end=2124,
 )
 
 
@@ -893,6 +908,13 @@ _SETTINGS = _descriptor.Descriptor(
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='shareDataKeyWithDevicePublicKey', full_name='AccountSummary.Settings.shareDataKeyWithDevicePublicKey', index=29,
+      number=30, type=8, cpp_type=7, label=1,
+      has_default_value=False, default_value=False,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
   ],
   extensions=[
   ],
@@ -905,8 +927,8 @@ _SETTINGS = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2069,
-  serialized_end=2941,
+  serialized_start=2127,
+  serialized_end=3040,
 )
 
 
@@ -944,8 +966,8 @@ _KEYVALUE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2943,
-  serialized_end=2981,
+  serialized_start=3042,
+  serialized_end=3080,
 )
 
 
@@ -983,8 +1005,8 @@ _KEYVALUEBOOLEAN = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2983,
-  serialized_end=3028,
+  serialized_start=3082,
+  serialized_end=3127,
 )
 
 
@@ -1022,8 +1044,8 @@ _KEYVALUELONG = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3030,
-  serialized_end=3072,
+  serialized_start=3129,
+  serialized_end=3171,
 )
 
 
@@ -1068,8 +1090,8 @@ _RESULT = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3074,
-  serialized_end=3135,
+  serialized_start=3173,
+  serialized_end=3234,
 )
 
 
@@ -1121,8 +1143,8 @@ _ENFORCEMENTS = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3138,
-  serialized_end=3332,
+  serialized_start=3237,
+  serialized_end=3431,
 )
 
 
@@ -1160,8 +1182,8 @@ _MISSINGACCOUNTSHAREKEY = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3334,
-  serialized_end=3394,
+  serialized_start=3433,
+  serialized_end=3493,
 )
 
 
@@ -1227,8 +1249,8 @@ _PASSWORDRULE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3396,
-  serialized_end=3513,
+  serialized_start=3495,
+  serialized_end=3612,
 )
 
 
@@ -1287,8 +1309,8 @@ _SECURITYKEY = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3516,
-  serialized_end=3667,
+  serialized_start=3615,
+  serialized_end=3766,
 )
 
 
@@ -1347,8 +1369,8 @@ _DEVICEREGISTRATION = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3669,
-  serialized_end=3790,
+  serialized_start=3768,
+  serialized_end=3889,
 )
 
 
@@ -1375,58 +1397,9 @@ _GROUP = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
     _descriptor.FieldDescriptor(
-      name='groupSettings', full_name='AccountSummary.Group.groupSettings', index=2,
-      number=3, type=11, cpp_type=10, label=3,
-      has_default_value=False, default_value=[],
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='administrator', full_name='AccountSummary.Group.administrator', index=3,
+      name='administrator', full_name='AccountSummary.Group.administrator', index=2,
       number=4, type=11, cpp_type=10, label=1,
       has_default_value=False, default_value=None,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='error', full_name='AccountSummary.Group.error', index=4,
-      number=5, type=11, cpp_type=10, label=1,
-      has_default_value=False, default_value=None,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='twoFactorRequired', full_name='AccountSummary.Group.twoFactorRequired', index=5,
-      number=6, type=8, cpp_type=7, label=1,
-      has_default_value=False, default_value=False,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='restrictSharing', full_name='AccountSummary.Group.restrictSharing', index=6,
-      number=7, type=8, cpp_type=7, label=1,
-      has_default_value=False, default_value=False,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='restrictAllSharing', full_name='AccountSummary.Group.restrictAllSharing', index=7,
-      number=8, type=8, cpp_type=7, label=1,
-      has_default_value=False, default_value=False,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='autoBackupDays', full_name='AccountSummary.Group.autoBackupDays', index=8,
-      number=9, type=5, cpp_type=1, label=1,
-      has_default_value=False, default_value=0,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='adminAccountSharing', full_name='AccountSummary.Group.adminAccountSharing', index=9,
-      number=10, type=8, cpp_type=7, label=1,
-      has_default_value=False, default_value=False,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
@@ -1442,8 +1415,8 @@ _GROUP = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=3793,
-  serialized_end=4121,
+  serialized_start=3891,
+  serialized_end=3998,
 )
 
 
@@ -1491,36 +1464,22 @@ _ADMINISTRATOR = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
     _descriptor.FieldDescriptor(
-      name='numberOfDevices', full_name='AccountSummary.Administrator.numberOfDevices', index=5,
-      number=6, type=5, cpp_type=1, label=1,
-      has_default_value=False, default_value=0,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='subscriptionCode', full_name='AccountSummary.Administrator.subscriptionCode', index=6,
+      name='subscriptionCode', full_name='AccountSummary.Administrator.subscriptionCode', index=5,
       number=7, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=b"".decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
     _descriptor.FieldDescriptor(
-      name='expirationDate', full_name='AccountSummary.Administrator.expirationDate', index=7,
+      name='expirationDate', full_name='AccountSummary.Administrator.expirationDate', index=6,
       number=8, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=b"".decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
     _descriptor.FieldDescriptor(
-      name='purchaseDate', full_name='AccountSummary.Administrator.purchaseDate', index=8,
+      name='purchaseDate', full_name='AccountSummary.Administrator.purchaseDate', index=7,
       number=9, type=9, cpp_type=9, label=1,
-      has_default_value=False, default_value=b"".decode('utf-8'),
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-    _descriptor.FieldDescriptor(
-      name='total', full_name='AccountSummary.Administrator.total', index=9,
-      number=10, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=b"".decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
@@ -1537,8 +1496,8 @@ _ADMINISTRATOR = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=4124,
-  serialized_end=4356,
+  serialized_start=4001,
+  serialized_end=4193,
 )
 
 _ACCOUNTSUMMARYELEMENTS.fields_by_name['settings'].message_type = _SETTINGS
@@ -1561,9 +1520,7 @@ _ENFORCEMENTS.fields_by_name['booleans'].message_type = _KEYVALUEBOOLEAN
 _ENFORCEMENTS.fields_by_name['longs'].message_type = _KEYVALUELONG
 _ENFORCEMENTS.fields_by_name['jsons'].message_type = _KEYVALUE
 _SECURITYKEY.fields_by_name['deviceRegistration'].message_type = _DEVICEREGISTRATION
-_GROUP.fields_by_name['groupSettings'].message_type = _KEYVALUE
 _GROUP.fields_by_name['administrator'].message_type = _ADMINISTRATOR
-_GROUP.fields_by_name['error'].message_type = _RESULT
 DESCRIPTOR.message_types_by_name['AccountSummaryRequest'] = _ACCOUNTSUMMARYREQUEST
 DESCRIPTOR.message_types_by_name['AccountSummaryElements'] = _ACCOUNTSUMMARYELEMENTS
 DESCRIPTOR.message_types_by_name['DeviceInfo'] = _DEVICEINFO

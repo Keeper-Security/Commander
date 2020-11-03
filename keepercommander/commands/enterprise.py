@@ -44,8 +44,8 @@ from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, EnterpriseUserDataKeys, UserDataKeyRequest, UserDataKeyResponse)
-from ..APIRequest_pb2 import ApiRequestPayload
+                             ApproveUserDevicesResponse, EnterpriseUserDataKeys)
+from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()

@@ -22,11 +22,14 @@ import tempfile
 import json
 
 from urllib.parse import urlsplit
+
+from google.protobuf.json_format import MessageToDict
 from tabulate import tabulate
 from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
+from ..display import bcolors
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api
@@ -34,7 +37,7 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError
-
+from ..loginv3 import LoginV3API, CommonHelperMethods
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -47,6 +50,7 @@ SSH_AGENT_CONSTRAIN_LIFETIME = 1
 
 def register_commands(commands):
     commands['sync-down'] = SyncDownCommand()
+    commands['this-device'] = ThisDeviceCommand()
     commands['delete-all'] = RecordDeleteAllCommand()
     commands['whoami'] = WhoamiCommand()
     commands['login'] = LoginCommand()
@@ -62,7 +66,7 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser]:
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -71,6 +75,12 @@ whoami_parser = argparse.ArgumentParser(prog='whoami', description='Information 
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
+
+this_device_available_command_verbs = ['rename', 'register', 'persistent_login', 'ip_auto_approve', 'timeout']
+this_device_parser = argparse.ArgumentParser(prog='this-device', description='Current device command')
+this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
+this_device_parser.error = raise_parse_exception
+this_device_parser.exit = suppress_exit
 
 
 login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper')
@@ -148,6 +158,162 @@ class SyncDownCommand(Command):
 
             if accepted:
                 params.sync_data = True
+
+
+class ThisDeviceCommand(Command):
+
+    def get_parser(self):
+        return this_device_parser
+
+    def execute(self, params, **kwargs):
+
+        ops = kwargs.get('ops')
+
+        if len(ops) == 0:
+
+            ThisDeviceCommand.print_device_info(params, this_device_available_command_verbs)
+            return
+
+        if len(ops) >= 1 and (ops[0].lower() != 'register' or ops[0].lower() != 'reg'):
+            if len(ops) == 1 and ops[0].lower() != 'register':
+                raise Exception("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
+
+            if len(ops) != 2:
+                raise Exception("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
+
+        action = ops[0].lower()
+
+        if action == 'rename' or action == 'ren':
+            value = ops[1]
+            LoginV3API.rename_device(params, value)
+            print(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
+
+        elif action == 'register' or action == 'reg':
+
+            is_device_registered = LoginV3API.register_encrypted_data_key_for_device(params)
+
+            if is_device_registered:
+                print(bcolors.OKGREEN + "Successfully registered device" + bcolors.ENDC)
+            else:
+                print(bcolors.OKGREEN + "Device already registered" + bcolors.ENDC)
+
+        elif action == 'persistent_login' or action == 'pl':
+            value = ops[1]
+
+            value_extracted = ThisDeviceCommand.get_setting_str_to_value('persistent_login', value)
+            LoginV3API.set_user_setting(params, 'persistent_login', value_extracted)
+            msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
+            print("Successfully " + msg + " Persistent Login on this device")
+
+            if value_extracted == '1':
+
+                _, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
+
+                if 'encryptedDataKeyPresent' not in this_device:
+                    print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
+
+        elif action == 'ip_auto_approve' or action == 'iaa':
+            value = ops[1]
+
+            value_extracted = ThisDeviceCommand.get_setting_str_to_value('ip_disable_auto_approve', value)
+            LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
+            msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
+            print("Successfully " + msg + " 'ip_auto_approve'")
+
+        elif action == 'timeout' or action == 'to':
+
+            value = ops[1]
+            value_extracted = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
+            LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
+            print("Successfully modified 'logout_timer' setting")
+
+        else:
+            raise Exception("Unknown sub-command " + action + ". Available sub-commands: ", ", ".join(this_device_available_command_verbs))
+
+    @staticmethod
+    def get_setting_str_to_value(name: str, value: str):
+
+        name = name.lower()
+        value = value.lower()
+
+        if name == 'persistent_login' or name == 'ip_disable_auto_approve':
+            if value == 'yes' or value == 'y' or value == 'on' or value == '1':
+                final_val = '1'
+            elif value == 'no' or value == 'n' or value == 'off' or value == '0':
+                final_val = '0'
+            else:
+                raise Exception("Unknown value. Available values 'on', 'off', 'yes', 'y', 'no' or 'n'")
+        elif name == 'logout_timer':
+            if not CommonHelperMethods.check_int(value):
+                raise Exception("Entered value is not an integer. Please enter integer")
+            final_val = value
+        else:
+            raise Exception("Unhandled settings name '" + name + "'")
+
+        return final_val
+
+    @staticmethod
+    def get_account_summary_and_this_device(params: KeeperParams):
+        def to_alphanumerics(text):
+            # remove ALL non - alphanumerics
+            return re.sub(r'[\W_]+', '', text)
+
+        def compare_device_tokens(t1: str, t2: str):
+            t1 = to_alphanumerics(t1)
+            t2 = to_alphanumerics(t2)
+
+            return t1 == t2
+
+        acct_summary = LoginV3API.accountSummary(params)
+        acct_summary_dict = MessageToDict(acct_summary)
+
+        devices = acct_summary_dict['devices']
+
+        this_device = next((item for item in devices if compare_device_tokens(item['encryptedDeviceToken'], params.config['device_token'])), None)
+
+        return acct_summary_dict, this_device
+
+    @staticmethod
+    def print_device_info(params: KeeperParams, available_verbs):
+
+        acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
+
+        print('{:>20}: {}'.format('Device Name', this_device['deviceName']))
+        print("{:>20}: {}".format('Client Version', this_device['clientVersion']))
+
+        if 'encryptedDataKeyPresent' in this_device:
+            print("{:>20}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if this_device['encryptedDataKeyPresent'] else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
+        else:
+            print("{:>20}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
+
+        if 'ipDisableAutoApprove' in acct_summary_dict['settings']:
+            ipDisableAutoApprove = acct_summary_dict['settings']['ipDisableAutoApprove']
+            print("{:>20}: {}".format('IP Auto Approve',
+                                      (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
+                                      if ipDisableAutoApprove else
+                                      (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+        else:
+            print("{:>20}: {}".format('IP Auto Approve', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        if 'persistentLogin' in acct_summary_dict['settings']:
+            persistentLogin = acct_summary_dict['settings']['persistentLogin']
+            print("{:>20}: {}".format('Persistent Login',
+                                      (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
+                                      if persistentLogin else
+                                      (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        else:
+            print("{:>20}: {}".format('Persistent Login', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        if 'logoutTimer' in acct_summary_dict['settings']:
+            logoutTimer = acct_summary_dict['settings']['logoutTimer']
+            logoutTimerMin = int(logoutTimer) / 1000 / 60
+            print("{:>20}: {} minutes".format('Logout Timeout', int(logoutTimerMin)))
+
+        else:
+            print("{:>20}: Default".format('Logout Timeout'))
+
+        print("\nAvailable sub-commands: ", bcolors.OKBLUE + (", ".join(this_device_available_command_verbs)) + bcolors.ENDC)
 
 
 class RecordDeleteAllCommand(Command):

@@ -204,6 +204,28 @@ This account requires 2FA Authentication
 Selection (ex. 2):
 ```
 
+##### Persistent Login
+Persistent Login allows users to login into keeper w/o password. In order to enable it user must also register the device
+with the backend. Once device is registered and persistent login is turned on, the next time when user opens keeper he will
+automatically login to the account.
+
+Steps to enable persistent login:
+
+1. Register device by running command `this-device register`
+2. Enable persistent login: `this-device persistent-login on
+
+
+###### Advanced: Login without password on another device
+It is possible to login on another device (such as server). Steps to achieve that
+
+1. Login to Commander on computer (A) and enable Persistent Login feature by following steps above.
+2. Copy content of the `config.json` file that was generated and pasted it into the same file on another server (B).
+3. Now it will be possible to login to Commander on the server (B) without being prompted for authentication
+
+Note: _Once logged in on the server (B), persistent login will be lost on your computer (A). Also, 
+once logged in to Keeper on computer (A), the persistent login feature will be lost on the server (B)_
+
+
 ### Interactive Shell
 To run a series of commands and stay logged in, you will enjoy using Commander's interactive shell.
 
