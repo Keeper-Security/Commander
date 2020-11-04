@@ -348,8 +348,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```list-sf``` or ```lsf``` Display all shared folders
 
-* ```create-user``` Create Keeper vault account.
-Note: If executed by an admin, the user will be provisioned to the Enterprise license. - [See Details](#creating-and-pre-populating-vaults)
+* ```create-user``` Invite user to create Keeper vault account
 
 * ```list-team``` or ```lt``` Display all teams
 
