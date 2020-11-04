@@ -174,7 +174,7 @@ class ThisDeviceCommand(Command):
             ThisDeviceCommand.print_device_info(params, this_device_available_command_verbs)
             return
 
-        if len(ops) >= 1 and (ops[0].lower() != 'register' or ops[0].lower() != 'reg'):
+        if len(ops) >= 1 and ops[0].lower() != 'register':
             if len(ops) == 1 and ops[0].lower() != 'register':
                 raise Exception("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
 
@@ -188,7 +188,7 @@ class ThisDeviceCommand(Command):
             LoginV3API.rename_device(params, value)
             print(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
 
-        elif action == 'register' or action == 'reg':
+        elif action == 'register':
 
             is_device_registered = LoginV3API.register_encrypted_data_key_for_device(params)
 

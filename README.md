@@ -135,7 +135,7 @@ optional arguments:
   --debug               Turn on debug mode
 ```
 
-### Login V3
+### Login
 
 Current login mechanism is by default uses new Login V3 flow. This login flow includes following features:
 - Now all devices that access Keeper require to be registered using email, sms push, or security key
@@ -204,27 +204,40 @@ This account requires 2FA Authentication
 Selection (ex. 2):
 ```
 
-##### Persistent Login
-Persistent Login allows users to login into keeper w/o password. In order to enable it user must also register the device
-with the backend. Once device is registered and persistent login is turned on, the next time when user opens keeper he will
-automatically login to the account.
+##### Persistent Login Flow
+Persistent Login allows users to login into Keeper without typing a password. In order to enable it user must register the device and turn on the persistent login. Once that's done the next time when user logs in to Keeper Commander he will
+be automatically login to the account. All settings to which account will be stored in `config.json` file.
 
 Steps to enable persistent login:
 
-1. Register device by running command `this-device register`
-2. Enable persistent login: `this-device persistent-login on
+1. Register device using command `this-device register`. See `this-device` section for more details.
+2. Enable persistent login: `this-device persistent-login on`
 
-
-###### Advanced: Login without password on another device
-It is possible to login on another device (such as server). Steps to achieve that
+##### Login without password
+It is possible to login on another device (such as server) without storing Master Password in the `config.json` file.
+Below are the steps to achive that:
 
 1. Login to Commander on computer (A) and enable Persistent Login feature by following steps above.
-2. Copy content of the `config.json` file that was generated and pasted it into the same file on another server (B).
+
+    During this step commander will generate configuration file `config.json` with `private_key`, `device_token`, and `device_token`.
+    Make sure to add property `user` with the email of the user that was used to login to the account.
+    
+    Example `config.json` file:
+    
+    ```shell script
+        {
+            "user": "johnd@email.com",
+            "private_key": "yaeK4jMeIGNkSR2pi4xf2XGmYM094YMUoE8-QEW9CAA",
+            "device_token": "bv7bkAncq0X6somJr1PHg2Ay1f_4JZZqqsvg3dz7NnCIqQ",
+            "device_token": "g6RDMxr1t-bcVdBeBpz-xQ"
+        }
+    ```
+    
+2. Copy content of the `config.json` file that was generated and paste it into the same file on another server (B).
 3. Now it will be possible to login to Commander on the server (B) without being prompted for authentication
 
 Note: _Once logged in on the server (B), persistent login will be lost on your computer (A). Also, 
-once logged in to Keeper on computer (A), the persistent login feature will be lost on the server (B)_
-
+once logged in to Keeper on a computer (A), the persistent login feature will be lost on the server (B)_
 
 ### Interactive Shell
 To run a series of commands and stay logged in, you will enjoy using Commander's interactive shell.
@@ -506,6 +519,30 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--approve <device ID>``` Approve the specific device or all devices 
     - ```--deny <device ID>``` Deny specific device
     - ```--trusted-ip``` When supplied with --approve, will only approve devices from a recognized IP address
+
+* ```this-device``` specific settings for the current device
+
+    Available sub-commands:
+    
+    - ```rename``` - To rename the device. Device name should be no longer than 150 utf8 characters.
+        
+        Example: `this-device rename work-computer`
+    - `register` - register a data key for the device. Needed for the persistent login to work.
+        
+        Example: `this-device register`
+    - `persistent_login` - If enabled, the client can resume a logged in session or do cross client login. 
+        If disabled, the client cannot resume a session. Available options: `on`, `off`
+        
+        Example: `this-device persistent_login on`
+    - `ip_auto_approve` - If enabled, the device is not automatically approved based on the device’s IP address.
+        If disabled, the device will be auto approved based on a previously used ip address for the user or enterprise.
+        Available options: `yes`, `no`
+        
+        Example: `this-device ip_auto_approve yes`
+        
+        _Note: this does NOT affect cloud sso devices._
+    - `timeout` - If the session is idle for more than the set value then user will be logged out, ei session token will expire. Default value for commander is 2 days.
+        This value is device specific, the backend will track this based on the device_id in the session token.
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
@@ -1405,62 +1442,6 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 5. Visit the Settings > General screen and setup a Master Password
 
 After the Master Password is created, you are now able to login to Keeper Commander.
-
-### Creating and Pre-Populating Vaults
-
-A Keeper Admin can create a user vault and pre-populate it with records. This can all be accomplished with a single command.
-
-For example:
-
-```
-create-user --generate --name="Test User" --expire --records="push.json" user@company.com
-
-Created account: user@company.com
-Generated password: <displayed on the screen>
-```
-
-This command performs the following streamlined operations:
-1. Creates a new user account for "Test User" with the email address user@company.com
-2. The account is automatically provisioned to the Enterprise license and receives the default role policy
-3. The records stored in push.json are pushed to the user's vault
-
-After command completion, the "Generated Password" displayed to the admin is the temporary Master Password set for the user account. You can provide this Master Password to the user via a separate channel. 
-
-Upon first logging in, the user will be prompted to set a new Master Password according to the password complexity requirements set by the role enforcement policy in the Keeper Admin Console.  If Two-Factor Authentication is required, the user will also be prompted to activate 2FA prior to accessing vault data.
-
-The "push.json" file is structured an an array of password objects.  For example:
-
-```
-[
-    {
-        "title": "Google For ${user_name}",
-        "login": "${user_email}",
-        "password": "${generate_password}",
-        "login_url": "https://google.com",
-        "notes": "",
-        "custom_fields": {
-            "2FA Phone": "916-555-1212"
-        }
-    },
-    {
-        "title": "Development Server",
-        "login": "${user_email}",
-        "password": "${generate_password}",
-        "login_url": "",
-        "notes": "Here are some\nMulti-line\nNotes",
-        "custom_fields": {
-        }
-    }
-]
-```
-
-Supported template parameters:
-
-```
-${user_email}          User email address
-${generate_password}   Generate random password
-${user_name}           User full name
-```
 
 ### Password Retrieval API
 
