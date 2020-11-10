@@ -706,40 +706,44 @@ LastPass import will transfer the vault passwords directly to Keeper retaining t
 
 Below is a JSON import file with 2 records. The first record is added to a folder called "My Servers". The second record is added to "My Servers" and also added to a shared folder called "Shared Servers". 
 
-The import file example below is an array of record objects which can import into private folders and shared folders:
+The import file example below is an array of record objects which can import into private folders and shared folders. Note in the example that the Facebook record contains a TOTP seed which will render on the Vault user interface and Commander CLI.
 
 ```bash
-[{
-    "title":"Dev Server",
+{
+  "records": [{
+    "title":"Google",
     "folders": [
       {
-        "folder": "My Servers"
+        "folder": "My Websites\\Online"
       }
     ],
-    "login": "root",
+    "login": "testing",
     "password": "lk4j139sk4j",
-    "login_url": "https://myserver.com",
+    "login_url": "https://google.com",
     "notes": "These are some notes.",
-    "custom_fields": {"Security Group":"Private"}
-},
-{
-    "title":"Prod Server",
+    "custom_fields": {"Favorite Food":"Cheetos"}
+  },
+  {
+    "title":"Facebook",
     "folders": [
       {
-        "folder": "My Servers"
+        "folder": "Social Media"
       },
       {
-       "shared_folder": "Shared Servers",
-       "can_edit": true,
-       "can_share": true
+        "shared_folder": "Shared Social",
+        "can_edit": false,
+        "can_share": false
       }
     ],
-    "login": "root",
-    "password": "kj424094fsdjhfs4jf7h",
-    "login_url": "https://myprodserver.com",
-    "notes": "These are some notes.",
-    "custom_fields": {"Security Group":"Public","IP Address":"12.45.67.8"}
-}]
+    "login": "me@gmail.com",
+    "password": "123123123123",
+    "login_url": "https://facebook.com",
+    "notes": "This is our corporate shared record.",
+    "custom_fields": {
+      "Facebook Application ID":"ABC12345",
+      "TFC:Keeper": "otpauth://totp/Amazon:me@company.com?secret=JBSWY3DPEHPK3PXP&issuer=Amazon&algorithm=SHA1&digits=6&period=30"}
+  }]
+}
 ```
 
 Another example below first creates shared folders that are shared to users and teams, then imports records into the shared folders.  The format of the file is slightly different and allows you to separate the creation of shared folder objects and records:
