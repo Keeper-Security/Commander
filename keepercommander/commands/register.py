@@ -124,21 +124,21 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper user')
-register_parser.add_argument('--store-record', dest='store', action='store_true',
-                             help='store credentials into Keeper record (must be logged in)')
-register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
-register_parser.add_argument('--pass', dest='password', action='store', help='user password')
-register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
-                             help='data center.')
-register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
+register_parser = argparse.ArgumentParser(prog='create-user', description='Send an invitation to the user to join Keeper')
+# register_parser.add_argument('--store-record', dest='store', action='store_true',
+#                              help='store credentials into Keeper record (must be logged in)')
+# register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
+# register_parser.add_argument('--pass', dest='password', action='store', help='user password')
+# register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
+#                              help='data center.')
+# register_parser.add_argument('--expire', dest='expire', action='store_true',
+#                              help='expire master password (enterprise only)')
+# register_parser.add_argument('--records', dest='records', action='store',
+#                              help='populate vault with default records (enterprise only)')
+# register_parser.add_argument('--question', dest='question', action='store', help='security question')
+# register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
 register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
-register_parser.add_argument('--expire', dest='expire', action='store_true',
-                             help='expire master password (enterprise only)')
-register_parser.add_argument('--records', dest='records', action='store',
-                             help='populate vault with default records (enterprise only)')
-register_parser.add_argument('--question', dest='question', action='store', help='security question')
-register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
+register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
 register_parser.add_argument('email', action='store', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit

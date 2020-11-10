@@ -32,7 +32,7 @@ from Cryptodome.Math.Numbers import Integer
 from ..display import bcolors
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
-from .. import api
+from .. import api, rest_api
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
@@ -171,7 +171,7 @@ class ThisDeviceCommand(Command):
 
         if len(ops) == 0:
 
-            ThisDeviceCommand.print_device_info(params, this_device_available_command_verbs)
+            ThisDeviceCommand.print_device_info(params)
             return
 
         if len(ops) >= 1 and ops[0].lower() != 'register':
@@ -209,8 +209,9 @@ class ThisDeviceCommand(Command):
 
                 _, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
-                if 'encryptedDataKeyPresent' not in this_device:
-                    print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
+                if this_device:
+                    if 'encryptedDataKeyPresent' not in this_device:
+                        print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
 
         elif action == 'ip_auto_approve' or action == 'iaa':
             value = ops[1]
@@ -269,12 +270,17 @@ class ThisDeviceCommand(Command):
 
         devices = acct_summary_dict['devices']
 
-        this_device = next((item for item in devices if compare_device_tokens(item['encryptedDeviceToken'], params.config['device_token'])), None)
+        if 'device_token' not in params.config:
+            current_device_token = rest_api.get_device_token(params.rest_context)
+        else:
+            current_device_token = params.config['device_token']
+
+        this_device = next((item for item in devices if compare_device_tokens(item['encryptedDeviceToken'], current_device_token)), None)
 
         return acct_summary_dict, this_device
 
     @staticmethod
-    def print_device_info(params: KeeperParams, available_verbs):
+    def print_device_info(params: KeeperParams):
 
         acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
@@ -369,17 +375,17 @@ class WhoamiCommand(Command):
             print('{0:>20s}: {1:<20s}'.format('Logged in as', params.user))
             if params.license:
                 print('')
-                account_type = params.license['account_type']
+                account_type = params.license['account_type'] if 'account_type' in params.license else None
                 account_type_name = 'Enterprise' if account_type == 2 \
                     else 'Family Plan' if account_type == 1 \
                     else params.license['product_type_name']
                 print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', account_type_name))
                 print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
                 if 'bytes_total' in params.license:
-                    storage_bytes = params.license['bytes_total']
+                    storage_bytes = int(params.license['bytes_total'])  # note: int64 in protobuf in python produces string as opposed to an int or long.
                     storage_gb = storage_bytes >> 30
                     print('{0:>20s} {1:>20s}: {2}GB'.format('Storage', 'Capacity', storage_gb))
-                    storage_usage = (params.license['bytes_used'] * 100 // storage_bytes) if storage_bytes != 0 else 0
+                    storage_usage = (int(params.license['bytes_used']) * 100 // storage_bytes) if storage_bytes != 0 else 0     # note: int64 in protobuf in python produces string  as opposed to an int or long.
                     print('{0:>20s} {1:>20s}: {2}%'.format('', 'Usage', storage_usage))
                     print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['storage_expiration_date']))
 

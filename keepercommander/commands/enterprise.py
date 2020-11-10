@@ -2018,7 +2018,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
             # user_ids.sort(key=lambda x: user_names.get(x))
             for i in range(len(user_ids)):
-                print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
+                print('{0:>24s}: {1:<32s} {2}'.format('Active User(s)' if i == 0 else '', (user_names[user_ids[i]] if user_ids[i] in user_names else "(Unmanaged User id: " + user_ids[i] + ")"), user_ids[i] if is_verbose else ''))
 
         if 'queued_team_users' in params.enterprise:
             user_ids = []
