@@ -3647,13 +3647,17 @@ class DeviceApproveCommand(EnterpriseCommand):
                             data_key_rs.ParseFromString(rs)
                             for key in data_key_rs.keys:
                                 enc_data_key = key.userEncryptedDataKey
-                                ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, enc_data_key[:65])
-                                shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
-                                digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-                                digest.update(shared_key)
-                                enc_key = digest.finalize()
-                                data_key = rest_api.decrypt_aes(enc_data_key[65:], enc_key)
-                                data_keys[key.enterpriseUserId] = data_key
+                                if enc_data_key:
+                                    try:
+                                        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, enc_data_key[:65])
+                                        shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
+                                        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                                        digest.update(shared_key)
+                                        enc_key = digest.finalize()
+                                        data_key = rest_api.decrypt_aes(enc_data_key[65:], enc_key)
+                                        data_keys[key.enterpriseUserId] = data_key
+                                    except Exception as e:
+                                        logging.debug(e)
 
                 # resolve user data keys from Account Transfer
                 user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
@@ -3672,7 +3676,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                             user_ids = set(data_key_rs.noEncryptedDataKey)
                             usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
                             if usernames:
-                                logging.info('User(s) \"%s\" have no accepted account transfers', ', '.join(usernames))
+                                logging.info('User(s) \"%s\" have no accepted account transfers or did not share encryption key', ', '.join(usernames))
                         if data_key_rs.accessDenied:
                             user_ids = set(data_key_rs.noEncryptedDataKey)
                             usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]

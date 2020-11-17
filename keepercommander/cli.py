@@ -175,40 +175,46 @@ def do_command(params, command_line):
 
     if '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):
-            print("usage: history|h")
-            print("\nShow command history")
+            print("usage: history|h [-h]")
+            print("\nShow command history.")
+            print("\noptional arguments:")
+            print("  -h, --help            show this help message and exit")
+            return
+        elif command_line.lower().startswith('d ') or command_line.lower().startswith('sync-down '):
+            print("usage: sync-down|d [-h]")
+            print("\nDownload your vault from the Keeper Cloud.")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
         elif command_line.lower().startswith('c ') or command_line.lower().startswith('cls ') or command_line.lower().startswith('clear '):
-            print("usage: clear|cls|c")
-            print("\nClear the screen")
+            print("usage: clear|cls|c [-h]")
+            print("\nClear the screen.")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
         elif command_line.lower().startswith('debug '):
-            print("usage: debug")
+            print("usage: debug [-h]")
             print("\nToggle debug mode")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
         elif command_line.lower().startswith('switch-to-mc '):
-            print("usage: switch-to-mc")
-            print("\nSwitch user's company to Managed Company")
+            print("usage: switch-to-mc [-h] mcId")
+            print("\nSwitch user's company to Managed Company.")
             print("\npositional arguments:")
             print("  mcId               ID of the Managed Company")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
         elif command_line.lower().startswith('switch-to-msp '):
-            print("usage: switch-to-msp")
-            print("\nSwitch user's context back to MSP Company")
+            print("usage: switch-to-msp [-h]")
+            print("\nSwitch user's context back to MSP Company.")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
         elif command_line.lower().startswith('q ') or command_line.lower().startswith('quit '):
-            print("usage: quit|q")
-            print("\nExit shell mode")
+            print("usage: quit|q [-h]")
+            print("\nExit commander")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
@@ -228,7 +234,7 @@ def do_command(params, command_line):
     elif 'switch-to-mc' in command_line:
 
         if current_mc_id is not None:
-            raise CommandError('switch-to-mc', "Already switch to Managed Company id=%s" % current_mc_id)
+            raise CommandError('switch-to-mc', "Already switched to Managed Company id=%s" % current_mc_id)
 
         cmd, args = command_and_args_from_cmd(command_line)
 
