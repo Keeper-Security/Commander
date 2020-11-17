@@ -16,11 +16,9 @@ import calendar
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data
 from .enterprise import EnterpriseCommand
-from .. import api
+from .. import api, loginv3
 from ..display import format_managed_company, format_msp_licenses
 from ..error import CommandError
-
-from keepercommander.loginv3 import CommonHelperMethods
 
 
 def register_commands(commands):
@@ -42,20 +40,20 @@ def register_command_info(aliases, command_info):
 
 
 msp_data_parser = argparse.ArgumentParser(prog='msp-down|md',
-                                          description='Refresh MSP data from the server',
+                                          description='Download current MSP data from the Keeper Cloud.',
                                           usage='msp-down')
 msp_data_parser.error = raise_parse_exception
 msp_data_parser.exit = suppress_exit
 
 msp_info_parser = argparse.ArgumentParser(prog='msp-info|mi',
-                                          description='Display MSP details, such as licenses and managed companies',
+                                          description='Displays MSP details, such as licenses and managed companies.',
                                           usage='msp-info')
 # msp_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 msp_info_parser.error = raise_parse_exception
 msp_info_parser.exit = suppress_exit
 
-msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='View and Manage MSP licenses', usage='msp-license --add --seats=4')
+msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='View and Manage MSP licenses.', usage='msp-license --add --seats=4')
 msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'reduce', 'usage'], help='Action to perform on the licenses', default='usage')
 msp_license_parser.add_argument('--mc', dest='mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 # msp_license_parser.add_argument('--product_id', dest='product_id', action='store', choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'], help='Plan Id.')
@@ -66,7 +64,7 @@ msp_license_parser.exit = suppress_exit
 ranges = ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']
 
 msp_license_report_parser = argparse.ArgumentParser(prog='msp-license-report',
-                                                    description='MSP License Reports. Use pre-defined date ranges or custom date range')
+                                                    description='Generate MSP License Reports.')
 msp_license_report_parser.add_argument('--type',
                                        dest='report_type',
                                        choices=['allocation', 'audit'],
@@ -224,12 +222,12 @@ class MSPLicensesReportCommand(EnterpriseCommand):
                 to_date = end_date1
             else:
                 # will use start and end data
-                if CommonHelperMethods.check_int(from_date_str):
+                if loginv3.CommonHelperMethods.check_int(from_date_str):
                     from_date = datetime.fromtimestamp(int(from_date_str))
                 else:
                     from_date = datetime.strptime(from_date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")
 
-                if CommonHelperMethods.check_int(to_date_str):
+                if loginv3.CommonHelperMethods.check_int(to_date_str):
                     to_date = datetime.fromtimestamp(int(to_date_str))
                 else:
                     to_date = datetime.strptime(to_date_str + " 11:59:59", "%Y-%m-%d %H:%M:%S")
@@ -272,7 +270,7 @@ class MSPLicensesReportCommand(EnterpriseCommand):
 def get_mc_by_name_or_id(msc, name_or_id):
 
     found_mc = None
-    if CommonHelperMethods.check_int(name_or_id):
+    if loginv3.CommonHelperMethods.check_int(name_or_id):
         # get by id
         found_mc = find(lambda mc: mc['mc_enterprise_id'] == int(name_or_id), msc)
 

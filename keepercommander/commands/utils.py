@@ -32,12 +32,12 @@ from Cryptodome.Math.Numbers import Integer
 from ..display import bcolors
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
-from .. import api
+from .. import api, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError
-from ..loginv3 import LoginV3API, CommonHelperMethods
+# from ..loginv3 import LoginV3API, CommonHelperMethods
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -71,26 +71,26 @@ def register_command_info(aliases, command_info):
     command_info['sync-down|d'] = 'Download & decrypt data'
 
 
-whoami_parser = argparse.ArgumentParser(prog='whoami', description='Information about logged in user')
+whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
 
 this_device_available_command_verbs = ['rename', 'register', 'persistent_login', 'ip_auto_approve', 'timeout']
-this_device_parser = argparse.ArgumentParser(prog='this-device', description='Current device command')
+this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device.')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
 this_device_parser.error = raise_parse_exception
 this_device_parser.exit = suppress_exit
 
 
-login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper')
+login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper.')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
 
 
-logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper')
+logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper.')
 logout_parser.error = raise_parse_exception
 logout_parser.exit = suppress_exit
 
@@ -114,20 +114,20 @@ connect_parser.error = raise_parse_exception
 connect_parser.exit = suppress_exit
 
 
-echo_parser = argparse.ArgumentParser(prog='echo', description='Displays argument to output')
+echo_parser = argparse.ArgumentParser(prog='echo', description='Displays an argument to output.')
 echo_parser.add_argument('argument', nargs='?', action='store', type=str, help='argument')
 echo_parser.error = raise_parse_exception
 echo_parser.exit = suppress_exit
 
 
-set_parser = argparse.ArgumentParser(prog='set', description='Set environment variable')
+set_parser = argparse.ArgumentParser(prog='set', description='Set an environment variable.')
 set_parser.add_argument('name', action='store', type=str, help='name')
 set_parser.add_argument('value', action='store', type=str, help='value')
 set_parser.error = raise_parse_exception
 set_parser.exit = suppress_exit
 
 
-help_parser = argparse.ArgumentParser(prog='help', description='Displays help on command')
+help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command.')
 help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
@@ -171,7 +171,7 @@ class ThisDeviceCommand(Command):
 
         if len(ops) == 0:
 
-            ThisDeviceCommand.print_device_info(params, this_device_available_command_verbs)
+            ThisDeviceCommand.print_device_info(params)
             return
 
         if len(ops) >= 1 and ops[0].lower() != 'register':
@@ -185,12 +185,12 @@ class ThisDeviceCommand(Command):
 
         if action == 'rename' or action == 'ren':
             value = ops[1]
-            LoginV3API.rename_device(params, value)
+            loginv3.LoginV3API.rename_device(params, value)
             print(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
 
         elif action == 'register':
 
-            is_device_registered = LoginV3API.register_encrypted_data_key_for_device(params)
+            is_device_registered = loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
 
             if is_device_registered:
                 print(bcolors.OKGREEN + "Successfully registered device" + bcolors.ENDC)
@@ -201,7 +201,7 @@ class ThisDeviceCommand(Command):
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('persistent_login', value)
-            LoginV3API.set_user_setting(params, 'persistent_login', value_extracted)
+            loginv3.LoginV3API.set_user_setting(params, 'persistent_login', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
             print("Successfully " + msg + " Persistent Login on this device")
 
@@ -209,14 +209,15 @@ class ThisDeviceCommand(Command):
 
                 _, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
-                if 'encryptedDataKeyPresent' not in this_device:
-                    print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
+                if this_device:
+                    if 'encryptedDataKeyPresent' not in this_device:
+                        print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
 
         elif action == 'ip_auto_approve' or action == 'iaa':
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('ip_disable_auto_approve', value)
-            LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
+            loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
             print("Successfully " + msg + " 'ip_auto_approve'")
 
@@ -224,7 +225,7 @@ class ThisDeviceCommand(Command):
 
             value = ops[1]
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
-            LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
+            loginv3.LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
             print("Successfully modified 'logout_timer' setting")
 
         else:
@@ -244,7 +245,7 @@ class ThisDeviceCommand(Command):
             else:
                 raise Exception("Unknown value. Available values 'on', 'off', 'yes', 'y', 'no' or 'n'")
         elif name == 'logout_timer':
-            if not CommonHelperMethods.check_int(value):
+            if not loginv3.CommonHelperMethods.check_int(value):
                 raise Exception("Entered value is not an integer. Please enter integer")
             final_val = value
         else:
@@ -264,17 +265,22 @@ class ThisDeviceCommand(Command):
 
             return t1 == t2
 
-        acct_summary = LoginV3API.accountSummary(params)
+        acct_summary = loginv3.LoginV3API.accountSummary(params)
         acct_summary_dict = MessageToDict(acct_summary)
 
         devices = acct_summary_dict['devices']
 
-        this_device = next((item for item in devices if compare_device_tokens(item['encryptedDeviceToken'], params.config['device_token'])), None)
+        if 'device_token' not in params.config:
+            current_device_token = rest_api.get_device_token(params.rest_context)
+        else:
+            current_device_token = params.config['device_token']
+
+        this_device = next((item for item in devices if compare_device_tokens(item['encryptedDeviceToken'], current_device_token)), None)
 
         return acct_summary_dict, this_device
 
     @staticmethod
-    def print_device_info(params: KeeperParams, available_verbs):
+    def print_device_info(params: KeeperParams):
 
         acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
@@ -369,17 +375,17 @@ class WhoamiCommand(Command):
             print('{0:>20s}: {1:<20s}'.format('Logged in as', params.user))
             if params.license:
                 print('')
-                account_type = params.license['account_type']
+                account_type = params.license['account_type'] if 'account_type' in params.license else None
                 account_type_name = 'Enterprise' if account_type == 2 \
                     else 'Family Plan' if account_type == 1 \
                     else params.license['product_type_name']
                 print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', account_type_name))
                 print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
                 if 'bytes_total' in params.license:
-                    storage_bytes = params.license['bytes_total']
+                    storage_bytes = int(params.license['bytes_total'])  # note: int64 in protobuf in python produces string as opposed to an int or long.
                     storage_gb = storage_bytes >> 30
                     print('{0:>20s} {1:>20s}: {2}GB'.format('Storage', 'Capacity', storage_gb))
-                    storage_usage = (params.license['bytes_used'] * 100 // storage_bytes) if storage_bytes != 0 else 0
+                    storage_usage = (int(params.license['bytes_used']) * 100 // storage_bytes) if storage_bytes != 0 else 0     # note: int64 in protobuf in python produces string  as opposed to an int or long.
                     print('{0:>20s} {1:>20s}: {2}%'.format('', 'Usage', storage_usage))
                     print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['storage_expiration_date']))
 

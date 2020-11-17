@@ -25,7 +25,7 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
 
-from .. import api, generator
+from .. import api, generator, loginv3
 from .base import dump_report_data, user_choice
 from .record import RecordAddCommand
 from ..params import KeeperParams
@@ -34,9 +34,7 @@ from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
-from ..loginv3 import LoginV3API
 
-from .. import loginv3
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 
@@ -60,7 +58,7 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change record share permissions')
+share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change the sharing permissions of an individual record')
 share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
 share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'],
                                  default='grant', action='store', help='user share action. \'grant\' if omitted')
@@ -70,7 +68,7 @@ share_record_parser.add_argument('record', nargs='?', type=str, action='store', 
 share_record_parser.error = raise_parse_exception
 share_record_parser.exit = suppress_exit
 
-share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change shared folder permissions')
+share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change a shared folders permissions.')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant',
                                  action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
@@ -89,7 +87,7 @@ share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', 
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
 
-share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report on record sharing')
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.')
 share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table',
                                  help='output format.')
 share_report_parser.add_argument('--output', dest='output', action='store',
@@ -103,50 +101,50 @@ share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='stor
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
-record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify record permissions')
+record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify a records permissions.')
 record_permission_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
-                                      help='Display record permissions to be changed')
+                                      help='Display the permissions changes without committing them')
 record_permission_parser.add_argument('--force', dest='force', action='store_true',
-                                      help='Apply permission changes without confirmation')
+                                      help='Apply permission changes without any confirmation')
 record_permission_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
-                                      help='Apply permission changes to sub-folders recursively')
+                                      help='Apply permission changes to all sub-folders')
 record_permission_parser.add_argument('--share-record', dest='share_record', action='store_true',
-                                      help='Change direct share record permissions')
+                                      help='Change a records sharing permissions')
 record_permission_parser.add_argument('--share-folder', dest='share_folder', action='store_true',
-                                      help='Change shared folder record permissions')
+                                      help='Change a folders sharing permissions')
 record_permission_parser.add_argument('-a', '--action', dest='action', action='store', choices=['grant', 'revoke'],
-                                      required=True, help='user share action')
+                                      required=True, help='The action being taken')
 record_permission_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true',
-                                      help='record permission: can be shared')
+                                      help='Set record permission: can be shared')
 record_permission_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true',
-                                      help='record permission: can be edited')
+                                      help='Set record permission: can be edited')
 record_permission_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or folder UID')
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper user')
-register_parser.add_argument('--store-record', dest='store', action='store_true',
-                             help='store credentials into Keeper record (must be logged in)')
-register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
-register_parser.add_argument('--pass', dest='password', action='store', help='user password')
-register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
-                             help='data center.')
-register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
+register_parser = argparse.ArgumentParser(prog='create-user', description='Send an invitation to the user to join Keeper')
+# register_parser.add_argument('--store-record', dest='store', action='store_true',
+#                              help='store credentials into Keeper record (must be logged in)')
+# register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
+# register_parser.add_argument('--pass', dest='password', action='store', help='user password')
+# register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
+#                              help='data center.')
+# register_parser.add_argument('--expire', dest='expire', action='store_true',
+#                              help='expire master password (enterprise only)')
+# register_parser.add_argument('--records', dest='records', action='store',
+#                              help='populate vault with default records (enterprise only)')
+# register_parser.add_argument('--question', dest='question', action='store', help='security question')
+# register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
 register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
-register_parser.add_argument('--expire', dest='expire', action='store_true',
-                             help='expire master password (enterprise only)')
-register_parser.add_argument('--records', dest='records', action='store',
-                             help='populate vault with default records (enterprise only)')
-register_parser.add_argument('--question', dest='question', action='store', help='security question')
-register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
+register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
 register_parser.add_argument('email', action='store', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
 
 
-file_report_parser = argparse.ArgumentParser(prog='file-report', description='File attachment report')
+file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments.')
 file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
-                                help='try downloading the attachments')
+                                help='Try downloading every attachment you have access to.')
 file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
@@ -166,7 +164,7 @@ class RegisterCommand(Command):
 
         if params.login_v3:
             logging.debug("Registering user using Login V3 flow to add users")
-            LoginV3API.register_for_login_v3(params, kwargs)
+            loginv3.LoginV3API.register_for_login_v3(params, kwargs)
             return
 
         email = kwargs['email'] if 'email' in kwargs else None

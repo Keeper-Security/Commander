@@ -167,14 +167,14 @@ class LoginV3Flow:
 
             elif resp.loginState == proto.DEVICE_ACCOUNT_LOCKED:
                 params.clear_session()
-                raise Exception('Device for this account is locked')
+                raise Exception('\n*** Device for this account is locked ***\n')
             elif resp.loginState == proto.DEVICE_LOCKED:
                 params.clear_session()
-                raise Exception('This device is locked')
+                raise Exception('\n*** This device is locked ***\n')
             elif resp.loginState == proto.ACCOUNT_LOCKED:
-                raise Exception('This user account is locked')
+                raise Exception('\n*** User account `' + params.user + '` is LOCKED ***\n')
             elif resp.loginState == proto.LICENSE_EXPIRED:
-                raise Exception('Your Keeper license has expired')
+                raise Exception('\n*** Your Keeper license has expired ***\n')
             elif resp.loginState == proto.UPGRADE:
                 raise Exception('Application or device is out of date and requires an update.')
             elif resp.loginState == proto.LOGGED_IN:
