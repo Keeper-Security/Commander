@@ -84,7 +84,7 @@ SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team_count', 'teams', 'role
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
 
-enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display enterprise information')
+enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display a tree structure of your enterprise.')
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store_true', help='print team list')
@@ -108,7 +108,7 @@ enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
 
 
-enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Enterprise node management')
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Manage an enterprise node.')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -119,7 +119,7 @@ enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
 
-enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Enterprise user management')
+enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Manage an enterprise user.')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
@@ -140,7 +140,7 @@ enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
 
-enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Enterprise role management')
+enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Manage an enterprise role(s).')
 #enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_role_parser.add_argument('--add', dest='add', action='store_true', help='create role')
@@ -159,7 +159,7 @@ enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
 
-enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Enterprise team management')
+enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Manage an enterprise team.')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
@@ -176,7 +176,7 @@ enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
-team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Automated team and user approval')
+team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Enable or disable automated team and user approval.')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
 team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
 team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
@@ -185,7 +185,7 @@ team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choice
 team_approve_parser.error = raise_parse_exception
 team_approve_parser.exit = suppress_exit
 
-device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices')
+device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices.')
 device_approve_parser.add_argument('--reload', dest='reload', action='store_true', help='reload list of pending approval requests')
 device_approve_parser.add_argument('--approve', dest='approve', action='store_true', help='approve user devices')
 device_approve_parser.add_argument('--deny', dest='deny', action='store_true', help='deny user devices')
@@ -203,14 +203,14 @@ enterprise_push_parser.error = raise_parse_exception
 enterprise_push_parser.exit = suppress_exit
 
 
-audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
+audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
 audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
 
-audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run audit report')
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
@@ -232,7 +232,7 @@ audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
 
-user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run user report')
+user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run a user report.')
 user_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'], default='table', help='output format.')
 user_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365, help='number of days to look back for last login.')

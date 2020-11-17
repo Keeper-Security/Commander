@@ -42,7 +42,7 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-ls_parser = argparse.ArgumentParser(prog='ls', description='List folder content')
+ls_parser = argparse.ArgumentParser(prog='ls', description='List folder contents.')
 ls_parser.add_argument('-l', '--list', dest='detail', action='store_true', help='show detailed list')
 ls_parser.add_argument('-f', '--folders', dest='folders', action='store_true', help='display folders')
 ls_parser.add_argument('-r', '--records', dest='records', action='store_true', help='display records')
@@ -51,26 +51,26 @@ ls_parser.error = raise_parse_exception
 ls_parser.exit = suppress_exit
 
 
-cd_parser = argparse.ArgumentParser(prog='cd', description='Change current folder')
+cd_parser = argparse.ArgumentParser(prog='cd', description='Change current folder.')
 cd_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 cd_parser.error = raise_parse_exception
 cd_parser.exit = suppress_exit
 
 
-tree_parser = argparse.ArgumentParser(prog='tree', description='Display folder structure')
+tree_parser = argparse.ArgumentParser(prog='tree', description='Display the folder structure.')
 tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 tree_parser.error = raise_parse_exception
 tree_parser.exit = suppress_exit
 
 
-rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove folder and its content')
+rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove a folder and its contents.')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
 rmdir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
 
-mkdir_parser = argparse.ArgumentParser(prog='mkdir', description='Create folder')
+mkdir_parser = argparse.ArgumentParser(prog='mkdir', description='Create a folder.')
 mkdir_parser.add_argument('-sf', '--shared-folder', dest='shared_folder', action='store_true', help='create shared folder')
 mkdir_parser.add_argument('-uf', '--user-folder', dest='user_folder', action='store_true', help='create user folder')
 mkdir_parser.add_argument('-a', '--all', dest='grant', action='store_true', help='anyone has all permissions by default')
@@ -83,7 +83,7 @@ mkdir_parser.error = raise_parse_exception
 mkdir_parser.exit = suppress_exit
 
 
-mv_parser = argparse.ArgumentParser(prog='mv', description='Move record or folder')
+mv_parser = argparse.ArgumentParser(prog='mv', description='Move a record or folder to another folder.')
 mv_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 mv_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 mv_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
@@ -93,7 +93,7 @@ mv_parser.error = raise_parse_exception
 mv_parser.exit = suppress_exit
 
 
-ln_parser = argparse.ArgumentParser(prog='ln', description='Create a link between record or folder')
+ln_parser = argparse.ArgumentParser(prog='ln', description='Create a link between a record and a folder.')
 ln_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 ln_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 ln_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')

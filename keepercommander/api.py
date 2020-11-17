@@ -20,7 +20,7 @@ import hashlib
 import logging
 import urllib.parse
 
-from . import rest_api, APIRequest_pb2 as proto
+from . import rest_api, APIRequest_pb2 as proto, loginv3
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -28,7 +28,6 @@ from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
-from .loginv3 import LoginV3Flow as loginv3, LoginV3API, CommonHelperMethods
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -78,7 +77,7 @@ def login(params):
 
     if params.login_v3:
         logging.info('Logging in to Keeper Commander')
-        loginv3.login(params)
+        loginv3.LoginV3Flow.login(params)
         return
 
     logging.info("Logging in...")
@@ -920,7 +919,7 @@ def create_auth_verifier(password, salt, iterations):
     derived_key = derive_key(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
-    return CommonHelperMethods.bytes_to_url_safe_str(auth_ver)
+    return loginv3.CommonHelperMethods.bytes_to_url_safe_str(auth_ver)
 
 
 def create_encryption_params(password, salt, iterations, data_key):
@@ -932,7 +931,7 @@ def create_encryption_params(password, salt, iterations, data_key):
     cipher = AES.new(derived_key, AES.MODE_CBC, enc_iv)
     enc_data_key = cipher.encrypt(data_key + data_key)
     enc_params = b'\x01' + enc_iter + salt + enc_iv + enc_data_key
-    return CommonHelperMethods.bytes_to_url_safe_str(enc_params)
+    return loginv3.CommonHelperMethods.bytes_to_url_safe_str(enc_params)
 
 
 def decrypt_encryption_params(encryption_params, password):
@@ -1843,7 +1842,7 @@ def query_enterprise(params):
 
 def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
 
-    resp = LoginV3API.loginToMc(params.rest_context, params.session_token, mc_id)
+    resp = loginv3.LoginV3API.loginToMc(params.rest_context, params.session_token, mc_id)
 
     mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
 
@@ -1859,7 +1858,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.login_v3 = params.login_v3
     mc_params.data_key = params.data_key
 
-    mc_params.session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
+    mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
 
     query_enterprise(mc_params)
