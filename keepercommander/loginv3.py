@@ -44,6 +44,8 @@ class LoginV3Flow:
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
+        is_alternate_login = False
+
         while True:
 
             is_cloud = resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY
@@ -73,7 +75,10 @@ class LoginV3Flow:
 
                 if encryptedLoginToken:
                     # Successfully completed 2FA. Re-login
-                    resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken)
+
+                    login_type = 'ALTERNATE' if is_alternate_login else 'NORMAL'
+
+                    resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken, loginType=login_type)
 
             elif resp.loginState == proto.REQUIRES_USERNAME:
 
@@ -89,6 +94,8 @@ class LoginV3Flow:
                     or resp.loginState == proto.REDIRECT_CLOUD_SSO:
                 print(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
                 print(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
+
+                is_alternate_login = True
 
                 resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
 
@@ -599,13 +606,13 @@ class LoginV3API:
         return rest_api.execute_rest(params.rest_context, 'authentication/validate_device_verification_code', api_request_payload)
 
     @staticmethod
-    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None):
+    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.encryptedLoginToken = encryptedLoginToken
         rq.encryptedDeviceToken = encryptedDeviceToken
         rq.username = params.user.lower()
-        # rq.loginType = proto.LoginType.Value('NORMAL')
+        rq.loginType = proto.LoginType.Value(loginType)
         if cloneCode:
             rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
             rq.cloneCode = cloneCode
