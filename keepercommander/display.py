@@ -52,6 +52,13 @@ def formatted_records(records, **kwargs):
     # Sort by folder+title
     records.sort(key=lambda x: x.title.lower(), reverse=False)
 
+    def abbreviate_text(text: str, chars_num: int):
+        if 'verbose' in kwargs and kwargs['verbose']:
+            return text
+        else:
+            return text if len(text) < chars_num else text[:chars_num] + '...'
+
+
     if len(records) > 0:
         shared_folder = None
         if 'folder' in kwargs and params is not None:
@@ -66,7 +73,7 @@ def formatted_records(records, **kwargs):
                 if fuid and fuid in params.shared_folder_cache:
                     shared_folder = params.shared_folder_cache[fuid]
 
-        table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32]] for i, r in enumerate(records)]
+        table = [[i + 1, r.record_uid, abbreviate_text(r.title, 32), r.login, abbreviate_text(r.login_url, 32)] for i, r in enumerate(records)]
         headers = ["#", 'Record UID', 'Title', 'Login', 'URL']
         if shared_folder and 'records' in shared_folder:
             headers.append('Flags')

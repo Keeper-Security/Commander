@@ -129,12 +129,14 @@ rm_parser.exit = suppress_exit
 
 list_parser = argparse.ArgumentParser(prog='list|l', description='List all records, ordered by title.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
 
 search_parser = argparse.ArgumentParser(prog='search|s', description='Search the vault. Can use a regular expression.')
 search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.error = raise_parse_exception
 search_parser.exit = suppress_exit
 
@@ -166,7 +168,7 @@ upload_parser.add_argument('record', action='store', help='record path or UID')
 upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
 
-delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record.\n\nExample to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg')
+delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record.', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
 delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
 delete_attachment_parser.error = raise_parse_exception
@@ -538,7 +540,7 @@ class SearchCommand(Command):
         results = api.search_records(params, pattern)
         if results:
             print('')
-            display.formatted_records(results)
+            display.formatted_records(results, verbose=kwargs['verbose'])
 
         # Search shared folders
         results = api.search_shared_folders(params, pattern)
@@ -563,7 +565,7 @@ class RecordListCommand(Command):
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
-            display.formatted_records(results)
+            display.formatted_records(results, verbose=kwargs['verbose'])
 
 
 class RecordListSfCommand(Command):
