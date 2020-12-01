@@ -211,7 +211,7 @@ be automatically login to the account. All settings to which account will be sto
 Steps to enable persistent login:
 
 1. Register device using command `this-device register`. See `this-device` section for more details.
-2. Enable persistent login: `this-device persistent-login on`
+2. Enable persistent login: `this-device persistent_login on`
 
 ##### Login without password
 It is possible to login on another device (such as server) without storing Master Password in the `config.json` file.
@@ -219,7 +219,7 @@ Below are the steps to achive that:
 
 1. Login to Commander on computer (A) and enable Persistent Login feature by following steps above.
 
-    During this step commander will generate configuration file `config.json` with `private_key`, `device_token`, and `device_token`.
+    During this step commander will generate configuration file `config.json` with `private_key`, `device_id`, and `device_token`.
     Make sure to add property `user` with the email of the user that was used to login to the account.
     
     Example `config.json` file:
@@ -228,7 +228,7 @@ Below are the steps to achive that:
         {
             "user": "johnd@email.com",
             "private_key": "yaeK4jMeIGNkSR2pi4xf2XGmYM094YMUoE8-QEW9CAA",
-            "device_token": "bv7bkAncq0X6somJr1PHg2Ay1f_4JZZqqsvg3dz7NnCIqQ",
+            "device_id": "IqpZaJj5KYLLLb_vTwn_dhOXytakXU6mFNQJfHFYmSxoqg",
             "device_token": "g6RDMxr1t-bcVdBeBpz-xQ"
         }
     ```
