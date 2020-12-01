@@ -1,4 +1,4 @@
-﻿![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_250x100.png)
+﻿<img src="https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/keeper-commander-logo-v2.png" alt="Keeper Commander Logo" height="85"/>
 
 ----
 

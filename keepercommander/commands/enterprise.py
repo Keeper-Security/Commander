@@ -54,7 +54,7 @@ def register_commands(commands):
     commands['enterprise-user'] = EnterpriseUserCommand()
     commands['enterprise-role'] = EnterpriseRoleCommand()
     commands['enterprise-team'] = EnterpriseTeamCommand()
-    # commands['enterprise-push'] = EnterprisePushCommand()
+    commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
 
@@ -74,7 +74,7 @@ def register_command_info(aliases, command_info):
 
     for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
               enterprise_team_parser,
-              # enterprise_push_parser,
+              enterprise_push_parser,
               team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
@@ -195,10 +195,10 @@ device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
-enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on file format and template parameters')
+enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')
 enterprise_push_parser.add_argument('--team', dest='team', action='append', help='Team name or team UID. Records will be assigned to all users in the team.')
 enterprise_push_parser.add_argument('--email', dest='user', action='append', help='User email or User ID. Records will be assigned to the user.')
-enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='file name in JSON format that contains template records')
+enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='File name in JSON format that contains template records.')
 enterprise_push_parser.error = raise_parse_exception
 enterprise_push_parser.exit = suppress_exit
 
@@ -3109,64 +3109,19 @@ class EnterprisePushCommand(EnterpriseCommand):
 
         name = kwargs.get('file') or ''
         if not name:
-            raise CommandError('audit-push', 'The template file name arguments are required')
+            raise CommandError('enterprise-push', 'The template file name arguments are required')
 
-        template_records = None
         file_name = os.path.abspath(os.path.expanduser(name))
         if os.path.isfile(file_name):
             with open(file_name, 'r') as f:
                 template_records = json.load(f)
         else:
-            raise CommandError('audit-push', 'File {0} does not exists'.format(name))
+            raise CommandError('enterprise-push', 'File {0} does not exists'.format(name))
 
-        emails = {}
-        users = kwargs.get('user')
-        if type(users) is list:
-            for user in users:
-                user_email = None
-                for u in params.enterprise['users']:
-                    if user.lower() in [u['username'].lower(), (u['data'].get('displayname') or '').lower(), str(u['enterprise_user_id'])]:
-                        user_email = u['username']
-                        break
-                if user_email:
-                    if user_email.lower() != params.user.lower():
-                        emails[user_email] = None
-                else:
-                    logging.warning('Cannot find user %s', user)
-
-        teams = kwargs.get('team')
-        if type(teams) is list:
-            users_map = {}
-            for u in params.enterprise['users']:
-                users_map[u['enterprise_user_id']] = u['username']
-            users_in_team = {}
-
-            if 'team_users' in params.enterprise:
-                for tu in params.enterprise['team_users']:
-                    team_uid = tu['team_uid']
-                    if not team_uid in users_in_team:
-                        users_in_team[team_uid] = []
-                    if tu['enterprise_user_id'] in users_map:
-                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
-
-            for team in teams:
-                team_uid = None
-                if team in params.enterprise['teams']:
-                    team_uid = team_uid
-                else:
-                    for t in params.enterprise['teams']:
-                        if team.lower() == t['name'].lower():
-                            team_uid = t['team_uid']
-                if team_uid:
-                    if team_uid in users_in_team:
-                        for user_email in users_in_team[team_uid]:
-                            if user_email.lower() != params.user.lower():
-                                emails[user_email] = None
-                else:
-                    logging.warning('Cannot find team %s', team)
+        emails = EnterprisePushCommand.collect_emails(params, kwargs)
 
         if len(emails) == 0:
-            raise CommandError('audit-push', 'No users')
+            raise CommandError('enterprise-push', 'No users')
 
         self.get_public_keys(params, emails)
         commands = []
@@ -3208,24 +3163,19 @@ class EnterprisePushCommand(EnterpriseCommand):
             else:
                 logging.warning('User %s is not created yet', email)
 
-        transfers = []
         for email in record_keys:
             for record_uid, record_key in record_keys[email].items():
-                transfers.append({
-                    'to_username': email,
-                    'record_uid': record_uid,
-                    'record_key': record_key,
-                    'transfer': True
-                })
 
-        while transfers:
-            chunk = transfers[:90]
-            transfers = transfers[90:]
-            commands.append({
-                'command': 'record_share_update',
-                'pt': 'Commander',
-                'add_shares': chunk
-            })
+                commands.append({
+                    'command': 'record_share_update',
+                    'pt': 'Commander',
+                    'add_shares': [{
+                                        'to_username': email,
+                                        'record_uid': record_uid,
+                                        'record_key': record_key,
+                                        'transfer': True
+                                    }]
+                })
 
         rss = api.execute_batch(params, commands)
         if rss:
@@ -3235,7 +3185,62 @@ class EnterprisePushCommand(EnterpriseCommand):
                         logging.error('Push error (%s): %s', rs.get('result_code'), rs.get('message'))
         params.sync_data = True
 
+    @staticmethod
+    def collect_emails(params, kwargs):
+        # Collect emails from individual users and from teams
+        emails = {}
 
+        users = kwargs.get('user')
+        if type(users) is list:
+            for user in users:
+                user_email = None
+                for u in params.enterprise['users']:
+                    if user.lower() in [u['username'].lower(), (u['data'].get('displayname') or '').lower(), str(u['enterprise_user_id'])]:
+                        user_email = u['username']
+                        break
+                if user_email:
+                    if user_email.lower() != params.user.lower():
+                        emails[user_email] = None
+                else:
+                    logging.warning('Cannot find user %s', user)
+
+        teams = kwargs.get('team')
+        if type(teams) is list:
+            users_map = {}
+            for u in params.enterprise['users']:
+                users_map[u['enterprise_user_id']] = u['username']
+            users_in_team = {}
+
+            if 'team_users' in params.enterprise:
+                for tu in params.enterprise['team_users']:
+                    team_uid = tu['team_uid']
+                    if not team_uid in users_in_team:
+                        users_in_team[team_uid] = []
+                    if tu['enterprise_user_id'] in users_map:
+                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
+
+            if 'teams' in params.enterprise:
+
+                for team in teams:
+
+                    team_uid = None
+                    if team in params.enterprise['teams']:
+                        team_uid = team_uid
+                    else:
+                        for t in params.enterprise['teams']:
+                            if team.lower() == t['name'].lower():
+                                team_uid = t['team_uid']
+                    if team_uid:
+                        if team_uid in users_in_team:
+                            for user_email in users_in_team[team_uid]:
+                                if user_email.lower() != params.user.lower():
+                                    emails[user_email] = None
+                    else:
+                        logging.warning('Cannot find team %s', team)
+            else:
+                logging.warning('There are no teams to manage. Try to refresh your local data by synching data from the server (use command `enterprise-down`).')
+
+        return emails
 class UserReportCommand(Command):
     def __init__(self):
         Command.__init__(self)
