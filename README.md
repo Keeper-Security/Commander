@@ -502,6 +502,14 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
+* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
+
+    Parameters:
+    - ```--syntax-help``` Displays information of record template file format
+    - ```--team TEAM_NAME or TEAM UID``` Populate all team users' vaults
+    - ```--email USER_EMAIL``` Populate user's vault
+    - ```file``` JSON file name containing template records
+
 * ```team-approve``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge 
 
     Parameters:
@@ -1445,6 +1453,57 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 5. Visit the Settings > General screen and setup a Master Password
 
 After the Master Password is created, you are now able to login to Keeper Commander.
+
+
+### Pushing Records to Users and Teams
+
+The Keeper Admin can push vault records automatically to any user or team vault in their organization using the "enterprise-push" command.
+
+Examples:
+
+```
+enterprise-push --team "Engineering Admins" push.json
+```
+
+```
+enterprise-push --email user@company.com push.json
+```
+
+The "push.json" file is structured an an array of password objects.  For example:
+
+```json
+[
+    {
+        "title": "Google",
+        "login": "${user_email}",
+        "password": "${generate_password}",
+        "login_url": "https://google.com",
+        "notes": "",
+        "custom_fields": {
+            "Name 1": "Value 1",
+            "Name 2": "Value 2"
+        }
+    },
+    {
+        "title": "Admin Tool",
+        "login": "${user_email}",
+        "password": "",
+        "login_url": "https://192.168.1.1",
+        "notes": "",
+        "custom_fields": {
+        }
+    }
+]
+```
+
+Supported template parameters:
+
+```
+${user_email}          User email address
+${generate_password}   Generate random password
+${user_name}           User full name
+```
+
 
 ### Password Retrieval API
 
