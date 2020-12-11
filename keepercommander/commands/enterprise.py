@@ -415,7 +415,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 u = {
                     'id': user_id,
                     'node_id': node_id,
-                    'username': user['username'],
+                    'username': user['username'] if 'username' in user else '[none]',
                     'name': user['data'].get('displayname') or '',
                     'status': user['status'],
                     'lock': user['lock']
@@ -548,11 +548,12 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 if len(node['users']) > 0:
                     if kwargs.get('verbose'):
+                        logging.debug('users: %s' % json.dumps(users, indent=4, sort_keys=True))
                         us = [users[x] for x in node['users']]
-                        us.sort(key=lambda x: x['username'])
+                        us.sort(key=lambda x: x['username'] if 'username' in x else 'a')
                         ud = OD()
                         for u in us:
-                            ud['{0} ({1})'.format(u['username'], u['id'])] = {}
+                            ud['{0} ({1})'.format(u['username'] if 'username' in u else '[none]', u['id'])] = {}
                         n['User(s)'] = ud
                     else:
                         n['{0} user(s)'.format(len(node['users']))] = {}
@@ -1042,7 +1043,12 @@ class EnterpriseUserCommand(EnterpriseCommand):
         if 'users' in params.enterprise:
             for u in params.enterprise['users']:
                 user_lookup[str(u['enterprise_user_id'])] = u
-                user_lookup[u['username'].lower()] = u
+
+                if 'username' in u:
+                    user_lookup[u['username'].lower()] = u
+                else:
+                    logging.debug('All users: %s' % params.enterprise['users'])
+                    logging.debug('WARNING: username is missing from the user id=%s, obj=%s' % (u['enterprise_user_id'], u))
 
         emails = kwargs['email']
         if emails:
@@ -1379,7 +1385,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
     def display_user(self, params, user, is_verbose = False):
         print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
-        print('{0:>16s}: {1}'.format('Email', user['username']))
+        print('{0:>16s}: {1}'.format('Email', user['username'] if 'username' in user else '[empty]'))
         print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
         status = lock_text(user['lock'])
         if not status:
@@ -2012,7 +2018,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         user_names = {}
         for u in params.enterprise['users']:
-            user_names[u['enterprise_user_id']] = u['username']
+            user_names[u['enterprise_user_id']] = u['username'] if 'username' in u else '[empty]'
 
         if 'team_users' in params.enterprise:
             user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
