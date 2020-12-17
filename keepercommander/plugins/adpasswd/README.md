@@ -19,11 +19,12 @@ Name         | Value         | Comment
 ---------    | -------       | ------------
 cmdr:plugin  | adpasswd      | 
 cmdr:host    |               | Host name or IP address of your AD Server 
+cmdr:port    |               | Optional: Port number of your AD Server. Default value: 389
 cmdr:use_ssl | True or False | Whether or not to use SSL connection to AD Server 
 cmdr:userdn  |               | [Distinguished name](https://msdn.microsoft.com/en-us/library/windows/desktop/aa366101.aspx) of the AD user you want to rotate the password on.
 cmdr:rules   |                | Optional [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)   
 
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_adpasswd.png)
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_adpasswd.jpg)
 
 ### Notes and Troubleshooting: 
 1. The Keeper "Login" field is not used for this plugin.  The user is identified with the <strong>cmdr:userdn</strong> custom field.
@@ -40,7 +41,7 @@ C:\Users\craig>dsquery user -name Craig*
 ```
 For connecting as Craig in this scenario, make sure the <strong>cmdr:userdn</strong> custom field contains this exact string (without the quotes).
 
-###Note
+### Note
 Microsoft Active Directory requires SSL connection in order to change the password.
 The following link explains how how secure connection to Active Directory
 

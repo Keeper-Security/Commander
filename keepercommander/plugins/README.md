@@ -21,25 +21,25 @@ Using Commander to rotate passwords, combined with the flexibility of Keeper's s
 
 To activate a plugin for a particular Keeper record, you first need to update the custom fields for that record with special keywords that are used by Commander.  For example, here is a MySQL database record:
 
-<img src="../images/vault_screen2.png" width="625">
+<img src="../images/vault_screen3.jpg" width="625" alt="vault screen">
 
 Now on the command line you can use the *download* command to pull down your changes...
 
-<img src="../images/download_command.png" width="625">
+<img src="../images/download_command2.jpg" width="625" alt="download command">
 
 Then *get* to view the record info.  
 
-<img src="../images/plugin_mysql_get.png" width="625">
+<img src="../images/plugin_mysql_get2.jpg" width="625" alt="mysql record">
 
-Each Keeper record has a unique Record UID.  In this example, the record UID is VEpovl5St-MPcnNrfJkyDg.  When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided.  In this case, it will use the mysql.py plugin.
+Each Keeper record has a unique Record UID.  In this example, the record UID is `y2K8XGC6dad-3jBOr11FLg`.  When a plugin is specified in a record, Commander will search in the plugins/ folder to load the module based on the name provided.  In this case, it will use the `mysql.py` plugin.
 
 At this point, to perform a rotation just use the *rotate* command.  For example in this case:
 
-```
-r VEpovl5St-MPcnNrfJkyDg
+```bash
+r y2K8XGC6dad-3jBOr11FLg
 ```
 
-Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created, email us at commander@keepersecurity.com.
+Keeper's team is expanding the number of plugins on an ongoing basis. If you need a particular plugin created or modified, email us at commander@keepersecurity.com.
 
 ### Auto-command execution
 
@@ -47,13 +47,13 @@ You can automate password resets using a plugin
 
 Example:
 
-```
+```json
 {                                                                               
     "debug":false,
     "server":"https://keepersecurity.com/api/v2/",
     "user":"admin@company.com",
     "password":"somereallystrongpassword",
-    "commands":["d", "r 3PMqasi9hohmyLWJkgxCWg"]
+    "commands":["d", "r y2K8XGC6dad-3jBOr11FLg"]
 }
 ```
 
@@ -62,5 +62,5 @@ In this example, we are telling Commander to first download and decrypt records,
 Another way to do a rotation would be to call rotate command from the command line:
 
 ```bash
-keeper rotate --uid 3PMqasi9hohmyLWJkgxCWg
+keeper rotate --uid y2K8XGC6dad-3jBOr11FLg
 ```

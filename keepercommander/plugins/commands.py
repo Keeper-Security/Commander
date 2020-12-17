@@ -91,14 +91,14 @@ def rotate_password(params, record_uid, name=None):
     if hasattr(plugin, "adjust"):
         new_password = plugin.adjust(new_password)
 
-    log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
-    if record.notes:
-        record.notes += '\n' + log_message
-    else:
-        record.notes = log_message
-
-    if not api.update_record(params, record, silent=True):
-        return False
+    # log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
+    # if record.notes:
+    #     record.notes += '\n' + log_message
+    # else:
+    #     record.notes = log_message
+    #
+    # if not api.update_record(params, record, silent=True):
+    #     return False
 
     api.sync_down(params)
     record = api.get_record(params, record_uid)

@@ -1,7 +1,7 @@
 Commander Plugin for Windows net Command
 ----
 
-This plugin allows rotating a windows user's password using the net user command.
+This plugin allows rotating a windows user's password using the `net user` command.
 
 ### Dependencies 
 

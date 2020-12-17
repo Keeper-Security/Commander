@@ -28,7 +28,7 @@ def rotate(record, newpassword):
         port = record.get('cmdr:port') or '3306'
         user_host = record.get('cmdr:user_host') or '%'
 
-        with pymysql.connect(host=host, port=int(port), user=user, password=oldpassword) as cursor:
+        with pymysql.connect(host=host, port=int(port), user=user, password=oldpassword).cursor() as cursor:
             is_old_version = True
             affected = cursor.execute('select @@version')
             if affected == 1:

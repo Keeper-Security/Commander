@@ -27,7 +27,7 @@ Name          | Value     | Comment
 cmdr:plugin   | awspswd   |
 cmdr:rules    |           | Optional [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
 
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_awspswd.png)
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_awspswd2.jpg)
 
 ### Output
 

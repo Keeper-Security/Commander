@@ -31,15 +31,15 @@ def rotate(record, newpassword):
 
     try:
         # Connect to the database
-        connection = pymssql.connect(host=host,
+        connection = pymssql.connect(server=host,
                                      user=user,
                                      password=oldpassword,
-                                     db=db)
+                                     database=db)
 
         with connection.cursor() as cursor:
             print("Connected to %s"%(host))
             # Create a new record
-            sql = 'ALTER LOGIN %s WITH PASSWORD="%s";'%(user, newpassword)
+            sql = "ALTER LOGIN %s WITH PASSWORD = '%s';" % (user, newpassword)
             cursor.execute(sql)
 
         # connection is not autocommit by default. So you must commit to save
@@ -48,8 +48,8 @@ def rotate(record, newpassword):
 
         record.password = newpassword
         result = True
-    except:
-        print("Error during connection to Microsoft SQL server")
+    except Exception as ex:
+        print("Error during connection to Microsoft SQL server: %s" % ex)
     finally:
         if connection:
             connection.close()
