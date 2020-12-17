@@ -22,6 +22,7 @@ def rotate(record, newpassword):
 
     old_password = record.password
     host = record.get('cmdr:host')
+    port = record.get('cmdr:port') or '389'
     user_dn = record.get('cmdr:userdn')
     use_ssl = record.get('cmdr:use_ssl')
 
@@ -30,6 +31,7 @@ def rotate(record, newpassword):
 
         server = Server(
             host=host,
+            port=int(port),
             use_ssl=(use_ssl in ['True','true','yes','Yes','y','Y','T','t']),
             get_info=ALL)
 
@@ -55,7 +57,7 @@ def rotate(record, newpassword):
 
         conn.unbind()
 
-    except:
-        print("Error during connection to AD server")
+    except Exception as e:
+        print("Error during connection to AD server: %s" % e)
 
     return result

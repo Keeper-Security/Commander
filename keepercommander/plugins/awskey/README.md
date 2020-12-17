@@ -26,7 +26,7 @@ Name          | Value     | Comment
 cmdr:plugin   | awskey    |
 cmdr:rules    |           | (Optional) [password complexity rules](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins/password_rules.md)
 
-![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_awskey.png)
+![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/plugin_awskey.jpg)
 
 
 ### Output
