@@ -8,6 +8,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import os
 import random
 import string
 
@@ -16,7 +17,8 @@ def randomSample(sampleLength=0, sampleString=''):
     sample = ''
 
     for i in range(sampleLength):
-        sample += sampleString[random.randint(0,len(sampleString)-1)]
+        pos = int.from_bytes(os.urandom(2), 'big') % len(sampleString)
+        sample += sampleString[pos]
 
     return sample
 

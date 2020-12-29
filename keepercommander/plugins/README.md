@@ -13,7 +13,7 @@ Using Commander to rotate passwords, combined with the flexibility of Keeper's s
 
 * Windows Logins
 
-* MySQL, Oracle, PostgreSQL, SQL Server
+* MySQL, Oracle, PostgreSQL, SQL Server, Azure AD
 
 * ... and more to come. 
 
