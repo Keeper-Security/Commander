@@ -1989,10 +1989,10 @@ pip install -r requirements.txt
 pip install -r extra_dependencies.txt
 
 # build one-folder package
-pyinstaller keeper-folder.spec
+pyinstaller keeper_folder.spec
 
 # or build one-file package
-pyinstaller keeper-file.spec
+pyinstaller keeper_file.spec
 
 # your packages are in dist/ folder
 ``` 
