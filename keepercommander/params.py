@@ -80,6 +80,7 @@ class KeeperParams:
         self.meta_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
+        self.key_cache = {}    # team or user
         self.available_team_cache = None
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}
@@ -94,6 +95,8 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.enterprise = None
+        self.enterprise_id = 0
+        self.msp_tree_key = None
         self.prepare_commands = False
         self.batch_mode = False
         self.__rest_context = RestApiContext(server=server, device_id=device_id)
@@ -102,6 +105,10 @@ class KeeperParams:
         self.record_history = {}        # type: dict[str, (list[dict], int)]
         self.event_queue = []
         self.logout_timer = 0
+        self.login_v3 = True
+        self.clone_code = None
+        self.device_token = None
+        self.device_private_key = None
 
     def clear_session(self):
         self.auth_verifier = ''
@@ -121,6 +128,7 @@ class KeeperParams:
         self.shared_folder_cache.clear()
         self.team_cache.clear()
         self.available_team_cache = None
+        self.key_cache.clear()
         self.subfolder_cache .clear()
         self.subfolder_record_cache.clear()
         self.non_shared_data_cache.clear()
@@ -134,6 +142,8 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.enterprise = None
+        self.enterprise_id = 0
+        self.msp_tree_key = None
         self.prepare_commands = True
         self.batch_mode = False
         self.pending_share_requests.clear()
@@ -141,6 +151,10 @@ class KeeperParams:
         self.record_history.clear()
         self.event_queue.clear()
         self.logout_timer = self.config.get('logout_timer') or 0
+        # self.login_v3 = self.config.get('login_v3') or True
+        self.clone_code = None
+        self.device_token = None
+        self.device_private_key = None
 
     def __get_rest_context(self):
         return self.__rest_context

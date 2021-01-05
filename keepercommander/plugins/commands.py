@@ -34,7 +34,7 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate Keeper record')
+rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate the password for a Keeper record from this Commander.')
 rotate_parser.add_argument('--print', dest='print', action='store_true', help='display the record content after rotation')
 rotate_parser.add_argument('--match', dest='match', action='store', help='regular expression to select records for password rotation')
 rotate_parser.add_argument('name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command')
@@ -91,14 +91,14 @@ def rotate_password(params, record_uid, name=None):
     if hasattr(plugin, "adjust"):
         new_password = plugin.adjust(new_password)
 
-    log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
-    if record.notes:
-        record.notes += '\n' + log_message
-    else:
-        record.notes = log_message
-
-    if not api.update_record(params, record, silent=True):
-        return False
+    # log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
+    # if record.notes:
+    #     record.notes += '\n' + log_message
+    # else:
+    #     record.notes = log_message
+    #
+    # if not api.update_record(params, record, silent=True):
+    #     return False
 
     api.sync_down(params)
     record = api.get_record(params, record_uid)

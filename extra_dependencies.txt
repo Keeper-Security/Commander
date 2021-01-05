@@ -1,9 +1,3 @@
-pexpect
-ldap3
-awscli
-PyMySQL
-cx_Oracle
-psycopg2-binary
 fido2
 libkeepass
 pyinstaller

@@ -19,7 +19,19 @@ pip3 install cx_Oracle
 ```
 Name: cmdr:plugin
 Value: oracle
+```
 
+a. To connect with DSN string:
+```
+Name: cmdr:dsn  (ex. "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=localhost)(PORT=1521))(CONNECT_DATA=(SID=XE)))")
+Value: <Oracle DSN string>
+```
+
+b. To connect using database host and service name
+
+_If `cmdr:dsn` is used then `cmdr:host` and `cmdr:db` properties will be ignored._
+
+```
 Name: cmdr:host
 Value: <hostname of your Oracle server>
 

@@ -40,6 +40,7 @@ from fido2.client import U2F_TYPE, U2fClient
 #             return u2f_client.sign(rq['appId'], rq['challenge'], [rq])
 #
 #
+from keepercommander.display import bcolors
 
 u2f_response = None
 should_cancel_u2f = False
@@ -49,7 +50,8 @@ if os.name == 'nt':
     win_cancel_getch = False
 
 def get_input_interrupted(prompt):
-    # type: (str) -> str
+    # TODO: refactor to use interruptable prompt from prompt_toolkit in api.py:193 (login: process 2fa error codes).
+    #  This method to be removed.
     if os.name == 'nt':
         global win_cancel_getch
 
@@ -82,6 +84,7 @@ def u2f_authenticate(authenticateRequests):
 
     devices = list(CtapHidDevice.list_devices())
     if not devices:
+        logging.warning("No U2F Devices detected")
         return None
 
     to_auth = []
@@ -115,7 +118,7 @@ def u2f_authenticate(authenticateRequests):
         u2f_thread = threading.Thread(target=thread_function, args=((to_auth,)))
         u2f_thread.start()
         try:
-            get_input_interrupted('\nTouch the flashing U2F device to authenticate or press Enter to resume with the primary two factor authentication...\n')
+            get_input_interrupted(bcolors.WARNING + '\nTouch the flashing U2F device to authenticate or press Enter to resume with the primary two factor authentication...\n' + bcolors.ENDC)
             should_cancel_u2f = True
             u2f_thread.join()
         except KeyboardInterrupt:

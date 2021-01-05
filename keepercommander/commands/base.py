@@ -12,6 +12,7 @@
 import argparse
 import shlex
 import logging
+import json
 import os
 import re
 import csv
@@ -25,6 +26,7 @@ from ..params import KeeperParams
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
 enterprise_commands = {}     # type: {str, Command}
+msp_commands = {}   # type: {str, Command}
 
 
 class ParseError(Exception):
@@ -63,6 +65,12 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_command_info(aliases, command_info)
 
 
+def register_msp_commands(commands, aliases, command_info):
+    from .msp import register_commands as msp_commands, register_command_info as msp_command_info
+    msp_commands(commands)
+    msp_command_info(aliases, command_info)
+
+
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
     choices = [ch.lower() if ch.upper() == default.upper() else ch.lower() for ch in choice]
 
@@ -98,9 +106,9 @@ def suppress_exit():
     raise ParseError()
 
 
-def dump_report_data(data, headers, title=None, is_csv = False, filename=None, append=False):
-    # type: (list, list, str, bool, str, bool) -> None
-    if is_csv:
+def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False):
+    # type: (list, list, str, str, str, bool) -> None
+    if fmt == 'csv':
         if filename:
             _, ext = os.path.splitext(filename)
             if not ext:
@@ -120,6 +128,24 @@ def dump_report_data(data, headers, title=None, is_csv = False, filename=None, a
                 if type(row[i]) == list:
                     row[i] = '\n'.join(row[i])
             csv_writer.writerow(row)
+        if filename:
+            fd.flush()
+            fd.close()
+    elif fmt == 'json':
+        data_list = []
+        for row in data:
+            obj = {}
+            for index, column in filter(lambda x: x[1], enumerate(row)):
+                name = headers[index] if headers and index < len(headers) else "#{:0>2}".format(index)
+                if name != '#':
+                    obj[name] = column
+            data_list.append(obj)
+        if filename:
+            _, ext = os.path.splitext(filename)
+            if not ext:
+                filename += '.json'
+        fd = open(filename, 'a' if append else 'w') if filename else sys.stdout
+        json.dump(data_list, fd, indent=2)
         if filename:
             fd.flush()
             fd.close()

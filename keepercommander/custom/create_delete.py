@@ -6,7 +6,7 @@
 #
 # Keeper Commander
 # Copyright 2017 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Contact: commander@keepersecurity.com
 #
 # Example showing how to create a record and upload
 # to the server, then deleting the record from the

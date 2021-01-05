@@ -16,6 +16,7 @@ import os
 import base64
 import json
 import logging
+import requests
 
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
@@ -24,7 +25,7 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
 
-from .. import api, generator
+from .. import api, generator, loginv3
 from .base import dump_report_data, user_choice
 from .record import RecordAddCommand
 from ..params import KeeperParams
@@ -33,7 +34,7 @@ from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
-from ..importer.imp_exp import get_folder_path
+
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
 
@@ -44,6 +45,7 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['create-user'] = RegisterCommand()
+    commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -51,11 +53,12 @@ def register_command_info(aliases, command_info):
     aliases['sf'] = 'share-folder'
     aliases['cu'] = 'create-user'
 
-    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser, register_parser]:
+    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
+              file_report_parser, register_parser]:
         command_info[p.prog] = p.description
 
 
-share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change record share permissions')
+share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change the sharing permissions of an individual record')
 share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
 share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'],
                                  default='grant', action='store', help='user share action. \'grant\' if omitted')
@@ -65,7 +68,7 @@ share_record_parser.add_argument('record', nargs='?', type=str, action='store', 
 share_record_parser.error = raise_parse_exception
 share_record_parser.exit = suppress_exit
 
-share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change shared folder permissions')
+share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change a shared folders permissions.')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke'], default='grant',
                                  action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
@@ -84,7 +87,7 @@ share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', 
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
 
-share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report on record sharing')
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.')
 share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table',
                                  help='output format.')
 share_report_parser.add_argument('--output', dest='output', action='store',
@@ -98,45 +101,52 @@ share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='stor
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
-record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify record permissions')
+record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify a records permissions.')
 record_permission_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
-                                      help='Display record permissions to be changed')
+                                      help='Display the permissions changes without committing them')
 record_permission_parser.add_argument('--force', dest='force', action='store_true',
-                                      help='Apply permission changes without confirmation')
+                                      help='Apply permission changes without any confirmation')
 record_permission_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
-                                      help='Apply permission changes to sub-folders recursively')
+                                      help='Apply permission changes to all sub-folders')
 record_permission_parser.add_argument('--share-record', dest='share_record', action='store_true',
-                                      help='Change direct share record permissions')
+                                      help='Change a records sharing permissions')
 record_permission_parser.add_argument('--share-folder', dest='share_folder', action='store_true',
-                                      help='Change shared folder record permissions')
+                                      help='Change a folders sharing permissions')
 record_permission_parser.add_argument('-a', '--action', dest='action', action='store', choices=['grant', 'revoke'],
-                                      required=True, help='user share action')
+                                      required=True, help='The action being taken')
 record_permission_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true',
-                                      help='record permission: can be shared')
+                                      help='Set record permission: can be shared')
 record_permission_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true',
-                                      help='record permission: can be edited')
+                                      help='Set record permission: can be edited')
 record_permission_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or folder UID')
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-register_parser = argparse.ArgumentParser(prog='create-user', description='Create Keeper User')
-register_parser.add_argument('--store-record', dest='store', action='store_true',
-                             help='store credentials into Keeper record (must be logged in)')
-register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
-register_parser.add_argument('--pass', dest='password', action='store', help='user password')
-register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
-                             help='data center.')
-register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
+register_parser = argparse.ArgumentParser(prog='create-user', description='Send an invitation to the user to join Keeper')
+# register_parser.add_argument('--store-record', dest='store', action='store_true',
+#                              help='store credentials into Keeper record (must be logged in)')
+# register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
+# register_parser.add_argument('--pass', dest='password', action='store', help='user password')
+# register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
+#                              help='data center.')
+# register_parser.add_argument('--expire', dest='expire', action='store_true',
+#                              help='expire master password (enterprise only)')
+# register_parser.add_argument('--records', dest='records', action='store',
+#                              help='populate vault with default records (enterprise only)')
+# register_parser.add_argument('--question', dest='question', action='store', help='security question')
+# register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
 register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
-register_parser.add_argument('--expire', dest='expire', action='store_true',
-                             help='expire master password (enterprise only)')
-register_parser.add_argument('--records', dest='records', action='store',
-                             help='populate vault with default records (enterprise only)')
-register_parser.add_argument('--question', dest='question', action='store', help='security question')
-register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
+register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
 register_parser.add_argument('email', action='store', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
+
+
+file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments.')
+file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
+                                help='Try downloading every attachment you have access to.')
+file_report_parser.error = raise_parse_exception
+file_report_parser.exit = suppress_exit
 
 
 class RegisterCommand(Command):
@@ -151,6 +161,12 @@ class RegisterCommand(Command):
         return 100000
 
     def execute(self, params, **kwargs):
+
+        if params.login_v3:
+            logging.debug("Registering user using Login V3 flow to add users")
+            loginv3.LoginV3API.register_for_login_v3(params, kwargs)
+            return
+
         email = kwargs['email'] if 'email' in kwargs else None
 
         if email:
@@ -169,9 +185,9 @@ class RegisterCommand(Command):
                 logging.warning('User \'%s\' already exists in Keeper', email)
             else:
                 logging.error(rs['message'])
-            return
-
-        password_rules = rs['password_rules']
+            # return
+        else:
+            password_rules = rs['password_rules']
 
         # check enterprise
         verification_code = None
@@ -201,7 +217,8 @@ class RegisterCommand(Command):
                 'command': 'enterprise_user_add',
                 'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
                 'enterprise_user_username': email,
-                'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'),
+                                                  params.enterprise['unencrypted_tree_key']),
                 'node_id': node_id,
                 'suppress_email_invite': True
             }
@@ -217,8 +234,8 @@ class RegisterCommand(Command):
                     rs = api.run_command(params, rq)
                     if 'password_rules' in rs:
                         password_rules = rs['password_rules']
-            except:
-                pass
+            except Exception as e:
+                logging.warning(e["message"])
 
         password = kwargs['password'] if 'password' in kwargs else None
         generate = kwargs['generate'] if 'generate' in kwargs else None
@@ -228,14 +245,15 @@ class RegisterCommand(Command):
             while not password:
                 pwd = getpass.getpass(prompt='Password: ', stream=None)
                 failed_rules = []
-                for r in password_rules:
-                    m = re.match(r['pattern'], pwd)
-                    if r['match']:
-                        if m is None:
-                            failed_rules.append(r['description'])
-                    else:
-                        if m is not None:
-                            failed_rules.append(r['description'])
+                if password_rules:
+                    for r in password_rules:
+                        m = re.match(r['pattern'], pwd)
+                        if r['match']:
+                            if m is None:
+                                failed_rules.append(r['description'])
+                        else:
+                            if m is not None:
+                                failed_rules.append(r['description'])
                 if len(failed_rules) == 0:
                     password = pwd
                 else:
@@ -268,21 +286,7 @@ class RegisterCommand(Command):
         enc_salt = os.urandom(16)
         backup_salt = os.urandom(16)
 
-        rsa_key = RSA.generate(2048)
-        private_key = DerSequence([0,
-                                   rsa_key.n,
-                                   rsa_key.e,
-                                   rsa_key.d,
-                                   rsa_key.p,
-                                   rsa_key.q,
-                                   rsa_key.d % (rsa_key.p - 1),
-                                   rsa_key.d % (rsa_key.q - 1),
-                                   Integer(rsa_key.q).inverse(rsa_key.p)
-                                   ]).encode()
-        pub_key = rsa_key.publickey()
-        public_key = DerSequence([pub_key.n,
-                                  pub_key.e
-                                  ]).encode()
+        private_key, public_key = loginv3.CommonHelperMethods.generate_rsa_key_pair()
 
         rq = {
             'command': 'register',
@@ -321,7 +325,8 @@ class RegisterCommand(Command):
                             'security_question': kwargs['question'],
                             'security_answer_salt': base64.urlsafe_b64encode(backup_salt).decode().rstrip('='),
                             'security_answer_iterations': iterations,
-                            'security_answer_hash': base64.urlsafe_b64encode(api.derive_key(answer, backup_salt, iterations)).decode().rstrip('=')
+                            'security_answer_hash': base64.urlsafe_b64encode(
+                                api.derive_key(answer, backup_salt, iterations)).decode().rstrip('=')
                         }
                         api.communicate(param1, rq)
                         logging.info('Master password backup is created.')
@@ -373,7 +378,8 @@ class RegisterCommand(Command):
                 if params.session_token:
                     try:
                         add_command = RecordAddCommand()
-                        add_command.execute(params, title='Keeper credentials for {0}'.format(email), login=email, password=password, force=True)
+                        add_command.execute(params, title='Keeper credentials for {0}'.format(email), login=email,
+                                            password=password, force=True)
                     except Exception:
                         store = False
                         logging.error('Failed to create record in Keeper')
@@ -420,60 +426,28 @@ class ShareFolderCommand(Command):
 
             action = kwargs.get('action') or 'grant'
 
-            public_keys = {}
-            team_keys = {}
+            as_users = set()
+            as_teams = set()
+
             default_account = False
             if 'user' in kwargs:
-                emails = []
-                teams = []
                 for u in (kwargs.get('user') or []):
                     if u == '*':
                         default_account = True
                     else:
                         em = re.match(EMAIL_PATTERN, u)
-                        if not em is None:
-                            emails.append(u)
+                        if em is not None:
+                            as_users.add(u.lower())
                         else:
-                            team_uid = None
-                            for tid in params.team_cache:
-                                if tid == u or params.team_cache[tid]['name'].lower() == u.lower():
-                                    team_uid = params.team_cache[tid]['team_uid']
-                                    break
-                            if team_uid:
-                                teams.append(team_uid)
+                            api.load_available_teams(params)
+                            team = next((x for x in params.available_team_cache
+                                         if u == x.get('team_uid') or
+                                         u.lower() == (x.get('team_name') or '').lower()), None)
+                            if team:
+                                team_uid = team['team_uid']
+                                as_teams.add(team_uid)
                             else:
                                 logging.warning('User %s could not be resolved as email or team', u)
-                if len(emails) > 0:
-                    rq = {
-                        'command': 'public_keys',
-                        'key_owners': emails
-                    }
-                    rs = api.communicate(params, rq)
-                    if 'public_keys' in rs:
-                        for pk in rs['public_keys']:
-                            if 'public_key' in pk:
-                                email = pk['key_owner'].lower()
-                                if email != params.user.lower():
-                                    public_keys[email] = pk['public_key']
-                            else:
-                                logging.warning('\'%s\' is not a known Keeper account', pk['key_owner'])
-
-                if len(teams) > 0:
-                    rq = {
-                        'command': 'team_get_keys',
-                        'teams': teams
-                    }
-                    rs = api.communicate(params, rq)
-                    if 'keys' in rs:
-                        for tk in rs['keys']:
-                            if 'key' in tk:
-                                team_uid = tk['team_uid']
-                                if tk['type'] == 1:
-                                    team_keys[team_uid] = api.decrypt_data(tk['key'], params.data_key)
-                                elif tk['type'] == 2:
-                                    team_keys[team_uid] = api.decrypt_rsa(tk['key'], params.rsa_key)
-                                elif tk['type'] == 3:
-                                    team_keys[team_uid] = base64.urlsafe_b64decode(tk['key'] + '==')
 
             record_uids = []
             default_record = False
@@ -522,14 +496,14 @@ class ShareFolderCommand(Command):
                 if kwargs.get('can_share'):
                     request['default_can_share'] = action == 'grant'
 
-            if len(public_keys) > 0:
+            if len(as_users) > 0:
                 email_set = set()
                 if 'users' in sh_fol:
                     for user in sh_fol['users']:
                         email_set.add(user['username'])
                 mr = kwargs.get('manage_records')
                 mu = kwargs.get('manage_users')
-                for email in public_keys:
+                for email in as_users:
                     uo = {
                         'username': email
                     }
@@ -551,36 +525,46 @@ class ShareFolderCommand(Command):
                             else:
                                 share_action = 'remove_users'
                     elif action == 'grant':
-                        uo['manage_records'] = mr
-                        uo['manage_users'] = mu
-                        rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_keys[email] + '=='))
-                        uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key_unencrypted'], rsa_key)
-                        share_action = 'add_users'
+                        api.load_user_public_keys(params, [email])
+                        rsa_key = params.key_cache.get(email)
+                        if rsa_key:
+                            uo['manage_records'] = sh_fol.get('default_manage_records') or False
+                            uo['manage_users'] = sh_fol.get('default_manage_users') or False
+                            uo['shared_folder_key'] = api.encrypt_rsa(sh_fol['shared_folder_key_unencrypted'], rsa_key)
+                            share_action = 'add_users'
+                        else:
+                            logging.warning('User %s not found', email)
 
                     if share_action:
-                        if not share_action in request:
+                        if share_action not in request:
                             request[share_action] = []
                         request[share_action].append(uo)
 
-            if len(team_keys) > 0:
-                team_set = set()
+            if len(as_teams) > 0:
+                existing_teams = {}
                 if 'teams' in sh_fol:
                     for team in sh_fol['teams']:
-                        team_set.add(team['team_uid'])
+                        team_uid = team['team_uid']
+                        existing_teams[team_uid] = team
 
                 mr = kwargs.get('manage_records')
                 mu = kwargs.get('manage_users')
-                for team_uid in team_keys:
+                for team_uid in as_teams:
                     to = {
                         'team_uid': team_uid
                     }
                     share_action = ''
-                    if team_uid in team_set:
+                    if team_uid in existing_teams:
+                        existing_permissions = existing_teams[team_uid]
                         if action == 'grant':
                             if mr:
                                 to['manage_records'] = True
+                            else:
+                                to['manage_records'] = existing_permissions.get('manage_records') or False
                             if mu:
                                 to['manage_users'] = True
+                            else:
+                                to['manage_users'] = existing_permissions.get('manage_users') or False
                             share_action = 'update_teams'
                         else:
                             if mr or mu:
@@ -592,13 +576,20 @@ class ShareFolderCommand(Command):
                             else:
                                 share_action = 'remove_teams'
                     elif action == 'grant':
-                        to['manage_records'] = mr
-                        to['manage_users'] = mu
-                        to['shared_folder_key'] = api.encrypt_aes(sh_fol['shared_folder_key_unencrypted'], team_keys[team_uid])
-                        share_action = 'add_teams'
+                        api.load_team_keys(params, [team_uid])
+                        team_key = params.key_cache.get(team_uid)
+                        if team_key:
+                            to['manage_records'] = sh_fol.get('default_manage_records') or False
+                            to['manage_users'] = sh_fol.get('default_manage_users') or False
+                            shared_folder_key = sh_fol['shared_folder_key_unencrypted']
+                            if type(team_key) == bytes:
+                                to['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
+                            else:
+                                to['shared_folder_key'] = api.encrypt_rsa(shared_folder_key, team_key)
+                            share_action = 'add_teams'
 
                     if share_action:
-                        if not share_action in request:
+                        if share_action not in request:
                             request[share_action] = []
                         request[share_action].append(to)
 
@@ -608,7 +599,7 @@ class ShareFolderCommand(Command):
                     for r in sh_fol['records']:
                         ruid_set.add(r['record_uid'])
                 team_uid = ''
-                if not 'key_type' in sh_fol:
+                if 'key_type' not in sh_fol:
                     if 'teams' in sh_fol:
                         for team in sh_fol['teams']:
                             team_uid = team['team_uid']
@@ -647,43 +638,61 @@ class ShareFolderCommand(Command):
                             ro['can_edit'] = ce
                             ro['can_share'] = cs
                             rec = params.record_cache[record_uid]
-                            ro['record_key'] = api.encrypt_aes(rec['record_key_unencrypted'], sh_fol['shared_folder_key_unencrypted'])
+                            ro['record_key'] = api.encrypt_aes(rec['record_key_unencrypted'],
+                                                               sh_fol['shared_folder_key_unencrypted'])
                             share_action = 'add_records'
 
                     if share_action:
-                        if not share_action in request:
+                        if share_action not in request:
                             request[share_action] = []
                         request[share_action].append(ro)
-            response = api.communicate(params, request)
-            params.sync_data = True
 
-            for node in ['add_teams', 'update_teams', 'remove_teams']:
-                if node in response:
-                    for t in response[node]:
-                        team = api.get_team(params, t['team_uid'])
-                        if t['status'] == 'success':
-                            logging.warning('Team share \'%s\' %s', team.name, 'added' if node == 'add_teams' else 'updated' if node == 'update_teams' else 'removed')
-                        else:
-                            logging.error('Team share \'%s\' failed', team.name)
+            try:
+                response = api.communicate(params, request)
+                params.sync_data = True
 
-            for node in ['add_users', 'update_users', 'remove_users']:
-                if node in response:
-                    for s in response[node]:
-                        if s['status'] == 'success':
-                            logging.warning('User share \'%s\' %s', s['username'], 'added' if node == 'add_users' else 'updated' if node == 'update_users' else 'removed')
-                        elif s['status'] == 'invited':
-                            logging.warning('User \'%s\' invited', s['username'])
-                        else:
-                            logging.error('User share \'%s\' failed', s['username'])
+                for node in ['add_teams', 'update_teams', 'remove_teams']:
+                    if node in response:
+                        for t in response[node]:
+                            team_uid = t['team_uid']
+                            team = next((x for x in params.available_team_cache if x.get('team_uid') == team_uid), None)
+                            if team:
+                                if t['status'] == 'success':
+                                    logging.info('Team share \'%s\' %s', team['team_name'],
+                                                    'added' if node == 'add_teams' else
+                                                    'updated' if node == 'update_teams' else
+                                                    'removed')
+                                else:
+                                    logging.warning('Team share \'%s\' failed', team['team_name'])
 
-            for node in ['add_records', 'update_records', 'remove_records']:
-                if node in response:
-                    for r in response[node]:
-                        rec = api.get_record(params, r['record_uid'])
-                        if r['status'] == 'success':
-                            logging.warning('Record share \'%s\' %s', rec.title, 'added' if node == 'add_records' else 'updated' if node == 'update_records' else 'removed')
-                        else:
-                            logging.error('Record share \'%s\' failed', rec.title)
+                for node in ['add_users', 'update_users', 'remove_users']:
+                    if node in response:
+                        for s in response[node]:
+                            if s['status'] == 'success':
+                                logging.info('User share \'%s\' %s', s['username'],
+                                                'added' if node == 'add_users' else
+                                                'updated' if node == 'update_users' else
+                                                'removed')
+                            elif s['status'] == 'invited':
+                                logging.info('User \'%s\' invited', s['username'])
+                            else:
+                                logging.warning('User share \'%s\' failed', s['username'])
+
+                for node in ['add_records', 'update_records', 'remove_records']:
+                    if node in response:
+                        for r in response[node]:
+                            rec = api.get_record(params, r['record_uid'])
+                            if r['status'] == 'success':
+                                logging.info('Record share \'%s\' %s', rec.title,
+                                                'added' if node == 'add_records' else
+                                                'updated' if node == 'update_records' else
+                                                'removed')
+                            else:
+                                logging.warning('Record share \'%s\' failed', rec.title)
+
+            except KeeperApiError as kae:
+                if kae.result_code != 'bad_inputs_nothing_to_do':
+                    raise kae
 
 
 class ShareRecordCommand(Command):
@@ -700,7 +709,8 @@ class ShareRecordCommand(Command):
         if action == 'cancel':
             answer = user_choice(bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
                                  'This action cannot be undone.\n\n' +
-                                 'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+                                 'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn',
+                                 'n')
             if answer.lower() in {'y', 'yes'}:
                 for email in emails:
                     rq = {
@@ -844,7 +854,8 @@ class ShareRecordCommand(Command):
 
             emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] in ['pending_accept']]
             if emails:
-                logging.info('Recipient must accept request to complete sharing. Invitation sent to %s. ', ', '.join(emails))
+                logging.info('Recipient must accept request to complete sharing. Invitation sent to %s. ',
+                             ', '.join(emails))
 
             emails = [x['to_username'] for x in rs['add_statuses'] if x['status'] not in ['success', 'pending_accept']]
             if emails:
@@ -987,7 +998,8 @@ class ShareReportCommand(Command):
                         records.sort(key=lambda x: x.title.lower())
                         table = [[i + 1, r.record_uid, r.title] for i, r in enumerate(records)]
                         title = 'Records shared with: {0}'.format(user)
-                        dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
+                        dump_report_data(table, headers, title=title, fmt=kwargs.get('format'),
+                                         filename=kwargs.get('output'), append=True)
 
                 if len(sf_shares) > 0:
                     user_names = [x for x in sf_shares.keys()]
@@ -999,7 +1011,8 @@ class ShareReportCommand(Command):
                         sfs.sort(key=lambda x: x.name.lower())
                         table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
                         title = 'Folders shared with: {0}'.format(user)
-                        dump_report_data(table, headers, title=title, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=True)
+                        dump_report_data(table, headers, title=title, fmt=kwargs.get('format'),
+                                         filename=kwargs.get('output'), append=True)
             else:
                 if params.user in record_shares:
                     del record_shares[params.user]
@@ -1020,7 +1033,7 @@ class ShareReportCommand(Command):
                 [(s[0], list(s[1]) if verbose else len(s[1])) for s in record_shares.items()]
                 table.sort(key=lambda x: len(x[1]) if type(x[1]) == list else x[1], reverse=True)
                 table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
-                dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+                dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         else:
             record_owners = {}
@@ -1078,7 +1091,7 @@ class ShareReportCommand(Command):
                     table.append(row)
                 table.sort(key=lambda x: len(x[3]) if type(x[3]) == list else x[3], reverse=True)
                 table = [[i + 1, s[0], s[1], s[2], s[3]] for i, s in enumerate(table)]
-                dump_report_data(table, headers, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+                dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def get_permission_text(can_edit, can_share, can_view=True):
@@ -1144,7 +1157,8 @@ class RecordPermissionCommand(Command):
         change_edit = kwargs['can_edit'] or False
 
         if not change_share and not change_edit:
-            raise CommandError('record-permission', 'Please choose at least one on the following options: can-edit, can-share')
+            raise CommandError('record-permission',
+                               'Please choose at least one on the following options: can-edit, can-share')
 
         if not kwargs.get('force'):
             logging.info('\nRequest to {0} {1}{3}{2} permission(s) in "{4}" folder {5}'
@@ -1393,7 +1407,7 @@ class RecordPermissionCommand(Command):
                     logging.info('')
 
         if not kwargs.get('dry_run') and (len(shared_folder_update) > 0 or len(direct_shares_update) > 0):
-            print('\n\n' +  bcolors.WARNING + bcolors.BOLD + 'ALERT!!!' + bcolors.ENDC)
+            print('\n\n' + bcolors.WARNING + bcolors.BOLD + 'ALERT!!!' + bcolors.ENDC)
             answer = user_choice("Do you want to proceed with these permission changes?", 'yn', 'n') \
                 if not kwargs.get('force') else 'Y'
             if answer.lower() == 'y':
@@ -1449,10 +1463,59 @@ class RecordPermissionCommand(Command):
 
                 if len(table) > 0:
                     headers = ['#', 'Shared Folder UID', 'Record UID', 'Error Code', 'Message']
-                    title = (bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
+                    title = (
+                                bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
                         .format('GRANT' if should_have else 'REVOKE')
                     dump_report_data(table, headers, title=title)
                     logging.info('')
                     logging.info('')
 
                 params.sync_data = True
+
+
+class FileReportCommand(Command):
+    def get_parser(self):
+        return file_report_parser
+
+    def execute(self, params, **kwargs):
+        headers = ['#', 'Title', 'Record UID', 'File ID']
+        if kwargs.get('try_download'):
+            headers.append('Downloadable')
+        table = []
+        for record_uid in params.record_cache:
+            r = api.get_record(params, record_uid)
+            if not r.attachments:
+                continue
+            file_ids = {}
+            for atta in r.attachments:
+                file_id = atta.get('id')
+                file_ids[file_id] = ''
+            if kwargs.get('try_download'):
+                ids = [x for x in file_ids]
+                rq = {
+                    'command': 'request_download',
+                    'file_ids': ids,
+                }
+                api.resolve_record_access_path(params, r.record_uid, path=rq)
+                logging.info('Downloading attachments for record %s', r.title)
+                try:
+                    rs = api.communicate(params, rq)
+                    urls = {}
+                    for file_id, dl in zip(ids, rs['downloads']):
+                        if 'url' in dl:
+                            urls[file_id] = dl['url']
+                        elif 'error_code' in dl:
+                            file_ids[file_id] = dl['error_code']
+                    for file_id in urls:
+                        url = urls[file_id]
+                        opt_rs = requests.get(url, headers={"Range": "bytes=0-1"})
+                        file_ids[file_id] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
+                except Exception as e:
+                    logging.debug(e)
+            for file_id in file_ids:
+                row = [len(table) + 1, r.title, r.record_uid, file_id]
+                if kwargs.get('try_download'):
+                    row.append(file_ids[file_id] or '-')
+                table.append(row)
+
+        dump_report_data(table, headers)

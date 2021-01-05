@@ -31,10 +31,11 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-import_parser = argparse.ArgumentParser(prog='import', description='Import data from local file to Keeper')
+import_parser = argparse.ArgumentParser(prog='import', description='Import data from a local file into Keeper.')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',  help='display Keeper JSON import instructions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass'], required=True, help='file format')
+import_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
@@ -42,7 +43,7 @@ import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
 
-export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to local file')
+export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to a local file.')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 export_parser.add_argument('--max-size', dest='max_size', help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
 export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
@@ -148,7 +149,7 @@ class RecordImportCommand(ImporterCommand):
                         can_share = True
 
             logging.info('Processing... please wait.')
-            imp_exp._import(params, import_format, import_name, shared=shared,
+            imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
                             manage_users=manage_users, manage_records=manage_records,
                             can_edit=can_edit, can_share=can_share)
         else:

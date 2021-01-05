@@ -11,8 +11,8 @@
 
 import argparse
 import json
-import csv
 import base64
+import string
 
 import requests
 import logging
@@ -27,13 +27,11 @@ import hashlib
 import hmac
 import copy
 import os
-import sys
 
 from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
-from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 
@@ -45,8 +43,9 @@ from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
-from .enterprise_pb2 import EnterpriseUserIds
-
+from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
+                             ApproveUserDevicesResponse, EnterpriseUserDataKeys)
+from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
@@ -57,6 +56,8 @@ def register_commands(commands):
     commands['enterprise-team'] = EnterpriseTeamCommand()
     commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
+    commands['device-approve'] = DeviceApproveCommand()
+
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
     commands['user-report'] = UserReportCommand()
@@ -71,28 +72,43 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['al'] = 'audit-log'
 
-    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser, enterprise_team_parser, enterprise_push_parser,
-              team_approve_parser, audit_log_parser, audit_report_parser, user_report_parser]:
+    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
+              enterprise_team_parser,
+              enterprise_push_parser,
+              team_approve_parser, device_approve_parser,
+              audit_log_parser, audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
 
-SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team', 'not-team']
+SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team_count', 'teams', 'role_count', 'roles']
+SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
+SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
 
-enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display enterprise information')
+enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display a tree structure of your enterprise.')
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store_true', help='print team list')
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
-enterprise_info_parser.add_argument('--columns', dest='columns', action='store', help='comma-separated list of columns: ' +
-'--users (%s)' % ', '.join(SUPPORTED_USER_COLUMNS))
-enterprise_info_parser.add_argument('pattern', nargs='?', type=str, help='search pattern. applicable to users, teams, and roles.')
+enterprise_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+                                    default='table', help='output format. applicable to users, teams, and roles.')
+enterprise_info_parser.add_argument('--output', dest='output', action='store',
+                                    help='output file name. (ignored for table format)')
+enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
+                                    help='comma-separated list of columns: ' +
+                                         '--users (%s)' % ', '.join(SUPPORTED_USER_COLUMNS) +
+                                         '--teams (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
+                                         '--roles (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
+                                    )
+
+enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
+                                    help='search pattern. applicable to users, teams, and roles.')
 enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
 
 
-enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Enterprise node management')
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Manage an enterprise node.')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -103,7 +119,7 @@ enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
 
-enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Enterprise user management')
+enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Manage an enterprise user.')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
@@ -124,7 +140,7 @@ enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
 
-enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Enterprise role management')
+enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Manage an enterprise role(s).')
 #enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_role_parser.add_argument('--add', dest='add', action='store_true', help='create role')
@@ -143,7 +159,7 @@ enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
 
-enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Enterprise team management')
+enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Manage an enterprise team.')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
@@ -160,7 +176,7 @@ enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
-team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Automated team and user approval')
+team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Enable or disable automated team and user approval.')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
 team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
 team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
@@ -169,26 +185,36 @@ team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choice
 team_approve_parser.error = raise_parse_exception
 team_approve_parser.exit = suppress_exit
 
+device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices.')
+device_approve_parser.add_argument('--reload', dest='reload', action='store_true', help='reload list of pending approval requests')
+device_approve_parser.add_argument('--approve', dest='approve', action='store_true', help='approve user devices')
+device_approve_parser.add_argument('--deny', dest='deny', action='store_true', help='deny user devices')
+device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
+device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
+device_approve_parser.error = raise_parse_exception
+device_approve_parser.exit = suppress_exit
+
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
-enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help on file format and template parameters')
+enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')
 enterprise_push_parser.add_argument('--team', dest='team', action='append', help='Team name or team UID. Records will be assigned to all users in the team.')
 enterprise_push_parser.add_argument('--email', dest='user', action='append', help='User email or User ID. Records will be assigned to the user.')
-enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='file name in JSON format that contains template records')
+enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='File name in JSON format that contains template records.')
 enterprise_push_parser.error = raise_parse_exception
 enterprise_push_parser.exit = suppress_exit
 
 
-audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export enterprise audit log')
+audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
 audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
 
-audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run audit report')
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+audit_report_parser.add_argument('--details', dest='details', action='store_true', help='lookup column details')
 audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], required=True, action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
@@ -206,7 +232,7 @@ audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
 
-user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run user report')
+user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run a user report.')
 user_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'], default='table', help='output format.')
 user_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365, help='number of days to look back for last login.')
@@ -389,7 +415,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 u = {
                     'id': user_id,
                     'node_id': node_id,
-                    'username': user['username'],
+                    'username': user['username'] if 'username' in user else '[none]',
                     'name': user['data'].get('displayname') or '',
                     'status': user['status'],
                     'lock': user['lock']
@@ -496,6 +522,12 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     n = None
             return path
 
+        def user_email(user_id):
+            if user_id in users:
+                return users[user_id]['username']
+            else:
+                return str(user_id)
+
         def restricts(team):
             rs = ''
             rs += 'R ' if team['restrict_view'] else '  '
@@ -516,11 +548,12 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 if len(node['users']) > 0:
                     if kwargs.get('verbose'):
+                        logging.debug('users: %s' % json.dumps(users, indent=4, sort_keys=True))
                         us = [users[x] for x in node['users']]
-                        us.sort(key=lambda x: x['username'])
+                        us.sort(key=lambda x: x['username'] if 'username' in x else 'a')
                         ud = OD()
                         for u in us:
-                            ud['{0} ({1})'.format(u['username'], u['id'])] = {}
+                            ud['{0} ({1})'.format(u['username'] if 'username' in u else '[none]', u['id'])] = {}
                         n['User(s)'] = ud
                     else:
                         n['{0} user(s)'.format(len(node['users']))] = {}
@@ -587,7 +620,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 columns.update(kwargs.get('columns').split(','))
             pattern = (kwargs.get('pattern') or '').lower()
             if show_users:
-                supported_columns = ['name', 'status', 'node', 'team', 'not-team']
+                supported_columns = SUPPORTED_USER_COLUMNS
                 if len(columns) == 0:
                     columns.update(('name', 'status', 'node'))
                 else:
@@ -617,12 +650,16 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             row.append(status)
                         elif column == 'node':
                             row.append(node_path(u['node_id']))
-                        elif column == 'team':
+                        elif column == 'team_count':
+                            row.append(len([1 for t in teams.values() if t['users'] and user_id in t['users']]))
+                        elif column == 'teams':
                             team_names = [t['name'] for t in teams.values() if t['users'] and user_id in t['users']]
-                            row.append('\n'.join(team_names))
-                        elif column == 'not-team':
-                            team_names = [t['name'] for t in teams.values() if t['users'] and user_id not in t['users']]
-                            row.append('\n'.join(team_names))
+                            row.append(team_names)
+                        elif column == 'role_count':
+                            row.append(len([1 for r in roles.values() if r['users'] and user_id in r['users']]))
+                        elif column == 'roles':
+                            role_names = [r['name'] for r in roles.values() if r['users'] and user_id in r['users']]
+                            row.append(role_names)
 
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
@@ -631,54 +668,106 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                headers = ['User ID', 'Email']
-                for column in displayed_columns:
-                    if column == 'name':
-                        headers.append('Name')
-                    elif column == 'status':
-                        headers.append('status')
-                    elif column == 'node':
-                        headers.append('Node')
-                    elif column == 'team':
-                        headers.append('Teams')
-                    elif column == 'not-team':
-                        headers.append('Not in Teams')
-                print(tabulate(rows, headers=headers))
+                headers = ['user_id', 'email']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_teams:
+                supported_columns = SUPPORTED_TEAM_COLUMNS
+                if len(columns) == 0:
+                    columns.update(('restricts', 'node', 'user_count'))
+                else:
+                    wc = columns.difference(supported_columns)
+                    if len(wc) > 0:
+                        logging.warning('\n\nSupported team columns: %s\n', ', '.join(supported_columns))
+
+                displayed_columns = [x for x in supported_columns if x in columns]
                 rows = []
                 for t in teams.values():
-                    row = [t['id'], t['name'], restricts(t), node_path(t['node_id']), len(t['users'])]
+                    row = [t['id'], t['name']]
+                    for column in displayed_columns:
+                        if column == 'restricts':
+                            row.append(restricts(t))
+                        elif column == 'node':
+                            row.append(node_path(t['node_id']))
+                        elif column == 'user_count':
+                            row.append(len(t['users']))
+                        elif column == 'users':
+                            row.append([user_email(x) for x in t['users']])
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
 
                 for t in queued_teams.values():
-                    row = [t['id'], t['name'], 'Queued', node_path(t['node_id']), len(t['users'])]
+                    row = [t['id'], t['name']]
+
+                    for column in displayed_columns:
+                        if column == 'restricts':
+                            row.append('Queued')
+                        elif column == 'node':
+                            row.append(node_path(t['node_id']))
+                        elif column == 'user_count':
+                            row.append(len(t['users']))
+                        elif column == 'users':
+                            row.append([user_email(x) for x in t['users']])
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
 
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["Team ID", 'Name', 'Restricts', 'Node', 'Users']))
+                headers = ['team_uid', 'name']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_roles:
+                supported_columns = SUPPORTED_TEAM_COLUMNS
+                if len(columns) == 0:
+                    columns.update(('is_visible_below', 'is_new_user', 'is_admin','node', 'user_count'))
+                else:
+                    wc = columns.difference(supported_columns)
+                    if len(wc) > 0:
+                        logging.warning('\n\nSupported team columns: %s\n', ', '.join(supported_columns))
+
+                displayed_columns = [x for x in supported_columns if x in columns]
+
                 rows = []
                 for r in roles.values():
-                    row = [r['id'], r['name'], 'Y' if r['visible_below'] else '', 'Y' if r['new_user_inherit'] else '',
-                           'Y' if r['is_admin'] else '', node_path(r['node_id']), len(r['users'])]
+                    row = [r['id'], r['name']]
+                    for column in displayed_columns:
+                        if column == 'is_visible_below':
+                            row.append('Y' if r['visible_below'] else '')
+                        elif column == 'is_new_user':
+                            row.append('Y' if r['new_user_inherit'] else '')
+                        elif column == 'is_admin':
+                            row.append('Y' if r['is_admin'] else '')
+                        elif column == 'node':
+                            row.append(node_path(r['node_id']))
+                        elif column == 'user_count':
+                            row.append(len(r['users']))
+                        elif column == 'users':
+                            row.append([user_email(x) for x in r['users']])
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >=0):
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
                     rows.append(row)
+
                 rows.sort(key=lambda x: x[1])
 
                 print('')
-                print(tabulate(rows, headers=["Role ID", 'Name', 'Visible Below?', 'New User?', 'Admin?','Node', 'Users']))
+
+                headers = ['role_id', 'name']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         print('')
 
@@ -852,6 +941,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         'role_id': r['role_id']
                     }
                     request_batch.append(rq)
+
                 users = [x for x in params.enterprise['users'] if x['node_id'] in nodes]
                 for u in users:
                     rq = {
@@ -860,13 +950,14 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     }
                     request_batch.append(rq)
 
-                teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
-                for t in teams:
-                    rq = {
-                        'command': 'team_delete',
-                        'team_uid': t['team_uid']
-                    }
-                    request_batch.append(rq)
+                if 'teams' in params.enterprise:
+                    teams = [x for x in params.enterprise['teams'] if x['node_id'] in nodes]
+                    for t in teams:
+                        rq = {
+                            'command': 'team_delete',
+                            'team_uid': t['team_uid']
+                        }
+                        request_batch.append(rq)
 
                 sub_nodes.pop(0)
                 sub_nodes.reverse()
@@ -952,7 +1043,12 @@ class EnterpriseUserCommand(EnterpriseCommand):
         if 'users' in params.enterprise:
             for u in params.enterprise['users']:
                 user_lookup[str(u['enterprise_user_id'])] = u
-                user_lookup[u['username'].lower()] = u
+
+                if 'username' in u:
+                    user_lookup[u['username'].lower()] = u
+                else:
+                    logging.debug('All users: %s' % params.enterprise['users'])
+                    logging.debug('WARNING: username is missing from the user id=%s, obj=%s' % (u['enterprise_user_id'], u))
 
         emails = kwargs['email']
         if emails:
@@ -1289,7 +1385,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
     def display_user(self, params, user, is_verbose = False):
         print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
-        print('{0:>16s}: {1}'.format('Email', user['username']))
+        print('{0:>16s}: {1}'.format('Email', user['username'] if 'username' in user else '[empty]'))
         print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
         status = lock_text(user['lock'])
         if not status:
@@ -1922,13 +2018,13 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         user_names = {}
         for u in params.enterprise['users']:
-            user_names[u['enterprise_user_id']] = u['username']
+            user_names[u['enterprise_user_id']] = u['username'] if 'username' in u else '[empty]'
 
         if 'team_users' in params.enterprise:
             user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
-            user_ids.sort(key=lambda x: user_names.get(x))
+            # user_ids.sort(key=lambda x: user_names.get(x))
             for i in range(len(user_ids)):
-                print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
+                print('{0:>24s}: {1:<32s} {2}'.format('Active User(s)' if i == 0 else '', (user_names[user_ids[i]] if user_ids[i] in user_names else "(Unmanaged User id: " + user_ids[i] + ")"), user_ids[i] if is_verbose else ''))
 
         if 'queued_team_users' in params.enterprise:
             user_ids = []
@@ -2581,6 +2677,7 @@ class AuditReportCommand(Command):
         self.team_lookup = None
         self.role_lookup = None
         self.node_lookup = None
+        self._detail_lookup = None
 
     def get_value(self, params, field, event):
         if field == 'message':
@@ -2660,8 +2757,13 @@ class AuditReportCommand(Command):
     def get_parser(self):
         return audit_report_parser
 
-    @staticmethod
-    def convert_value(field, value, **kwargs):
+    @property
+    def detail_lookup(self):
+        if self._detail_lookup is None:
+            self._detail_lookup = {}
+        return self._detail_lookup
+
+    def convert_value(self, field, value, **kwargs):
         if not value:
             return ''
 
@@ -2678,8 +2780,40 @@ class AuditReportCommand(Command):
             return dt
         elif field in {"first_created", "last_created"}:
             return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-        else:
-            return value
+        elif field in {'record_uid', 'shared_folder_uid', 'team_uid', 'node'}:
+            if kwargs.get('details') and kwargs.get('params'):
+                params = kwargs['params']
+                if value not in self.detail_lookup:
+                    self.detail_lookup[value] = ''
+                    if field == 'record_uid':
+                        if value in params.record_cache:
+                            r = api.get_record(params, value)
+                            if r:
+                                self.detail_lookup[value] = r.title or ''
+                    elif field == 'shared_folder_uid':
+                        if value in params.shared_folder_cache:
+                            sf = api.get_shared_folder(params, value)
+                            if sf:
+                                self.detail_lookup[value] = sf.name or ''
+                    elif field == 'team_uid' and params.enterprise:
+                        team = None
+                        if 'teams' in params.enterprise:
+                            team = next((x for x in params.enterprise['teams'] if x['team_uid'] == value), None)
+                        if not team and 'queued_teams' in params.enterprise:
+                            team = next((x for x in params.enterprise['queued_teams'] if x['team_uid'] == value), None)
+                        if team and 'name' in team:
+                            self.detail_lookup[value] = team['name'] or ''
+                    elif field == 'node' and params.enterprise:
+                        node = None
+                        if 'nodes' in params.enterprise:
+                            node = next((x for x in params.enterprise['nodes'] if str(x['node_id']) == value), None)
+                        if node and 'data' in node:
+                            self.detail_lookup[value] = node['data'].get('displayname') or ''
+
+                detail_value = self.detail_lookup.get(value)
+                if detail_value:
+                    return '{1} ({0})'.format(value, detail_value)
+        return value
 
     def execute(self, params, **kwargs):
         loadSyslogTemplates(params)
@@ -2760,6 +2894,7 @@ class AuditReportCommand(Command):
         fields = []
         table = []
 
+        details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
             misc_fields = ['to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node',
@@ -2782,9 +2917,9 @@ class AuditReportCommand(Command):
                 row = []
                 for field in fields:
                     value = self.get_value(params, field, event)
-                    row.append(self.convert_value(field, value))
+                    row.append(self.convert_value(field, value, details=details, params=params))
                 table.append(row)
-            dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+            dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         elif report_type == 'dim':
             to_append = False
@@ -2804,7 +2939,7 @@ class AuditReportCommand(Command):
                     table = []
                     for row in rs['dimensions'][dim]:
                         table.append([row])
-                dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'), append=to_append)
+                dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'), append=to_append)
                 to_append = True
 
         else:
@@ -2819,9 +2954,9 @@ class AuditReportCommand(Command):
             for event in rs['audit_event_overview_report_rows']:
                 row = []
                 for f in fields:
-                    row.append(self.convert_value(f, event.get(f), report_type=report_type))
+                    row.append(self.convert_value(f, event.get(f), report_type=report_type, details=details, params=params))
                 table.append(row)
-            dump_report_data(table, fields, is_csv=(kwargs.get('format') == 'csv'), filename=kwargs.get('output'))
+            dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def convert_date(value):
@@ -2980,64 +3115,19 @@ class EnterprisePushCommand(EnterpriseCommand):
 
         name = kwargs.get('file') or ''
         if not name:
-            raise CommandError('audit-push', 'The template file name arguments are required')
+            raise CommandError('enterprise-push', 'The template file name arguments are required')
 
-        template_records = None
         file_name = os.path.abspath(os.path.expanduser(name))
         if os.path.isfile(file_name):
             with open(file_name, 'r') as f:
                 template_records = json.load(f)
         else:
-            raise CommandError('audit-push', 'File {0} does not exists'.format(name))
+            raise CommandError('enterprise-push', 'File {0} does not exists'.format(name))
 
-        emails = {}
-        users = kwargs.get('user')
-        if type(users) is list:
-            for user in users:
-                user_email = None
-                for u in params.enterprise['users']:
-                    if user.lower() in [u['username'].lower(), (u['data'].get('displayname') or '').lower(), str(u['enterprise_user_id'])]:
-                        user_email = u['username']
-                        break
-                if user_email:
-                    if user_email.lower() != params.user.lower():
-                        emails[user_email] = None
-                else:
-                    logging.warning('Cannot find user %s', user)
-
-        teams = kwargs.get('team')
-        if type(teams) is list:
-            users_map = {}
-            for u in params.enterprise['users']:
-                users_map[u['enterprise_user_id']] = u['username']
-            users_in_team = {}
-
-            if 'team_users' in params.enterprise:
-                for tu in params.enterprise['team_users']:
-                    team_uid = tu['team_uid']
-                    if not team_uid in users_in_team:
-                        users_in_team[team_uid] = []
-                    if tu['enterprise_user_id'] in users_map:
-                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
-
-            for team in teams:
-                team_uid = None
-                if team in params.enterprise['teams']:
-                    team_uid = team_uid
-                else:
-                    for t in params.enterprise['teams']:
-                        if team.lower() == t['name'].lower():
-                            team_uid = t['team_uid']
-                if team_uid:
-                    if team_uid in users_in_team:
-                        for user_email in users_in_team[team_uid]:
-                            if user_email.lower() != params.user.lower():
-                                emails[user_email] = None
-                else:
-                    logging.warning('Cannot find team %s', team)
+        emails = EnterprisePushCommand.collect_emails(params, kwargs)
 
         if len(emails) == 0:
-            raise CommandError('audit-push', 'No users')
+            raise CommandError('enterprise-push', 'No users')
 
         self.get_public_keys(params, emails)
         commands = []
@@ -3079,24 +3169,19 @@ class EnterprisePushCommand(EnterpriseCommand):
             else:
                 logging.warning('User %s is not created yet', email)
 
-        transfers = []
         for email in record_keys:
             for record_uid, record_key in record_keys[email].items():
-                transfers.append({
-                    'to_username': email,
-                    'record_uid': record_uid,
-                    'record_key': record_key,
-                    'transfer': True
-                })
 
-        while transfers:
-            chunk = transfers[:90]
-            transfers = transfers[90:]
-            commands.append({
-                'command': 'record_share_update',
-                'pt': 'Commander',
-                'add_shares': chunk
-            })
+                commands.append({
+                    'command': 'record_share_update',
+                    'pt': 'Commander',
+                    'add_shares': [{
+                                        'to_username': email,
+                                        'record_uid': record_uid,
+                                        'record_key': record_key,
+                                        'transfer': True
+                                    }]
+                })
 
         rss = api.execute_batch(params, commands)
         if rss:
@@ -3106,7 +3191,62 @@ class EnterprisePushCommand(EnterpriseCommand):
                         logging.error('Push error (%s): %s', rs.get('result_code'), rs.get('message'))
         params.sync_data = True
 
+    @staticmethod
+    def collect_emails(params, kwargs):
+        # Collect emails from individual users and from teams
+        emails = {}
 
+        users = kwargs.get('user')
+        if type(users) is list:
+            for user in users:
+                user_email = None
+                for u in params.enterprise['users']:
+                    if user.lower() in [u['username'].lower(), (u['data'].get('displayname') or '').lower(), str(u['enterprise_user_id'])]:
+                        user_email = u['username']
+                        break
+                if user_email:
+                    if user_email.lower() != params.user.lower():
+                        emails[user_email] = None
+                else:
+                    logging.warning('Cannot find user %s', user)
+
+        teams = kwargs.get('team')
+        if type(teams) is list:
+            users_map = {}
+            for u in params.enterprise['users']:
+                users_map[u['enterprise_user_id']] = u['username']
+            users_in_team = {}
+
+            if 'team_users' in params.enterprise:
+                for tu in params.enterprise['team_users']:
+                    team_uid = tu['team_uid']
+                    if not team_uid in users_in_team:
+                        users_in_team[team_uid] = []
+                    if tu['enterprise_user_id'] in users_map:
+                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
+
+            if 'teams' in params.enterprise:
+
+                for team in teams:
+
+                    team_uid = None
+                    if team in params.enterprise['teams']:
+                        team_uid = team_uid
+                    else:
+                        for t in params.enterprise['teams']:
+                            if team.lower() == t['name'].lower():
+                                team_uid = t['team_uid']
+                    if team_uid:
+                        if team_uid in users_in_team:
+                            for user_email in users_in_team[team_uid]:
+                                if user_email.lower() != params.user.lower():
+                                    emails[user_email] = None
+                    else:
+                        logging.warning('Cannot find team %s', team)
+            else:
+                logging.warning('There are no teams to manage. Try to refresh your local data by synching data from the server (use command `enterprise-down`).')
+
+        return emails
 class UserReportCommand(Command):
     def __init__(self):
         Command.__init__(self)
@@ -3213,85 +3353,22 @@ class UserReportCommand(Command):
         user_list = list(self.users.values())
         user_list.sort(key=lambda x: x['username'].lower())
 
-        file_name = kwargs['output'] or ''
-        if file_name == '-':
-            file_name = ''
+        rows = []
+        headers = ['email', 'name', 'status', 'last_login', 'node', 'roles', 'teams']
+        for user in user_list:
+            status = UserReportCommand.get_user_status(user)
+            path = self.get_node_path(user['node_id'])
+            teams = self.user_teams.get(user['enterprise_user_id']) or []
+            roles = self.user_roles.get(user['enterprise_user_id']) or []
+            teams.sort(key=str.lower)
+            roles.sort(key=str.lower)
+            ll = user.get('last_login')
+            last_log = str(ll) if ll else ''
+            rows.append([user['username'], user['name'], status, last_log, ' -> '.join(path), roles, teams])
 
-
-        if kwargs.get('format') == 'csv':
-            if file_name:
-                _, ext = os.path.splitext(file_name)
-                if not ext:
-                    file_name += '.csv'
-            fd = open(file_name, 'w') if file_name else sys.stdout
-            csv_writer = csv.writer(fd)
-            csv_writer.writerow(['Email', 'Name', 'Status', 'Last Login', 'Node', 'Roles', 'Teams'])
-            for user in user_list:
-                status = UserReportCommand.get_user_status(user)
-                path = self.get_node_path(user['node_id'])
-                teams = self.user_teams.get(user['enterprise_user_id']) or []
-                roles = self.user_roles.get(user['enterprise_user_id']) or []
-                teams.sort(key=str.lower)
-                roles.sort(key=str.lower)
-                ll = user.get('last_login')
-                las_log = str(ll) if ll else ''
-                csv_writer.writerow([user['username'], user['name'], status, las_log, ' -> '.join(path), ' | '.join(roles), ' | '.join(teams)])
-            if file_name:
-                fd.flush()
-                fd.close()
-
-        elif kwargs.get('format') == 'json':
-            if file_name:
-                _, ext = os.path.splitext(file_name)
-                if not ext:
-                    file_name += '.json'
-            result = []
-            for user in user_list:
-                path = self.get_node_path(user['node_id'])
-                entry = {
-                    'email': user['username'],
-                    'name': user['name'],
-                    'status':  UserReportCommand.get_user_status(user),
-                    'node':  '->'.join(path)
-                }
-                teams = self.user_teams.get(user['enterprise_user_id'])
-                if teams:
-                    teams.sort(key=str.lower)
-                    entry['teams'] = teams
-                roles = self.user_roles.get(user['enterprise_user_id'])
-                if roles:
-                    roles.sort(key=str.lower)
-                    entry['roles'] = roles
-                ll = user.get('last_login')
-                if ll:
-                    ll = ll.astimezone(tz=datetime.timezone.utc)
-                    entry['last_login'] = ll.strftime('%Y-%m-%dT%H:%M:%SZ')
-                result.append(entry)
-            if file_name:
-                with open(file_name, 'w') as jf:
-                    json.dump(result, jf, indent=2)
-            else:
-                print(json.dumps(result, indent=2))
-
-        else:
-            print('')
-            rows = []
-            headers = ['Email', 'Name', 'Status', 'Last Login', 'Node', 'Roles', 'Teams']
-            for user in user_list:
-                status = UserReportCommand.get_user_status(user)
-                path = self.get_node_path(user['node_id'])
-                teams = self.user_teams.get(user['enterprise_user_id']) or []
-                roles = self.user_roles.get(user['enterprise_user_id']) or []
-                team_len = len(teams)
-                role_len = len(roles)
-                teams.sort(key=str.lower)
-                roles.sort(key=str.lower)
-                ll = user.get('last_login')
-                las_log = str(ll) if ll else ''
-                rows.append([user['username'], user['name'], status, las_log, ' -> '.join(path), roles[0] if role_len > 0 else '', teams[0] if team_len > 0 else ''])
-                for i in range(1, max(role_len, team_len)):
-                    rows.append(['', '', '', '', '', roles[i] if i < role_len else '', teams[i] if i < team_len else ''])
-            print(tabulate(rows, headers=headers))
+            if kwargs.get('format') != 'json':
+                headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+            dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     def get_node_path(self, node_id):
         path = []
@@ -3433,3 +3510,258 @@ class TeamApproveCommand(EnterpriseCommand):
                         logging.info('Team User approval: success %s; failure %s', success, failure)
                 api.query_enterprise(params)
 
+
+class DeviceApproveCommand(EnterpriseCommand):
+    def get_parser(self):
+        return device_approve_parser
+
+    DevicesToApprove = None
+
+    @staticmethod
+    def token_to_string(token): # type: (bytes) -> str
+        src = token[0:10]
+        if src.hex:
+            return src.hex()
+        return ''.join('{:02x}'.format(x) for x in src)
+
+    def execute(self, params, **kwargs):
+        try:
+            from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives import serialization
+        except:
+            print('To use this feature, install cryptography package\n' + bcolors.OKGREEN + '\'pip install cryptography\'' + bcolors.ENDC)
+            return
+
+        if DeviceApproveCommand.DevicesToApprove is None or kwargs.get('reload'):
+            request = {
+                'command': 'get_enterprise_data',
+                'include': ['devices_request_for_admin_approval']
+            }
+            response = api.communicate(params, request)
+            DeviceApproveCommand.DevicesToApprove = response.get('devices_request_for_admin_approval') or []
+        if not DeviceApproveCommand.DevicesToApprove:
+            logging.info('There are no pending devices to approve')
+            return
+
+        if kwargs.get('approve') and kwargs.get('deny'):
+            raise CommandError('device-approve', "'approve' and 'deny' parameters are mutually exclusive.")
+
+        devices = kwargs['device']
+        matching_devices = {}
+        for device in DeviceApproveCommand.DevicesToApprove:
+            device_id = device.get('encrypted_device_token')
+            if not device_id:
+                continue
+            device_id = DeviceApproveCommand.token_to_string(base64.urlsafe_b64decode(device_id + '=='))
+            found = False
+            if devices:
+                for name in devices:
+                    if name:
+                        if device_id.startswith(name):
+                            found = True
+                            break
+                        ent_user_id = device.get('enterprise_user_id')
+                        u = next((x for x in params.enterprise['users'] if x.get('enterprise_user_id') == ent_user_id), None)
+                        if u:
+                            if u.get('username') == name:
+                                found = True
+                                break
+                    else:
+                        found = True
+            else:
+                found = True
+            if found:
+                matching_devices[device_id] = device
+
+        if len(matching_devices) == 0:
+            logging.info('No matching devices found')
+            return
+
+        if kwargs.get('approve') and kwargs.get('check_ip'):
+            user_ids = set([x['enterprise_user_id'] for x in matching_devices.values() if 'enterprise_user_id' in x])
+            emails = {}
+            for u in params.enterprise['users']:
+                user_id = u['enterprise_user_id']
+                if user_id in user_ids:
+                    emails[user_id] = u['username']
+
+            last_year = datetime.datetime.now() - datetime.timedelta(days=365)
+            rq = {
+                'command': 'get_audit_event_reports',
+                'report_type': 'span',
+                'scope': 'enterprise',
+                'columns': ['ip_address', 'username'],
+                'filter': {
+                    'audit_event_type': 'login',
+                    'created': {
+                        "min": int(last_year.timestamp())
+                    },
+                    'username': list(emails.values())
+                },
+                'limit': 1000
+            }
+            rs = api.communicate(params, rq)
+            ip_map = {}
+            if 'audit_event_overview_report_rows' in rs:
+                for row in rs['audit_event_overview_report_rows']:
+                    if 'username' in row and 'ip_address' in row:
+                        uname = row['username']
+                        if uname not in ip_map:
+                            ip_map[uname] = set()
+                        ip_map[uname].add(row['ip_address'])
+
+            for k, v in matching_devices.items():
+                p_uname = emails.get(v.get('enterprise_user_id'))
+                p_ip_addr = v.get('ip_address')
+                keep = p_uname and p_ip_addr and p_uname in ip_map and p_ip_addr in ip_map[p_uname]
+                if not keep:
+                    del matching_devices[k]
+
+        if len(matching_devices) == 0:
+            logging.info('No matching devices found')
+            return
+
+        if kwargs.get('approve') or kwargs.get('deny'):
+            approve_rq = ApproveUserDevicesRequest()
+            data_keys = {}
+            if kwargs.get('approve'):
+
+                # resolve user data keys shared with enterprise
+                user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
+                user_ids.difference_update(data_keys.keys())
+                if len(user_ids) > 0:
+                    ecc_private_key = None
+                    curve = ec.SECP256R1()
+                    if 'keys' in params.enterprise:
+                        if 'ecc_encrypted_private_key' in params.enterprise['keys']:
+                            keys = params.enterprise['keys']
+                            try:
+                                ecc_private_key_data = base64.urlsafe_b64decode(keys['ecc_encrypted_private_key'] + '==')
+                                ecc_private_key_data = rest_api.decrypt_aes(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
+                                private_value = int.from_bytes(ecc_private_key_data, byteorder='big', signed=False)
+                                ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
+                            except Exception as e:
+                                logging.debug(e)
+                                
+                    if ecc_private_key:
+                        data_key_rq = UserDataKeyRequest()
+                        data_key_rq.enterpriseUserId.extend(user_ids)
+                        api_request_payload = ApiRequestPayload()
+                        api_request_payload.payload = data_key_rq.SerializeToString()
+                        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+                        rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/get_enterprise_user_data_key', api_request_payload)
+                        if type(rs) is bytes:
+                            data_key_rs = EnterpriseUserDataKeys()
+                            data_key_rs.ParseFromString(rs)
+                            for key in data_key_rs.keys:
+                                enc_data_key = key.userEncryptedDataKey
+                                if enc_data_key:
+                                    try:
+                                        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, enc_data_key[:65])
+                                        shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
+                                        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                                        digest.update(shared_key)
+                                        enc_key = digest.finalize()
+                                        data_key = rest_api.decrypt_aes(enc_data_key[65:], enc_key)
+                                        data_keys[key.enterpriseUserId] = data_key
+                                    except Exception as e:
+                                        logging.debug(e)
+
+                # resolve user data keys from Account Transfer
+                user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
+                user_ids.difference_update(data_keys.keys())
+                if len(user_ids) > 0:
+                    data_key_rq = UserDataKeyRequest()
+                    data_key_rq.enterpriseUserId.extend(user_ids)
+                    api_request_payload = ApiRequestPayload()
+                    api_request_payload.payload = data_key_rq.SerializeToString()
+                    api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+                    rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/get_user_data_key_shared_to_enterprise', api_request_payload)
+                    if type(rs) is bytes:
+                        data_key_rs = UserDataKeyResponse()
+                        data_key_rs.ParseFromString(rs)
+                        if data_key_rs.noEncryptedDataKey:
+                            user_ids = set(data_key_rs.noEncryptedDataKey)
+                            usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                            if usernames:
+                                logging.info('User(s) \"%s\" have no accepted account transfers or did not share encryption key', ', '.join(usernames))
+                        if data_key_rs.accessDenied:
+                            user_ids = set(data_key_rs.noEncryptedDataKey)
+                            usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                            if usernames:
+                                logging.info('You cannot manage these user(s): %s', ', '.join(usernames))
+                        if data_key_rs.userDataKeys:
+                            for dk in data_key_rs.userDataKeys:
+                                try:
+                                    role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
+                                    private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
+                                    for user_dk in dk.enterpriseUserIdDataKeyPairs:
+                                        if user_dk.enterpriseUserId not in data_keys:
+                                            data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
+                                            data_key = api.decrypt_rsa(data_key_str, private_key)
+                                            data_keys[user_dk.enterpriseUserId] = data_key
+                                except Exception as ex:
+                                    logging.debug(ex)
+                    else:
+                        logging.warning(rs)
+
+            for device in matching_devices.values():
+                ent_user_id = device['enterprise_user_id']
+                device_rq = ApproveUserDeviceRequest()
+                device_rq.enterpriseUserId = ent_user_id
+                device_rq.encryptedDeviceToken = base64.urlsafe_b64decode(device['encrypted_device_token'] + '==')
+                device_rq.denyApproval = True if kwargs.get('deny') else False
+                if kwargs.get('approve'):
+                    public_key = device['device_public_key']
+                    if not public_key or len(public_key) == 0:
+                        continue
+                    data_key = data_keys.get(ent_user_id)
+                    if not data_key:
+                        continue
+                    try:
+                        curve = ec.SECP256R1()
+                        ephemeral_key = ec.generate_private_key(curve,  default_backend())
+                        device_public_key = ec.EllipticCurvePublicKey. \
+                            from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
+                        shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
+                        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                        digest.update(shared_key)
+                        enc_key = digest.finalize()
+                        encrypted_data_key = rest_api.encrypt_aes(data_key, enc_key)
+                        eph_public_key = ephemeral_key.public_key().public_bytes(
+                            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+                        device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
+                    except Exception as e:
+                        logging.info(e)
+                        return
+                approve_rq.deviceRequests.append(device_rq)
+
+            if len(approve_rq.deviceRequests) == 0:
+                return
+
+            api_request_payload = ApiRequestPayload()
+            api_request_payload.payload = approve_rq.SerializeToString()
+            api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+            rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/approve_user_devices', api_request_payload)
+            if type(rs) is bytes:
+                approve_rs = ApproveUserDevicesResponse()
+                approve_rs.ParseFromString(rs)
+                DeviceApproveCommand.DevicesToApprove = None
+            else:
+                logging.warning(rs)
+        else:
+            print('')
+            headers = ['Email', 'Device ID', 'Device Name', 'IP Address', 'Client Version']
+            rows = []
+            for k, v in matching_devices.items():
+                user = next((x for x in params.enterprise['users']
+                             if x.get('enterprise_user_id') == v.get('enterprise_user_id')), None)
+                if not user:
+                    continue
+                rows.append([user.get('username'), k, v.get('device_name'), v.get('ip_address'), v.get('client_version')])
+            rows.sort(key=lambda x: x[0])
+            dump_report_data(rows, headers)
+            print('')

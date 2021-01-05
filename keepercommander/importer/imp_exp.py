@@ -19,10 +19,10 @@ import re
 import logging
 
 from contextlib import contextmanager
-from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
 
 from keepercommander import api
+from ..params import KeeperParams
 
 from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
     Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder,  Permission as ImportPermission,\
@@ -188,6 +188,9 @@ def _import(params, file_format, filename, **kwargs):
     api.sync_down(params)
 
     shared = kwargs.get('shared') or False
+    import_into = kwargs.get('import_into') or ''
+    if import_into:
+        import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
 
     importer = importer_for_format(file_format)()
     # type: BaseImporter
@@ -198,9 +201,11 @@ def _import(params, file_format, filename, **kwargs):
     records = []  # type: [ImportRecord]
     for x in importer.execute(filename):
         if type(x) is ImportRecord:
-            if shared:
-                if x.folders:
-                    for f in x.folders:
+            if shared or import_into:
+                if not x.folders:
+                    x.folders = [ImportFolder()]
+                for f in x.folders:
+                    if shared:
                         d_comps = list(path_components(f.domain)) if f.domain else []
                         p_comps = list(path_components(f.path)) if f.path else []
                         if len(d_comps) > 0:
@@ -210,12 +215,24 @@ def _import(params, file_format, filename, **kwargs):
                             f.domain = p_comps[0]
                             p_comps = p_comps[1:]
                         f.path = PathDelimiter.join([x.replace(PathDelimiter, 2*PathDelimiter) for x in p_comps])
+                    if import_into:
+                        if f.domain:
+                            f.domain = PathDelimiter.join([import_into, f.domain])
+                        elif f.path:
+                            f.path = PathDelimiter.join([import_into, f.path])
+                        else:
+                            f.path = import_into
+
             x.validate()
             records.append(x)
         elif type(x) is ImportSharedFolder:
             if shared:
                 continue
             x.validate()
+            if import_into:
+                if x.path:
+                    x.path = PathDelimiter.join([import_into, x.path])
+
             folders.append(x)
 
     if shared:
@@ -777,7 +794,7 @@ def prepare_record_link(params, records):
     return record_links
 
 
-def prepare_folder_permission(params, folders):
+def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) -> list
     shared_folder_lookup = {}
     for shared_folder_uid in params.shared_folder_cache:
         path = get_folder_path(params, shared_folder_uid)
@@ -785,31 +802,36 @@ def prepare_folder_permission(params, folders):
             shared_folder_lookup[path] = shared_folder_uid
 
     email_pattern = re.compile(EMAIL_PATTERN)
-    # public keys
-    emails = {}
+    emails = set()
+    teams = set()
     for fol in folders:
         if fol.permissions:
             for perm in fol.permissions:
-                if not perm.uid:
+                if perm.uid:
+                    teams.add(perm.uid)
+                    if perm.name:
+                        teams.add(perm.name)
+                elif perm.name:
                     match = email_pattern.match(perm.name)
                     if match:
-                        if perm.name not in emails:
-                            if perm.name != params.user:
-                                emails[perm.name.lower()] = None
+                        if perm.name != params.user:
+                            emails.add(perm.name.lower())
+                    else:
+                        teams.add(perm.name)
 
-    if emails:
-        request = {
-            'command': "public_keys",
-            'key_owners': list(emails.keys())
-        }
-        try:
-            rs = api.communicate(params, request)
-            if 'public_keys' in rs:
-                for pk in rs['public_keys']:
-                    if 'public_key' in pk:
-                        emails[pk['key_owner']] = pk['public_key']
-        except Exception as e:
-            logging.debug(e)
+    if len(emails) > 0:
+        api.load_user_public_keys(params, list(emails))
+
+    if len(teams) > 0:
+        api.load_available_teams(params)
+        team_uids = set()
+        for t in teams:
+            team_uid = next((x.get('team_uid') for x in params.available_team_cache
+                         if x.get('team_uid') == t or x.get('team_name').casefold() == t.casefold()), None)
+            if team_uid:
+                team_uids.add(team_uid)
+        if len(team_uids) > 0:
+            api.load_team_keys(params, list(team_uids))
 
     folder_permissions = []
     for fol in folders:
@@ -822,69 +844,58 @@ def prepare_folder_permission(params, folders):
         shared_folder_key = shared_folder.get('shared_folder_key_unencrypted')
         if not shared_folder_key:
             continue
+
         if fol.permissions:
             add_users = []
             add_teams = []
             for perm in fol.permissions:
-                is_team = False
-                if perm.uid and params.team_cache:
-                    is_team = perm.uid in params.team_cache
-                else:
-                    match = email_pattern.match(perm.name)
-                    if not match:
-                        is_team = True
-                    if is_team:
-                        perm.uid = None
-                        for team_uid in params.team_cache:
-                            team = params.team_cache[team_uid]
-                            if team['name'].lower() == perm.name.lower():
-                                perm.uid = team_uid
-                                break
-                if is_team:
-                    team = params.team_cache.get(perm.uid)
-                    if team:
-                        found = False
-                        if 'teams' in shared_folder:
-                            for team in shared_folder['teams']:
-                                if team['team_uid'] == team['team_uid']:
-                                    found = True
-                                    break
-                        if not found:
-                            add_teams.append({
-                                'team_uid': team['team_uid'],
+                try:
+                    if perm.uid:
+                        if perm.uid in params.key_cache:
+                            team_key = params.key_cache[perm.uid]
+                            rq = {
+                                'team_uid': perm.uid,
                                 'manage_users': perm.manage_users,
                                 'manage_records': perm.manage_records,
-                                'shared_folder_key': api.encrypt_aes(shared_folder_key, team['team_key_unencrypted']),
-                            })
-                elif perm.name:
-                    email = perm.name.lower()
-                    found = False
-                    if 'users' in shared_folder:
-                        for user in shared_folder['users']:
-                            if user['username'] == email:
-                                found = True
-                                break
-                    if not found:
-                        if email == params.user.lower():
-                            add_users.append({
-                                'username': email,
+                            }
+                            if type(team_key) == bytes:
+                                rq['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
+                            else:
+                                rq['shared_folder_key'] = api.encrypt_rsa(shared_folder_key, team_key)
+                            add_teams.append(rq)
+                            continue
+
+                    if perm.name:
+                        name = perm.name.casefold()
+                        if name in params.key_cache:
+                            rsa_key = params.key_cache[name]
+                            rq = {
+                                'username': name,
                                 'manage_users': perm.manage_users,
                                 'manage_records': perm.manage_records,
-                                'shared_folder_key': api.encrypt_aes(shared_folder_key, params.data_key)
-                            })
-                        elif email in emails:
-                            public_key = emails[email]
-                            if public_key:
-                                try:
-                                    rsa_key = RSA.importKey(base64.urlsafe_b64decode(public_key + '=='))
-                                    add_users.append({
-                                        'username': email,
-                                        'manage_users': perm.manage_users,
-                                        'manage_records': perm.manage_records,
-                                        'shared_folder_key': api.encrypt_rsa(shared_folder_key, rsa_key)
-                                    })
-                                except Exception as e:
-                                    logging.debug(e)
+                                'shared_folder_key': api.encrypt_rsa(shared_folder_key, rsa_key)
+                            }
+                            add_users.append(rq)
+                            continue
+
+                        team_uid = next((x.get('team_uid') for x in params.available_team_cache
+                                         if x.get('team_name').casefold() == name), None)
+                        if team_uid in params.key_cache:
+                            team_key = params.key_cache[team_uid]
+                            rq = {
+                                'team_uid': team_uid,
+                                'manage_users': perm.manage_users,
+                                'manage_records': perm.manage_records,
+                            }
+                            if type(team_key) == bytes:
+                                rq['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
+                            else:
+                                rq['shared_folder_key'] = api.encrypt_rsa(shared_folder_key, team_key)
+                            add_teams.append(rq)
+                            continue
+
+                except Exception as e:
+                    logging.debug(e)
 
             if add_teams or add_users:
                 request = {

@@ -25,7 +25,8 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
 
-CLIENT_VERSION = 'c14.0.0'
+LEGACY_CLIENT_VERSION = 'c14.0.0'
+CLIENT_VERSION = 'c15.0.0'
 
 
 SERVER_PUBLIC_KEYS = {
@@ -105,7 +106,7 @@ def derive_key_v2(domain, password, salt, iterations):
     return hmac.new(derived_key, domain.encode('utf-8'), digestmod=hashlib.sha256).digest()
 
 
-def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Any
+def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, proto.ApiRequestPayload) -> any
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
@@ -135,29 +136,28 @@ def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, p
         if rs.status_code == 200:
             if content_type == 'application/json':
                 return rs.json()        # type: dict
-            else:
-                rs_body = rs.content
-                if rs_body:
-                    rs_body = decrypt_aes(rs.content, context.transmission_key)
-                return rs_body
+
+            rs_body = rs.content
+            if rs_body:
+                rs_body = decrypt_aes(rs.content, context.transmission_key)
+            return rs_body
         elif rs.status_code >= 400:
-            failure = rs.json() if content_type == 'application/json' else None
-            if rs.status_code == 401 and json:
-                if failure.get('error') == 'key':
-                    server_key_id = failure['key_id']
-                    if server_key_id != context.server_key_id:
-                        context.server_key_id = server_key_id
-                        run_request = True
-                        continue
-            if rs.status_code >= 500:
+            if content_type == 'application/json':
+                failure = rs.json()
+                if rs.status_code == 401:
+                    if failure.get('error') == 'key':
+                        server_key_id = failure['key_id']
+                        if server_key_id != context.server_key_id:
+                            context.server_key_id = server_key_id
+                            run_request = True
+                            continue
+                return failure
+            else:
                 logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
+                if logging.getLogger().level <= logging.DEBUG:
+                    if rs.text:
+                        logging.debug('<<< Response Content: [%s]', str(rs.text))
                 raise CommunicationError('Code {0}: {1}'.format(rs.status_code, rs.reason))
-
-            if logging.getLogger().level <= logging.DEBUG:
-                if rs.text:
-                    logging.debug('<<< Response Content: [%s]', str(rs.text))
-
-            return failure
 
 
 def get_device_token(context):
@@ -171,12 +171,12 @@ def get_device_token(context):
         api_request_payload = proto.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
         rs = execute_rest(context, 'authentication/get_device_token', api_request_payload)
-        if type(rs) == bytes:
+        if type(rs) is bytes:
             device_rs = proto.DeviceResponse()
             device_rs.ParseFromString(rs)
-            if proto.DeviceStatus.Name(device_rs.status) == 'OK':
+            if proto.DeviceStatus.Name(device_rs.status) == 'DEVICE_OK':
                 context.device_id = device_rs.encryptedDeviceToken
-        elif type(rs) == dict:
+        elif type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
 
     return context.device_id
@@ -204,7 +204,7 @@ def pre_login(context, username, two_factor_token=None):
             pre_login_rs.ParseFromString(rs)
             return pre_login_rs
 
-        elif type(rs) == dict:
+        elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
                     context.device_id = None
@@ -230,12 +230,12 @@ def get_new_user_params(context, username):
     api_request_payload = proto.ApiRequestPayload()
     api_request_payload.payload = rq.SerializeToString()
     rs = execute_rest(context, 'authentication/get_new_user_params', api_request_payload)
-    if type(rs) == bytes:
+    if type(rs) is bytes:
         pre_login_rs = proto.NewUserMinimumParams()
         pre_login_rs.ParseFromString(rs)
         return pre_login_rs
 
-    if type(rs) == dict:
+    if type(rs) is dict:
         raise KeeperApiError(rs['error'], rs['message'])
 
 
@@ -246,11 +246,14 @@ def v2_execute(context, rq):
     api_request_payload.payload = json.dumps(rq).encode('utf-8')
     rs_data = execute_rest(context, 'vault/execute_v2_command', api_request_payload)
     if rs_data:
-        rs = json.loads(rs_data.decode('utf-8'))
-        logger = logging.getLogger()
-        if logger.level <= logging.DEBUG:
-            logger.debug('>>> Request JSON: [%s]', json.dumps(rq, sort_keys=True, indent=4))
-            logger.debug('<<< Response JSON: [%s]', json.dumps(rs, sort_keys=True, indent=4))
+        if type(rs_data) is bytes:
+            rs = json.loads(rs_data.decode('utf-8'))
+            logger = logging.getLogger()
+            if logger.level <= logging.DEBUG:
+                logger.debug('>>> Request JSON: [%s]', json.dumps(rq, sort_keys=True, indent=4))
+                logger.debug('<<< Response JSON: [%s]', json.dumps(rs, sort_keys=True, indent=4))
+            return rs
 
-        return rs
+        if type(rs_data) is dict:
+            raise KeeperApiError(rs_data['error'], rs_data['message'])
 

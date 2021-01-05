@@ -1,8 +1,9 @@
 colorama
+cryptography
 pycryptodomex
 requests
 tabulate
-prompt_toolkit
+prompt_toolkit==2.0.10
 asciitree
 pytest
 protobuf

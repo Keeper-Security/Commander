@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 from os import path
 
 import keepercommander
@@ -11,13 +11,14 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 install_requires = [
     'colorama',
+    'cryptography',
     'pycryptodomex>=3.7.2',
     'libkeepass',
     'requests',
     'tabulate',
-    'prompt_toolkit>=2.0.4',
+    'prompt_toolkit>=2.0.4,<=2.0.10',
     'asciitree',
-    'protobuf>=3.6.0',
+    'protobuf>=3.13.0',
     'pyperclip'
 ]
 
@@ -33,32 +34,13 @@ setup(name='keepercommander',
       classifiers=["Development Status :: 4 - Beta",
                    "License :: OSI Approved :: MIT License",
                    "Operating System :: OS Independent",
-                   "Programming Language :: Python :: 3.4",
+                   "Programming Language :: Python :: 3.5",
                    "Topic :: Security"],
       keywords='security password',
 
-      packages=['keepercommander',
-                'keepercommander.commands',
-                'keepercommander.importer',
-                'keepercommander.importer.json',
-                'keepercommander.importer.csv',
-                'keepercommander.importer.keepass',
-                'keepercommander.plugins',
-                'keepercommander.plugins.adpasswd',
-                'keepercommander.plugins.awskey',
-                'keepercommander.plugins.mssql',
-                'keepercommander.plugins.mysql',
-                'keepercommander.plugins.oracle',
-                'keepercommander.plugins.postgresql',
-                'keepercommander.plugins.ssh',
-                'keepercommander.plugins.sshkey',
-                'keepercommander.plugins.unixpasswd',
-                'keepercommander.plugins.windows',
-                'keepercommander.plugins.pspasswd',
-                'keepercommander.yubikey',
-                ],
+      packages=find_packages(),
       include_package_data=True,
-      python_requires='>=3.4',
+      python_requires='>=3.5',
       entry_points={
           "console_scripts": [
               "keeper=keepercommander.__main__:main",

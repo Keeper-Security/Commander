@@ -20,7 +20,7 @@ import hashlib
 import logging
 import urllib.parse
 
-from . import rest_api, APIRequest_pb2 as proto
+from . import rest_api, APIRequest_pb2 as proto, loginv3
 from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -48,7 +48,9 @@ unpad_char = lambda s: s[0:-ord(s[-1])]
 
 def run_command(params, request):
     # type: (KeeperParams, dict) -> dict
-    request['client_version'] = rest_api.CLIENT_VERSION
+    if 'client_version' not in request:
+        request['client_version'] = rest_api.CLIENT_VERSION
+
     return rest_api.v2_execute(params.rest_context, request)
 
 
@@ -72,6 +74,14 @@ install_fido_package_warning = 'You can use Security Key with Commander:\n' +\
 
 def login(params):
     # type: (KeeperParams) -> None
+
+    if params.login_v3:
+        logging.info('Logging in to Keeper Commander')
+        loginv3.LoginV3Flow.login(params)
+        return
+
+    logging.info("Logging in...")
+
     global should_cancel_u2f
     global u2f_response
     global warned_on_fido_package
@@ -87,7 +97,7 @@ def login(params):
             logging.debug('No auth verifier, sending pre-auth request')
             try:
                 pre_login_rs = rest_api.pre_login(params.rest_context, params.user)
-                auth_params = pre_login_rs.salt[0]
+                auth_params = get_correct_salt(pre_login_rs.salt)
                 params.iterations = auth_params.iterations
                 params.salt = auth_params.salt
                 params.auth_verifier = auth_verifier(params.password, params.salt, params.iterations)
@@ -105,16 +115,22 @@ def login(params):
             'include': ['keys', 'license', 'settings', 'enforcements', 'is_enterprise_admin'],
             'version': 2,
             'auth_response': params.auth_verifier,
-            'username': params.user.lower()
+            'username': params.user.lower(),
+            'platform_device_token': base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
         }
+
+        if params.enterprise_id > 0:
+            rq['enterprise_id'] = params.enterprise_id
 
         if params.mfa_token:
             rq['2fa_token'] = params.mfa_token
             rq['2fa_type'] = params.mfa_type or 'device_token'
             if params.mfa_type == 'one_time':
                 expire_token = params.config.get('device_token_expiration') or False
-                expire_days = 0 if expire_token else 30
+                expire_days = 0 if expire_token else 9999
                 rq['device_token_expire_days'] = expire_days
+
+        rq['client_version'] = rest_api.LEGACY_CLIENT_VERSION   # this login only supports up to v14 clients.
 
         response_json = run_command(params, rq)
 
@@ -143,6 +159,7 @@ def login(params):
         if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
             success = True
             logging.debug('Auth Success')
+            store_config = not params.config or params.config.get('user') != params.user
 
             params.session_token = response_json['session_token']
 
@@ -167,18 +184,21 @@ def login(params):
 
             if response_json.get('is_enterprise_admin'):
                 query_enterprise(params)
+                query_msp(params)
 
             params.sync_data = True
             params.prepare_commands = True
 
-            if store_config: # save token to config file if the file exists
+            if store_config:    # save token to config file if the file exists
                 params.config['user'] = params.user
-                try:
-                    with open(params.config_filename, 'w') as f:
-                        json.dump(params.config, f, ensure_ascii=False, indent=2)
-                        logging.info('Updated %s', params.config_filename)
-                except Exception as e:
-                    logging.debug('Unable to update %s. %s', params.config_filename, e)
+
+                if params.config_filename:
+                    try:
+                        with open(params.config_filename, 'w') as f:
+                            json.dump(params.config, f, ensure_ascii=False, indent=2)
+                            logging.info('Updated %s', params.config_filename)
+                    except Exception as e:
+                        logging.debug('Unable to update %s. %s', params.config_filename, e)
 
         elif response_json['result_code'] in ['need_totp', 'invalid_device_token', 'invalid_totp']:
             try:
@@ -235,13 +255,11 @@ def login(params):
 
         elif response_json['result_code'] == 'auth_failed':
             params.password = ''
+            params.auth_verifier = None
             raise AuthenticationError('Authentication failed.')
 
-        elif response_json['result_code'] == 'throttled':
-            raise AuthenticationError(response_json['message'])
-
         elif response_json['result_code']:
-            raise AuthenticationError(response_json['result_code'])
+            raise KeeperApiError(response_json['result_code'], response_json['message'])
 
         else:
             raise CommunicationError('Unknown problem')
@@ -309,6 +327,11 @@ def accept_account_transfer_consent(params, share_account_to):
     return False
 
 
+def decrypt_aes_plain(data: bytes, key: bytes):
+    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=data[:12])
+    return cipher.decrypt_and_verify(data[12:-16], data[-16:])
+
+
 def decrypt_aes(data, key):
     # type: (str, bytes) -> bytes
     decoded_data = base64.urlsafe_b64decode(data + '==')
@@ -323,6 +346,13 @@ def decrypt_data(data, key):
     return unpad_binary(decrypt_aes(data, key))
 
 
+def encrypt_aes_plain(data: bytes, key: bytes):
+    iv = os.urandom(12)
+    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=iv)
+    enc_data, tag = cipher.encrypt_and_digest(data)
+    return iv + enc_data + tag
+
+
 def encrypt_aes(data, key):
     iv = os.urandom(16)
     cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -335,6 +365,11 @@ def encrypt_aes_key(key_to_encrypt, encryption_key):
     cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
     encrypted_data = iv + cipher.encrypt(key_to_encrypt)
     return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
+
+
+def encrypt_rsa_plain(data, rsa_key):
+    cipher = PKCS1_v1_5.new(rsa_key)
+    return cipher.encrypt(data)
 
 
 def encrypt_rsa(data, rsa_public_key):
@@ -480,6 +515,8 @@ def sync_down(params):
         for sf_uid in response_json['removed_shared_folders']:
             if sf_uid in params.shared_folder_cache:
                 delete_shared_folder_key(sf_uid)
+                if sf_uid in params.subfolder_record_cache:
+                    del params.subfolder_record_cache[sf_uid]
                 shared_folder = params.shared_folder_cache[sf_uid]
                 if 'shared_folder_key' in shared_folder:
                     del shared_folder['shared_folder_key']
@@ -532,12 +569,13 @@ def sync_down(params):
 
     if 'non_shared_data' in response_json:
         for non_shared_data in response_json['non_shared_data']:
-            try:
-                decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
-                non_shared_data['data_unencrypted'] = decrypted_data
-                params.non_shared_data_cache[non_shared_data['record_uid']] = non_shared_data
-            except:
-                logging.debug('Non-shared data for record %s could not be decrypted', non_shared_data['record_uid'])
+            if 'data' in non_shared_data and non_shared_data['data']:
+                try:
+                    decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
+                    non_shared_data['data_unencrypted'] = decrypted_data
+                    params.non_shared_data_cache[non_shared_data['record_uid']] = non_shared_data
+                except:
+                    logging.debug('Non-shared data for record %s could not be decrypted', non_shared_data['record_uid'])
 
     # convert record keys from RSA to AES-256
     if 'record_meta_data' in response_json:
@@ -881,7 +919,7 @@ def create_auth_verifier(password, salt, iterations):
     derived_key = derive_key(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
-    return base64.urlsafe_b64encode(auth_ver).decode().strip('=')
+    return loginv3.CommonHelperMethods.bytes_to_url_safe_str(auth_ver)
 
 
 def create_encryption_params(password, salt, iterations, data_key):
@@ -893,7 +931,7 @@ def create_encryption_params(password, salt, iterations, data_key):
     cipher = AES.new(derived_key, AES.MODE_CBC, enc_iv)
     enc_data_key = cipher.encrypt(data_key + data_key)
     enc_params = b'\x01' + enc_iter + salt + enc_iv + enc_data_key
-    return base64.urlsafe_b64encode(enc_params).decode().strip('=')
+    return loginv3.CommonHelperMethods.bytes_to_url_safe_str(enc_params)
 
 
 def decrypt_encryption_params(encryption_params, password):
@@ -903,8 +941,8 @@ def decrypt_encryption_params(encryption_params, password):
     3 bytes: Iterations, unsigned integer, big endian
     16 bytes: salt
     80 bytes: encrypted data key (broken down further below)
-    16 bytes: IV
-    64 bytes: ciphertextIn
+        16 bytes: IV
+        64 bytes: ciphertextIn
     Key for encrypting the data key: 
         PBKDF2_with_HMAC_SHA256(iterations, salt, master password, 256-bit)
     Encryption method: 256-bit AES, CBC mode, no padding
@@ -942,6 +980,22 @@ def decrypt_encryption_params(encryption_params, password):
 
     # save the encryption params 
     return decrypted_data_key[:32]
+
+
+def decrypt_data_key(params: KeeperParams, encrypted_data_key):
+
+    encrypted_data_key_len = len(encrypted_data_key)
+
+    # [12 bytes: nonce / iv]
+    # [32 bytes: ciphertext]
+    # [16 bytes: auth - tag]
+
+    if encrypted_data_key_len != 60:
+        raise CryptoError('Invalid encryption params: Encrypted data key was unexpected length ' + str(encrypted_data_key_len))
+
+    decryption_key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
+
+    return rest_api.decrypt_aes(encrypted_data_key, decryption_key)
 
 
 def get_record(params,record_uid):
@@ -1034,6 +1088,51 @@ def get_shared_folder(params,shared_folder_uid):
     return sf
 
 
+def load_user_public_keys(params, emails):  # type: (KeeperParams, list) -> None
+    emails_to_load = [x for x in emails if x.lower() not in params.key_cache]
+    if not emails_to_load:
+        return
+    rq = {
+        'command': 'public_keys',
+        'key_owners': emails
+    }
+    rs = communicate(params, rq)
+    if 'public_keys' in rs:
+        for pk in rs['public_keys']:
+            if 'public_key' in pk:
+                email = pk['key_owner']
+                public_key = base64.urlsafe_b64decode(pk['public_key'] + '==')
+                try:
+                    params.key_cache[email] = RSA.importKey(public_key)
+                except Exception as e:
+                    logging.debug(e)
+
+
+def load_team_keys(params, team_uids):          # type: (KeeperParams, list) -> None
+    uids_to_load = [x for x in team_uids if x not in params.key_cache]
+    if not uids_to_load:
+        return
+    rq = {
+        'command': 'team_get_keys',
+        'teams': uids_to_load
+    }
+    rs = communicate(params, rq)
+    if 'keys' in rs:
+        for tk in rs['keys']:
+            if 'key' in tk:
+                team_uid = tk['team_uid']
+                try:
+                    if tk['type'] == 1:
+                        params.key_cache[team_uid] = decrypt_data(tk['key'], params.data_key)
+                    elif tk['type'] == 2:
+                        params.key_cache[team_uid] = decrypt_rsa(tk['key'], params.rsa_key)
+                    elif tk['type'] == 3:
+                        public_key = base64.urlsafe_b64decode(tk['key'] + '==')
+                        params.key_cache[team_uid] = RSA.importKey(public_key)
+                except Exception as e:
+                    logging.debug(e)
+
+
 def load_available_teams(params):
     if params.available_team_cache is not None:
         return
@@ -1044,6 +1143,13 @@ def load_available_teams(params):
     try:
         rs = communicate(params, rq)
         params.available_team_cache = rs.get('teams')
+        for t in params.available_team_cache:
+            team_uid = t['team_uid']
+            if team_uid in params.team_cache:
+                team = params.team_cache[team_uid]
+                if 'team_key_unencrypted' in team:
+                    params.key_cache[team_uid] = team['team_key_unencrypted']
+
     except Exception as e:
         logging.debug(e)
 
@@ -1170,7 +1276,7 @@ def prepare_record(params, record):
         rec = params.record_cache[record.record_uid]
 
         data.update(json.loads(rec['data_unencrypted'].decode('utf-8')))
-        if data['secret2'] != record.password:
+        if data.get('secret2') != record.password:
             params.queue_audit_event('record_password_change', record_uid=record.record_uid)
 
         if 'extra' in rec:
@@ -1229,7 +1335,6 @@ def communicate_rest(params, request, endpoint):
     elif type(rs) == dict:
         raise KeeperApiError(rs['error'], rs['message'])
     raise KeeperApiError('Error', endpoint)
-
 
 
 def communicate(params, request):
@@ -1499,13 +1604,16 @@ def resolve_record_write_path(params, record_uid):
     # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_edit')
 
+
 def resolve_record_share_path(params, record_uid):
     # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_share')
 
+
 def resolve_record_view_path(params, record_uid):
     # type: (KeeperParams, str) -> dict or None
     return resolve_record_permission_path(params, record_uid, 'can_view')
+
 
 def resolve_record_access_path(params, record_uid, path=None):
     # type: (KeeperParams, str, dict or None) -> dict
@@ -1623,6 +1731,46 @@ def get_record_shares(params, record_uids):
             logging.error(e)
 
 
+def query_msp(params):
+    def fix_data(d):
+        idx = d.rfind(b'}')
+        if idx < len(d) - 1:
+            d = d[:idx+1]
+        return d
+
+    request = {
+        'command': 'get_enterprise_data',
+        'include': ['managed_companies']
+    }
+
+    try:
+        response = communicate(params, request)
+        if response['result'] == 'success':
+            if 'key_type_id' in response:
+                tree_key = None
+                if response['key_type_id'] == 1:
+                    tree_key = decrypt_data(response['tree_key'], params.data_key)
+                elif response['key_type_id'] == 2:
+                    tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
+                if not tree_key is None:
+                    tree_key = tree_key[:32]
+                    response['unencrypted_tree_key'] = tree_key
+                    if 'managed_companies' in response:
+                        for mc in response['managed_companies']:
+                            mc['data'] = {}
+                            if 'encrypted_data' in mc:
+                                try:
+                                    data = decrypt_data(mc['encrypted_data'], tree_key)
+                                    data = fix_data(data)
+                                    mc['data'] = json.loads(data.decode('utf-8'))
+                                except Exception as e:
+                                    pass
+                        if params.enterprise:
+                            params.enterprise['managed_companies'] = response['managed_companies']
+    except:
+        pass
+
+
 def query_enterprise(params):
     def fix_data(d):
         idx = d.rfind(b'}')
@@ -1633,7 +1781,8 @@ def query_enterprise(params):
     request = {
         'command': 'get_enterprise_data',
         'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
-                    'role_users', 'managed_nodes', 'role_keys', 'licenses', 'queued_teams', 'queued_team_users']
+                    'role_users', 'managed_nodes', 'role_keys', 'licenses', 'queued_teams', 'queued_team_users',
+                    'licenses', 'keys']
     }
     try:
         response = communicate(params, request)
@@ -1641,9 +1790,16 @@ def query_enterprise(params):
             if 'key_type_id' in response:
                 tree_key = None
                 if response['key_type_id'] == 1:
-                    tree_key = decrypt_data(response['tree_key'], params.data_key)
+                    tree_key = decrypt_data(response['tree_key'], params.data_key)  # old AES
                 elif response['key_type_id'] == 2:
-                    tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
+                    if params.enterprise_id > 0:
+
+                        decoded_data = base64.urlsafe_b64decode(response['tree_key'] + '==')
+
+                        tree_key = rest_api.decrypt_aes(decoded_data, params.msp_tree_key)  # new AES
+                        # tree_key = decrypt_data(response['tree_key'], msp_tree_key)
+                    else:
+                        tree_key = decrypt_rsa(response['tree_key'], params.rsa_key) # old RSA
                 if not tree_key is None:
                     tree_key = tree_key[:32]
                     response['unencrypted_tree_key'] = tree_key
@@ -1679,5 +1835,61 @@ def query_enterprise(params):
                                     pass
 
                     params.enterprise = response
-    except:
+    except Exception as e:
+        logging.debug(e)
         params.enterprise = None
+
+
+def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
+
+    resp = loginv3.LoginV3API.loginToMc(params.rest_context, params.session_token, mc_id)
+
+    mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
+
+    mc_params.config = params.config
+    mc_params.auth_verifier = params.auth_verifier
+    mc_params.mfa_token = params.mfa_token
+    mc_params.salt = params.salt
+    mc_params.iterations = params.iterations
+    mc_params.user = params.user
+    mc_params.password = params.password
+    mc_params.enterprise_id = mc_id
+    mc_params.session_token = params.session_token
+    mc_params.login_v3 = params.login_v3
+    mc_params.data_key = params.data_key
+
+    mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
+    mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
+
+    query_enterprise(mc_params)
+
+    return mc_params
+
+
+def login_and_get_mc_params(params, mc_id):
+
+    mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
+
+    mc_params.config = params.config
+    mc_params.auth_verifier = params.auth_verifier
+    mc_params.mfa_token = params.mfa_token
+    mc_params.salt = params.salt
+    mc_params.iterations = params.iterations
+    mc_params.user = params.user
+    mc_params.password = params.password
+    mc_params.enterprise_id = mc_id
+    mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
+    mc_params.session_token = None
+
+    login(mc_params)
+    query_enterprise(mc_params)
+
+    return mc_params
+
+
+def get_correct_salt(salts):
+    if len(salts) > 1:
+        salt = next((s for s in salts if s.name.lower() == 'alternate'), salts[0])
+    else:
+        salt = salts[0]
+    return salt

@@ -52,6 +52,13 @@ def formatted_records(records, **kwargs):
     # Sort by folder+title
     records.sort(key=lambda x: x.title.lower(), reverse=False)
 
+    def abbreviate_text(text: str, chars_num: int):
+        if 'verbose' in kwargs and kwargs['verbose']:
+            return text
+        else:
+            return text if len(text) < chars_num else text[:chars_num] + '...'
+
+
     if len(records) > 0:
         shared_folder = None
         if 'folder' in kwargs and params is not None:
@@ -66,7 +73,7 @@ def formatted_records(records, **kwargs):
                 if fuid and fuid in params.shared_folder_cache:
                     shared_folder = params.shared_folder_cache[fuid]
 
-        table = [[i + 1, r.record_uid, r.title if len(r.title) < 32 else r.title[:32] + '...', r.login, r.login_url[:32]] for i, r in enumerate(records)]
+        table = [[i + 1, r.record_uid, abbreviate_text(r.title, 32), r.login, abbreviate_text(r.login_url, 32)] for i, r in enumerate(records)]
         headers = ["#", 'Record UID', 'Title', 'Login', 'URL']
         if shared_folder and 'records' in shared_folder:
             headers.append('Flags')
@@ -192,5 +199,43 @@ def print_record(params, record_uid):
         raise Exception('Record not found: ' + record_uid)
     data = json.loads(cached_rec['data_unencrypted'].decode('utf-8'))
     print(data)
+
+
+def format_msp_licenses(licenses):
+
+    print('')
+    print('MSP Plans and Licenses')
+    print('-----------------------')
+
+    if len(licenses) > 0:
+
+        for i, lic in enumerate(licenses):
+
+            if len(licenses) > 1:
+                print('License # ', i+1)
+
+            msp_license_pool = lic['msp_pool']
+
+            table = [
+                [
+                    j + 1,
+                    ml['product_id'],
+                    ml['availableSeats'],
+                    ml['seats'],
+                    ml['stash'] if 'stash' in ml else ' -'   # sometimes stash won't be returned from the backend
+                ] for j, ml in enumerate(msp_license_pool)]
+            print(tabulate(table, headers=["#", 'Plan Id', 'Available Licenses', 'Total Licenses', 'Stash']))
+            print('')
+
+
+def format_managed_company(mcs):
+
+    # Sort by title
+    mcs.sort(key=lambda x: x['mc_enterprise_name'].lower(), reverse=False)
+
+    if len(mcs) > 0:
+        table = [[i + 1, mc['mc_enterprise_id'], mc['mc_enterprise_name'], mc['product_id'], mc['number_of_seats'], mc['number_of_users']] for i, mc in enumerate(mcs)]
+        print(tabulate(table, headers=["#", 'ID', 'Name', 'Plan', 'Allocated', 'Active']))
+        print('')
 
 

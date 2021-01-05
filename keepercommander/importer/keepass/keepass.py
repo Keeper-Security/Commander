@@ -301,7 +301,7 @@ class KeepassExporter(BaseExporter):
                 node = root
                 for i in range(len(comps)):
                     comp = comps[i]
-                    sub_node = node.find('Group[Name=\'{0}\']'.format(comp))
+                    sub_node = node.find("Group[Name=\'{0}\']".format(comp))
                     if sub_node is None:
                         sub_node = objectify.Element('Group')
                         sub_node.UUID = base64.b64encode(os.urandom(16)).decode()
@@ -342,7 +342,7 @@ class KeepassExporter(BaseExporter):
                                 comps = list(path_components(path))
                                 for i in range(len(comps)):
                                     comp = comps[i]
-                                    sub_node = node.find('Group[Name=\'{0}\']'.format(comp))
+                                    sub_node = node.find("Group[Name=\'{0}\']".format(comp))
                                     if sub_node is None:
                                         sub_node = objectify.Element('Group')
                                         sub_node.UUID = base64.b64encode(os.urandom(16)).decode()

@@ -70,21 +70,21 @@ def register_command_info(aliases, command_info):
     command_info['list-team|lt'] = 'Display all teams'
 
 
-record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Record History')
-record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='record history action. \'list\' if omitted')
-record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='history revision')
+record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Show the history of a record modifications.')
+record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='filter by record history type. (default: \'list\')')
+record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='only show the details for a specific revision')
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 record_history_parser.error = raise_parse_exception
 record_history_parser.exit = suppress_exit
 
 
-totp_parser = argparse.ArgumentParser(prog='totp', description='Display Two Factor Code')
+totp_parser = argparse.ArgumentParser(prog='totp', description='Display the Two Factor Code for a record.')
 totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
 
 
-clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-copy', description='Find record then output password')
+clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-copy', description='Retrieve the password for a specific record.')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='password output destination')
 clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='output login name instead of password')
@@ -93,7 +93,7 @@ clipboard_copy_parser.error = raise_parse_exception
 clipboard_copy_parser.exit = suppress_exit
 
 
-add_parser = argparse.ArgumentParser(prog='add|a', description='Add record')
+add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
 add_parser.add_argument('--pass', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
@@ -101,71 +101,74 @@ add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
-add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
+add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 add_parser.add_argument('title', type=str, action='store', help='record title')
 add_parser.error = raise_parse_exception
 add_parser.exit = suppress_exit
 
 
-edit_parser = argparse.ArgumentParser(prog='edit', description='Edit record')
+edit_parser = argparse.ArgumentParser(prog='edit', description='Edit a record')
 edit_parser.add_argument('--login', dest='login', action='store', help='login name')
 edit_parser.add_argument('--pass', dest='password', action='store', help='password')
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
-edit_parser.add_argument('--notes', dest='notes', action='store', help='notes. + in front of notes appends text to existing notes')
-edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
-edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate random password')
+edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
+edit_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 edit_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 edit_parser.error = raise_parse_exception
 edit_parser.exit = suppress_exit
 
 
-rm_parser = argparse.ArgumentParser(prog='rm', description='Remove record')
+rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record')
+rm_parser.add_argument('--purge', dest='purge', action='store_true', help='remove the record from all folders and purge it from the trash')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 rm_parser.error = raise_parse_exception
 rm_parser.exit = suppress_exit
 
 
-list_parser = argparse.ArgumentParser(prog='list|l', description='Display all record UID/titles')
+list_parser = argparse.ArgumentParser(prog='list|l', description='List all records, ordered by title.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
 
-search_parser = argparse.ArgumentParser(prog='search|s', description='Search with regular expression')
+search_parser = argparse.ArgumentParser(prog='search|s', description='Search the vault. Can use a regular expression.')
 search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.error = raise_parse_exception
 search_parser.exit = suppress_exit
 
 
-get_info_parser = argparse.ArgumentParser(prog='get|g', description='Display specified Keeper record/folder/team')
+get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID.')
 get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
 
 
-append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to existing record')
+append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to an existing record.')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 append_parser.error = raise_parse_exception
 append_parser.exit = suppress_exit
 
 
-download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
+download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments.')
 #download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted.')
 download_parser.add_argument('record', action='store', help='record path or UID')
 download_parser.error = raise_parse_exception
 download_parser.exit = suppress_exit
 
 
-upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
+upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments.')
 upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload.')
 upload_parser.add_argument('record', action='store', help='record path or UID')
 upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
 
-delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete attachment file')
+delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record.', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
 delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
 delete_attachment_parser.error = raise_parse_exception
@@ -448,7 +451,6 @@ class RecordRemoveCommand(Command):
         if name in params.record_cache:
             record_uid = name
             folders = list(find_folders(params, record_uid))
-            #TODO support multiple folders
             if len(folders) > 0:
                 folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
         else:
@@ -463,42 +465,68 @@ class RecordRemoveCommand(Command):
         if record_uid is None:
             raise CommandError('rm', 'Enter name of existing record')
 
-        del_obj = {
-            'delete_resolution': 'unlink',
-            'object_uid': record_uid,
-            'object_type': 'record'
-        }
-        if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-            del_obj['from_type'] = 'user_folder'
-            if folder.type == BaseFolderNode.UserFolderType:
-                del_obj['from_uid'] = folder.uid
+        if kwargs.get('purge'):
+            is_owner = False
+            if record_uid in params.meta_data_cache:
+                md = params.meta_data_cache[record_uid]
+                is_owner = md.get('owner') or False
+            if not is_owner:
+                logging.warning('Record purge error: Not an owner')
+                return
+
+            rq = {
+                'command': 'record_update',
+                'pt': 'Commander',
+                'device_id': 'Commander',
+                'client_time': api.current_milli_time(),
+                'delete_records': [record_uid]
+            }
+            if not kwargs.get('force'):
+                answer = user_choice('Do you want to proceed with record purge?', 'yn', default='n')
+                if answer.lower() != 'y':
+                    return
+            rs = api.communicate(params, rq)
+            if 'delete_records' in rs:
+                for status in rs['delete_records']:
+                    if status['status'] != 'success':
+                        logging.warning('Record purge error: %s', status.get('status'))
         else:
-            del_obj['from_type'] = 'shared_folder_folder'
-            del_obj['from_uid'] = folder.uid
+            del_obj = {
+                'delete_resolution': 'unlink',
+                'object_uid': record_uid,
+                'object_type': 'record'
+            }
+            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                del_obj['from_type'] = 'user_folder'
+                if folder.type == BaseFolderNode.UserFolderType:
+                    del_obj['from_uid'] = folder.uid
+            else:
+                del_obj['from_type'] = 'shared_folder_folder'
+                del_obj['from_uid'] = folder.uid
 
-        rq = {
-            'command': 'pre_delete',
-            'objects': [del_obj]
-        }
+            rq = {
+                'command': 'pre_delete',
+                'objects': [del_obj]
+            }
 
-        rs = api.communicate(params, rq)
-        if rs['result'] == 'success':
-            pdr = rs['pre_delete_response']
+            rs = api.communicate(params, rq)
+            if rs['result'] == 'success':
+                pdr = rs['pre_delete_response']
 
-            force = kwargs['force'] if 'force' in kwargs else None
-            np = 'y'
-            if not force:
-                summary = pdr['would_delete']['deletion_summary']
-                for x in summary:
-                    print(x)
-                np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-            if np.lower() == 'y':
-                rq = {
-                    'command': 'delete',
-                    'pre_delete_token': pdr['pre_delete_token']
-                }
-                api.communicate(params, rq)
-                params.sync_data = True
+                force = kwargs['force'] if 'force' in kwargs else None
+                np = 'y'
+                if not force:
+                    summary = pdr['would_delete']['deletion_summary']
+                    for x in summary:
+                        print(x)
+                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                if np.lower() == 'y':
+                    rq = {
+                        'command': 'delete',
+                        'pre_delete_token': pdr['pre_delete_token']
+                    }
+                    api.communicate(params, rq)
+                    params.sync_data = True
 
 
 class SearchCommand(Command):
@@ -512,7 +540,7 @@ class SearchCommand(Command):
         results = api.search_records(params, pattern)
         if results:
             print('')
-            display.formatted_records(results)
+            display.formatted_records(results, verbose=kwargs['verbose'])
 
         # Search shared folders
         results = api.search_shared_folders(params, pattern)
@@ -537,7 +565,7 @@ class RecordListCommand(Command):
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
-            display.formatted_records(results)
+            display.formatted_records(results, verbose=kwargs['verbose'])
 
 
 class RecordListSfCommand(Command):
@@ -702,7 +730,7 @@ class RecordGetUidCommand(Command):
                         print('')
                     return
 
-        raise CommandError('get', 'Cannot find any object with UID: %s'.format(uid))
+        raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 
 
 class RecordDownloadAttachmentCommand(Command):

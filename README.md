@@ -1,4 +1,4 @@
-﻿![](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander_logo_250x100.png)
+﻿<img src="https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/keeper-commander-logo-v2.png" alt="Keeper Commander Logo" height="85"/>
 
 ----
 
@@ -8,6 +8,7 @@ Jump to:
 * [Installation](#python-installation---linux-and-mac)
 * [Developer Setup](#developer-mode)
 * [Command-line Usage](#command-line-usage)
+* [Login V3](#login-v3)
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
 * [Importing Data](#importing-records-into-keeper)
@@ -24,8 +25,10 @@ Jump to:
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
+* [Troubleshooting](#troubleshooting)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
+* [Binary Package](#build-binary-package)
 
 ### Password Management SDK for IT Admins & Developers
 
@@ -77,9 +80,9 @@ $ pip3 install --upgrade keepercommander
 
 Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
 
-### .Net SDK
+### .Net SDK and PowerShell Module
 
-We are in active development of a .Net SDK that covers the core use cases of accessing and updating vault records.  See the [.Net SDK](https://github.com/Keeper-Security/Commander/tree/master/dotnet-keeper-sdk) for source code and sample Commander project of the latest version.
+We are in active development of a .Net SDK and PowerShell that covers the core use cases of accessing and updating vault records.  See the [.Net SDK](https://github.com/Keeper-Security/keeper-sdk-dotnet) for sample code and PowerShell modules.
 
 ### Developer Mode
 
@@ -131,6 +134,110 @@ optional arguments:
   --config CONFIG       Config file to use
   --debug               Turn on debug mode
 ```
+
+### Login
+
+Current login mechanism is by default uses new Login V3 flow. This login flow includes following features:
+- Now all devices that access Keeper require to be registered using email, sms push, or security key
+- Ability to use SSO login. At this time Commander only supports login with alternate master password.
+
+##### Disabling Login V3
+If you need to disable Login V3 flow for any reason (ex. issue with automation) there are two way of doing that:
+
+1. Setting `login_v3` flag to `false` in the configuration file
+    
+    Example configuration file:
+    ```json
+   {
+        "login_v3": false
+   }
+    ```
+2. Passing command line argument `--login-v3 false` or `-lv3 false`
+    
+    Example command:
+    ```shell script
+   keeper -lv3 false
+   ```
+
+
+##### Device approval
+
+Login V3 now by default requires all devices to be approved before authenticating a user. On the first run Commander
+will present user with the options to approve this device. Below are the available options that will be presented:
+
+- `email_send` - Send email to the user with instructions to approve this device.
+- `email_code=<code>` - This option allows user to manually enter the code that was sent in the device approval email
+- `keeper_push` - Sends push notification to the approved device where Keeper app is already installed and the same user is logged in
+- `2fa_send` - Sends 2FA code to SMS, TOTP (Google Authenticator), DUO, etc.
+- `2fa_code=<code>` - Ability to enter 2FA code to validate a code supplied by 2FA application used in `2fa_send` command
+- `approval_check` Check or refresh login state to check current state of the device approval. Can be used when user clicks on the email link send after running command `email_send`
+
+Example output screen:
+
+```shell script
+Device Approval Required
+Approve by selecting a method below:
+	"email_send" to send email
+	"email_code=<code>" to validate verification code sent via email
+	"keeper_push" to send Keeper Push notification
+	"2fa_send" to send 2FA code
+	"2fa_code=<code>" to validate a code provided by 2FA application
+	"approval_check" check for device approval
+Type your selection: email_send
+```
+
+##### Authentication
+Once devices is approved user will be presented with the authentication flow. If user's configurations have 2FA enabled
+then user will be presented with the available options to authorize and then authenticate with the master password.
+
+
+
+##### SSO Accounts
+Even though Login V3 supports SSO login, Commander at this point does not support this ability.
+Accounts with SSO authentication must setup and login using alternate master password.
+
+```shell script
+This account requires 2FA Authentication
+        1: Enter received 2FA code (Email, SMS, TOTP, RSA, or DUO)
+        2: Send SMS Code
+        3: U2F (FIDO Security Key)
+Selection (ex. 2):
+```
+
+##### Persistent Login Flow
+Persistent Login allows users to login into Keeper without typing a password. In order to enable it user must register the device and turn on the persistent login. Once that's done the next time when user logs in to Keeper Commander he will
+be automatically login to the account. All settings to which account will be stored in `config.json` file.
+
+Steps to enable persistent login:
+
+1. Register device using command `this-device register`. See `this-device` section for more details.
+2. Enable persistent login: `this-device persistent_login on`
+
+##### Login without password
+It is possible to login on another device (such as server) without storing Master Password in the `config.json` file.
+Below are the steps to achive that:
+
+1. Login to Commander on computer (A) and enable Persistent Login feature by following steps above.
+
+    During this step commander will generate configuration file `config.json` with `private_key`, `device_id`, and `device_token`.
+    Make sure to add property `user` with the email of the user that was used to login to the account.
+    
+    Example `config.json` file:
+    
+    ```shell script
+        {
+            "user": "johnd@email.com",
+            "private_key": "yaeK4jMeIGNkSR2pi4xf2XGmYM094YMUoE8-QEW9CAA",
+            "device_id": "IqpZaJj5KYLLLb_vTwn_dhOXytakXU6mFNQJfHFYmSxoqg",
+            "device_token": "g6RDMxr1t-bcVdBeBpz-xQ"
+        }
+    ```
+    
+2. Copy content of the `config.json` file that was generated and paste it into the same file on another server (B).
+3. Now it will be possible to login to Commander on the server (B) without being prompted for authentication
+
+Note: _Once logged in on the server (B), persistent login will be lost on your computer (A). Also, 
+once logged in to Keeper on a computer (A), the persistent login feature will be lost on the server (B)_
 
 ### Interactive Shell
 To run a series of commands and stay logged in, you will enjoy using Commander's interactive shell.
@@ -237,10 +344,11 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```delete-attachment``` Delete a file attachment from the specified record.  Specify Record UID and Filename (or Attachment ID)
 
+* ```file-report``` File attachment report
+
 * ```list-sf``` or ```lsf``` Display all shared folders
 
-* ```create-user``` Create Keeper vault account.
-Note: If executed by an admin, the user will be provisioned to the Enterprise license. - [See Details](#creating-and-pre-populating-vaults)
+* ```create-user``` Invite user to create Keeper vault account
 
 * ```list-team``` or ```lt``` Display all teams
 
@@ -285,8 +393,49 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
 **Folder and Record Sharing Commands**
 
 * ```share-record``` or ```sr``` Grant or revoke record's user access
+    
+    Usage:
+    ```shell script
+    share-record|sr -e EMAIL [-a {grant,revoke,owner,cancel}] [-s] [-w] [record]
+    ```
+    
+    Parameters:
+    - `--email` or `-e` Account email
+    - `--action` or `-a` User share action.
+        
+        Available actions:
+        - `grant` - Grant read-only access to the record. Default value if omitted.
+        - `revoke` - Revoke edit permissions to this record.
+        - `owner` - Make user an owner of this record.
+        - `cancel` - Remove access to this record.
+    - `--share` or `-s` Grant permission to re-share record
+    - `--write` or `-w` Grant permission to modify record
 
-* ```share-folder``` or ```sf``` Grant or revoke shared folder's user access or record permission
+    Usage examples:
+    
+    - Grant edit and share access to one record: `share-record -a grant -e db-admin@keepersecurity.com -w "Prod MySQL"`
+    - Revoke access to the shared record: `share-record -a revoke -e db-admin@keepersecurity.com -w "Prod MySQL"`
+    
+* `share-folder` or `sf` Grant or revoke shared folder's user or teams access or record permission
+
+    Usage:
+    ```shell script
+    share-folder|sf [-a {grant,revoke}] [-e USER] [-r RECORD] [-p] [-o] [-s] [-d] [folder]
+    ```
+    Parameters:
+    
+    - `--action` or `-a` Shared Folder action. Available options: `grant`, `revoke`. Default is `grant` if omitted.
+    - `--email` or `-e` Account email, team name, or '*' as default folder permission
+    - `--record` or `-r` Record name, record UID, or '*' as default folder permission
+    - `--manage-records` or `-p` Allows user or team to manage records in this Shared Folder
+    - `--manage-users` or `-o` Allows user or team to manage users' access to this Shared Folder.
+    - `--can-share` or `-s` Enables user or team to shared this Shared Folder
+    - `--can-edit` or `-d` Enables user or team to modified this Shared Folder
+
+    Usage examples:
+    
+    - Grant read-only access for the team to records in the Shared Folder: `share-folder -a grant -e DB_ADMINS TestDBs`
+    - Revoke access for the team to the Shared Folder: `share-folder -a revoke -e DB_ADMINS TestDBs`
 
 * ```record-permission``` Changes record permissions inside the folder or folder tree. 
 
@@ -353,6 +502,14 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-view``` Restrict record viewing on the team 
     - If no parameters are provided, displays information about specified team
 
+* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
+
+    Parameters:
+    - ```--syntax-help``` Displays information of record template file format
+    - ```--team TEAM_NAME or TEAM UID``` Populate all team users' vaults
+    - ```--email USER_EMAIL``` Populate user's vault
+    - ```file``` JSON file name containing template records
+
 * ```team-approve``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge 
 
     Parameters:
@@ -362,13 +519,37 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--restrict-share {on,off}``` disable record re-shares
     - ```--restrict-view {on,off}``` disable view/copy passwords
 
-* ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
+* ```device-approve``` Approve SSO Cloud devices that are pending from end-users
 
     Parameters:
-    - ```--syntax-help``` Displays information of record template file format
-    - ```--team TEAM_NAME or TEAM UID``` Populate all team users' vaults
-    - ```--email USER_EMAIL``` Populate user's vault
-    - ```file``` JSON file name containing template records
+    - ```--reload``` Get the latest devices that require approval 
+    - ```--approve <device ID>``` Approve the specific device or all devices 
+    - ```--deny <device ID>``` Deny specific device
+    - ```--trusted-ip``` When supplied with --approve, will only approve devices from a recognized IP address
+
+* ```this-device``` specific settings for the current device
+
+    Available sub-commands:
+    
+    - ```rename``` - To rename the device. Device name should be no longer than 150 utf8 characters.
+        
+        Example: `this-device rename work-computer`
+    - `register` - register a data key for the device. Needed for the persistent login to work.
+        
+        Example: `this-device register`
+    - `persistent_login` - If enabled, the client can resume a logged in session or do cross client login. 
+        If disabled, the client cannot resume a session. Available options: `on`, `off`
+        
+        Example: `this-device persistent_login on`
+    - `ip_auto_approve` - If enabled, the device is not automatically approved based on the device’s IP address.
+        If disabled, the device will be auto approved based on a previously used ip address for the user or enterprise.
+        Available options: `yes`, `no`
+        
+        Example: `this-device ip_auto_approve yes`
+        
+        _Note: this does NOT affect cloud sso devices._
+    - `timeout` - If the session is idle for more than the set value then user will be logged out, ei session token will expire. Default value for commander is 2 days.
+        This value is device specific, the backend will track this based on the device_id in the session token.
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
@@ -410,6 +591,111 @@ Note: If executed by an admin, the user will be provisioned to the Enterprise li
     - ```--owner``` Include the owner information for each record 
     - ```--verbose``` Include the record title and permission settings for each record 
 
+**MSP Console Management Commands**
+
+* ```msp-info``` or ```mi``` Display MSP details, such as licenses and managed companies
+
+    Sample Output:
+    
+    ```
+      MSP Plans and Licenses
+    -----------------------
+      #  Plan Id           Available Licenses    Total Licenses    Stash
+    ---  --------------  --------------------  ----------------  -------
+      1  business                           6                10       10
+      2  businessPlus                       8                10       10
+      3  enterprise                         2                10       10
+      4  enterprisePlus                     6                10       10
+  
+      #    ID  Name         Plan              Allocated    Active
+    ---  ----  -----------  --------------  -----------  --------
+      1  3861  Company 1     businessPlus              2         2
+      2  3862  Company 2     enterprise                0         0
+      3  3900  Company 3     business                  2         0
+      4  3877  Company 4     enterprisePlus            4         0
+      5  3863  Company 5     enterprise                8         0
+      6  3875  Company 6     business                  2         0
+
+  ```
+  
+* ```msp-down``` or ```md``` Refresh local MSP data from the server. Useful in case when there was an update made on 
+the font end and user wants to retrieve current configurations without re-login to the commander  
+
+* ```msp-license``` or ```ml``` View and Manage MSP licenses
+
+    Usage example:
+    ```
+  msp-license --add --seats=4 --mc 3984
+  ```
+    Parameters:
+    
+    - ```-h```, ```--help``` Show help message
+    - ```-a {add,reduce,usage}```, ```--action {add,reduce,usage}``` Action to perform on the licenses. Default: `usage`
+        
+        Options:
+        - `usage` - View current usage of licenses given to the MSP. Will print the table listing License Plan ID, available license, total allocated licenses, and Stash
+        - `add` - Add licenses to the managed company
+        - `reduce` - Reduce licenses from the managed company
+    - ```--mc MC```  Managed Company identifier (managed company name or ID). Example: `3862` OR `"Keeper Security, Inc."`. ID of the company can be located by running `msp-info` command
+    - ```-s SEATS```, ```--seats SEATS``` - Number of seats to add or reduce.
+
+
+* ```msp-license-report``` or ```mlr``` MSP License Reports
+
+    Usage example:
+    ```
+    msp-license-report [-h] [--type {allocation,audit}]
+                      [--format {table,csv,json}]
+                      [--range {today,yesterday,last_7_days,last_30_days,month_to_date,last_month,year_to_date,last_year}]
+                      [--from FROM_DATE] [--to TO_DATE] [--output OUTPUT]
+
+     ```
+    Parameters:
+    - ```-h``` or ```--help``` Show help message
+    - ```--type {allocation,audit}``` Type of the report. Default `allocation`
+    - ```--format {table,csv,json}``` Format of the report output. 
+    - ```--range {today,yesterday,last_7_days,last_30_days,month_to_date,last_month,year_to_date,last_year}``` Pre-defined data ranges to run the report.
+     Only application to the `audit` report. Default `last_30_days`
+    - ```--from FROM_DATE``` Run report from this date.  Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
+    - ```--to TO_DATE```     Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
+    - ```--output OUTPUT``` Output file name. (ignored for table format)
+
+#### Running commands as Managed Company (MC) administrator
+
+In the Web Console interface MSP users have ability to login to the managed company and perform actions as an admin of the Managed Company.
+
+In Commander's command line interface the same can be achieved by running one command as MC or switching the context to MC and running all following commands 
+under that particular company.
+
+##### One-off Command as MC Administrator
+
+To run one-off command w/o switching context from MSP can be achieved by adding MS ID as one of the arguments to the command (ex. `--mc 12345`). The ID of the MC can
+be found by running `msp-info` command.
+
+Example to add user as an admin of MC with id 3900:
+
+```
+$ enterprise-user --add user@example.com --mc 3900
+```
+
+##### Switching to MC
+
+To switch the context to run all commands as MC administrator, use the `switch-to-mc [MC ID]` command. The ID of the MC can be found by running `msp-info` command.
+
+Example:
+
+```
+$ switch-to-mc 3900
+```
+
+To switch the context back to MSP, use the `switch-to-msp` command.
+
+Example: 
+
+```
+switch-to-msp
+```
+
 ### Importing Records into Keeper
 
 To import records into your vault, use the ```import``` command.  Supported import formats:
@@ -428,40 +714,44 @@ LastPass import will transfer the vault passwords directly to Keeper retaining t
 
 Below is a JSON import file with 2 records. The first record is added to a folder called "My Servers". The second record is added to "My Servers" and also added to a shared folder called "Shared Servers". 
 
-The import file example below is an array of record objects which can import into private folders and shared folders:
+The import file example below is an array of record objects which can import into private folders and shared folders. Note in the example that the Facebook record contains a TOTP seed which will render on the Vault user interface and Commander CLI.
 
 ```bash
-[{
-    "title":"Dev Server",
+{
+  "records": [{
+    "title":"Google",
     "folders": [
       {
-        "folder": "My Servers"
+        "folder": "My Websites\\Online"
       }
     ],
-    "login": "root",
+    "login": "testing",
     "password": "lk4j139sk4j",
-    "login_url": "https://myserver.com",
+    "login_url": "https://google.com",
     "notes": "These are some notes.",
-    "custom_fields": {"Security Group":"Private"}
-},
-{
-    "title":"Prod Server",
+    "custom_fields": {"Favorite Food":"Cheetos"}
+  },
+  {
+    "title":"Facebook",
     "folders": [
       {
-        "folder": "My Servers"
+        "folder": "Social Media"
       },
       {
-       "shared_folder": "Shared Servers",
-       "can_edit": true,
-       "can_share": true
+        "shared_folder": "Shared Social",
+        "can_edit": false,
+        "can_share": false
       }
     ],
-    "login": "root",
-    "password": "kj424094fsdjhfs4jf7h",
-    "login_url": "https://myprodserver.com",
-    "notes": "These are some notes.",
-    "custom_fields": {"Security Group":"Public","IP Address":"12.45.67.8"}
-}]
+    "login": "me@gmail.com",
+    "password": "123123123123",
+    "login_url": "https://facebook.com",
+    "notes": "This is our corporate shared record.",
+    "custom_fields": {
+      "Facebook Application ID":"ABC12345",
+      "TFC:Keeper": "otpauth://totp/Amazon:me@company.com?secret=JBSWY3DPEHPK3PXP&issuer=Amazon&algorithm=SHA1&digits=6&period=30"}
+  }]
+}
 ```
 
 Another example below first creates shared folders that are shared to users and teams, then imports records into the shared folders.  The format of the file is slightly different and allows you to separate the creation of shared folder objects and records:
@@ -803,7 +1093,7 @@ To automate the syslog event export every 5 minutes, create a JSON configuration
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=syslog"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -875,7 +1165,7 @@ To automate the push of Splunk events every 5 minutes, create a JSON configurati
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=splunk"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -943,7 +1233,7 @@ To automate the push of Sumo Logic events every 5 minutes, create a JSON configu
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=sumo"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -1001,7 +1291,7 @@ To automate the JSON event export every 5 minutes, create a JSON configuration f
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=json"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -1067,7 +1357,7 @@ To automate the push of events to Azure Log Analytics every 5 minutes, create a 
     "debug":false,
     "plugins":[],
     "commands":["sync-down","audit-log --target=azure-la"],
-    "timedelay":600,
+    "timedelay":600
 }
 ```
 
@@ -1118,7 +1408,7 @@ Notes:
 
 To configure Yubikey device authentication, follow the [setup instructions](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/yubikey).  In this mode, you will use a challenge phrase to authenticate instead of a Master Password.
 
-* ```device_token_expiration``` can be set to ```true``` to expire 2FA device tokens after 30 days. By default, the 2FA device token will never expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices.
+* ```device_token_expiration``` can be set to ```true``` to require 2FA every login.  Otherwise, the 2FA token will not expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices. Note: if a Security Key is attached to an account, this will require prompt every time currently.
 
 ### Batch Mode 
 
@@ -1163,6 +1453,7 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 5. Visit the Settings > General screen and setup a Master Password
 
 After the Master Password is created, you are now able to login to Keeper Commander.
+
 
 ### Pushing Records to Users and Teams
 
@@ -1213,61 +1504,6 @@ ${generate_password}   Generate random password
 ${user_name}           User full name
 ```
 
-### Creating and Pre-Populating Vaults
-
-A Keeper Admin can create a user vault and pre-populate it with records. This can all be accomplished with a single command.
-
-For example:
-
-```
-create-user --generate --name="Test User" --expire --records="push.json" user@company.com
-
-Created account: user@company.com
-Generated password: <displayed on the screen>
-```
-
-This command performs the following streamlined operations:
-1. Creates a new user account for "Test User" with the email address user@company.com
-2. The account is automatically provisioned to the Enterprise license and receives the default role policy
-3. The records stored in push.json are pushed to the user's vault
-
-After command completion, the "Generated Password" displayed to the admin is the temporary Master Password set for the user account. You can provide this Master Password to the user via a separate channel. 
-
-Upon first logging in, the user will be prompted to set a new Master Password according to the password complexity requirements set by the role enforcement policy in the Keeper Admin Console.  If Two-Factor Authentication is required, the user will also be prompted to activate 2FA prior to accessing vault data.
-
-The "push.json" file is structured an an array of password objects.  For example:
-
-```
-[
-    {
-        "title": "Google For ${user_name}",
-        "login": "${user_email}",
-        "password": "${generate_password}",
-        "login_url": "https://google.com",
-        "notes": "",
-        "custom_fields": {
-            "2FA Phone": "916-555-1212"
-        }
-    },
-    {
-        "title": "Development Server",
-        "login": "${user_email}",
-        "password": "${generate_password}",
-        "login_url": "",
-        "notes": "Here are some\nMulti-line\nNotes",
-        "custom_fields": {
-        }
-    }
-]
-```
-
-Supported template parameters:
-
-```
-${user_email}          User email address
-${generate_password}   Generate random password
-${user_name}           User full name
-```
 
 ### Password Retrieval API
 
@@ -1636,6 +1872,18 @@ For more details on Keeper's security architecture, certifications and implement
 
 Keeper has partnered with Bugcrowd to manage our vulnerability disclosure program. Please submit reports through https://bugcrowd.com/keepersecurity or send an email to security@keepersecurity.com.
 
+### Troubleshooting 
+
+**SSL Certificate Errors**
+
+When running Commander or related Keeper SDK code, if you receive SSL certificate errors such as:
+
+```bash
+requests.exceptions.SSLError: HTTPSConnectionPool(host='keepersecurity.com', port=443): Max retries exceeded with url: /api/rest/authentication/get_device_token (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1108)')))
+```
+
+If you receive this message, please make sure that your network is not attempting to do packet inspection with a proxy.  Due to our advanced encryption, Keeper traffic cannot be intercepted by a network proxy device.  Consult with your IT team to allow traffic to keepersecurity.com on the firewall outbound.
+
 ### About Keeper
 
 Keeper is the world's most downloaded password keeper and secure digital vault for protecting and managing your passwords and other secret information.  Millions of people and companies use Keeper to protect their most sensitive and private information.
@@ -1705,14 +1953,46 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [KeeperFill for Edge](https://www.microsoft.com/en-us/store/p/keeper-password-manager-digital-vault/9n0mnnslfz1t)
 
+### Enterprise Resources
+
 [Enterprise Admin Console](https://keepersecurity.com/console)
 
-### Sales & Support 
-
 [Enterprise Guide](https://docs.keeper.io/enterprise-guide/)
+
+### Sales & Support 
 
 [White Papers & Data Sheets](https://keepersecurity.com/enterprise-resources.html)
 
 [Contact Sales or Support](https://keepersecurity.com/contact.html)
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at commander@keepersecurity.com.
+
+### Build Binary Package
+
+Commander can be bundled with [PyInstaller](https://pyinstaller.readthedocs.io/en/stable/) as a single package.
+There are two PyInstaller configuration files `keeper_folder.spec` and `keeper_file.spec` that build
+["One-Folder"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-folder-program-works) and 
+["One-File"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-file-program-works) packages accordingly.
+To build a binary package:
+```shell script
+# create Python environment
+python -m venv installer
+
+# activate environment
+. installer/bin/activate
+cd Commander
+
+# install base Commander packages
+pip install -r requirements.txt
+
+# install optional packages 
+pip install -r extra_dependencies.txt
+
+# build one-folder package
+pyinstaller keeper_folder.spec
+
+# or build one-file package
+pyinstaller keeper_file.spec
+
+# your packages are in dist/ folder
+``` 
