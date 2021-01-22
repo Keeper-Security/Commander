@@ -76,7 +76,7 @@ whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true
 whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
 
-this_device_available_command_verbs = ['rename', 'register', 'persistent_login', 'ip_auto_approve', 'timeout']
+this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'timeout']
 this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device.')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
 this_device_parser.error = raise_parse_exception
@@ -176,20 +176,16 @@ class ThisDeviceCommand(Command):
 
         if len(ops) >= 1 and ops[0].lower() != 'register':
             if len(ops) == 1 and ops[0].lower() != 'register':
-                raise Exception("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
+                logging.error("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
+                return
 
             if len(ops) != 2:
-                raise Exception("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
+                logging.error("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
+                return
 
         action = ops[0].lower()
 
-        if action == 'rename' or action == 'ren':
-            value = ops[1]
-            loginv3.LoginV3API.rename_device(params, value)
-            print(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
-
-        elif action == 'register':
-
+        def register_device():
             is_device_registered = loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
 
             if is_device_registered:
@@ -197,13 +193,23 @@ class ThisDeviceCommand(Command):
             else:
                 print(bcolors.OKGREEN + "Device already registered" + bcolors.ENDC)
 
-        elif action == 'persistent_login' or action == 'pl':
+        if action == 'rename' or action == 'ren':
+            value = ops[1]
+            loginv3.LoginV3API.rename_device(params, value)
+            print(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
+
+        elif action == 'register':
+            register_device()
+
+        elif action == 'persistent_login' or action == 'persistent-login' or action == 'pl':
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('persistent_login', value)
             loginv3.LoginV3API.set_user_setting(params, 'persistent_login', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
             print("Successfully " + msg + " Persistent Login on this device")
+
+            register_device()
 
             if value_extracted == '1':
 
@@ -213,7 +219,7 @@ class ThisDeviceCommand(Command):
                     if 'encryptedDataKeyPresent' not in this_device:
                         print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
 
-        elif action == 'ip_auto_approve' or action == 'iaa':
+        elif action == 'ip_auto_approve' or action == 'ip-auto-approve' or action == 'iaa':
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('ip_disable_auto_approve', value)
@@ -238,9 +244,9 @@ class ThisDeviceCommand(Command):
         value = value.lower()
 
         if name == 'persistent_login' or name == 'ip_disable_auto_approve':
-            if value == 'yes' or value == 'y' or value == 'on' or value == '1':
+            if value == 'yes' or value == 'y' or value == 'on' or value == '1' or value.lower() == 'true':
                 final_val = '1'
-            elif value == 'no' or value == 'n' or value == 'off' or value == '0':
+            elif value == 'no' or value == 'n' or value == 'off' or value == '0' or value.lower() == 'false':
                 final_val = '0'
             else:
                 raise Exception("Unknown value. Available values 'on', 'off', 'yes', 'y', 'no' or 'n'")
