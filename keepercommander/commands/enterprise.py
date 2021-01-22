@@ -190,6 +190,10 @@ device_approve_parser.add_argument('--reload', dest='reload', action='store_true
 device_approve_parser.add_argument('--approve', dest='approve', action='store_true', help='approve user devices')
 device_approve_parser.add_argument('--deny', dest='deny', action='store_true', help='deny user devices')
 device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
+device_approve_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+                                    default='table', help='Output format. Applicable to list of devices in the queue.')
+device_approve_parser.add_argument('--output', dest='output', action='store',
+                                    help='Output file name (ignored for table format)')
 device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
 device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit
@@ -3754,14 +3758,38 @@ class DeviceApproveCommand(EnterpriseCommand):
                 logging.warning(rs)
         else:
             print('')
-            headers = ['Email', 'Device ID', 'Device Name', 'IP Address', 'Client Version']
+            headers = [
+                'Date',
+                'Email',
+                'Device ID',
+                'Device Name',
+                'Device Type',
+                'IP Address',
+                'Client Version',
+                'Location']
+
+            if kwargs.get('format') == 'json':
+                headers = [x.replace(' ', '_').lower() for x in headers]
+
             rows = []
             for k, v in matching_devices.items():
                 user = next((x for x in params.enterprise['users']
                              if x.get('enterprise_user_id') == v.get('enterprise_user_id')), None)
                 if not user:
                     continue
-                rows.append([user.get('username'), k, v.get('device_name'), v.get('ip_address'), v.get('client_version')])
+
+                date_formatted = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(v.get('date')/1000.0))
+
+                rows.append([
+                    date_formatted,
+                    user.get('username'),
+                    k,
+                    v.get('device_name'),
+                    v.get('device_type'),
+                    v.get('ip_address'),
+                    v.get('client_version'),
+                    v.get('location')
+                ])
             rows.sort(key=lambda x: x[0])
-            dump_report_data(rows, headers)
+            dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
             print('')
