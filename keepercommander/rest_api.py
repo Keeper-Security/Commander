@@ -144,6 +144,7 @@ def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, p
         elif rs.status_code >= 400:
             if content_type == 'application/json':
                 failure = rs.json()
+                logging.debug('<<< Response Error: [%s]', failure)
                 if rs.status_code == 401:
                     if failure.get('error') == 'key':
                         server_key_id = failure['key_id']

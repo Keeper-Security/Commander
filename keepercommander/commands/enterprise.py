@@ -186,9 +186,9 @@ team_approve_parser.error = raise_parse_exception
 team_approve_parser.exit = suppress_exit
 
 device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices.')
-device_approve_parser.add_argument('--reload', dest='reload', action='store_true', help='reload list of pending approval requests')
-device_approve_parser.add_argument('--approve', dest='approve', action='store_true', help='approve user devices')
-device_approve_parser.add_argument('--deny', dest='deny', action='store_true', help='deny user devices')
+device_approve_parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='reload list of pending approval requests')
+device_approve_parser.add_argument('--approve', '-a', dest='approve', action='store_true', help='approve user devices')
+device_approve_parser.add_argument('--deny', '-d', dest='deny', action='store_true', help='deny user devices')
 device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
 device_approve_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                     default='table', help='Output format. Applicable to list of devices in the queue.')
@@ -3546,6 +3546,9 @@ class DeviceApproveCommand(EnterpriseCommand):
             }
             response = api.communicate(params, request)
             DeviceApproveCommand.DevicesToApprove = response.get('devices_request_for_admin_approval') or []
+
+            api.query_enterprise(params)
+
         if not DeviceApproveCommand.DevicesToApprove:
             logging.info('There are no pending devices to approve')
             return
@@ -3660,6 +3663,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                         if type(rs) is bytes:
                             data_key_rs = EnterpriseUserDataKeys()
                             data_key_rs.ParseFromString(rs)
+                            logging.debug(data_key_rs)
                             for key in data_key_rs.keys:
                                 enc_data_key = key.userEncryptedDataKey
                                 if enc_data_key:
@@ -3753,6 +3757,7 @@ class DeviceApproveCommand(EnterpriseCommand):
             if type(rs) is bytes:
                 approve_rs = ApproveUserDevicesResponse()
                 approve_rs.ParseFromString(rs)
+                logging.debug(approve_rs)
                 DeviceApproveCommand.DevicesToApprove = None
             else:
                 logging.warning(rs)
