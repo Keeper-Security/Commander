@@ -91,7 +91,7 @@ class KeeperCsvExporter(BaseExporter):
                             if folder.can_share:
                                 domain = domain + '#reshare'
                         break
-                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
+                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain, r.uid]
                 if r.custom_fields:
                     for cf in r.custom_fields:
                         row.append(cf)
