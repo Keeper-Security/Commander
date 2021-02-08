@@ -64,5 +64,6 @@ def rotate(record, newpassword):
         logging.error("Timed out waiting for response.")
     except pxssh.ExceptionPxssh as e:
         logging.error("Failed to login with ssh.")
+        logging.error(e)
 
     return result

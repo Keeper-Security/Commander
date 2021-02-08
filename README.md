@@ -141,25 +141,6 @@ Current login mechanism is by default uses new Login V3 flow. This login flow in
 - Now all devices that access Keeper require to be registered using email, sms push, or security key
 - Ability to use SSO login. At this time Commander only supports login with alternate master password.
 
-##### Disabling Login V3
-If you need to disable Login V3 flow for any reason (ex. issue with automation) there are two way of doing that:
-
-1. Setting `login_v3` flag to `false` in the configuration file
-    
-    Example configuration file:
-    ```json
-   {
-        "login_v3": false
-   }
-    ```
-2. Passing command line argument `--login-v3 false` or `-lv3 false`
-    
-    Example command:
-    ```shell script
-   keeper -lv3 false
-   ```
-
-
 ##### Device approval
 
 Login V3 now by default requires all devices to be approved before authenticating a user. On the first run Commander
@@ -1989,10 +1970,10 @@ pip install -r requirements.txt
 pip install -r extra_dependencies.txt
 
 # build one-folder package
-pyinstaller keeper_folder.spec
+pyinstaller keeper-folder.spec
 
 # or build one-file package
-pyinstaller keeper_file.spec
+pyinstaller keeper-file.spec
 
 # your packages are in dist/ folder
 ``` 

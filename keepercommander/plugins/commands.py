@@ -108,7 +108,7 @@ def rotate_password(params, record_uid, name=None):
     if success:
         logging.debug("Password rotation is successful for \"%s\".", plugin_name)
     else:
-        logging.warning("Password rotation failed for \"%s\".", plugin_name)
+        logging.warning("Password rotation failed for record uid=[%s], plugin \"%s\"." % (record.record_uid, plugin_name))
         return False
 
     if api.update_record(params, record):

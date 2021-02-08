@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import requests
+import time
 
 from urllib.parse import urlsplit, urlunsplit
 from email.utils import parseaddr
@@ -83,6 +84,9 @@ share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='
                                  help='record permission: can be shared')
 share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true',
                                  help='record permission: can be modified.')
+share_folder_parser.add_argument('-f', '--force', dest='force', action='store_true',
+                                 help='Apply permission changes ignoring default folder permissions. Used on the '
+                                      'initial sharing action')
 share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
@@ -96,6 +100,11 @@ share_report_parser.add_argument('-r', '--record', dest='record', action='append
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
 share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true',
                                  help='record ownership information')
+share_report_parser.add_argument('--share-date', dest='share_date', action='store_true',
+                                 help='include date when the record was shared. This flag will only apply to the '
+                                      'detailed owner report. This data is available only to those users who have '
+                                      'permissions to execute reports for their company. Example of the report that '
+                                      'includes shared date: `share-report -v -o --share-date --format table`')
 share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
                                  help='display verbose information')
 share_report_parser.error = raise_parse_exception
@@ -579,8 +588,12 @@ class ShareFolderCommand(Command):
                         api.load_team_keys(params, [team_uid])
                         team_key = params.key_cache.get(team_uid)
                         if team_key:
-                            to['manage_records'] = sh_fol.get('default_manage_records') or False
-                            to['manage_users'] = sh_fol.get('default_manage_users') or False
+                            if kwargs.get('force'):
+                                to['manage_records'] = mr
+                                to['manage_users'] = mu
+                            else:
+                                to['manage_records'] = sh_fol.get('default_manage_records') or False
+                                to['manage_users'] = sh_fol.get('default_manage_users') or False
                             shared_folder_key = sh_fol['shared_folder_key_unencrypted']
                             if type(team_key) == bytes:
                                 to['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
@@ -1036,12 +1049,35 @@ class ShareReportCommand(Command):
                 dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         else:
+
+            include_share_date = kwargs.get('share_date')
             record_owners = {}
             record_shared_with = {}
+            is_an_enterprise_user_by_ref = [True] # To track if use is part of an enterprise. If not then call backend only once.
+            total_record = len(record_uids)
+            count = 0
             for uid in record_uids:
+
+                if include_share_date:
+
+                    rem_count = total_record - count
+                    percent = int(((rem_count/total_record)*100))
+                    percent_indicator_left = int(50 - (percent/2))
+                    percent_indicator_right = int(50 - percent_indicator_left)
+
+                    print(
+                          (bcolors.OKBLUE + 'Generating report: |' + bcolors.ENDC) +
+                          ((bcolors.OKBLUE + '█' + bcolors.ENDC) * percent_indicator_left) +
+                          ((bcolors.OKBLUE + '_' + bcolors.ENDC) * percent_indicator_right) +
+                          (bcolors.OKBLUE + '|' + bcolors.ENDC),
+                          (bcolors.OKBLUE + str(100-percent) + "%" + bcolors.ENDC), end='\x1b[1K\r')
+
+                count = count + 1
+
                 record = params.record_cache[uid]
                 if 'shares' in record:
                     record_shared_with[uid] = []
+                    record_share_details = self.get_record_share_activities(params, uid, is_an_enterprise_user_by_ref) if include_share_date else None
                     if 'user_permissions' in record['shares']:
                         for up in record['shares']['user_permissions']:
                             user_name = up['username']
@@ -1051,7 +1087,8 @@ class ShareReportCommand(Command):
                                 can_edit = up.get('editable') or False
                                 can_share = up.get('shareable') or False
                                 permission = self.get_permission_text(can_edit, can_share)
-                                record_shared_with[uid].append('{0} -> {1}'.format(user_name, permission))
+                                date_shared = self.get_date_for_share(record_share_details, user_name)
+                                record_shared_with[uid].append('{0} -> {1}{2}'.format(user_name, permission, date_shared))
                     if 'shared_folder_permissions' in record['shares']:
                         for sfp in record['shares']['shared_folder_permissions']:
                             shared_folder_uid = sfp['shared_folder_uid']
@@ -1069,12 +1106,14 @@ class ShareReportCommand(Command):
                                     permission = self.get_permission_text(can_edit, can_share)
                                     if 'users' in shared_folder:
                                         for u in shared_folder['users']:
+                                            date_shared = self.get_date_for_share_folder_record(record_share_details, shared_folder_uid)
                                             user_name = u['username']
-                                            record_shared_with[uid].append('{0} => {1}'.format(user_name, permission))
+                                            record_shared_with[uid].append('{0} => {1}{2}'.format(user_name, permission, date_shared))
                                     if 'teams' in shared_folder:
                                         for t in shared_folder['teams']:
-                                            user_name = t['name']
-                                            record_shared_with[uid].append('{0} => {1}'.format(user_name, permission))
+                                            date_shared = self.get_date_for_share_folder_record(record_share_details, shared_folder_uid)
+                                            team_name = t['name']
+                                            record_shared_with[uid].append('{0} => {1}{2}'.format(team_name, permission, date_shared))
 
             if len(record_owners) > 0:
                 headers = ['#', 'Record Title', 'Record UID', 'Owner', 'Shared with']
@@ -1104,6 +1143,128 @@ class ShareReportCommand(Command):
         else:
             return 'View Only' if can_view else 'Launch Only'
 
+    @staticmethod
+    def get_record_share_activities(params: KeeperParams, record_uid: str, is_an_enterprise_user_by_ref):
+
+        if not is_an_enterprise_user_by_ref[0]:
+            # no need to execute the query to get analytics data because we know that user is not part of the enterprise
+            return None
+
+        rq = {
+            'command': 'get_audit_event_reports',
+            'report_type': 'raw',
+            'scope': 'enterprise',
+            'limit': 1000,
+            'order': 'ascending',
+            'filter': {
+                'audit_event_type': [
+                    'share'
+                    , 'record_share_outside_user'
+                    , 'remove_share'
+
+                    , 'folder_add_team'
+                    , 'folder_remove_team'
+
+                    , 'folder_add_record'
+                    , 'folder_remove_record'
+
+                    # ,'change_share'
+                    # ,'transfer_owner'
+                    # ,'accept_share'
+                    # ,'cancel_share'
+                ],
+                'record_uid': record_uid
+            }
+        }
+
+        try:
+            rs = api.communicate(params, rq)
+
+        except Exception as e:
+
+            if e.result_code == 'not_an_enterprise_user':
+                # logging.warning("In order to see shared time details, user must be part of the Keeper account.")
+                is_an_enterprise_user_by_ref[0] = False
+                return None
+            elif e.result_code == 'access_denied':
+                logging.debug("You do not have permissions to access report for your organization. In order to "
+                                "allow user to access reports, ask administrator to grant permission \"Run Reports\" "
+                                "permission.")
+                is_an_enterprise_user_by_ref[0] = False
+                return None
+
+        is_an_enterprise_user_by_ref[0] = True
+
+        rs = api.communicate(params, rq)
+
+        if rs['result'] == 'success':
+            audit_events = rs['audit_event_overview_report_rows']
+
+            # sort list by creation date
+            audit_events = sorted(audit_events, key=lambda i: i['created'])
+
+        else:
+            logging.warning("Error retrieving values")
+
+            return None
+
+        # Remove mutually exclusive records (ex. "share -> remove_share -> share -> remove_share -> share" will
+        # become just "share")
+        latest_record_share_events = {}
+        latest_folder_share_events = {}
+
+        for event in audit_events:
+
+            if 'to_username' in event:  # INDIVIDUAL record sharing
+
+                key = str(event['record_uid']) + '-' + str(event['to_username'])
+
+                if event['audit_event_type'] in ['share', 'record_share_outside_user', 'remove_share']:
+                    if key in latest_record_share_events and event['audit_event_type'] == 'remove_share':
+                        del latest_record_share_events[key]
+                    elif event['audit_event_type'] in ['share', 'record_share_outside_user']:
+                        latest_record_share_events[key] = event
+                    else:
+                        pass
+
+            elif 'shared_folder_uid' in event:  # FOLDER sharing
+
+                key = str(event['record_uid']) + '-' + str(event['shared_folder_uid'])
+
+                if event['audit_event_type'] in ['folder_add_record', 'folder_remove_record']:
+                    if key in latest_folder_share_events and event['audit_event_type'] == 'folder_remove_record':
+                        del latest_folder_share_events[key]
+                    elif event['audit_event_type'] == 'folder_add_record':
+                        latest_folder_share_events[key] = event
+                    else:
+                        pass
+
+        return list(latest_record_share_events.values()) + list(latest_folder_share_events.values())
+
+    @staticmethod
+    def get_date_for_share(share_activity_list: list, user_name: str):
+        if not share_activity_list or len(share_activity_list) == 0:
+            return ""
+
+        activity = next((s for s in share_activity_list if 'to_username' in s and s['to_username'] == user_name), None)
+        activity_created_ms = activity['created']
+        date_formatted = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(activity_created_ms))
+
+        if activity['audit_event_type'] == 'record_share_outside_user':
+            return '\t(externally shared on {0})'.format(date_formatted)
+        else:
+            return '\t(shared on {0})'.format(date_formatted)
+
+    @staticmethod
+    def get_date_for_share_folder_record(share_activity_list: list, shared_folder_uid: str):
+        if not share_activity_list or len(share_activity_list) == 0:
+            return ""
+
+        activity = next((s for s in share_activity_list if ('folder' in s['audit_event_type'] and s["shared_folder_uid"] == shared_folder_uid)), None)
+        activity_created_ms = activity['created']
+        date_formatted = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(activity_created_ms))
+
+        return '\t(shared on {0})'.format(date_formatted)
 
 class RecordPermissionCommand(Command):
     def get_parser(self):
