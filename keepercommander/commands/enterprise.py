@@ -674,9 +674,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 print('')
                 headers = ['user_id', 'email']
                 headers.extend(displayed_columns)
-                if kwargs.get('format') != 'json':
-                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
-                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+            if kwargs.get('format') != 'json':
+                headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+            dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_teams:
                 supported_columns = SUPPORTED_TEAM_COLUMNS
