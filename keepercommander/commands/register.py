@@ -1247,6 +1247,10 @@ class ShareReportCommand(Command):
             return ""
 
         activity = next((s for s in share_activity_list if 'to_username' in s and s['to_username'] == user_name), None)
+
+        if activity is None:
+            return ""
+
         activity_created_ms = activity['created']
         date_formatted = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(activity_created_ms))
 
