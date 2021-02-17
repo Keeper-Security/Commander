@@ -359,7 +359,8 @@ def runcommands(params):
                 logging.error("Communication Error: %s", e.message)
             except AuthenticationError as e:
                 logging.error("AuthenticationError Error: %s", e.message)
-            except:
+            except Exception as e:
+                logging.debug(e, exc_info=True)
                 logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
 
         if timedelay == 0:
