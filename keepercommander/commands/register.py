@@ -1266,6 +1266,10 @@ class ShareReportCommand(Command):
             return ""
 
         activity = next((s for s in share_activity_list if ('folder' in s['audit_event_type'] and s["shared_folder_uid"] == shared_folder_uid)), None)
+        
+        if activity is None:
+            return ""
+
         activity_created_ms = activity['created']
         date_formatted = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(activity_created_ms))
 
