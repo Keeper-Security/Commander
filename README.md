@@ -221,7 +221,7 @@ Note: _Once logged in on the server (B), persistent login will be lost on your c
 once logged in to Keeper on a computer (A), the persistent login feature will be lost on the server (B)_
 
 ### Interactive Shell
-To run a series of commands and stay logged in, you will enjoy using Commander's interactive shell.
+To run a series of commands and stay logged in, you must use Commander's interactive shell.
 
 ```
 $ keeper shell
