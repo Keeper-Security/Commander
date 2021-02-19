@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
 
@@ -374,51 +375,42 @@ class LoginV3Flow:
         global warned_on_fido_package
 
         print("This account requires 2FA Authentication")
-        login_resp_dist = MessageToDict(login_resp, preserving_proto_field_name=True)
+        login_resp_dict = MessageToDict(login_resp, preserving_proto_field_name=True)
 
-        channelTypeDescrMapping = {
-            "TWO_FA_CT_U2F": "U2F (FIDO Security Key)",
-            "TWO_FA_CT_DUO": "DUO",
-            "TWO_FA_CT_TOTP": "TOTP (Google Authenticator)",
-            "TWO_FA_CT_SMS": "Send SMS Code"
-        }
-        optionsDict = {}
+        channel_types = OrderedDict([
+            ('TWO_FA_CT_U2F', 'U2F (FIDO Security Key)'),
+            ('TWO_FA_CT_DUO', 'DUO'),
+            ('TWO_FA_CT_TOTP', 'TOTP (Google Authenticator)'),
+            ('TWO_FA_CT_SMS', 'Send SMS Code'),
+        ])
 
-        if 'channels' in login_resp_dist:
-
-            optionsDict[1] = {'channelType': "2FA_CODE"}
-            print("\t%s: %s" % (1, "Enter received 2FA code (Email, SMS, TOTP, RSA, or DUO)"))
-
-            count = 2
-            for channel in login_resp_dist['channels']:
-
-                optionsDict[count] = channel
-
-                if channel['channelType'] in channelTypeDescrMapping:
-                    logging.debug("\t%s: %s" % (count, channelTypeDescrMapping[channel['channelType']]))
-                else:
-                    logging.debug("\t%s: %s" % (count, channel['channelType']))
-
-                count = count + 1
-        else:
+        try:
+            assert 'channels' in login_resp_dict
+        except AssertionError:
             raise Exception("No channels provided by API")
-
-        selection: str = input('Selection (ex. 2): ')
-
-        if not CommonHelperMethods.check_int(selection):
-            logging.error("Please type a number")
-            return
-
-        if int(selection) in optionsDict:
-            channelSelected = optionsDict[int(selection)]
         else:
-            logging.debug("Your selection %s not in the list" % selection)
-            return
 
-        if channelSelected['channelType'] == 'TWO_FA_CODE_NONE':
-            logging.debug("TWO_FA_CODE_NONE")
-        elif channelSelected['channelType'] == "TWO_FA_CT_SMS":
+            available_channels = dict([(channel['channelType'], channel) for channel in login_resp_dict['channels']])
 
+            for n, (channel_type, channel_desc) in enumerate(channel_types.items()):
+                if channel_type in available_channels:
+                    print(f"{n+1}. {channel_desc}")
+
+            try:
+                selection: str = input('Selection: ')
+                idx = 1 if not selection else int(selection)
+                assert 1 <= idx <= len(channel_types)
+                channel_type = list(channel_types.keys())[idx - 1]
+                channel = available_channels.get(channel_type)
+                logging.debug(f"Selected {idx}. {channel_type}")
+                assert channel is not None
+            except:
+                raise Exception("Invalid selection, please type the number of one of the enumerated choices.")
+
+        if channel_type == 'TWO_FA_CODE_NONE':
+            pass
+
+        elif channel_type == "TWO_FA_CT_SMS":
             rs = LoginV3API.twoFactorSend2FAPushMessage(
                 params,
                 encryptedLoginToken,
@@ -431,13 +423,13 @@ class LoginV3Flow:
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
-        elif channelSelected['channelType'] == 'TWO_FA_CODE_RSA':
+        elif channel_type == 'TWO_FA_CODE_RSA':
             logging.debug("DO RSA")
-        elif channelSelected['channelType'] == "TWO_FA_CT_U2F":
+
+        elif channel_type == "TWO_FA_CT_U2F":
             try:
                 from .yubikey import u2f_authenticate
-
-                challenge = json.loads(channelSelected['challenge'])
+                challenge = json.loads(channel['challenge'])
                 u2f_request = challenge['authenticateRequests']
                 u2f_response = u2f_authenticate(u2f_request)
 
@@ -465,26 +457,26 @@ class LoginV3Flow:
             except Exception as e:
                 logging.error(e)
 
-        elif channelSelected['channelType'] == 'TWO_FA_RESP_WEBAUTHN':
-            raise Exception("Not supported channelType " + channelSelected['channelType'])
-        elif channelSelected['channelType'] == 'TWO_FA_CT_KEEPER':
-            raise Exception("Not supported channelType " + channelSelected['channelType'])
-        elif channelSelected['channelType'] == 'TWO_FA_CODE_TOTP':
+        elif channel['channelType'] == 'TWO_FA_RESP_WEBAUTHN':
+            raise Exception("Not supported channelType " + channel['channelType'])
+        elif channel['channelType'] == 'TWO_FA_CT_KEEPER':
+            raise Exception("Not supported channelType " + channel['channelType'])
+        elif channel['channelType'] == 'TWO_FA_CODE_TOTP':
             # print("DO TOTP (Google Authenticator)")
-            raise Exception("Not supported channelType " + channelSelected['channelType'])
-        elif channelSelected['channelType'] == 'TWO_FA_CODE_DUO':
-            raise Exception("Not supported channelType " + channelSelected['channelType'])
-        elif channelSelected['channelType'] == 'TWO_FA_CODE_DNA':
-            raise Exception("Not supported channelType " + channelSelected['channelType'])
-        elif channelSelected['channelType'] == 'EMAIL_CODE':
-            raise Exception("Not supported channelType " + channelSelected['channelType'])
-        elif channelSelected['channelType'] == '2FA_CODE' \
-                or channelSelected['channelType'] == 'TWO_FA_CT_TOTP'\
-                or channelSelected['channelType'] == 'TWO_FA_CT_DUO':
+            raise Exception("Not supported channelType " + channel['channelType'])
+        elif channel['channelType'] == 'TWO_FA_CODE_DUO':
+            raise Exception("Not supported channelType " + channel['channelType'])
+        elif channel['channelType'] == 'TWO_FA_CODE_DNA':
+            raise Exception("Not supported channelType " + channel['channelType'])
+        elif channel['channelType'] == 'EMAIL_CODE':
+            raise Exception("Not supported channelType " + channel['channelType'])
+        elif channel['channelType'] == '2FA_CODE' \
+                or channel['channelType'] == 'TWO_FA_CT_TOTP'\
+                or channel['channelType'] == 'TWO_FA_CT_DUO':
 
             prompt_str = "Enter 2FA Code"
 
-            cur_channel_type = channelSelected['channelType']
+            cur_channel_type = channel['channelType']
 
             if cur_channel_type == 'TWO_FA_CT_DUO':
                 prompt_str = prompt_str + " (use code from DUO app)"
@@ -515,8 +507,7 @@ class LoginV3Flow:
                 logging.warning(warning_msg)
 
         else:
-            raise Exception("Unhandled channel type %s" % channelSelected['channelType'])
-
+            raise Exception("Unhandled channel type %s" % channel['channelType'])
 
 class LoginV3API:
 
