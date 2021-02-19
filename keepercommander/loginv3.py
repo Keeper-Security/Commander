@@ -92,8 +92,8 @@ class LoginV3Flow:
 
             elif resp.loginState == proto.REDIRECT_ONSITE_SSO \
                     or resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                print(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
-                print(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
+                logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
+                logging.info(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
 
                 is_alternate_login = True
 
@@ -216,7 +216,7 @@ class LoginV3Flow:
 
                 LoginV3Flow.populateAccountSummary(params)
 
-                print(bcolors.OKGREEN + "Successfully authenticated with Login V3 (" + login_type_message + ")" + bcolors.ENDC)
+                logging.info(bcolors.OKGREEN + "Successfully authenticated with Login V3 (" + login_type_message + ")" + bcolors.ENDC)
 
                 return
             else:
@@ -347,7 +347,7 @@ class LoginV3Flow:
             rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, code, proto.TWO_FA_EXP_IMMEDIATELY)
 
             if type(rs) == bytes:
-                print("Successfully verified 2FA code.")
+                logging.info("Successfully verified 2FA code.")
                 return True
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
@@ -360,7 +360,7 @@ class LoginV3Flow:
                 proto.TWO_FA_PUSH_KEEPER)
 
             if type(rs) == bytes:
-                print("Successfully made a push notification to the approved device.")
+                logging.info("Successfully made a push notification to the approved device.")
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
@@ -395,9 +395,9 @@ class LoginV3Flow:
                 optionsDict[count] = channel
 
                 if channel['channelType'] in channelTypeDescrMapping:
-                    print("\t%s: %s" % (count, channelTypeDescrMapping[channel['channelType']]))
+                    logging.debug("\t%s: %s" % (count, channelTypeDescrMapping[channel['channelType']]))
                 else:
-                    print("\t%s: %s" % (count, channel['channelType']))
+                    logging.debug("\t%s: %s" % (count, channel['channelType']))
 
                 count = count + 1
         else:
@@ -412,11 +412,11 @@ class LoginV3Flow:
         if int(selection) in optionsDict:
             channelSelected = optionsDict[int(selection)]
         else:
-            print("Your selection %s not in the list" % selection)
+            logging.debug("Your selection %s not in the list" % selection)
             return
 
         if channelSelected['channelType'] == 'TWO_FA_CODE_NONE':
-            print("TWO_FA_CODE_NONE")
+            logging.debug("TWO_FA_CODE_NONE")
         elif channelSelected['channelType'] == "TWO_FA_CT_SMS":
 
             rs = LoginV3API.twoFactorSend2FAPushMessage(
@@ -427,12 +427,12 @@ class LoginV3Flow:
             )
 
             if type(rs) == bytes:
-                print(bcolors.OKGREEN + "\nSuccessfully sent SMS.\n" + bcolors.ENDC)
+                logging.info(bcolors.OKGREEN + "\nSuccessfully sent SMS.\n" + bcolors.ENDC)
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
         elif channelSelected['channelType'] == 'TWO_FA_CODE_RSA':
-            print("DO RSA")
+            logging.debug("DO RSA")
         elif channelSelected['channelType'] == "TWO_FA_CT_U2F":
             try:
                 from .yubikey import u2f_authenticate
@@ -504,7 +504,7 @@ class LoginV3Flow:
 
             if type(rs) == bytes:
 
-                print(bcolors.OKGREEN + "Successfully verified 2FA Code." + bcolors.ENDC)
+                logging.info(bcolors.OKGREEN + "Successfully verified 2FA Code." + bcolors.ENDC)
 
                 two_fa_validation_rs = proto.TwoFactorValidateResponse()
                 two_fa_validation_rs.ParseFromString(rs)
@@ -512,7 +512,7 @@ class LoginV3Flow:
                 return two_fa_validation_rs.encryptedLoginToken
             else:
                 warning_msg = bcolors.WARNING + "Unable to verify 2FA code '" + otp_code + "'. Regenerate the code and try again." + bcolors.ENDC
-                print(warning_msg)
+                logging.warning(warning_msg)
 
         else:
             raise Exception("Unhandled channel type %s" % channelSelected['channelType'])
