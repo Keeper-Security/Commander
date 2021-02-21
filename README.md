@@ -528,7 +528,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
         
         Example: `this-device ip_auto_approve yes`
         
-        _Note: this does NOT affect cloud sso devices._
+        _Note: this does NOT affect cloud SSO devices._
     - `timeout` - If the session is idle for more than the set value then user will be logged out, ei session token will expire. Default value for commander is 2 days.
         This value is device specific, the backend will track this based on the device_id in the session token.
 
@@ -688,7 +688,7 @@ To import records into your vault, use the ```import``` command.  Supported impo
 
 JSON import files can contain records, folders, subfolders, shared folders, default folder permissions  and user/team permissions.
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
-Keepass files will transfer records, file attachments, folders and subfolders. Option exists to make all folders as shared folders. File attachments are supported in both import and export with Keepass however they are limited to 1MB for each file based on keepass' structure.
+Keepass files will transfer records, file attachments, folders and subfolders. Option exists to make all folders as shared folders. File attachments are supported in both import and export with Keepass however they are limited to 1MB for each file based on Keepass' structure.
 LastPass import will transfer the vault passwords directly to Keeper retaining the folder structure.
 
 **JSON Record Import**
@@ -1024,7 +1024,7 @@ Commander supports integration with popular SIEM solutions such as Splunk, Sumo 
 
 [https://docs.keeper.io/enterprise-guide/event-reporting](https://docs.keeper.io/enterprise-guide/event-reporting)
 
-Using Commander for SIEM integration works well in an on-prem environment where the HTTP event collector is only available within your network.  The Keeper Admin Console versino 13.3+ is capable of integrating our backend event data into your SIEM solution but it requires that you are utilizing a cloud-based SIEM solution. If you need assistance in integrating Keeper into your SIEM solution without Commander, please contact our business support team at business.support@keepersecurity.com. 
+Using Commander for SIEM integration works well in an on-prem environment where the HTTP event collector is only available within your network.  The Keeper Admin Console version 13.3+ is capable of integrating our backend event data into your SIEM solution but it requires that you are utilizing a cloud-based SIEM solution. If you need assistance in integrating Keeper into your SIEM solution without Commander, please contact our business support team at business.support@keepersecurity.com. 
 
 **Export of Event Logs in Syslog Format**
 
@@ -1632,7 +1632,7 @@ connect:xxx:ssh-key:yyy | {<custom field with private key>} ${password}
 
 Here, ```xxx``` is the friendly name of the connection.  ```yyy``` is an optional key name used with the SSH agent.
 
-In this example, the first parameter references the private key, the second parameter references the passphase used to encrypt the private key.
+In this example, the first parameter references the private key, the second parameter references the passphrase used to encrypt the private key.
 
 ```${password}``` references the value stored in the record's Password field 
 
@@ -1833,7 +1833,7 @@ The Record UID and Shared Folder UID can be found either through the "get", "lis
 
 ### Deep linking to records (Web Vault Hyperlink)
 
-The Record UID that is displayed on password record output can be used for deep linking directly into the Keeper Web Vault only for privileged users. This Vault link can be stored and sent over unsecure channels because it only provides a reference to the record within your vault -- it does not provide access to the actual record content.  To access the content, you must still authenticate into the vault and decrypt the data.  The link is in the format `https://keepersecurity.com/vault#detail/XXXXXX` and you simply replace XXXXXX with the Record UID. Providing this link to another user does NOT initiate sharing.  To share a vault record, you must authenticate to your vault, open the record and click the "Share" feature.
+The Record UID that is displayed on password record output can be used for deep linking directly into the Keeper Web Vault only for privileged users. This Vault link can be stored and sent over insecure channels because it only provides a reference to the record within your vault -- it does not provide access to the actual record content.  To access the content, you must still authenticate into the vault and decrypt the data.  The link is in the format `https://keepersecurity.com/vault#detail/XXXXXX` and you simply replace XXXXXX with the Record UID. Providing this link to another user does NOT initiate sharing.  To share a vault record, you must authenticate to your vault, open the record and click the "Share" feature.
 
 ### About Our Security
 
@@ -1898,7 +1898,7 @@ Keeper's Features &amp; Benefits
 [https://keepersecurity.com](https://keepersecurity.com)
 
 ### Pricing
-Keeper is free for local password management on your device.  Premium subscriptions provides cloud-based capabilites including multi-device sync, shared folders, teams, SSO integration and encrypted file storage. More info about our enterprise pricing plans can be found [here](https://keepersecurity.com/pricing.html?tab=business).
+Keeper is free for local password management on your device.  Premium subscriptions provides cloud-based capabilities including multi-device sync, shared folders, teams, SSO integration and encrypted file storage. More info about our enterprise pricing plans can be found [here](https://keepersecurity.com/pricing.html?tab=business).
 
 ### Mobile Apps
 
