@@ -1351,7 +1351,7 @@ $ keeper --config=my_config_file.json
 
 ### Advanced Configuration File
 
-By default, Keeper will look for a file called ```config.json``` in the current working directory and it will use this file for reading and writing session parameters. For example, if you login with two factor authentication, the device token is written to this file. The configuration file loaded can also be customized through the ```config``` parameter. The config file can also be used to automate and schedule commands.
+By default, Keeper will look for a file pointed to by the environment variable `KEEPER_CONFIG_FILE`, falling back to ```config.json``` in the current working directory, and will use this file for reading and writing session parameters. For example, if you login with two factor authentication, the device token is written to this file. The configuration file loaded can also be customized through the ```config``` parameter. The config file can also be used to automate and schedule commands.
 
 Below is a fully loaded config file. 
 
@@ -1513,7 +1513,7 @@ In this case, you will be asked for the Keeper Master Password. There are a few 
 
 2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Email>`. This method is demonstrated in the Jenkins script explained below.
 
-3. Stored to `config.json` file. Commander searches for file named `config.json` in the current working directory and uses the ```password``` parameter.
+3. Stored to `config.json` file. Commander searches for the file pointed to by the environment variable `KEEPER_CONFIG_FILE`, falling back to `config.json` in the current working directory, and uses the ```password``` parameter.
 
 ```json
 {
