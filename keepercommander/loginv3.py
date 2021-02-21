@@ -395,15 +395,15 @@ class LoginV3Flow:
                 optionsDict[count] = channel
 
                 if channel['channelType'] in channelTypeDescrMapping:
-                    logging.debug("\t%s: %s" % (count, channelTypeDescrMapping[channel['channelType']]))
+                    print("\t%s: %s" % (count, channelTypeDescrMapping[channel['channelType']]))
                 else:
-                    logging.debug("\t%s: %s" % (count, channel['channelType']))
+                    print("\t%s: %s" % (count, channel['channelType']))
 
                 count = count + 1
         else:
             raise Exception("No channels provided by API")
 
-        selection: str = input('Selection (ex. 2): ')
+        selection = input('Selection (ex. 2): ')
 
         if not CommonHelperMethods.check_int(selection):
             logging.error("Please type a number")
@@ -412,11 +412,11 @@ class LoginV3Flow:
         if int(selection) in optionsDict:
             channelSelected = optionsDict[int(selection)]
         else:
-            logging.debug("Your selection %s not in the list" % selection)
+            print("Your selection %s not in the list" % selection)
             return
 
         if channelSelected['channelType'] == 'TWO_FA_CODE_NONE':
-            logging.debug("TWO_FA_CODE_NONE")
+            print("TWO_FA_CODE_NONE")
         elif channelSelected['channelType'] == "TWO_FA_CT_SMS":
 
             rs = LoginV3API.twoFactorSend2FAPushMessage(
@@ -432,7 +432,7 @@ class LoginV3Flow:
                 raise KeeperApiError(rs['error'], rs['message'])
 
         elif channelSelected['channelType'] == 'TWO_FA_CODE_RSA':
-            logging.debug("DO RSA")
+            print("DO RSA")
         elif channelSelected['channelType'] == "TWO_FA_CT_U2F":
             try:
                 from .yubikey import u2f_authenticate
