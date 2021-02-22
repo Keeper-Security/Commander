@@ -28,7 +28,9 @@ from . import cli
 
 def get_params_from_config(config_filename):
     params = KeeperParams()
-    params.config_filename = config_filename or 'config.json'
+    params.config_filename = (
+        config_filename or os.getenv('KEEPER_CONFIG_FILE', 'config.json')
+    )
 
     if os.path.exists(params.config_filename):
         try:

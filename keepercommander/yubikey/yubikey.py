@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import getpass
 import time
 import threading
 import logging
@@ -69,7 +70,7 @@ def get_input_interrupted(prompt):
             raise KeyboardInterrupt()
         return result.decode()
     else:
-        return input(prompt)
+        return getpass.getpass(prompt=prompt)
 
 
 def u2f_authenticate(authenticateRequests):
