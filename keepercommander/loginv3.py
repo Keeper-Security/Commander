@@ -408,7 +408,7 @@ class LoginV3Flow:
                 logging.debug(f"Selected {idx}. {channel_type}")
                 assert channel is not None
             except:
-                raise Exception("Invalid selection, please type the number of one of the enumerated choices.")
+                raise Exception("Invalid entry, additional factors of authentication shown may be configured if not currently enabled.")
 
         if channel_type == 'TWO_FA_CODE_NONE':
             pass
