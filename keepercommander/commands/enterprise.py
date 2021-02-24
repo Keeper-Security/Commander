@@ -1202,7 +1202,16 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                             is_managed_role = True
                                             break
                             if is_managed_role:
-                                if 'role_keys' in params.enterprise:
+
+                                if 'role_keys2' in params.enterprise:
+                                    for rk2 in params.enterprise['role_keys2']:
+                                        if rk2['role_id'] == role_id:
+                                            encrypted_key_decoded = base64.urlsafe_b64decode(rk2['role_key'] + '==')
+                                            role_key = rest_api.decrypt_aes(encrypted_key_decoded,
+                                                                            params.enterprise['unencrypted_tree_key'])
+                                            break
+
+                                if 'role_keys' in params.enterprise and role_key is None:
                                     for rk in params.enterprise['role_keys']:
                                         if rk['role_id'] == role_id:
                                             if rk['key_type'] == 'encrypted_by_data_key':
@@ -1238,7 +1247,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     if user_pkeys[user_id]:
                                         rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
                                         if role_key:
-                                            rq['role_admin_key'] = api.encrypt_aes(role_key, user_pkeys[user_id])
+                                            rq['role_admin_key'] = api.encrypt_rsa(role_key, user_pkeys[user_id])
                                         request_batch.append(rq)
                                 else:
                                     request_batch.append(rq)
@@ -1565,7 +1574,15 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                         is_managed_role = True
                                         break
                         if is_managed_role:
-                            if 'role_keys' in params.enterprise:
+
+                            if 'role_keys2' in params.enterprise:
+                                for rk2 in params.enterprise['role_keys2']:
+                                    if rk2['role_id'] == role_id:
+                                        encrypted_key_decoded = base64.urlsafe_b64decode(rk2['role_key'] + '==')
+                                        role_key = rest_api.decrypt_aes(encrypted_key_decoded, params.enterprise['unencrypted_tree_key'])
+                                        break
+
+                            if 'role_keys' in params.enterprise and role_key is None:
                                 for rk in params.enterprise['role_keys']:
                                     if rk['role_id'] == role_id:
                                         if rk['key_type'] == 'encrypted_by_data_key':
@@ -1590,7 +1607,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             if user_pkeys[user_id]:
                                 rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
                                 if role_key:
-                                    rq['role_admin_key'] = api.encrypt_aes(role_key, user_pkeys[user_id])
+                                    rq['role_admin_key'] = api.encrypt_rsa(role_key, user_pkeys[user_id])
                                 request_batch.append(rq)
                         else:
                             request_batch.append(rq)
@@ -3546,9 +3563,6 @@ class DeviceApproveCommand(EnterpriseCommand):
             }
             response = api.communicate(params, request)
             DeviceApproveCommand.DevicesToApprove = response.get('devices_request_for_admin_approval') or []
-
-            api.query_enterprise(params)
-
         if not DeviceApproveCommand.DevicesToApprove:
             logging.info('There are no pending devices to approve')
             return
@@ -3663,7 +3677,6 @@ class DeviceApproveCommand(EnterpriseCommand):
                         if type(rs) is bytes:
                             data_key_rs = EnterpriseUserDataKeys()
                             data_key_rs.ParseFromString(rs)
-                            logging.debug(data_key_rs)
                             for key in data_key_rs.keys:
                                 enc_data_key = key.userEncryptedDataKey
                                 if enc_data_key:
@@ -3757,7 +3770,6 @@ class DeviceApproveCommand(EnterpriseCommand):
             if type(rs) is bytes:
                 approve_rs = ApproveUserDevicesResponse()
                 approve_rs.ParseFromString(rs)
-                logging.debug(approve_rs)
                 DeviceApproveCommand.DevicesToApprove = None
             else:
                 logging.warning(rs)
