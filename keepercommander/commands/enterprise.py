@@ -1590,7 +1590,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             if user_pkeys[user_id]:
                                 rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
                                 if role_key:
-                                    rq['role_admin_key'] = api.encrypt_aes(role_key, user_pkeys[user_id])
+                                    rq['role_admin_key'] = api.encrypt_rsa(role_key, user_pkeys[user_id])
                                 request_batch.append(rq)
                         else:
                             request_batch.append(rq)
