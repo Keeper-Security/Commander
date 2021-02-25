@@ -3620,12 +3620,19 @@ class DeviceApproveCommand(EnterpriseCommand):
                             ip_map[uname] = set()
                         ip_map[uname].add(row['ip_address'])
 
+            # Filter out users that tried to login from an untrusted IP
+            trusted_devices = {}    # To avoid array modification in a loop, we will store this into a separated dict
+
             for k, v in matching_devices.items():
                 p_uname = emails.get(v.get('enterprise_user_id'))
                 p_ip_addr = v.get('ip_address')
                 keep = p_uname and p_ip_addr and p_uname in ip_map and p_ip_addr in ip_map[p_uname]
-                if not keep:
-                    del matching_devices[k]
+                if keep:
+                    trusted_devices[k] = v
+                else:
+                    logging.warning("User '%s' will not be approved because user tried to login from an untrusted IP %s. Remove --trusted-ip argument", p_uname, p_ip_addr)
+
+            matching_devices = trusted_devices
 
         if len(matching_devices) == 0:
             logging.info('No matching devices found')
