@@ -3630,7 +3630,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                 if keep:
                     trusted_devices[k] = v
                 else:
-                    logging.warning("User '%s' will not be approved because user tried to login from an untrusted IP %s. Remove --trusted-ip argument", p_uname, p_ip_addr)
+                    logging.warning("The user %s attempted to login from an unstrusted IP (%s). To force the approval, run the same command without the --trusted-ip argument", p_uname, p_ip_addr)
 
             matching_devices = trusted_devices
 
