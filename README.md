@@ -929,6 +929,43 @@ JSON export files contain records, folders, subfolders, shared folders, default 
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
 Keepass files contain records, file attachments, folders and subfolders.
 
+### Security Audit Report
+
+Business customers can generate security audit reports. For help with the syntax of the report, use the following command:
+```
+My Vault> security-audit-report --syntax-help
+
+Security Audit Report Command Syntax Description:
+
+Column Name       Description
+  username          user name
+  email             e-mail address
+  weak              number of records whose password strength is in the weak category
+  medium            number of records whose password strength is in the medium category
+  strong            number of records whose password strength is in the strong category
+  reused            number of reused passwords
+  unique            number of unique passwords
+  securityScore     security score
+  twoFactorChannel  2FA - ON/OFF
+
+--report-type:
+            csv     CSV format
+            json    JSON format
+            table   Table format (default)
+```
+Supported export formats:
+* JSON
+* CSV
+
+To view the report in CSV format use the following command:
+```
+My Vault> security-audit-report --format csv
+```
+To export the report in CSV format use the following command:
+```
+My Vault> security-audit-report --format csv --output security_audit.csv
+```
+
 ### Ad-Hoc Event Reporting 
 
 Business customers can now generate advanced ad-hoc event reports with over 100 different event types and custom filters. For help with the syntax of the report, use the below command:
