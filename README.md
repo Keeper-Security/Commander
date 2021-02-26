@@ -957,6 +957,15 @@ Supported export formats:
 * JSON
 * CSV
 
+To view the report in CSV format use the following command:
+```
+My Vault> security-audit-report --format csv
+```
+To export the report in CSV format use the following command:
+```
+My Vault> security-audit-report --format csv --output security_audit.csv
+```
+
 ### Ad-Hoc Event Reporting 
 
 Business customers can now generate advanced ad-hoc event reports with over 100 different event types and custom filters. For help with the syntax of the report, use the below command:
