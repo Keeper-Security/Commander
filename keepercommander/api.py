@@ -45,6 +45,7 @@ pad_binary = lambda s: s + ((BS - len(s) % BS) * chr(BS - len(s) % BS)).encode()
 unpad_binary = lambda s: s[0:-s[-1]]
 unpad_char = lambda s: s[0:-ord(s[-1])]
 
+decode_uid_to_str = lambda uid: base64.urlsafe_b64encode(uid).decode().rstrip('=')
 
 def run_command(params, request):
     # type: (KeeperParams, dict) -> dict
@@ -1324,7 +1325,9 @@ def prepare_record(params, record):
 def communicate_rest(params, request, endpoint):
     api_request_payload = proto.ApiRequestPayload()
     api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-    api_request_payload.payload = request.SerializeToString()
+    if request:
+        api_request_payload.payload = request.SerializeToString()
+
     rs = None
     try:
         rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)

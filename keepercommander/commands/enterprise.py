@@ -44,7 +44,7 @@ from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, EnterpriseUserDataKeys)
+                             ApproveUserDevicesResponse, EnterpriseUserDataKeys, SharedRecordEvent, SharedRecordResponse)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
 def register_commands(commands):
@@ -62,6 +62,7 @@ def register_commands(commands):
     commands['audit-report'] = AuditReportCommand()
     commands['security-audit-report'] = SecurityAuditReportCommand()
     commands['user-report'] = UserReportCommand()
+    commands['shared-records-report'] = SharedRecordsReport()
 
 
 def register_command_info(aliases, command_info):
@@ -252,6 +253,12 @@ user_report_parser.add_argument('--output', dest='output', action='store', help=
 user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365, help='number of days to look back for last login.')
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
+
+shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', description='Report to show all shared records logged in user owns.')
+shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', required=True, help='Data format output')
+shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
+shared_records_report_parser.error = raise_parse_exception
+shared_records_report_parser.exit = suppress_exit
 
 
 def lock_text(lock):
@@ -3948,3 +3955,57 @@ class DeviceApproveCommand(EnterpriseCommand):
             rows.sort(key=lambda x: x[0])
             dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
             print('')
+
+
+class SharedRecordsReport(Command):
+    def get_parser(self):
+        return shared_records_report_parser
+
+    def execute(self, params, **kwargs):
+
+        export_format = kwargs['format'] if 'format' in kwargs else None
+        export_name = kwargs['name'] if 'name' in kwargs else None
+
+        rs = api.communicate_rest(params, None, 'report/get_shared_record_report')
+
+        shared_records_data_rs = SharedRecordResponse()
+        shared_records_data_rs.ParseFromString(rs)
+
+        shared_from_mapping = {
+            1: "Direct Share",
+            2: "Share Folder",
+            3: "Share Team Folder"
+        }
+
+        rows = []
+
+        for e in shared_records_data_rs.events:
+
+            record_uid_str = api.decode_uid_to_str(e.recordUid)
+
+            cached_record = api.get_record(params, record_uid_str)
+
+            row = {
+                'uid': record_uid_str,
+                'title': cached_record.title,
+                'shareTo': e.userName,
+                'sharedFrom': shared_from_mapping[e.shareFrom],
+                'canEdit': e.canEdit,
+                'canReshare': e.canReshare
+            }
+
+            rows.append(row)
+
+        fields = ['uid', 'title', 'shareTo', 'sharedFrom', 'canEdit', 'canReshare']
+        field_descriptions = fields
+        if export_format == 'table':
+            field_descriptions = ['Record UID', 'Title', 'Shared To', 'Shared From', 'Can Edit', 'Can Reshare']
+
+        table = []
+        for raw in rows:
+            row = []
+            for f in fields:
+                row.append(raw[f])
+            table.append(row)
+
+        dump_report_data(table, field_descriptions, fmt=export_format, filename=export_name)
