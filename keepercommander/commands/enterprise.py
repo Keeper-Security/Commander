@@ -44,7 +44,7 @@ from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, EnterpriseUserDataKeys, SharedRecordEvent, SharedRecordResponse)
+                             ApproveUserDevicesResponse, EnterpriseUserDataKeys)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
 def register_commands(commands):
