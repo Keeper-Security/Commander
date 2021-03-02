@@ -177,7 +177,7 @@ delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
 
 shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', description='Report to show all shared records logged in user owns.')
-shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', required=True, help='Data format output')
+shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 shared_records_report_parser.error = raise_parse_exception
 shared_records_report_parser.exit = suppress_exit
@@ -1536,6 +1536,10 @@ class SharedRecordsReport(Command):
             record_uid = api.decode_uid_to_str(e.recordUid)
 
             cached_record = api.get_record(params, record_uid)
+
+            if not cached_record:   # probably deleted record
+                logging.debug("Record uid=%s was not located in current cache." % record_uid)
+                continue
 
             # Folder Path(s)
             folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
