@@ -1012,7 +1012,7 @@ def get_record(params,record_uid):
         return
 
     if not record_uid in params.record_cache:
-        logging.warning('Record UID not found.')
+        logging.warning('Record UID %s not found in cache.' % record_uid)
         return
 
     cached_rec = params.record_cache[record_uid]

@@ -1530,12 +1530,16 @@ class SharedRecordsReport(Command):
         }
 
         rows = []
-
+        count = 0
         for e in shared_records_data_rs.events:
+            count = count + 1
 
             record_uid = api.decode_uid_to_str(e.recordUid)
 
-            cached_record = api.get_record(params, record_uid)
+            cached_record = None
+
+            if record_uid in params.record_cache:   # to avoid not found warning log messages
+                cached_record = api.get_record(params, record_uid)
 
             if not cached_record:   # probably deleted record
                 logging.debug("Record uid=%s was not located in current cache." % record_uid)
@@ -1547,23 +1551,31 @@ class SharedRecordsReport(Command):
             for i in range(len(folders)):
                 path_str = path_str + ('{0}{1}'.format('\n' if i > 0 else '', folders[i]))
 
+            if not e.canEdit and not e.canReshare:
+                permissions = "Read Only"
+            elif not e.canEdit and e.canReshare:
+                permissions = "Can Share"
+            elif e.canEdit and e.canReshare:
+                permissions = "Can Edit"
+            else:
+                permissions = "Can Edit & Share"
+
             row = {
+                'count': count,
                 'uid': record_uid,
                 'title': cached_record.title,
                 'shareTo': e.userName,
-                'sharedFrom': shared_from_mapping[e.shareFrom],
-                'canEdit': e.canEdit,
-                'canReshare': e.canReshare,
+                'sharedFrom': shared_from_mapping[e.shareFrom] if e.shareFrom in shared_from_mapping else "Other Share",
+                'permissions': permissions,
                 'folderPath': path_str
             }
 
             rows.append(row)
 
-        fields = ['uid', 'title', 'shareTo', 'sharedFrom', 'canEdit', 'canReshare', 'folderPath']
+        fields = ['count', 'uid', 'title', 'shareTo', 'sharedFrom', 'permissions', 'folderPath']
         field_descriptions = fields
         if export_format == 'table':
-            field_descriptions = ['Record UID', 'Title', 'Shared To', 'Shared From', 'Can Edit', 'Can Reshare',
-                                  'Folder Path']
+            field_descriptions = ['#', 'Record UID', 'Title', 'Shared To', 'Shared From', 'Permissions', 'Folder Path']
 
         table = []
         for raw in rows:
