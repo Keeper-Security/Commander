@@ -1551,7 +1551,7 @@ class SharedRecordsReport(Command):
                 'uid': record_uid,
                 'title': cached_record.title,
                 'shareTo': e.userName,
-                'sharedFrom': shared_from_mapping[e.shareFrom],
+                'sharedFrom': shared_from_mapping[e.shareFrom] if e.shareFrom in shared_from_mapping else "Other Share",
                 'canEdit': e.canEdit,
                 'canReshare': e.canReshare,
                 'folderPath': path_str
