@@ -929,6 +929,18 @@ JSON export files contain records, folders, subfolders, shared folders, default 
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
 Keepass files contain records, file attachments, folders and subfolders.
 
+### Shared Records Report
+Details of all shared record for a logged-in user.
+
+```
+My Vault> shared-records-report
+```
+
+Example exporting the report to CSV format and save it to the file:
+```
+My Vault> shared-records-report --format csv --output shared-records-report.csv
+```
+
 ### Security Audit Report
 
 Business customers can generate security audit reports. For help with the syntax of the report, use the following command:
