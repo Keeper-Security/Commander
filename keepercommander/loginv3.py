@@ -407,9 +407,11 @@ class LoginV3Flow:
                 channel = available_channels.get(channel_type)
                 logging.debug(f"Selected {idx}. {channel_type}")
                 assert channel is not None
-            except:
+            except AssertionError:
                 print("Invalid entry, additional factors of authentication shown may be configured if not currently enabled.")
                 return
+            except (KeyboardInterrupt, EOFError):
+                exit(1)
 
         mfa_prompt = False
 
