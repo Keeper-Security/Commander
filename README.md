@@ -196,6 +196,13 @@ This account requires 2FA Authentication
 Selection (ex. 2):
 ```
 
+Steps to enable alternate master password:
+- Login to Web Vault
+- Navigate to: Setting -> General -> Master Password
+
+![image](https://user-images.githubusercontent.com/187306/110345751-c38c7d00-7fe3-11eb-9643-894c7c0ec025.png)
+
+
 ##### Persistent Login Flow
 Persistent Login allows a user to login without typing a master password. In order to enable this feature, the user must register the device and turn on the persistent login setting. Once that's done the next time when user logs in, the session will be resumed and the user will be automatically logged in. Several tokens are stored in the `config.json` file in order to resume a session automatically.
 
