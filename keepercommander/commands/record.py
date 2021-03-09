@@ -25,10 +25,11 @@ from tabulate import tabulate
 from ..team import Team
 from .. import api, display, generator
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
-from .base import raise_parse_exception, suppress_exit, user_choice, Command
+from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
+from .enterprise_pb2 import SharedRecordResponse
 
 
 def register_commands(commands):
@@ -47,6 +48,7 @@ def register_commands(commands):
     commands['clipboard-copy'] = ClipboardCommand()
     commands['record-history'] = RecordHistoryCommand()
     commands['totp'] = TotpCommand()
+    commands['shared-records-report'] = SharedRecordsReport()
 
 
 def register_command_info(aliases, command_info):
@@ -64,7 +66,7 @@ def register_command_info(aliases, command_info):
     aliases['rh'] = 'record-history'
 
     for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, record_history_parser, totp_parser,  add_parser, edit_parser, rm_parser,
-              append_parser, download_parser, upload_parser, delete_attachment_parser]:
+              append_parser, download_parser, upload_parser, delete_attachment_parser, shared_records_report_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -173,6 +175,12 @@ delete_attachment_parser.add_argument('--name', dest='name', action='append', re
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
+
+shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', description='Report shared records for a logged-in user.')
+shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
+shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
+shared_records_report_parser.error = raise_parse_exception
+shared_records_report_parser.exit = suppress_exit
 
 
 class RecordAddCommand(Command):
@@ -1501,4 +1509,79 @@ class TotpCommand(Command):
                     TotpCommand.Endpoints.append(TotpEndpoint(record_uid, record.title, paths))
 
 
+class SharedRecordsReport(Command):
+    def get_parser(self):
+        return shared_records_report_parser
 
+    def execute(self, params, **kwargs):
+
+        export_format = kwargs['format'] if 'format' in kwargs else None
+        export_name = kwargs['name'] if 'name' in kwargs else None
+
+        rs = api.communicate_rest(params, None, 'report/get_shared_record_report')
+
+        shared_records_data_rs = SharedRecordResponse()
+        shared_records_data_rs.ParseFromString(rs)
+
+        shared_from_mapping = {
+            1: "Direct Share",
+            2: "Share Folder",
+            3: "Share Team Folder"
+        }
+
+        rows = []
+        count = 0
+        for e in shared_records_data_rs.events:
+            count = count + 1
+
+            record_uid = api.decode_uid_to_str(e.recordUid)
+
+            cached_record = None
+
+            if record_uid in params.record_cache:   # to avoid not found warning log messages
+                cached_record = api.get_record(params, record_uid)
+
+            if not cached_record:   # probably deleted record
+                logging.debug("Record uid=%s was not located in current cache." % record_uid)
+                continue
+
+            # Folder Path(s)
+            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
+            path_str = ""
+            for i in range(len(folders)):
+                path_str = path_str + ('{0}{1}'.format('\n' if i > 0 else '', folders[i]))
+
+            if not e.canEdit and not e.canReshare:
+                permissions = "Read Only"
+            elif not e.canEdit and e.canReshare:
+                permissions = "Can Share"
+            elif e.canEdit and e.canReshare:
+                permissions = "Can Edit"
+            else:
+                permissions = "Can Edit & Share"
+
+            row = {
+                'count': count,
+                'uid': record_uid,
+                'title': cached_record.title,
+                'shareTo': e.userName,
+                'sharedFrom': shared_from_mapping[e.shareFrom] if e.shareFrom in shared_from_mapping else "Other Share",
+                'permissions': permissions,
+                'folderPath': path_str
+            }
+
+            rows.append(row)
+
+        fields = ['count', 'uid', 'title', 'shareTo', 'sharedFrom', 'permissions', 'folderPath']
+        field_descriptions = fields
+        if export_format == 'table':
+            field_descriptions = ['#', 'Record UID', 'Title', 'Shared To', 'Shared From', 'Permissions', 'Folder Path']
+
+        table = []
+        for raw in rows:
+            row = []
+            for f in fields:
+                row.append(raw[f])
+            table.append(row)
+
+        dump_report_data(table, field_descriptions, fmt=export_format, filename=export_name)
