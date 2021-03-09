@@ -64,6 +64,7 @@ def register_command_info(aliases, command_info):
     aliases['cc'] = 'clipboard-copy'
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
     aliases['rh'] = 'record-history'
+    aliases['srr'] = 'shared-records-report'
 
     for p in [search_parser, list_parser, get_info_parser, clipboard_copy_parser, record_history_parser, totp_parser,  add_parser, edit_parser, rm_parser,
               append_parser, download_parser, upload_parser, delete_attachment_parser, shared_records_report_parser]:
@@ -176,7 +177,7 @@ delete_attachment_parser.add_argument('record', action='store', help='record pat
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
 
-shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', description='Report shared records for a logged-in user.')
+shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
 shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 shared_records_report_parser.error = raise_parse_exception
