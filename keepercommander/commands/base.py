@@ -113,8 +113,8 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.csv'
-        fd = open(filename, 'a' if append else 'w') if filename else sys.stdout
-        csv_writer = csv.writer(fd, newline='')
+        fd = open(filename, 'a' if append else 'w', newline='') if filename else sys.stdout
+        csv_writer = csv.writer(fd)
         if title:
             csv_writer.writerow([])
             csv_writer.writerow([title])

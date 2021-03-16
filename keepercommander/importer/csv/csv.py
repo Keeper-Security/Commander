@@ -75,7 +75,7 @@ class KeeperCsvImporter(BaseFileImporter):
 class KeeperCsvExporter(BaseExporter):
 
     def do_export(self, filename, records):
-        csvfile = open(filename, 'w', encoding='utf-8') if filename else sys.stdout
+        csvfile = open(filename, 'w', encoding='utf-8', newline='') if filename else sys.stdout
         writer = csv.writer(csvfile)
         for r in records:
             if type(r) == Record:
