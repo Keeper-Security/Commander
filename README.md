@@ -22,6 +22,8 @@ Jump to:
 * [Creating and Pre-Populating Vaults](#creating-and-pre-populating-vaults)
 * [Password Retrieval API](#password-retrieval-api)
 * [Jenkins CI Integration](#jenkins-ci-integration)
+* [GitHub Actions Integration](#github-actions-integration)
+* [Azure DevOps Pipeline Integration](#azure-devops-pipeline-integration)
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
@@ -1637,6 +1639,138 @@ node {
 ```
 
 In this example, replace the Record UID with the actual UID from the Keeper vault. To locate the Record UID see [this section](#locating-the-record-uid-and-other-identifiers).
+
+
+### GitHub Actions Integration
+
+This example demonstrates retrieving a password in Keeper for user in GitHub Actions environment
+
+1. Generate configuration file
+    - On your local machine, login to Keeper with the account you will be using in GitHub Actions. In our example we will use `gha@mycompany.com`. Make sure to disable 2FA for this account.
+      ```shell
+      keeper shell --user gha@mycompany.com
+      ```
+      
+    - Edit config file
+      
+      In your current directory where `keeper` command ran you should see a newly generated config file `config.json`. Modify this file by adding password that was used to login. This is the sample of the config file:
+      
+      ```json
+      {
+          "user": "gha@mycompany.com",
+          "password": "M4yTh4F0rc3Bw1thU!",
+          "private_key": "upemV2551Nc-oOw6DbqBzAXphOw46BBW19Rw7auXhzY",
+          "device_token": "kDbya3s-pco6N7n5mKBqSgUyQMCv9QVim4gh177zBJ11Pg"
+      }
+      ```
+      
+2. GitHub Actions Workflow configuration
+   
+    In your GitHub Actions workflow add following steps
+    - Install Keeper Commander
+    - Add `config.json` to the home folder from where Commander's commands will be executed. See note below on the best practices on how to secure the config file.
+    - Call Commander's commands
+  
+    Example Github Actions workflow code:
+  
+    ```yaml
+    name: Commander In GitHub Actions
+    on:
+      push:
+        branches: [ main ]
+      pull_request:
+        branches: [ main ]
+      workflow_dispatch:
+    jobs:
+      build:
+       runs-on: ubuntu-latest
+       steps:
+          - uses: actions/checkout@v2
+          - uses: actions/setup-python@v2
+            with:
+            python-version: '3.9'
+            architecture: 'x64'
+        - name: Install Keeper Commander
+          run: |
+            pip install keepercommander
+   
+        - name: Setup Config File
+          env: 
+            COMMANDER_CONFIG_JSON: ${{ secrets.COMMANDER_CONFIG_JSON }}
+          shell: bash
+          run: 'echo "$COMMANDER_CONFIG_JSON" > config.json'
+        - name: Example calling Keeper
+          run: |
+            keeper "ls -l"
+            keeper this-device
+    ```
+
+Note to secure config file:
+Config file that was generated in the step #1 can be stored in Actions secrets (Settings -> Secrets -> Repository secrets) as a JSON string in the value field.
+Later on this json will be retrieved and stored in the `config.json`, as it is shown in the "Setup Config File" step above.
+
+```yaml
+- name: Setup Config File
+  env: 
+    COMMANDER_CONFIG_JSON: ${{ secrets.COMMANDER_CONFIG_JSON }}
+  shell: bash
+  run: 'echo "$COMMANDER_CONFIG_JSON" > config.json'
+
+```
+
+
+
+### Azure DevOps Pipeline Integration
+
+This example demonstrates retrieving a password in Keeper for user in Azure DevOps Pipeline
+
+1. Generate configuration file 
+   
+    See Step 1 in [GitHub Actions Integration](#github-actions-integration) example. 
+
+2. Azure DevOps Pipeline configuration
+
+   In your GitHub Actions workflow add following steps
+    - Install Keeper Commander
+    - Add `config.json` to the home folder from where Commander's commands will be executed.
+    - Call Commander's commands
+
+    Example Azure DevOps Pipeline code:
+
+    ```yaml
+    trigger:
+    - main
+    
+    pool:
+      vmImage: ubuntu-latest
+    
+    steps:
+    
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.7'
+        addToPath: true
+        architecture: 'x64'
+    
+    - task: DownloadSecureFile@1
+      name: secureKeeperConfig
+      displayName: Download Keeper config file
+      inputs:
+        secureFile: config.json
+    
+    - displayName: Install Keeper Commander
+      script: |
+        pip3 install keepercommander
+        
+    - displayName: 'Example calling Keeper'
+      script: |
+        export KEEPER_CONFIG_FILE=$(keeperConfig.secureFilePath)
+        keeper whoami
+        keeper "ls -l"
+    ```
+
+
+See [this document](https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/utility/download-secure-file?view=azure-devops) on how to securely store files in Azure DevOps Pipeline
 
 
 ### Launching and Connecting to Remote Servers 
