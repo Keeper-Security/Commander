@@ -1728,14 +1728,14 @@ This example demonstrates retrieving a password in Keeper for user in Azure DevO
    
     See Step 1 in [GitHub Actions Integration](#github-actions-integration) example. 
 
-2. Azure DevOps Pipline configuration
+2. Azure DevOps Pipeline configuration
 
    In your GitHub Actions workflow add following steps
     - Install Keeper Commander
     - Add `config.json` to the home folder from where Commander's commands will be executed.
     - Call Commander's commands
 
-    Example Azure DevOps Pipline code:
+    Example Azure DevOps Pipeline code:
 
     ```yaml
     trigger:
@@ -1770,7 +1770,7 @@ This example demonstrates retrieving a password in Keeper for user in Azure DevO
     ```
 
 
-See [this document](https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/utility/download-secure-file?view=azure-devops) on how to securely store files in Azure DevOps Pipline
+See [this document](https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/utility/download-secure-file?view=azure-devops) on how to securely store files in Azure DevOps Pipeline
 
 
 ### Launching and Connecting to Remote Servers 
