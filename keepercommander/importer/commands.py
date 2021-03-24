@@ -161,6 +161,11 @@ class RecordExportCommand(ImporterCommand):
         return export_parser
 
     def execute(self, params, **kwargs):
+
+        if is_export_restricted(params):
+            logging.warning('Permissions Required: `export` command is disabled. Please contact your enterprise administrator.')
+            return
+
         export_format = kwargs['format'] if 'format' in kwargs else None
         export_name = kwargs['name'] if 'name' in kwargs else None
         if format:
@@ -189,3 +194,17 @@ class RecordExportCommand(ImporterCommand):
             imp_exp.export(params, export_format, export_name, **extra)
         else:
             logging.error('Missing argument')
+
+
+def is_export_restricted(params):
+    is_export_restricted = False
+
+    booleans = params.enforcements['booleans'] if 'booleans' in params.enforcements else []
+
+    if len(booleans) > 0:
+        restrict_export_boolean = next((s for s in booleans if s['key'] == 'restrict_export'), None)
+
+        if restrict_export_boolean:
+            is_export_restricted = restrict_export_boolean['value']
+
+    return is_export_restricted
