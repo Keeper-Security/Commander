@@ -40,9 +40,9 @@ After rotation is completed, the new password will be stored in the **`Password`
 2. Give a name to the application and leave Supported account type as "Accounts in this organizational directory only (Default Directory only - Single tenant)"
 3. Click "Register"
 
-### Steps to add `User Administrator` role to the 
+### Steps to add role to the application
 1. Azure portal -> `Azure Active Directory` -> `Roles and administrators`
-2. Search for `User administrator` role and click on it
+2. Search for `Helpdesk Administrator` role and click on it
 3. Click on `+ Add assignments`
 4. Search for the application that was created above, select it, and click on "Add"
 
