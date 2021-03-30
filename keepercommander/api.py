@@ -1324,7 +1324,8 @@ def prepare_record(params, record):
 
 def communicate_rest(params, request, endpoint):
     api_request_payload = proto.ApiRequestPayload()
-    api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+    if params.session_token:
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
     if request:
         api_request_payload.payload = request.SerializeToString()
 

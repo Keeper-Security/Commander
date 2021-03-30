@@ -142,19 +142,22 @@ optional arguments:
 In the folder where you are running Commander, create a file called config.json which defines the
 API server and the email address.
 
-For customers hosted in the US region, set the US endpoint:
-```shell script
+Commander defaults to the US region, so customers hosted in other regions will need to specify a server in the config.
+
+| Region  | URL                           | Property in `config.json` file              |
+|---------|-------------------------------|---------------------------------------------|
+| US      | https://keepersecurity.com    | ```{"server": "https://keepersecurity.com"}```    |
+| EU      | https://keepersecurity.eu     | ```{"server": "https://keepersecurity.eu"}```     |
+| AU      | https://keepersecurity.com.au | ```{"server": "https://keepersecurity.com.au"}``` |
+
+#### Example config.json for EU region
+```json
 {
-  "server": "https://keepersecurity.com/api/v2/"
+  "server": "https://keepersecurity.eu"
 }
 ```
 
-For customers hosted in the EU region, set the EU endpoint:
-```shell script
-{
-  "server": "https://keepersecurity.eu/api/v2/"
-}
-```
+
 
 ##### Device approval
 
@@ -716,7 +719,7 @@ Below is a JSON import file with 2 records. The first record is added to a folde
 
 The import file example below is an array of record objects which can import into private folders and shared folders. Note in the example that the Facebook record contains a TOTP seed which will render on the Vault user interface and Commander CLI.
 
-```bash
+```json
 {
   "records": [{
     "title":"Google",
@@ -1132,9 +1135,9 @@ My Vault> audit-log --target=syslog --record=<your record UID>
 
 To automate the syslog event export every 5 minutes, create a JSON configuration file such as this:
 
-```bash
+```json
 {
-    "server":"https://keepersecurity.com/api/v2/",
+    "server":"https://keepersecurity.com",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
@@ -1204,9 +1207,9 @@ My Vault> audit-log --target=splunk --record=<your record UID>
 
 To automate the push of Splunk events every 5 minutes, create a JSON configuration file such as this:
 
-```bash
+```json
 {
-    "server":"https://keepersecurity.com/api/v2/",
+    "server":"https://keepersecurity.com",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
@@ -1272,9 +1275,9 @@ My Vault> audit-log --target=sumo --record=<your record UID>
 
 To automate the push of Sumo Logic events every 5 minutes, create a JSON configuration file such as this:
 
-```bash
+```json
 {
-    "server":"https://keepersecurity.com/api/v2/",
+    "server":"https://keepersecurity.com",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
@@ -1330,9 +1333,9 @@ My Vault> audit-log --target=json --record=<your record UID>
 
 To automate the JSON event export every 5 minutes, create a JSON configuration file such as this:
 
-```bash
+```json
 {
-    "server":"https://keepersecurity.com/api/v2/",
+    "server":"https://keepersecurity.com",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
@@ -1396,9 +1399,9 @@ My Vault> audit-log --target=azure-la --record=<your record UID>
 
 To automate the push of events to Azure Log Analytics every 5 minutes, create a JSON configuration file such as this:
 
-```bash
+```json
 {
-    "server":"https://keepersecurity.com/api/v2/",
+    "server":"https://keepersecurity.com",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
@@ -1423,9 +1426,9 @@ By default, Keeper will look for a file pointed to by the environment variable `
 
 Below is a fully loaded config file. 
 
-```bash
+```json
 {
-    "server":"https://keepersecurity.com/api/v2/",
+    "server":"https://keepersecurity.com",
     "user":"craig@company.com",
     "password":"your_password_here",
     "mfa_token":"filled_in_by_commander",
