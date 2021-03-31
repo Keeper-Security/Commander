@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+from  urllib.parse import urlparse, urlunparse
 from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
@@ -110,20 +111,29 @@ class LoginV3Flow:
                 raise Exception('This account need to be created.' % rest_api.CLIENT_VERSION)
 
             elif resp.loginState == proto.REGION_REDIRECT:
+                p = urlparse(params.server)
+                new_server = urlunparse((p.scheme, resp.stateSpecificValue, '', None, None, None))
 
-                redir_serv_host = params.server[8:].upper()
 
                 warn_msg = \
-                    "\nThis account is registered in '%s' but you are trying to login to '%s' server." \
-                    "\nRedirecting to %s"\
-                    % (resp.stateSpecificValue.upper(), redir_serv_host, redir_serv_host)
+                    "\n'%s' has indicated that this account was originally created in a different region." \
+                    "\nPlease update config to use server: %s"\
+                    "\nYou may also need to register this device in the other region, unsetting the the device_token and clone_code will do this automatically upon login."\
+                    % (p.netloc.upper(), new_server)
 
                 logging.warning(warn_msg)
 
-                params.rest_context.server_base = 'https://{0}/'.format(resp.stateSpecificValue)
-                params.server = params.rest_context.server_base
+                raise Exception("Changes to configuration are required.")
 
-                resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
+                # TODO: change configuration structure so that device_token is paired with server, so that a given device_token is more certain to work for a given server, and will not be forced to be unset to "find out"
+                # params.rest_context.server_base = new_server
+                # params.server = params.rest_context.server_base
+                #
+                # LoginV3API.register_device_in_region(params)
+                #
+                # resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
+
+
 
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
 
@@ -779,6 +789,30 @@ class LoginV3API:
             raise e
 
         return True
+
+
+    @staticmethod
+    def register_device_in_region(params: KeeperParams):
+        rq = proto.RegisterDeviceInRegionRequest()
+        rq.encryptedDeviceToken = CommonHelperMethods.url_safe_str_to_bytes(params.device_token)
+        rq.clientVersion = rest_api.CLIENT_VERSION
+        rq.deviceName = CommonHelperMethods.get_device_name()
+        rq.devicePublicKey = CommonHelperMethods.public_key_ecc(params)
+
+
+        # TODO: refactor into util for handling Standard Rest Authentication Errors
+        # try:
+        rs = api.communicate_rest(params, rq, 'authentication/register_device_in_region')
+        # except Exception as e:
+        #     # device_disabled - this device has been disabled for all users / all commands
+        #     # user_device_disabled - this user has disabled access from this device
+        #     # redirect - depending on the command, if the user is a pending enterprise user, or and existing user and they are in a different region, they will be redirected to the proper keeperapp server to submit the request
+        #     # client_version - Invalid client version
+        #     logging.error(f"Unable to register device in {params.region}: {e}")
+        #     return False
+        # else:
+        #     return True
+
 
     @staticmethod
     def set_user_setting(params: KeeperParams, name: str, value: str):
