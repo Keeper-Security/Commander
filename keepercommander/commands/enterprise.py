@@ -34,6 +34,7 @@ from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
+from argparse import RawTextHelpFormatter
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .record import RecordAddCommand
@@ -82,11 +83,13 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-SUPPORTED_USER_COLUMNS = ['name', 'status', 'node', 'team_count', 'teams', 'role_count', 'roles']
+SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
 
-enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei', description='Display a tree structure of your enterprise.')
+enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei',
+                                                 description='Display a tree structure of your enterprise.',
+                                                 formatter_class=RawTextHelpFormatter)
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store_true', help='print team list')
@@ -98,10 +101,10 @@ enterprise_info_parser.add_argument('--format', dest='format', action='store', c
 enterprise_info_parser.add_argument('--output', dest='output', action='store',
                                     help='output file name. (ignored for table format)')
 enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
-                                    help='comma-separated list of columns: ' +
-                                         '--users (%s)' % ', '.join(SUPPORTED_USER_COLUMNS) +
-                                         '--teams (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
-                                         '--roles (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
+                                    help='comma-separated list of available columns per argument:' +
+                                         '\n for `users` (%s)' % ', '.join(SUPPORTED_USER_COLUMNS) +
+                                         '\n for `teams` (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
+                                         '\n for `roles` (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
                                     )
 
 enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
@@ -254,8 +257,28 @@ user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
 
 
-def lock_text(lock):
-    return 'Locked' if lock == 1 else 'Disabled' if lock == 2 else ''
+def get_user_status_dict(user):
+
+    def lock_text(lock):
+        return 'Locked' if lock == 1 else 'Disabled' if lock == 2 else ''
+
+    account_status = 'Invited' if user['status'] == 'invited' else 'Active'
+
+    if user['lock'] > 0:
+        account_status = lock_text(user['lock'])
+
+    acct_transfer_status = ''
+
+    if 'account_share_expiration' in user:
+        expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
+        if expire_at < datetime.datetime.now():
+            acct_transfer_status = 'Blocked'
+        else:
+            acct_transfer_status = 'Pending Transfer'
+    return {
+        'acct_status': account_status,
+        'acct_transfer_status': acct_transfer_status
+    }
 
 
 class GetEnterpriseDataCommand(Command):
@@ -636,7 +659,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_users:
                 supported_columns = SUPPORTED_USER_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('name', 'status', 'node'))
+                    columns.update(('name', 'status', 'transfer_status', 'node'))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
@@ -645,23 +668,18 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 displayed_columns = [x for x in supported_columns if x in columns]
                 rows = []
                 for u in users.values():
+
+                    user_status_dict = get_user_status_dict(u)
+
                     user_id = u['id']
                     row = [user_id, u['username']]
                     for column in displayed_columns:
                         if column == 'name':
                             row.append(u['name'])
                         elif column == 'status':
-                            status = lock_text(u['lock'])
-                            if not status:
-                                if 'account_share_expiration' in u:
-                                    expire_at = datetime.datetime.fromtimestamp(u['account_share_expiration']/1000.0)
-                                    if expire_at < datetime.datetime.now():
-                                        status = 'Blocked'
-                                    else:
-                                        status = 'Transfer Acceptance'
-                                else:
-                                    status = u['status'].capitalize()
-                            row.append(status)
+                            row.append(user_status_dict['acct_status'])
+                        elif column == 'transfer_status':
+                            row.append(user_status_dict['acct_transfer_status'])
                         elif column == 'node':
                             row.append(node_path(u['node_id']))
                         elif column == 'team_count':
@@ -1406,21 +1424,20 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 self.display_user(params, user, is_verbose)
                 print('\n')
 
-    def display_user(self, params, user, is_verbose = False):
+    def display_user(self, params, user, is_verbose=False):
         print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
         print('{0:>16s}: {1}'.format('Email', user['username'] if 'username' in user else '[empty]'))
         print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
-        status = lock_text(user['lock'])
-        if not status:
-            if 'account_share_expiration' in user:
-                expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
-                if expire_at < datetime.datetime.now():
-                    status = 'Blocked'
-                else:
-                    status = 'Transfer Acceptance'
-            else:
-                status = user['status'].capitalize()
-        print('{0:>16s}: {1}'.format('Status', status))
+
+        status_dict = get_user_status_dict(user)
+
+        acct_status = status_dict['acct_status']
+        acct_transfer_status = status_dict['acct_transfer_status']
+
+        print('{0:>16s}: {1}'.format('Status', acct_status))
+
+        if acct_transfer_status:
+            print('{0:>16s}: {1}'.format('Transfer Status', acct_transfer_status))
 
         if 'role_users' in params.enterprise:
             role_ids = [x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == user['enterprise_user_id']]
@@ -3506,9 +3523,13 @@ class UserReportCommand(Command):
         user_list.sort(key=lambda x: x['username'].lower())
 
         rows = []
-        headers = ['email', 'name', 'status', 'last_login', 'node', 'roles', 'teams']
+        headers = ['email', 'name', 'status', 'transfer_status', 'last_login', 'node', 'roles', 'teams']
         for user in user_list:
-            status = UserReportCommand.get_user_status(user)
+            status_dict = get_user_status_dict(user)
+
+            acct_status = status_dict['acct_status']
+            acct_transfer_status = status_dict['acct_transfer_status']
+
             path = self.get_node_path(user['node_id'])
             teams = self.user_teams.get(user['enterprise_user_id']) or []
             roles = self.user_roles.get(user['enterprise_user_id']) or []
@@ -3516,7 +3537,16 @@ class UserReportCommand(Command):
             roles.sort(key=str.lower)
             ll = user.get('last_login')
             last_log = str(ll) if ll else ''
-            rows.append([user['username'], user['name'], status, last_log, ' -> '.join(path), roles, teams])
+            rows.append([
+                user['username'],       # email
+                user['name'],           # name
+                acct_status,            # status == acct_status
+                acct_transfer_status,   # acct_transfer_status
+                last_log,               # last_login
+                ' -> '.join(path),      # node
+                roles,                  # roles
+                teams                   # teams
+            ])
 
         if kwargs.get('format') != 'json':
             headers = [string.capwords(x.replace('_', ' ')) for x in headers]
