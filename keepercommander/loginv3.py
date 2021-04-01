@@ -30,6 +30,11 @@ from .params import KeeperParams
 
 warned_on_fido_package = False
 
+permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Concole -> Admin -> " \
+                        "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
+                        "'Enable' check box next to Commander SDK.\nAlso note that if user has more than two roles " \
+                        "assigned then the most restrictive policy from all the roles will be applied"
+
 
 class LoginV3Flow:
 
@@ -641,8 +646,11 @@ class LoginV3API:
                     # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     params.device_id = None
                     # continue
-
-                raise KeeperApiError(rs['error'], rs['message'])
+                if rs['error'] == 'restricted_client_type':
+                    msg = "%s.\n\n%s" % (rs['message'], permissions_error_msg)
+                    raise KeeperApiError(rs['error'], msg)
+                else:
+                   raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
     def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
