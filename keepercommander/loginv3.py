@@ -961,6 +961,9 @@ class LoginV3API:
         if provisioned:
             logging.info("User '%s' create and added to the enterprise" % email)
 
+            # Refresh (sync-down) enterprise data only
+            api.query_enterprise(params)
+
         # Create user (will send email to the user)
         # loginv3.LoginV3API().create_user(params, email)
 
