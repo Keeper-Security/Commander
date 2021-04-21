@@ -342,7 +342,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```totp``` Display the Two-Factor Code (TOTP) attached to a vault record. If no record UID is provided, a list of available records that contain Two-Factor Codes will be displayed. If a record UID is provided, the code is displayed with a countdown timer.
 
     Parameters:
-    - ```--print``` or ```--p``` Prints the TOTP code of the selected record UID to standard output. This option does not dispaly the countdown timer and could be used in scripting tasks.
+    - ```--print``` or ```-p``` Prints the TOTP code of the selected record UID to standard output. This option does not dispaly the countdown timer and could be used in scripting tasks.
 
 * ```download-attachment``` Download all file attachments in specified record
 
@@ -547,7 +547,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
         If disabled, the client cannot resume a session. Available options: `on`, `off`
 
         Example: `this-device persistent_login on`
-    - `ip_auto_approve` - If enabled, the device is automatically approved based on a previously used ip address for the user or enterprise.
+    - `ip_auto_approve` - If enabled, the device is automatically approved based on a previously used IP address for the user or enterprise.
         If disabled, the device will not be automatically approved.
         By default ip_auto_approve is ON.
         Available options: `yes`, `no`
