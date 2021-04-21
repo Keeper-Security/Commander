@@ -1,4 +1,4 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -223,8 +223,10 @@ class ThisDeviceCommand(Command):
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('ip_disable_auto_approve', value)
-            loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
+            # invert ip_auto_approve value before passing it to ip_disable_auto_approve
+            value_extracted = '0' if value_extracted == '1' else '1' if value_extracted == '0' else value_extracted
+            loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
             print("Successfully " + msg + " 'ip_auto_approve'")
 
         elif action == 'timeout' or action == 'to':
@@ -244,12 +246,12 @@ class ThisDeviceCommand(Command):
         value = value.lower()
 
         if name == 'persistent_login' or name == 'ip_disable_auto_approve':
-            if value == 'yes' or value == 'y' or value == 'on' or value == '1' or value.lower() == 'true':
+            if value and value.lower() in (val.lower() for val in ('yes', 'y', 'on', '1', 'true')):
                 final_val = '1'
-            elif value == 'no' or value == 'n' or value == 'off' or value == '0' or value.lower() == 'false':
+            elif value and value.lower() in (val.lower() for val in ('no', 'n', 'off', '0', 'false')):
                 final_val = '0'
             else:
-                raise Exception("Unknown value. Available values 'on', 'off', 'yes', 'y', 'no' or 'n'")
+                raise Exception("Unknown value. Available values 'yes'/'no', 'y'/'n', 'on'/'off', '1'/'0', 'true'/'false'")
         elif name == 'logout_timer':
             if not loginv3.CommonHelperMethods.check_int(value):
                 raise Exception("Entered value is not an integer. Please enter integer")
@@ -300,12 +302,16 @@ class ThisDeviceCommand(Command):
 
         if 'ipDisableAutoApprove' in acct_summary_dict['settings']:
             ipDisableAutoApprove = acct_summary_dict['settings']['ipDisableAutoApprove']
+            # ip_disable_auto_approve - If enabled, the device is NOT automatically approved
+            # If disabled, the device will be auto approved
+            ipAutoApprove = not ipDisableAutoApprove
             print("{:>20}: {}".format('IP Auto Approve',
                                       (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
-                                      if ipDisableAutoApprove else
+                                      if ipAutoApprove else
                                       (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
         else:
-            print("{:>20}: {}".format('IP Auto Approve', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+            print("{:>20}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
+            # ip_disable_auto_approve = 0 / disabled (default) <==> IP Auto Approve :ON
 
         if 'persistentLogin' in acct_summary_dict['settings']:
             persistentLogin = acct_summary_dict['settings']['persistentLogin']

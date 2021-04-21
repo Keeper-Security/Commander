@@ -341,6 +341,9 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```totp``` Display the Two-Factor Code (TOTP) attached to a vault record. If no record UID is provided, a list of available records that contain Two-Factor Codes will be displayed. If a record UID is provided, the code is displayed with a countdown timer.
 
+    Parameters:
+    - ```--print``` or ```--p``` Prints the TOTP code of the selected record UID to standard output. This option does not dispaly the countdown timer and could be used in scripting tasks.
+
 * ```download-attachment``` Download all file attachments in specified record
 
 * ```upload-attachment``` Upload file attachments to the specified record
@@ -533,26 +536,29 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```this-device``` specific settings for the current device
 
     Available sub-commands:
-    
+
     - ```rename``` - To rename the device. Device name should be no longer than 150 utf8 characters.
-        
+
         Example: `this-device rename work-computer`
     - `register` - register a data key for the device. Needed for the persistent login to work.
-        
+
         Example: `this-device register`
     - `persistent_login` - If enabled, the client can resume a logged in session or do cross client login. 
         If disabled, the client cannot resume a session. Available options: `on`, `off`
-        
+
         Example: `this-device persistent_login on`
-    - `ip_auto_approve` - If enabled, the device is not automatically approved based on the device’s IP address.
-        If disabled, the device will be auto approved based on a previously used ip address for the user or enterprise.
+    - `ip_auto_approve` - If enabled, the device is automatically approved based on a previously used ip address for the user or enterprise.
+        If disabled, the device will not be automatically approved.
+        By default ip_auto_approve is ON.
         Available options: `yes`, `no`
-        
+
         Example: `this-device ip_auto_approve yes`
-        
+
         _Note: this does NOT affect cloud SSO devices._
+
     - `timeout` - If the session is idle for more than the set value then user will be logged out, ei session token will expire. Default value for commander is 2 days.
         This value is device specific, the backend will track this based on the device_id in the session token.
+        Value is in minutes, 0 = disabled, max value = 525600 (365 days)
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 

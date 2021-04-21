@@ -152,7 +152,7 @@ def command_and_args_from_cmd(command_line):
         cmd = command_line[:pos]
         args = command_line[pos + 1:].strip()
     else:
-        cmd = command_line
+        cmd = command_line.strip()
 
     return cmd, args
 

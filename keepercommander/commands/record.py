@@ -1,4 +1,4 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -19,9 +19,11 @@ import base64
 import tempfile
 import logging
 import threading
+
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
 
+from ..display import bcolors
 from ..team import Team
 from .. import api, display, generator
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
@@ -82,6 +84,7 @@ record_history_parser.exit = suppress_exit
 
 
 totp_parser = argparse.ArgumentParser(prog='totp', description='Display the Two Factor Code for a record.')
+totp_parser.add_argument('-p', '--print', dest='print', action='store_true', help='print TOTP code to standard output')
 totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
@@ -1447,23 +1450,32 @@ class TotpCommand(Command):
                     else:
                         raise CommandError('totp', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
+        print_totp = kwargs.get('print')
+        if print_totp and not record_uid:
+            logging.warning(bcolors.FAIL + '--print option requires valid record UID' + bcolors.ENDC)
+
         if record_uid:
             rec = api.get_record(params, record_uid)
-            tmer = None     # type: threading.Timer or None
-            done = False
-            def print_code():
-                global tmer
-                if not done:
-                    TotpCommand.display_code(rec.totp)
-                    tmer = threading.Timer(1, print_code).start()
-            try:
-                print('Press <Enter> to exit\n')
-                print_code()
-                input()
-            finally:
-                done = True
-                if tmer:
-                    tmer.cancel()
+            if print_totp:
+                if rec.totp:
+                    code, remains, total = get_totp_code(rec.totp)
+                    if code: print(code)
+            else:
+                tmer = None     # type: threading.Timer or None
+                done = False
+                def print_code():
+                    global tmer
+                    if not done:
+                        TotpCommand.display_code(rec.totp)
+                        tmer = threading.Timer(1, print_code).start()
+                try:
+                    print('Press <Enter> to exit\n')
+                    print_code()
+                    input()
+                finally:
+                    done = True
+                    if tmer:
+                        tmer.cancel()
         else:
             TotpCommand.find_endpoints(params)
             logging.info('')
