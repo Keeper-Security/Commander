@@ -1596,8 +1596,8 @@ class RecordPermissionCommand(Command):
                             code = status['status']
                             if code != 'success':
                                 record_uid = status['record_uid']
-                                username = status['username'] if 'username' in status else status['to_username']
-                                table.append([len(table) + 1, record_uid, username, code, status['message']])
+                                username = status.get('username') or status.get('to_username')
+                                table.append([len(table) + 1, record_uid, username, code, status.get('message')])
 
                 if len(table) > 0:
                     headers = ['#', 'Record UID', 'Email', 'Error Code', 'Message']
