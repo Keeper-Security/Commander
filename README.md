@@ -341,6 +341,9 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```totp``` Display the Two-Factor Code (TOTP) attached to a vault record. If no record UID is provided, a list of available records that contain Two-Factor Codes will be displayed. If a record UID is provided, the code is displayed with a countdown timer.
 
+    Parameters:
+    - ```--print``` or ```-p``` Prints the TOTP code of the selected record UID to standard output. This option does not dispaly the countdown timer and could be used in scripting tasks.
+
 * ```download-attachment``` Download all file attachments in specified record
 
 * ```upload-attachment``` Upload file attachments to the specified record
@@ -533,26 +536,30 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```this-device``` specific settings for the current device
 
     Available sub-commands:
-    
+
     - ```rename``` - To rename the device. Device name should be no longer than 150 utf8 characters.
-        
+
         Example: `this-device rename work-computer`
     - `register` - register a data key for the device. Needed for the persistent login to work.
-        
+
         Example: `this-device register`
     - `persistent_login` - If enabled, the client can resume a logged in session or do cross client login. 
         If disabled, the client cannot resume a session. Available options: `on`, `off`
-        
+
         Example: `this-device persistent_login on`
-    - `ip_auto_approve` - If enabled, the device is not automatically approved based on the device’s IP address.
-        If disabled, the device will be auto approved based on a previously used ip address for the user or enterprise.
+    - `ip_auto_approve` - If enabled, the device is automatically approved based on a previously used IP address for the user or enterprise.
+        If disabled, the device will not be automatically approved.
+        By default ip_auto_approve is ON.
         Available options: `yes`, `no`
-        
+
         Example: `this-device ip_auto_approve yes`
-        
+
         _Note: this does NOT affect cloud SSO devices._
+
     - `timeout` - If the session is idle for more than the set value then user will be logged out, ei session token will expire. Default value for commander is 2 days.
         This value is device specific, the backend will track this based on the device_id in the session token.
+        Value is in minutes, 0 = disabled, max value = 525600 (365 days).
+        Note: When disabled (timeout = 0) or not set, clients will use client type default values - Mobile: 10 min, Console, Desktop, Web: 60 min.
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
@@ -950,6 +957,18 @@ To export records from your vault, use the ```export``` command.  Supported expo
 JSON export files contain records, folders, subfolders, shared folders, default folder permissions and user/team permissions.
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
 Keepass files contain records, file attachments, folders and subfolders.
+
+**Keepass Export**
+
+```bash
+$ keeper export --format=keepass test.kdbx
+```
+
+You can optionally provide file password through command line option ```--keepass-file-password``` - this flag will only apply when ```--format=keepass``` is set. Master pasword is required for Keepass export - if none provided you will be asked during export and your input will be masked.
+
+```bash
+$ keeper export --format=keepass --keepass-file-password=file_password_here test.kdbx
+```
 
 ### Shared Records Report
 Details of all shared record for a logged-in user.
