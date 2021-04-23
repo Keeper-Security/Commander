@@ -558,7 +558,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
     - `timeout` - If the session is idle for more than the set value then user will be logged out, ei session token will expire. Default value for commander is 2 days.
         This value is device specific, the backend will track this based on the device_id in the session token.
-        Value is in minutes, 0 = disabled, max value = 525600 (365 days)
+        Value is in minutes, 0 = disabled, max value = 525600 (365 days).
+        Note: When disabled (timeout = 0) or not set, clients will use client type default values - Mobile: 10 min, Console, Desktop, Web: 60 min.
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
@@ -963,7 +964,7 @@ Keepass files contain records, file attachments, folders and subfolders.
 $ keeper export --format=keepass test.kdbx
 ```
 
-You can optionally provide file password through command line option ```--keepass-file-password```. Master pasword is required for Keepass export - if none provided you will be asked during export and your input will be masked.
+You can optionally provide file password through command line option ```--keepass-file-password``` - this flag will only apply when ```--format=keepass``` is set. Master pasword is required for Keepass export - if none provided you will be asked during export and your input will be masked.
 
 ```bash
 $ keeper export --format=keepass --keepass-file-password=file_password_here test.kdbx
