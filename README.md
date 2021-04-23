@@ -966,7 +966,7 @@ $ keeper export --format=keepass test.kdbx
 You can optionally provide file password through command line option ```--keepass-file-password```. Master pasword is required for Keepass export - if none provided you will be asked during export and your input will be masked.
 
 ```bash
-$ keeper export --format=keepass test.kdbx --keepass-file-password=file_password_here
+$ keeper export --format=keepass --keepass-file-password=file_password_here test.kdbx
 ```
 
 ### Shared Records Report
