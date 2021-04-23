@@ -280,9 +280,11 @@ class KeepassImporter(BaseFileImporter):
 
 class KeepassExporter(BaseExporter):
 
-    def do_export(self, filename, records):
-        print('Choose password for your Keepass file')
-        master_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
+    def do_export(self, filename, records, file_password):
+        master_password = file_password
+        if not master_password:
+            print('Choose password for your Keepass file')
+            master_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
 
         sfs = []  # type: [SharedFolder]
         rs = []   # type: [Record]

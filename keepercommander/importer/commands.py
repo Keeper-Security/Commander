@@ -46,6 +46,7 @@ import_parser.exit = suppress_exit
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to a local file.')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 export_parser.add_argument('--max-size', dest='max_size', help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
+export_parser.add_argument('-kp', '--keepass-file-password', dest='keepass_file_password', action='store', help='Password for the exported Keepass file')
 export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
@@ -168,9 +169,13 @@ class RecordExportCommand(ImporterCommand):
 
         export_format = kwargs['format'] if 'format' in kwargs else None
         export_name = kwargs['name'] if 'name' in kwargs else None
+
+        extra = {}
+        if kwargs.get('keepass_file_password'):
+            extra['keepass_file_password'] = kwargs.get('keepass_file_password')
+
         if format:
             logging.info('Processing... please wait.')
-            extra = {}
             msize = kwargs.get('max_size')    # type: str
             if msize:
                 multiplier = 1
@@ -199,7 +204,7 @@ class RecordExportCommand(ImporterCommand):
 def is_export_restricted(params):
     is_export_restricted = False
 
-    booleans = params.enforcements['booleans'] if 'booleans' in params.enforcements else []
+    booleans = params.enforcements['booleans'] if params.enforcements and 'booleans' in params.enforcements else []
 
     if len(booleans) > 0:
         restrict_export_boolean = next((s for s in booleans if s['key'] == 'restrict_export'), None)

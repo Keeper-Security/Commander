@@ -957,6 +957,18 @@ JSON export files contain records, folders, subfolders, shared folders, default 
 CSV import files contain records, folders, subfolders, shared folders and default shared folder permissions.
 Keepass files contain records, file attachments, folders and subfolders.
 
+**Keepass Export**
+
+```bash
+$ keeper export --format=keepass test.kdbx
+```
+
+You can optionally provide file password through command line option ```--keepass-file-password```. Master pasword is required for Keepass export - if none provided you will be asked during export and your input will be masked.
+
+```bash
+$ keeper export --format=keepass test.kdbx --keepass-file-password=file_password_here
+```
+
 ### Shared Records Report
 Details of all shared record for a logged-in user.
 
