@@ -1451,9 +1451,6 @@ class TotpCommand(Command):
                         raise CommandError('totp', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
         print_totp = kwargs.get('print')
-        if print_totp and not record_uid:
-            logging.warning(bcolors.FAIL + '--print option requires valid record UID' + bcolors.ENDC)
-
         if record_uid:
             rec = api.get_record(params, record_uid)
             if print_totp:
@@ -1491,6 +1488,9 @@ class TotpCommand(Command):
             table.sort(key=lambda x: x[2])
             print(tabulate(table, headers=headers))
             print('')
+
+        if print_totp and not record_uid:
+            logging.warning(bcolors.FAIL + '--print option requires valid record UID' + bcolors.ENDC)
 
     LastDisplayedCode = ''
     @staticmethod
