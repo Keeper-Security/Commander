@@ -280,7 +280,7 @@ class KeepassImporter(BaseFileImporter):
 
 class KeepassExporter(BaseExporter):
 
-    def do_export(self, filename, records, file_password):
+    def do_export(self, filename, records, file_password=None):
         master_password = file_password
         if not master_password:
             print('Choose password for your Keepass file')

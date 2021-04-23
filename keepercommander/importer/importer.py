@@ -195,7 +195,7 @@ class BaseExporter:
     def __init__(self):
         self.max_size = 10 * 1024 * 1024
 
-    def execute(self, filename, records, file_password):
+    def execute(self, filename, records, file_password=None):
         # type: (BaseExporter, str, [Record or SharedFolder], str or None) -> None
 
         if filename:
@@ -210,7 +210,7 @@ class BaseExporter:
 
         self.do_export(filename, records, file_password)
 
-    def do_export(self, filename, records, file_password):
+    def do_export(self, filename, records, file_password=None):
         # type: (BaseExporter, str, [Record or SharedFolder], str or None) -> None
         raise NotImplemented()
 
