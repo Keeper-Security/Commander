@@ -71,7 +71,8 @@ class KeeperJsonImporter(BaseFileImporter):
 
 
 class KeeperJsonExporter(BaseExporter):
-    def do_export(self, filename, records):
+
+    def do_export(self, filename, records, file_password):
         sfs = []
         rs = []
         for elem in records:
