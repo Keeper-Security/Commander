@@ -26,7 +26,6 @@ from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
 from .commands.msp import get_mc_by_name_or_id
-from .loginv3 import permissions_error_msg
 
 from .params import KeeperParams
 from . import display, loginv3, api
@@ -505,7 +504,7 @@ def loop(params):  # type: (KeeperParams) -> int
 
             if e.result_code == 'restricted_client_type':
 
-                logging.error("Error code: %s\n%s" % e.result_code, permissions_error_msg)
+                logging.error("Error code: %s\n%s" % e.result_code, loginv3.permissions_error_msg)
             else:
                 logging.error("Error code: %s\nCommunication Error: %s" % (e.result_code, e.message))
 
