@@ -29,14 +29,19 @@ from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
+from ..APIRequest_pb2 import ApplicationShareRequest, ApiRequestPayload, ApplicationShareType
+from ..api import decrypt_data
 from ..display import bcolors
+from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command
+from ..rest_api import execute_rest, decrypt_aes
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
-from ..error import CommandError
+from ..error import CommandError, KeeperApiError
+
 # from ..loginv3 import LoginV3API, CommonHelperMethods
 
 SSH_AGENT_FAILURE = 5
@@ -61,12 +66,13 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
+    commands['app-share'] = AppShareCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser]:
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, app_share_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -131,6 +137,12 @@ help_parser = argparse.ArgumentParser(prog='help', description='Displays help on
 help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
+
+app_share_parser = argparse.ArgumentParser(prog='app-share', description='One-Time Binding App Token (BAT) command')
+app_share_parser.add_argument('--uid', type=str, action='store', help='Record UID')
+app_share_parser.add_argument('--app_name', type=str, action='store', help='Application Name')
+app_share_parser.error = raise_parse_exception
+app_share_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -491,6 +503,71 @@ class CheckEnforcementsCommand(Command):
                 finally:
                     del params.settings['must_perform_account_share_by']
                     del params.settings['share_account_to']
+
+
+class AppShareCommand(Command):
+    def get_parser(self):
+        return app_share_parser
+
+    def execute(self, params, **kwargs):
+
+        uid = kwargs['uid'] if 'uid' in kwargs else None
+        app_name = kwargs['app_name'] if 'app_name' in kwargs else None
+
+        secret_key = os.urandom(32)
+        logging.debug("secret_key=[%s]" % CommonHelperMethods.bytes_to_url_safe_str(secret_key))
+
+        binding_token = api.hashlib.sha256(secret_key).digest()
+
+        if api.is_shared_folder(params, uid):
+
+            cached_sf = params.shared_folder_cache[uid]
+
+            shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
+
+            encrypted_key = rest_api.encrypt_aes(shared_folder_key_unencrypted, secret_key)
+
+            share_type = 'SHT_FOLDER'
+
+        else:
+            # TODO: Search shared records as well, not just owned
+            rec = params.record_cache[uid]
+
+            # print(rec['record_key_unencrypted'])
+
+
+            encrypted_key = rest_api.encrypt_aes(rec['record_key_unencrypted'], secret_key)
+            # print("encryptedKey=%s" % encryptedKey)
+
+            share_type = 'SHT_RECORD'
+
+
+        logging.debug("binding_token (HASH)=[%s]" % CommonHelperMethods.bytes_to_url_safe_str(binding_token))
+
+        # secretUid = CommonHelperMethods.normal64Bytes(rec['record_uid'])
+
+        rq = ApplicationShareRequest()
+
+        rq.applicationName = app_name
+        rq.shareType = ApplicationShareType.Value(share_type)
+        rq.secretUid = CommonHelperMethods.url_safe_str_to_bytes(uid)
+        rq.encryptedSecretKey = encrypted_key
+        rq.bindingToken = binding_token
+
+        api_request_payload = ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+        rs = execute_rest(params.rest_context, 'vault/application_share', api_request_payload)
+
+        if type(rs) is bytes:
+
+            print("------------------------------------------------------------------------------------")
+            print("Binding Key (One Time Token): [%s]" % CommonHelperMethods.bytes_to_url_safe_str(secret_key))
+            print("------------------------------------------------------------------------------------")
+
+        if type(rs) is dict:
+            raise KeeperApiError(rs['error'], rs['message'])
 
 
 class LogoutCommand(Command):

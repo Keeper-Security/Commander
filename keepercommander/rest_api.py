@@ -128,7 +128,7 @@ def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, p
         url = context.server_base + endpoint
 
         logging.debug('>>> Request URL: [%s]', url)
-        rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'})
+        rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'}, verify=False)
         logging.debug('<<< Response Code: [%d]', rs.status_code)
         logging.debug('<<< Response Headers: [%s]', str(rs.headers))
 
