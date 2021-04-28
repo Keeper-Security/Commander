@@ -151,8 +151,8 @@ class Record:
         if len(self.custom_fields) > 0:
             for c in self.custom_fields:
                 if not 'value' in c: c['value'] = ''
-                if not 'name' in c: c['name'] = ''
-                print('{0:>20s}: {1:<s}'.format(c['name'], c['value']))
+                if not 'name' in c: c['name'] = c['type'] if 'type' in c else ''
+                print('{0:>20s}: {1:<s}'.format(str(c['name']), str(c['value'])))
 
         if self.notes:
             lines = self.notes.split('\n')
