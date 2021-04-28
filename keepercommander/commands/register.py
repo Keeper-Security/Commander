@@ -46,7 +46,7 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['create-user'] = RegisterCommand()
-    commands['file-report'] = FileReportCommand()
+    # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -55,7 +55,8 @@ def register_command_info(aliases, command_info):
     aliases['cu'] = 'create-user'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
-              file_report_parser, register_parser]:
+            #   file_report_parser,
+              register_parser]:
         command_info[p.prog] = p.description
 
 

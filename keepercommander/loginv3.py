@@ -961,6 +961,9 @@ class LoginV3API:
         if provisioned:
             logging.info("User '%s' create and added to the enterprise" % email)
 
+            # Refresh (sync-down) enterprise data only
+            api.query_enterprise(params)
+
         # Create user (will send email to the user)
         # loginv3.LoginV3API().create_user(params, email)
 
@@ -974,17 +977,17 @@ class LoginV3API:
         if params.enterprise:
             node_id = None
             if node:
-                for node in params.enterprise['nodes']:
-                    if node in {str(node['node_id']), node['data'].get('displayname')}:
-                        node_id = node['node_id']
+                for enode in params.enterprise['nodes']:
+                    if node in {str(enode['node_id']), enode['data'].get('displayname')}:
+                        node_id = enode['node_id']
                         break
-                    elif not node.get('parent_id') and node == params.enterprise['enterprise_name']:
-                        node_id = node['node_id']
+                    elif not enode.get('parent_id') and node == params.enterprise['enterprise_name']:
+                        node_id = enode['node_id']
                         break
             if node_id is None:
-                for node in params.enterprise['nodes']:
-                    if not node.get('parent_id'):
-                        node_id = node['node_id']
+                for enode in params.enterprise['nodes']:
+                    if not enode.get('parent_id'):
+                        node_id = enode['node_id']
                         break
             data = {'displayname': displayname}
 

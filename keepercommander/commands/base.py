@@ -34,7 +34,7 @@ class ParseError(Exception):
 
 
 def register_commands(commands, aliases, command_info):
-    from .record import register_commands as record_commands, register_command_info as record_command_info
+    from .recordv3 import register_commands as record_commands, register_command_info as record_command_info
     record_commands(commands)
     record_command_info(aliases, command_info)
 

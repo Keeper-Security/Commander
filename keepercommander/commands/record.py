@@ -1,4 +1,4 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -25,7 +25,7 @@ from tabulate import tabulate
 from ..team import Team
 from .. import api, display, generator
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
-from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
@@ -171,11 +171,13 @@ upload_parser.add_argument('record', action='store', help='record path or UID')
 upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
 
+
 delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record.', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
 delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
+
 
 shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
 shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
@@ -571,6 +573,8 @@ class RecordListCommand(Command):
     def execute(self, params, **kwargs):
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_records(params, pattern or '')
+        # hide v3 attachments (a.k.a. fileRef/v4) - they are shown in Gallery/file-report command
+        results = [x for x in results if x.record_uid not in params.record_cache or params.record_cache[x.record_uid]['version'] != 4]
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
