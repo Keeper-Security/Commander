@@ -1508,6 +1508,15 @@ add --login=blah@gmail.com --pass=somemasterpass --url=https://google.com --forc
 share-record --email="user@company.com" --write "Some Record Title"
 ```
 
+#### Batch Mode in Windows
+
+Following example shows how to execute three commands using Windows command line:
+
+```
+(echo ls -l && echo whoami && tree) | keeper --batch-mode shell
+```
+
+
 ### Enterprise SSO Login
 
 Customers who normally login to their Keeper Vault using Enterprise SSO Login (SAML 2.0) can also login to Keeper Commander using a Master Password.  To make use of this capability, it must be enabled by the Keeper Administrator and then configured by the user.  The steps are below:
