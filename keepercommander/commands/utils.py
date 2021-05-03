@@ -16,6 +16,8 @@ import argparse
 import logging
 import datetime
 import getpass
+import sys
+import platform
 
 import requests
 import tempfile
@@ -30,6 +32,7 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
 from ..display import bcolors
+from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api, rest_api, loginv3
@@ -37,7 +40,8 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError
-# from ..loginv3 import LoginV3API, CommonHelperMethods
+from .. import __version__
+
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -61,12 +65,14 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
+    commands['version'] = VersionCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser]:
+    aliases['v'] = 'version'
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, version_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -131,6 +137,11 @@ help_parser = argparse.ArgumentParser(prog='help', description='Displays help on
 help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
+
+
+version_parser = argparse.ArgumentParser(prog='version', description='Displays version of installed Commander.')
+version_parser.error = raise_parse_exception
+version_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -414,6 +425,18 @@ class WhoamiCommand(Command):
 
         else:
             print('{0:>20s}:'.format('Not logged in'))
+
+
+class VersionCommand(Command):
+    def get_parser(self):
+        return whoami_parser
+
+    def execute(self, params, **kwargs):
+        print('Keeper Commander: {0}'.format(__version__))
+        print('Python: {0}'.format(sys.version.replace("\n", "")))
+        print("OS: {0} {1}".format(CommonHelperMethods.get_os(), platform.release()))
+
+        CommonHelperMethods.check_commander_version()
 
 
 class LoginCommand(Command):

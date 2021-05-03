@@ -26,6 +26,7 @@ from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
 from .commands.msp import get_mc_by_name_or_id
+from .loginv3 import CommonHelperMethods
 
 from .params import KeeperParams
 from . import display, loginv3, api
@@ -429,6 +430,8 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_while_typing=False)
 
         display.welcome()
+        CommonHelperMethods.check_commander_version()
+
     else:
         logging.getLogger().setLevel(logging.WARNING)
 
