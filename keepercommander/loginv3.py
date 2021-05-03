@@ -161,7 +161,7 @@ class LoginV3Flow:
                 params.session_token_bytes = resp.encryptedSessionToken
                 params.session_token_restriction = resp.sessionTokenType  # getSessionTokenScope(login_resp.sessionTokenType)
                 params.clone_code = resp.cloneCode
-                params.device_token_bytes = encryptedDeviceToken
+                # params.device_token_bytes = encryptedDeviceToken
                 # auth_context.message_session_uid = login_resp.messageSessionUid
 
                 if not params.device_private_key:
@@ -778,7 +778,7 @@ class LoginV3API:
         rq.clientVersion = rest_api.CLIENT_VERSION
         # rq.deviceStatus = proto.DEVICE_OK
         rq.deviceName = new_name
-        rq.encryptedDeviceToken = params.device_token_bytes
+        rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
 
         api.communicate_rest(params, rq, 'authentication/update_device')
 
@@ -786,7 +786,7 @@ class LoginV3API:
     def register_encrypted_data_key_for_device(params: KeeperParams):
         rq = proto.RegisterDeviceDataKeyRequest()
 
-        rq.encryptedDeviceToken = params.device_token_bytes
+        rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
         rq.encryptedDeviceDataKey = CommonHelperMethods.get_encrypted_device_data_key(params)
 
         try:
