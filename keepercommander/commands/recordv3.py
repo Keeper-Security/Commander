@@ -91,7 +91,7 @@ add_parser.add_argument('--login', dest='login', action='store', help='login nam
 add_parser.add_argument('--pass', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-add_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
 add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
@@ -111,7 +111,7 @@ edit_parser.add_argument('--login', dest='login', action='store', help='login na
 edit_parser.add_argument('--pass', dest='password', action='store', help='password')
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
-edit_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 command_group = edit_parser.add_mutually_exclusive_group()
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
@@ -234,7 +234,7 @@ field_types_parser.exit = suppress_exit
 
 
 record_types_parser = argparse.ArgumentParser(prog='get-record-types|grt', description='Get record types')
-record_types_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
+record_types_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display extended help on record types parameters')
 record_types_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format')
 record_types_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 record_types_parser.add_argument('-d', '--update', dest='update', action='store_true', help='force reload all templates from server')
@@ -253,6 +253,8 @@ command_group = record_type_parser.add_mutually_exclusive_group()
 command_group.add_argument('-a', '--add-type', dest='add_type', action='store_true', help='add new custom record type')
 command_group.add_argument('-u', '--update-type', dest='update_type', action='store_true', help='update existing custom record type')
 command_group.add_argument('-r', '--remove-type', dest='remove_type', action='store_true', help='delete custom record type')
+record_type_parser.error = raise_parse_exception
+record_type_parser.exit = suppress_exit
 
 
 file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments')
@@ -305,9 +307,9 @@ class RecordAddCommand(Command):
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt + bcolors.ENDC)
                 return
 
-        data_opts = recordv3.RecordV3.convert_options_to_json('', rt_def, kwargs) if rt_def else None
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
+        data_opts = recordv3.RecordV3.convert_options_to_json('', rt_def, kwargs) if rt_def else None
         if not (data_json or data_file or data_opts):
             print("Please provide valid record data as a JSON string, options or file name.")
             self.get_parser().print_help()
@@ -320,7 +322,8 @@ class RecordAddCommand(Command):
                     data = file.read()
         if data_opts and not data:
             if not data_opts.get('errors'):
-                data = data_opts.get('json')
+                rec = data_opts.get('record')
+                data = json.dumps(rec) if rec else ''
 
         data = data.strip() if data else None
         if not data:
@@ -1701,14 +1704,13 @@ Column Name       Description
 
 
 class RecordGetRecordTypes(Command):
-    def __init__(self):
-        self.record_types_lookup = None
+    record_types_lookup = None
 
     def get_parser(self):
         return record_types_parser
 
     def get_record_types(self, params, reload):
-        if reload or self.record_types_lookup is None:
+        if reload or RecordGetRecordTypes.record_types_lookup is None:
             rq = records.RecordTypesRequest()
             rq.standard = True
             rq.user = True
@@ -1718,14 +1720,14 @@ class RecordGetRecordTypes(Command):
             record_types_rs.ParseFromString(rs)
 
             if len(record_types_rs.recordTypes) > 0:
-                self.record_types_lookup = {}
+                RecordGetRecordTypes.record_types_lookup = {}
                 for rt in record_types_rs.recordTypes:
-                    self.record_types_lookup[rt.recordTypeId] = rt.content
+                    RecordGetRecordTypes.record_types_lookup[rt.recordTypeId] = rt.content
 
     def resolve_record_type(self, record_type_id):
         record_type_info = {}
-        if self.record_types_lookup is not None and record_type_id in self.record_types_lookup:
-            record_type_info = { record_type_id: self.record_types_lookup[record_type_id] }
+        if RecordGetRecordTypes.record_types_lookup is not None and record_type_id in RecordGetRecordTypes.record_types_lookup:
+            record_type_info = { record_type_id: RecordGetRecordTypes.record_types_lookup[record_type_id] }
 
         return record_type_info
 
@@ -1733,8 +1735,8 @@ class RecordGetRecordTypes(Command):
         record_type_info = None
         if record_type_name:
             self.get_record_types(params, reload=False)
-            if self.record_types_lookup:
-                for v in self.record_types_lookup.values():
+            if RecordGetRecordTypes.record_types_lookup:
+                for v in RecordGetRecordTypes.record_types_lookup.values():
                     dict = json.loads(v)
                     # TODO: Is 'type' case sensitive
                     if dict and dict.get('$id').lower() == record_type_name.lower():
@@ -1745,11 +1747,11 @@ class RecordGetRecordTypes(Command):
 
     def resolve_record_types(self, record_type_id):
         records = [] # (count, category, recordTypeId, content)
-        if self.record_types_lookup is not None:
+        if RecordGetRecordTypes.record_types_lookup is not None:
             if record_type_id and (type(record_type_id) == int or record_type_id.isdigit()):
                 record_type_id = int(record_type_id)
-                if record_type_id in self.record_types_lookup:
-                    content = self.record_types_lookup[record_type_id]
+                if record_type_id in RecordGetRecordTypes.record_types_lookup:
+                    content = RecordGetRecordTypes.record_types_lookup[record_type_id]
                     dict = json.loads(content)
                     #content = json.dumps(dict, indent=2) # breaks csv, json
                     categories = dict['categories'] if 'categories' in dict else []
@@ -1758,8 +1760,8 @@ class RecordGetRecordTypes(Command):
                     print(bcolors.WARNING + 'Record Type ID: ' + str(record_type_id) + ' not found!' + bcolors.ENDC)
             else:
                 show_all = not record_type_id or record_type_id.isspace() or record_type_id == '*'
-                for rtid in self.record_types_lookup:
-                    content = self.record_types_lookup[rtid]
+                for rtid in RecordGetRecordTypes.record_types_lookup:
+                    content = RecordGetRecordTypes.record_types_lookup[rtid]
                     dict = json.loads(content)
                     #content = json.dumps(dict, indent=2) # breaks csv, json
                     categories = dict['categories'] if 'categories' in dict else []
@@ -1775,11 +1777,11 @@ class RecordGetRecordTypes(Command):
     def resolve_categories(self, category):
         categories = [] # count, category, recordTypeId, content
         should_resolve_all = not category or category.isspace() or category == '*'
-        if self.record_types_lookup is not None:
+        if RecordGetRecordTypes.record_types_lookup is not None:
             if should_resolve_all:
                 cats = {}
-                for rtid in self.record_types_lookup:
-                    json_content = self.record_types_lookup[rtid]
+                for rtid in RecordGetRecordTypes.record_types_lookup:
+                    json_content = RecordGetRecordTypes.record_types_lookup[rtid]
                     content = json.loads(json_content)
                     cat_list = content['categories'] if 'categories' in content else [' ']
                     for category in cat_list:
@@ -1787,8 +1789,8 @@ class RecordGetRecordTypes(Command):
                 for cat_name, count in cats.items():
                     categories.append((count, cat_name, 0, None))
             else:
-                for rtid in self.record_types_lookup:
-                    json_content = self.record_types_lookup[rtid]
+                for rtid in RecordGetRecordTypes.record_types_lookup:
+                    json_content = RecordGetRecordTypes.record_types_lookup[rtid]
                     content = json.loads(json_content)
                     cat_list = content['categories'] if 'categories' in content else [' ']
                     if cat_list and category in cat_list:
@@ -1821,7 +1823,7 @@ class RecordGetRecordTypes(Command):
         elif lrid is not None:
             row_data = self.resolve_record_types(lrid)
         else:
-            count = len(self.record_types_lookup) if self.record_types_lookup is not None else 0
+            count = len(RecordGetRecordTypes.record_types_lookup) if RecordGetRecordTypes.record_types_lookup is not None else 0
             print('Cached ' + str(count) + ' record types.')
             return
 
@@ -1884,6 +1886,8 @@ class RecordRecordType(Command):
         if not params.enterprise:
             logging.error('This command is restricted to Keeper Enterprise administrators.')
             return
+
+        changed = False
         scope = records.RecordTypeScope.DESCRIPTOR.values_by_name['RT_ENTERPRISE'].number
 
         if 'add_type' in kwargs and kwargs['add_type']:
@@ -1902,6 +1906,7 @@ class RecordRecordType(Command):
             rs = api.communicate_rest(params, rq, 'vault/record_type_add')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
+            changed = True
             print('Record added - new record type ID: ' + str(record_type_rs.recordTypeId))
 
         if 'remove_type' in kwargs and kwargs['remove_type']:
@@ -1915,6 +1920,7 @@ class RecordRecordType(Command):
             rs = api.communicate_rest(params, rq, 'vault/record_type_delete')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
+            changed = True
             print('Record deleted - record type ID: ' + str(record_type_rs.recordTypeId))
 
         if 'update_type' in kwargs and kwargs['update_type']:
@@ -1937,7 +1943,11 @@ class RecordRecordType(Command):
             rs = api.communicate_rest(params, rq, 'vault/record_type_update')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
+            changed = True
             print('Record updated - record type ID: ' + str(record_type_rs.recordTypeId))
+
+        if changed:
+            RecordGetRecordTypes().get_record_types(params, reload=True)
 
 
 class RecordFileReportCommand(Command):
