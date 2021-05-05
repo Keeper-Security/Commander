@@ -30,6 +30,11 @@ from .params import KeeperParams
 
 warned_on_fido_package = False
 
+permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Concole -> Admin -> " \
+                        "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
+                        "'Enable' check box next to Commander SDK.\nAlso note that if user has more than two roles " \
+                        "assigned then the most restrictive policy from all the roles will be applied"
+
 
 class LoginV3Flow:
 
@@ -156,7 +161,7 @@ class LoginV3Flow:
                 params.session_token_bytes = resp.encryptedSessionToken
                 params.session_token_restriction = resp.sessionTokenType  # getSessionTokenScope(login_resp.sessionTokenType)
                 params.clone_code = resp.cloneCode
-                params.device_token_bytes = encryptedDeviceToken
+                # params.device_token_bytes = encryptedDeviceToken
                 # auth_context.message_session_uid = login_resp.messageSessionUid
 
                 if not params.device_private_key:
@@ -641,8 +646,11 @@ class LoginV3API:
                     # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     params.device_id = None
                     # continue
-
-                raise KeeperApiError(rs['error'], rs['message'])
+                if rs['error'] == 'restricted_client_type':
+                    msg = "%s.\n\n%s" % (rs['message'], permissions_error_msg)
+                    raise KeeperApiError(rs['error'], msg)
+                else:
+                   raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
     def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
@@ -770,7 +778,7 @@ class LoginV3API:
         rq.clientVersion = rest_api.CLIENT_VERSION
         # rq.deviceStatus = proto.DEVICE_OK
         rq.deviceName = new_name
-        rq.encryptedDeviceToken = params.device_token_bytes
+        rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
 
         api.communicate_rest(params, rq, 'authentication/update_device')
 
@@ -778,7 +786,7 @@ class LoginV3API:
     def register_encrypted_data_key_for_device(params: KeeperParams):
         rq = proto.RegisterDeviceDataKeyRequest()
 
-        rq.encryptedDeviceToken = params.device_token_bytes
+        rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
         rq.encryptedDeviceDataKey = CommonHelperMethods.get_encrypted_device_data_key(params)
 
         try:

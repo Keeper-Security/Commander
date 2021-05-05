@@ -179,7 +179,8 @@ def export(params, file_format, filename, **export_args):
     rec_count = len(to_export) - sf_count
 
     if len(to_export) > 0:
-        exporter.execute(filename, to_export)
+        file_password = export_args.get('keepass_file_password') if export_args else None
+        exporter.execute(filename, to_export, file_password)
         params.queue_audit_event('exported_records', file_format=file_format)
         logging.info('%d records exported', rec_count)
 
