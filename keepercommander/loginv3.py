@@ -30,10 +30,10 @@ from .params import KeeperParams
 
 warned_on_fido_package = False
 
-permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Concole -> Admin -> " \
+permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Console -> Admin -> " \
                         "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
                         "'Enable' check box next to Commander SDK.\nAlso note that if user has more than two roles " \
-                        "assigned then the most restrictive policy from all the roles will be applied"
+                        "assigned then the most restrictive policy from all the roles will be applied."
 
 
 class LoginV3Flow:
