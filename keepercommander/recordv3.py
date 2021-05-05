@@ -12,6 +12,7 @@
 import datetime
 import json
 import logging
+import re
 import requests.exceptions
 import urllib.parse
 
@@ -397,11 +398,18 @@ class RecordV3:
       'type': 'name',
       'value_description': 'multiple fields to capture name',
       'value': {          # object
-        'firstName': '',  # string
-        'middleName': '', # string
-        'lastName': ''    # string
+        'first': '',  # string
+        'middle': '', # string
+        'last': ''    # string
       },
-      'required': ['firstName', 'lastName'] # required parts of field value - enforced only when RT specify that field is required
+      'required': ['first', 'last'] # required parts of field value - enforced only when RT specify that field is required
+      # 2021-04-01 use reference implementation (webVault - above) != from documentation (Record+Format+V3+draft - below)
+      # 'value': {          # object
+      #   'firstName': '',  # string
+      #   'middleName': '', # string
+      #   'lastName': ''    # string
+      # },
+      # 'required': ['firstName', 'lastName']
     },
     'address': {
       'type': 'address',
@@ -595,6 +603,7 @@ class RecordV3:
     # Converts dot notation options string to JSON string representing a valid record type
     # NB! Currently duplicate field types cannot be added or edited using dot notation syntax
     # Use JSON representation for full add/edit capabilites
+
     result = {
       'errors': [],
       'warnings': [],
@@ -606,16 +615,39 @@ class RecordV3:
     rt = {}
     if rt_json:
       try: rt = json.loads(rt_json)
-      except: result['errors'].append('Unable to parse record type JSON string: ' + str(rt_json))
+      except: result['errors'].append('Unable to parse record type JSON: ' + str(rt_json))
 
     rtdef = {}
     if rt_def:
       try: rtdef = json.loads(rt_def)
-      except: result['errors'].append('Unable to parse record type definition from JSON string: ' + str(rt_def))
+      except: result['errors'].append('Unable to parse record type definition JSON: ' + str(rt_def))
     if result['errors']: return result
 
     options = kwargs.get('option') or []
     opts = [(x or '').split("=", 1) for x in options]
+    if not options:
+      return result
+
+    # normalize prefixes: f. -> fields., c. -> custom.
+    # so f.name.first is treated as duplicate of fields.name.first
+    for x in opts:
+      if x and x[0]:
+        x[0] = re.sub('^\s*fields\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub('^\s*custom\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub('^\s*f\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub('^\s*c\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
+
+    # check for duplicate keys or keys with more than one value
+    dupes = [x for x in opts if x and len(x) != 2] # keys with multiple values
+    if dupes:
+      result['errors'].append('Found keys with multiple values: ' + str(dupes))
+    groups = {} # duplicate key(s) / values
+    for x, *values in opts: groups[x] = 1 + (groups.get(x) or 0)
+    multi = [{x: groups[x]} for x in groups if groups[x] > 1]
+    if multi:
+      result['errors'].append('Found duplicate keys/values: ' + str(multi))
+    if result['errors']: return result
+
     rt_type = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'type'), None)
     rt_title = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'title'), None)
     rt_notes = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'notes'), None)
@@ -628,14 +660,77 @@ class RecordV3:
       result['errors'].append('Array types fields[] and custom[] cannot be assigned directly')
     if result['errors']: return result
 
-    # Top level RT options - unknown attribute(s) generate warnings and are silently ignored
+    # Top level RT options - unknown attribute(s) generate error
+    # All known attribute(s) /from RT definition/ generate а warning and are silently ignored
     tlo = [x for x in opts if x and not x[0].__contains__('.')]
-    # if unknonw tlo warning+= 
+    ignored = ('$id', 'categories', 'description', 'label') # these are in RT definitions only
+    ilist = [x for x in tlo if x and x[0] in ignored]
+    if ilist:
+      tlo = [x for x in tlo if x not in ilist]
+      result['warnings'].append('Removed record type attributes that should be present in record type definitions only: ' + str(ilist))
+
+    ulist = [x for x in tlo if x and x[0].strip() not in ('type', 'title', 'notes')]
+    if ulist:
+      result['errors'].append('Unknown top level attributes: ' + str(ulist))
+
+    # field type options - ex. -o field.name.first=Jane -o f.name.last=Doe
+    flo = [x for x in opts if x and x[0].__contains__('.')]
+
+    # All fields must be either in fields[] or custom[] arrays
+    badg = [x for x in flo if x[0].split('.', 1)[0].strip().lower() not in ('fields', 'custom') ]
+    if badg:
+      result['errors'].append('Unknown field group (not fields[] and not custom[]): ' + str(badg))
+
+    # Allow only valid/known field types - field types are case sensitive?
+    badf = [x for x in flo if not RecordV3.field_types.__contains__(x[0].split('.', 2)[1].strip())]
+    if badf:
+      result['errors'].append('Unknown field types: ' + str(badf))
     if result['errors']: return result
 
-    # field options
-    flo = [x for x in opts if x and x[0].__contains__('.')]
-    # if not is_edit and key has[] - err 'indexing is allowed in edit mode only'
+    # only one FT of type password allowed in record v3
+    pwds = [x for x in flo if x and x[0].startswith(('fields.password','f.password','custom.password','c.password'))]
+    if len(pwds) > 1:
+      result['errors'].append('Error: Only one password allowed per record! ' + str(pwds))
+    elif len(pwds) == 1:
+      rtdp = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'password'), False)
+      pwdc = pwds[0][0] and pwds[0][0].lower().startswith('custom.')
+      if rtdp:
+        if pwdc: result['errors'].append('Password must be in fields[] section as defined by record type! ' + str(pwds))
+      else:
+        if not pwdc: result['errors'].append('Password must be in custom[] section - record type does not allow password in fields[]! ' + str(pwds))
+    if result['errors']: return result
+
+    # All fields with prefix f./fields. must be in record type definition
+    # Don't move f./fileds. not in RT definition to custom[] - undefined order on duplicates, might break scripts
+    rtdf = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x]
+    flds = [x for x in flo if x and x[0].startswith(('fields.','f.'))]
+    cust = [x for x in flo if x and x[0].startswith(('custom.','c.'))]
+    badf = [x for x in flds if not x[0].split('.', 2)[1].strip() in rtdf]
+    if badf:
+      result['errors'].append('This record type doesn\'t allow "fields." prefix for these (move to custom): ' + str(badf))
+    if result['errors']: return result
+
+    # fields[] must contain all 'requried' fields (and requried value parts)
+    reqd = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x and 'required' in x]
+    for fld in reqd:
+      ft = (RecordV3.field_types.get(fld) or {}).get('type')
+      ftr = (RecordV3.field_values.get(ft) or {}).get('required') or []
+      if ftr:
+        ftr = ['fields.' + fld + '.' + x for x in ftr]
+        flon = [x[0] for x in flo if x and x[0]]
+        ftrm = [x for x in ftr if x not in flon]
+        if ftrm:
+          result['errors'].append('Missing requried fields: ' + str(ftrm))
+      else:
+        result['warnings'].append('Couldn\'t find requried fields for filed type: ' + str(ft))
+    if result['errors']: return result
+    # todo: cmdline labels override RT definition labels which override FT definition labels
+    # todo: verfiy ever xxRef (v4, cardRef, addressRef) UID exists in record cache or decline
+
+    pass
+    # todo: if is_edit => if 2+ of same FT -Error out; if 1! present -Edit; if 0 present -Add (chk rules - recheck 1! pwd)
+
+    if result['errors']: return result
 
     result['record'] = rt
     return result
