@@ -30,6 +30,10 @@ from . import cli
 def get_params_from_config(config_filename):
     params = KeeperParams()
 
+    if os.getenv("KEEPER_COMMANDER_DEBUG"):
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.info('Debug ON')
+
     if os.getenv('KEEPER_CONFIG_FILE'):
         logging.debug("Setting config file from KEEPER_CONFIG_FILE env variable %s" % os.getenv('KEEPER_CONFIG_FILE'))
         params.config_filename = os.getenv('KEEPER_CONFIG_FILE')
