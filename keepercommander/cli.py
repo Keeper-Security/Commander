@@ -26,7 +26,6 @@ from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
 
 from .commands.msp import get_mc_by_name_or_id
-from .loginv3 import CommonHelperMethods
 
 from .params import KeeperParams
 from . import display, loginv3, api
@@ -35,7 +34,6 @@ from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
-
 
 stack = []
 command_info = OrderedDict()
@@ -430,7 +428,6 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_while_typing=False)
 
         display.welcome()
-        CommonHelperMethods.check_commander_version()
 
     else:
         logging.getLogger().setLevel(logging.WARNING)

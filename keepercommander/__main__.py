@@ -19,6 +19,7 @@ import shlex
 import json
 import logging
 import base64
+from pathlib import Path
 
 from . import __version__
 from .params import KeeperParams
@@ -28,9 +29,25 @@ from . import cli
 
 def get_params_from_config(config_filename):
     params = KeeperParams()
-    params.config_filename = (
-        config_filename or os.getenv('KEEPER_CONFIG_FILE', 'config.json')
-    )
+
+    if os.getenv('KEEPER_CONFIG_FILE'):
+        logging.debug("Setting config file from KEEPER_CONFIG_FILE env variable %s" % os.getenv('KEEPER_CONFIG_FILE'))
+        params.config_filename = os.getenv('KEEPER_CONFIG_FILE')
+    elif os.getenv('KEEPER_SET_LAUNCHER_CONFIG_FILE'):
+        current_user_home_path = str(Path.home())
+        path_sep = os.path.sep
+
+        # mac: /Users/username/.keeper/
+        # win: C:\\Users\\username\\.keeper\\
+
+        laucher_keeper_folder_path = current_user_home_path + path_sep + '.keeper'
+        logging.debug("Launcher keeper folder: %s" % laucher_keeper_folder_path)
+
+        Path(laucher_keeper_folder_path).mkdir(parents=True, exist_ok=True)
+
+        params.config_filename = laucher_keeper_folder_path + path_sep + 'config.json'
+    else:
+        params.config_filename = config_filename
 
     if os.path.exists(params.config_filename):
         try:
@@ -129,6 +146,9 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
 
 
 def main(from_package=False):
+
+    set_working_dir()
+
     errno = 0
 
     if from_package:
@@ -203,6 +223,17 @@ def main(from_package=False):
         errno = cli.loop(params)
 
     sys.exit(errno)
+
+
+def set_working_dir():
+
+    if os.getenv('KEEPER_SET_LAUNCHER_CONFIG_FILE'):
+        current_user_home_path = str(Path.home())
+
+        logging.debug("User home: %s" % current_user_home_path)
+
+        current_user_home_path = str(Path.home())
+        os.chdir(current_user_home_path)
 
 
 if __name__ == '__main__':

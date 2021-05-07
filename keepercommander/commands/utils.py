@@ -32,7 +32,6 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
 from ..display import bcolors
-from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api, rest_api, loginv3
@@ -41,7 +40,7 @@ from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError
 from .. import __version__
-
+from ..versioning import is_binary_app, is_up_to_date_version
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -432,11 +431,25 @@ class VersionCommand(Command):
         return whoami_parser
 
     def execute(self, params, **kwargs):
-        print('Keeper Commander: {0}'.format(__version__))
-        print('Python: {0}'.format(sys.version.replace("\n", "")))
-        print("OS: {0} {1}".format(CommonHelperMethods.get_os(), platform.release()))
+        print('  Commander Version : {0}'.format(__version__))
+        print('  Python Version    : {0}'.format(sys.version.replace("\n", "")))
+        print('  Operating System  : {0} {1}'.format(loginv3.CommonHelperMethods.get_os(), platform.release()))
 
-        CommonHelperMethods.check_commander_version()
+        this_app_version = __version__
+
+        remove_version_details = is_up_to_date_version()
+
+        if not remove_version_details.get('is_up_to_date'):
+
+            print((bcolors.WARNING +
+                   '  Latest Commander Version: %s\n'
+                   '  You can download the current version at: %s \n' + bcolors.ENDC)
+                  % (this_app_version, remove_version_details.get('new_version_download_url')))
+        if is_binary_app():
+            print("Installation path: {0} ".format(sys._MEIPASS))
+
+        logging.debug("Current working directory: %s" % os.getcwd())
+        logging.debug("Current Python executable: %s" % sys.executable)
 
 
 class LoginCommand(Command):
