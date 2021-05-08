@@ -53,7 +53,7 @@ def get_params_from_config(config_filename):
 
         params.config_filename = laucher_keeper_folder_path + path_sep + 'config.json'
     else:
-        params.config_filename = config_filename
+        params.config_filename = config_filename or 'config.json'
 
     if os.path.exists(params.config_filename):
         try:
