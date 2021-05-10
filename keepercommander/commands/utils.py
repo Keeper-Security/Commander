@@ -138,7 +138,7 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-version_parser = argparse.ArgumentParser(prog='version', description='Displays version of installed Commander.')
+version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
 version_parser.error = raise_parse_exception
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.exit = suppress_exit
