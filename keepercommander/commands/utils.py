@@ -391,7 +391,7 @@ class WhoamiCommand(Command):
                 elif host_str.endswith('.com'):
                     data_center = 'US'
                 elif host_str.endswith('.au'):
-                    data_center = 'AUS'
+                    data_center = 'AU'
                 else:
                     # Ideally we should determine TLD which might require additional lib
                     data_center = host_str
@@ -452,11 +452,12 @@ class VersionCommand(Command):
         if not is_verbose:
             print('{0}: {1}'.format('Commander Version', this_app_version))
         else:
-            print('  {0:>20s}: {1}'.format('Commander Version', __version__))
-            print('  {0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
-            print('  {0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
-            print('  {0:>20s}: {1}'.format('Working directory', os.getcwd()))
-            print('  {0:>20s}: {1}'.format('Executable', sys.executable))
+            print('{0:>20s}: {1}'.format('Commander Version', __version__))
+            print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
+            print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
+            print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
+            print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
+            print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
         if not version_details.get('is_up_to_date'):
 
