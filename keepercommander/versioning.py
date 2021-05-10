@@ -17,8 +17,7 @@ from pathlib import Path
 
 import requests
 
-from . import __version__
-# from .display import bcolors
+from . import __version__, display
 
 
 def is_up_to_date_version():
@@ -114,9 +113,9 @@ def welcome_print_version():
 
     ver_info = is_up_to_date_version()
     if not ver_info.get('is_up_to_date'):
-        print(
-              ("Your version of the Commander CLI is %s, the current version is %s.\n Use the ‘v’ or ‘version’ "
-               "command for more details.\n") % (this_app_version, ver_info.get('current_github_version'))
+        print(display.bcolors.WARNING +
+              (" Your version of the Commander CLI is %s, the current version is %s.\n Use the ‘v’ or ‘version’ "
+               "command for more details.\n") % (this_app_version, ver_info.get('current_github_version')) + display.bcolors.ENDC
               )
     else:
         pass

@@ -140,6 +140,7 @@ help_parser.exit = suppress_exit
 
 version_parser = argparse.ArgumentParser(prog='version', description='Displays version of installed Commander.')
 version_parser.error = raise_parse_exception
+version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.exit = suppress_exit
 
 
@@ -382,7 +383,18 @@ class WhoamiCommand(Command):
                 cp = host.rfind(':')
                 if cp > 0:
                     host = host[:cp]
-                data_center = 'EU' if host.endswith('.eu') else 'US'
+
+                host_str = host.lower()
+
+                if host_str.endswith('.eu'):
+                    data_center = 'EU'
+                elif host_str.endswith('.com'):
+                    data_center = 'US'
+                elif host_str.endswith('.au'):
+                    data_center = 'AUS'
+                else:
+                    data_center = host_str
+
                 print('{0:>20s}: {1}'.format('Data Center', data_center))
                 environment = ''
                 if host.startswith('dev.'):
@@ -431,25 +443,30 @@ class VersionCommand(Command):
         return whoami_parser
 
     def execute(self, params, **kwargs):
-        print('  Commander Version : {0}'.format(__version__))
-        print('  Python Version    : {0}'.format(sys.version.replace("\n", "")))
-        print('  Operating System  : {0} {1}'.format(loginv3.CommonHelperMethods.get_os(), platform.release()))
 
         this_app_version = __version__
+        version_details = is_up_to_date_version()
+        is_verbose = kwargs.get('verbose') or False
 
-        remove_version_details = is_up_to_date_version()
+        if not is_verbose:
+            print('{0}: {1}'.format('Commander Version', this_app_version))
+        else:
+            print('  {0:>20s}: {1}'.format('Commander Version', __version__))
+            print('  {0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
+            print('  {0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
+            print('  {0:>20s}: {1}'.format('Working directory', os.getcwd()))
+            print('  {0:>20s}: {1}'.format('Executable', sys.executable))
 
-        if not remove_version_details.get('is_up_to_date'):
+        if not version_details.get('is_up_to_date'):
+
+            latest_version = version_details.get('current_github_version')
 
             print((bcolors.WARNING +
-                   '  Latest Commander Version: %s\n'
-                   '  You can download the current version at: %s \n' + bcolors.ENDC)
-                  % (this_app_version, remove_version_details.get('new_version_download_url')))
+                   'Latest Commander Version: %s\n'
+                   'You can download the current version at: %s \n' + bcolors.ENDC)
+                  % (latest_version, version_details.get('new_version_download_url')))
         if is_binary_app():
             print("Installation path: {0} ".format(sys._MEIPASS))
-
-        logging.debug("Current working directory: %s" % os.getcwd())
-        logging.debug("Current Python executable: %s" % sys.executable)
 
 
 class LoginCommand(Command):
