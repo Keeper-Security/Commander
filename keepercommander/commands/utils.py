@@ -393,6 +393,7 @@ class WhoamiCommand(Command):
                 elif host_str.endswith('.au'):
                     data_center = 'AUS'
                 else:
+                    # Ideally we should determine TLD which might require additional lib
                     data_center = host_str
 
                 print('{0:>20s}: {1}'.format('Data Center', data_center))

@@ -43,7 +43,7 @@ def get_params_from_config(config_filename):
         current_user_home_path = str(Path.home())
         path_sep = os.path.sep
 
-        # mac: /Users/username/.keeper/
+        # unix: /Users/username/.keeper/
         # win: C:\\Users\\username\\.keeper\\
 
         laucher_keeper_folder_path = current_user_home_path + path_sep + '.keeper'
@@ -139,7 +139,9 @@ parser.add_argument('--config', dest='config', action='store', help='Config file
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
 parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
 parser.add_argument('--login-v3', '-lv3', dest='login_v3', action='store', help='Use Login v3 to login to Keeper.')
-parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store', help='Indicate that the app was launched using a shortcut.')
+parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
+                    help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
+                         'Windows Start Menu.')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage

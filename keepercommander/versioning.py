@@ -114,7 +114,7 @@ def welcome_print_version():
     ver_info = is_up_to_date_version()
     if not ver_info.get('is_up_to_date'):
         print(display.bcolors.WARNING +
-              (" Your version of the Commander CLI is %s, the current version is %s.\n Use the ‘v’ or ‘version’ "
+              (" Your version of the Commander CLI is %s, the current version is %s.\n Use the ‘version’ "
                "command for more details.\n") % (this_app_version, ver_info.get('current_github_version')) + display.bcolors.ENDC
               )
     else:
