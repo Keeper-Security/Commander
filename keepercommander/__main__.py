@@ -39,7 +39,7 @@ def get_params_from_config(config_filename):
     if os.getenv('KEEPER_CONFIG_FILE'):
         logging.debug("Setting config file from KEEPER_CONFIG_FILE env variable %s" % os.getenv('KEEPER_CONFIG_FILE'))
         params.config_filename = os.getenv('KEEPER_CONFIG_FILE')
-    elif os.getenv('KEEPER_SET_LAUNCHER_CONFIG_FILE') or opts.launched_with_shortcut:
+    elif opts.launched_with_shortcut:
         current_user_home_path = str(Path.home())
         path_sep = os.path.sep
 
@@ -236,7 +236,7 @@ def set_working_dir():
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
 
-    if os.getenv('KEEPER_SET_LAUNCHER_CONFIG_FILE' or opts.launched_with_shortcut):
+    if opts.launched_with_shortcut:
         current_user_home_path = str(Path.home())
 
         logging.debug("User home: %s" % current_user_home_path)
