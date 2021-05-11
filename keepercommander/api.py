@@ -1369,6 +1369,7 @@ def prepare_record_v3(params, record):
         encrypted record key is sent to the server.  If the record is in a
         shared folder, must send shared folder UID for edit permission.
     """
+    from keepercommander.commands.recordv3 import RecordGetRecordTypes
 
     if not record.record_uid:
         logging.debug('Generated Record UID: %s', record.record_uid)
@@ -1392,7 +1393,18 @@ def prepare_record_v3(params, record):
         rec = params.record_cache[record.record_uid]
 
         data = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else rec['data_unencrypted']
-        is_valid, msg = RecordV3.is_valid_record_type(data)
+        try:
+            d = json.loads(data)
+            rt_name = d.get('type') or ''
+            rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt_name)
+            res = RecordV3.is_valid_record_type(data, rt_def)
+            if not res.get('is_valid'):
+                logging.error('Error validating record type - ' + res.get('error'))
+                return None
+        except Exception as e:
+            logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
+            return None
+
         data = pad_aes_gcm(data)
 
         # if data.get('secret2') != record.password:
@@ -1567,13 +1579,13 @@ def update_record(params, record, **kwargs):
     return True
 
 
-def update_record_v3(params, record, **kwargs):
+def update_record_v3(params, rec, **kwargs):
     """ Push a record update to the cloud.
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
 
-    record_rq = prepare_record_v3(params, record)
+    record_rq = prepare_record_v3(params, rec)
     if record_rq is None:
         return
 
@@ -1622,7 +1634,7 @@ def update_record_v3(params, record, **kwargs):
             return False
 
         new_revision = 0
-        if success and ruid == record.record_uid:
+        if success and ruid == rec.record_uid:
             new_revision = records_modify_rs.revision
 
         if new_revision == 0:
@@ -1749,6 +1761,7 @@ def add_record_v3(params, record, **kwargs):
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
+    from keepercommander.commands.recordv3 import RecordGetRecordTypes
 
     record_rq = record
     if record_rq is None:
@@ -1772,6 +1785,18 @@ def add_record_v3(params, record, **kwargs):
     #key = base64.urlsafe_b64encode(key)
 
     data = record_rq['data_unencrypted'].decode('utf-8') if isinstance(record_rq['data_unencrypted'], bytes) else record_rq['data_unencrypted']
+    try:
+        d = json.loads(data)
+        rt_name = d.get('type') or ''
+        rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt_name)
+        res = RecordV3.is_valid_record_type(data, rt_def)
+        if not res.get('is_valid'):
+            logging.error('Error validating record type - ' + res.get('error'))
+            return None
+    except Exception as e:
+        logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
+        return None
+
     data = pad_aes_gcm(data)
 
     rdata = bytes(data, 'utf-8')

@@ -11,6 +11,7 @@ Jump to:
 * [Login V3](#login-v3)
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
+* [Record Types Commands](record-types.md)
 * [Importing Data](#importing-records-into-keeper)
 * [Exporting Data](#exporting-records-from-keeper)
 * [Event Reporting](#ad-hoc-event-reporting)
@@ -36,14 +37,14 @@ Jump to:
 
 Keeper Security develops the world's most downloaded password manager and encrypted digital vault with millions of individual customers and thousands of enterprise customers worldwide.  Keeper is a zero-knowledge, native and cloud-based solution available on every mobile and desktop device platform. <a href="#about-keeper">Read more</a> about Keeper or visit the [Keeper Security](https://keepersecurity.com) website.
 
-Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and partners. 
+Keeper Commander is a command-line and SDK interface to [Keeper&reg; Password Manager](https://keepersecurity.com). Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and partners.
 
 If you need any assistance or require specific functionality not supported in Commander yet, please contact us at commander@keepersecurity.com.
 
 ### Use Cases
 
 * Access your Keeper vault through a command-line interface
-* Perform bulk import and export of vault records 
+* Perform bulk import and export of vault records
 * Manage records, folders and shared folders
 * Customize integration into your backend systems
 * Provision new Enterprise user accounts and shared folders
@@ -51,7 +52,7 @@ If you need any assistance or require specific functionality not supported in Co
 * Rotate passwords on service accounts or other targets
 * Integrate Keeper into your existing backend systems
 * Schedule and automate commands
-* Initiate remote connections (such as SSH and RDP) 
+* Initiate remote connections (such as SSH and RDP)
 
 ### Python Installation - Linux and Mac
 
@@ -64,10 +65,10 @@ $ pip3 install keepercommander
 
 Important: Restart your terminal session after installation
 
-### Python Installation - Windows 
+### Python Installation - Windows
 
 1. Download and install [WinPython](https://winpython.github.io/)
-2. From the install folder of WinPython, run the "WinPython Command Prompt" 
+2. From the install folder of WinPython, run the "WinPython Command Prompt"
 2. Install Keeper Commander with pip3:
 
 ```bash
@@ -90,7 +91,7 @@ We are in active development of a .Net SDK and PowerShell that covers the core u
 
 If you are a developer and you want to modify the Python source code then follow these steps:
 
-1. Clone/Download the Commander repository 
+1. Clone/Download the Commander repository
 2. Install Python3 from python.org
 3. Install virtualenv:
 ```bash
@@ -224,9 +225,9 @@ Below are the steps to achive that:
 
     During this step commander will generate configuration file `config.json` with `private_key`, `device_id`, and `device_token`.
     Make sure to add property `user` with the email of the user that was used to login to the account.
-    
+
     Example `config.json` file:
-    
+
     ```shell script
         {
             "user": "johnd@email.com",
@@ -235,11 +236,11 @@ Below are the steps to achive that:
             "device_token": "g6RDMxr1t-bcVdBeBpz-xQ"
         }
     ```
-    
+
 2. Copy content of the `config.json` file that was generated and paste it into the same file on another server (B).
 3. Now it will be possible to login to Commander on the server (B) without being prompted for authentication
 
-Note: _Once logged in on the server (B), persistent login will be lost on your computer (A). Also, 
+Note: _Once logged in on the server (B), persistent login will be lost on your computer (A). Also,
 once logged in to Keeper on a computer (A), the persistent login feature will be lost on the server (B)_
 
 ### Interactive Shell
@@ -278,7 +279,7 @@ My Vault> get Pe8N7Ii0rDd64XVDOnlS4g
  Account ID or alias: mycompanyname
        Access Key ID: BLklAomJ9NvGWtupv3QZmc0#m@
           Secret Key: 0MZenvr0x4rzK$8qLHwzS42i8r7fsdjh4DKJASHd34
-               Notes: These are some notes 
+               Notes: These are some notes
         Shared Users: craig@acme-demo.com (Owner) self
       Shared Folders: Amazon AWS          
 
@@ -324,20 +325,20 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
 
-* ```find-password``` or ```clipboard-copy``` Copy the specified Keeper Record password field to the system output or clipboard 
+* ```find-password``` or ```clipboard-copy``` Copy the specified Keeper Record password field to the system output or clipboard
   accordingly. Command accepts record UID or record path. If record is not found then command matches records by title.
-  
+
     Parameters:   
     - ```--username``` Matches records by login/username field in addition to matching by title. Can be used if matching by record title returns more than one record.
-    
+
 * ```record-history``` Display the record version history or a specific version of a record.
 
     Parameters:
     - ```--action=list``` Display the revision number, modified by user, time of modification.
-    - ```--action=diff``` Display revision, field changed and old/new values. 
-    - ```--action=show``` Provided the revision number, display the record for that specific revision and record. 
+    - ```--action=diff``` Display revision, field changed and old/new values.
+    - ```--action=show``` Provided the revision number, display the record for that specific revision and record.
     - ```--action=restore``` Restore the current version to the specified record UID and version.
-    - ```--revision``` Get a specific revision 
+    - ```--revision``` Get a specific revision
 
 * ```totp``` Display the Two-Factor Code (TOTP) attached to a vault record. If no record UID is provided, a list of available records that contain Two-Factor Codes will be displayed. If a record UID is provided, the code is displayed with a countdown timer.
 
@@ -378,7 +379,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```ln``` Create a link between record or folder
 
-* ```set``` Set environmental variables that can be used for substitution within other commands/arguments. 
+* ```set``` Set environmental variables that can be used for substitution within other commands/arguments.
 
 * ```echo``` Display environmental variables
 
@@ -399,16 +400,16 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 **Folder and Record Sharing Commands**
 
 * ```share-record``` or ```sr``` Grant or revoke record's user access
-    
+
     Usage:
     ```shell script
     share-record|sr -e EMAIL [-a {grant,revoke,owner,cancel}] [-s] [-w] [record]
     ```
-    
+
     Parameters:
     - `--email` or `-e` Account email
     - `--action` or `-a` User share action.
-        
+
         Available actions:
         - `grant` - Grant read-only access to the record. Default value if omitted.
         - `revoke` - Revoke edit permissions to this record.
@@ -418,10 +419,10 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - `--write` or `-w` Grant permission to modify record
 
     Usage examples:
-    
+
     - Grant edit and share access to one record: `share-record -a grant -e db-admin@keepersecurity.com -w "Prod MySQL"`
     - Revoke access to the shared record: `share-record -a revoke -e db-admin@keepersecurity.com -w "Prod MySQL"`
-    
+
 * `share-folder` or `sf` Grant or revoke shared folder's user or teams access or record permission
 
     Usage:
@@ -429,7 +430,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     share-folder|sf [-a {grant,revoke}] [-e USER] [-r RECORD] [-p] [-o] [-s] [-d] [folder]
     ```
     Parameters:
-    
+
     - `--action` or `-a` Shared Folder action. Available options: `grant`, `revoke`. Default is `grant` if omitted.
     - `--email` or `-e` Account email, team name, or '*' as default folder permission
     - `--record` or `-r` Record name, record UID, or '*' as default folder permission
@@ -439,11 +440,11 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - `--can-edit` or `-d` Enables user or team to modified this Shared Folder
 
     Usage examples:
-    
+
     - Grant read-only access for the team to records in the Shared Folder: `share-folder -a grant -e DB_ADMINS TestDBs`
     - Revoke access for the team to the Shared Folder: `share-folder -a revoke -e DB_ADMINS TestDBs`
 
-* ```record-permission``` Changes record permissions inside the folder or folder tree. 
+* ```record-permission``` Changes record permissions inside the folder or folder tree.
 
     Parameters:
     - ```--action``` Grant or revoke requested permissions
@@ -452,7 +453,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - ```--recursive``` Apply permissions to all records in folder tree
     - ```--can-share``` Permission to share the record
     - ```--can-edit``` Permission to edit the record
-    - ```--dry-run``` Do not modify but display permissions that are about to be changed by this command 
+    - ```--dry-run``` Do not modify but display permissions that are about to be changed by this command
 
 **Enterprise Console Management Commands**
 
@@ -464,27 +465,27 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - ```--roles``` Show all roles in a list view
     - ```--teams``` Show all teams in a list view
     - ```--node``` Specify a single node to limit view
-    - ```--v``` Verbose mode 
+    - ```--v``` Verbose mode
 
 * ```enterprise-user <email(s)>``` or ```eu <email(s)>```   Enterprise user management
 
     Parameters:
     - ```--expire``` Expire the Master Password for the user
-    - ```--extend``` Extend vault transfer consent by 7 days 
+    - ```--extend``` Extend vault transfer consent by 7 days
     - ```--lock``` Unlock the user account
-    - ```--unlock``` Lock the user account 
+    - ```--unlock``` Lock the user account
     - ```--disable-2fa``` Disable 2FA for a user
     - ```--add``` Invite a new user to join the enterprise
     - ```--delete``` Delete the user and all stored vault records (use with caution)
     - ```--name``` Rename a user's display name
-    - ```--node``` Move user into a node 
+    - ```--node``` Move user into a node
     - ```--add-role``` Add a user to a role
     - ```--remove-role``` Remove a user from a role
     - ```--add-team``` Add a user to a team
     - ```--remove-team``` Remove a user from a team
     - If no parameters are provided, displays information about specified email
 
-    Multiple emails can be provided, for example: 
+    Multiple emails can be provided, for example:
     - ```enterprise-user --lock user1@company.com user2@company.com user3@company.com```
 
 * ```enterprise-role <Role ID>``` or ```er <Role ID>```   Enterprise role management
@@ -505,7 +506,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - ```--delete``` Delete a team
     - ```--restrict-edit``` Restrict record edit on the team
     - ```--restrict-share``` Restrict record re-sharing on the team
-    - ```--restrict-view``` Restrict record viewing on the team 
+    - ```--restrict-view``` Restrict record viewing on the team
     - If no parameters are provided, displays information about specified team
 
 * ```enterprise-push <Record Template File Name>```   Populate user and team vaults with default records - [See Details](#pushing-records-to-users-and-teams)
@@ -516,7 +517,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - ```--email USER_EMAIL``` Populate user's vault
     - ```file``` JSON file name containing template records
 
-* ```team-approve``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge 
+* ```team-approve``` Approve queued teams and users that have been provisioned by SCIM or Active Directory Bridge
 
     Parameters:
     - ```--team``` Approve teams only
@@ -528,8 +529,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```device-approve``` Approve SSO Cloud devices that are pending from end-users
 
     Parameters:
-    - ```--reload``` Get the latest devices that require approval 
-    - ```--approve <device ID>``` Approve the specific device or all devices 
+    - ```--reload``` Get the latest devices that require approval
+    - ```--approve <device ID>``` Approve the specific device or all devices
     - ```--deny <device ID>``` Deny specific device
     - ```--trusted-ip``` When supplied with --approve, will only approve devices from a recognized IP address
 
@@ -543,7 +544,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
     - `register` - register a data key for the device. Needed for the persistent login to work.
 
         Example: `this-device register`
-    - `persistent_login` - If enabled, the client can resume a logged in session or do cross client login. 
+    - `persistent_login` - If enabled, the client can resume a logged in session or do cross client login.
         If disabled, the client cannot resume a session. Available options: `on`, `off`
 
         Example: `this-device persistent_login on`
@@ -562,7 +563,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
         Note: When disabled (timeout = 0) or not set, clients will use client type default values - Mobile: 10 min, Console, Desktop, Web: 60 min.
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
-    - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
+    - ```--target=splunk``` Export events to Splunk HTTP Event Collector
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
     - ```--target=syslog-port``` Export events in syslog format to TCP port. Both plain and SSL connections are supported
@@ -596,17 +597,17 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 * ```share-report``` Generate ad-hoc sharing permission report that displays users and team permissions for all records in the vault
 
     Parameters:
-    - ```--record``` View share permissions on specific record 
+    - ```--record``` View share permissions on specific record
     - ```--email``` View share permissions with specific account. User email or team name
-    - ```--owner``` Include the owner information for each record 
-    - ```--verbose``` Include the record title and permission settings for each record 
+    - ```--owner``` Include the owner information for each record
+    - ```--verbose``` Include the record title and permission settings for each record
 
 **MSP Console Management Commands**
 
 * ```msp-info``` or ```mi``` Display MSP details, such as licenses and managed companies
 
     Sample Output:
-    
+
     ```
       MSP Plans and Licenses
     -----------------------
@@ -616,7 +617,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
       2  businessPlus                       8                10       10
       3  enterprise                         2                10       10
       4  enterprisePlus                     6                10       10
-  
+
       #    ID  Name         Plan              Allocated    Active
     ---  ----  -----------  --------------  -----------  --------
       1  3861  Company 1     businessPlus              2         2
@@ -627,8 +628,8 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
       6  3875  Company 6     business                  2         0
 
   ```
-  
-* ```msp-down``` or ```md``` Refresh local MSP data from the server. Useful in case when there was an update made on 
+
+* ```msp-down``` or ```md``` Refresh local MSP data from the server. Useful in case when there was an update made on
 the font end and user wants to retrieve current configurations without re-login to the commander  
 
 * ```msp-license``` or ```ml``` View and Manage MSP licenses
@@ -638,10 +639,10 @@ the font end and user wants to retrieve current configurations without re-login 
   msp-license --add --seats=4 --mc 3984
   ```
     Parameters:
-    
+
     - ```-h```, ```--help``` Show help message
     - ```-a {add,reduce,usage}```, ```--action {add,reduce,usage}``` Action to perform on the licenses. Default: `usage`
-        
+
         Options:
         - `usage` - View current usage of licenses given to the MSP. Will print the table listing License Plan ID, available license, total allocated licenses, and Stash
         - `add` - Add licenses to the managed company
@@ -663,7 +664,7 @@ the font end and user wants to retrieve current configurations without re-login 
     Parameters:
     - ```-h``` or ```--help``` Show help message
     - ```--type {allocation,audit}``` Type of the report. Default `allocation`
-    - ```--format {table,csv,json}``` Format of the report output. 
+    - ```--format {table,csv,json}``` Format of the report output.
     - ```--range {today,yesterday,last_7_days,last_30_days,month_to_date,last_month,year_to_date,last_year}``` Pre-defined data ranges to run the report.
      Only application to the `audit` report. Default `last_30_days`
     - ```--from FROM_DATE``` Run report from this date.  Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only application to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`
@@ -674,7 +675,7 @@ the font end and user wants to retrieve current configurations without re-login 
 
 In the Web Console interface MSP users have ability to login to the managed company and perform actions as an admin of the Managed Company.
 
-In Commander's command line interface the same can be achieved by running one command as MC or switching the context to MC and running all following commands 
+In Commander's command line interface the same can be achieved by running one command as MC or switching the context to MC and running all following commands
 under that particular company.
 
 ##### One-off Command as MC Administrator
@@ -700,7 +701,7 @@ $ switch-to-mc 3900
 
 To switch the context back to MSP, use the `switch-to-msp` command.
 
-Example: 
+Example:
 
 ```
 switch-to-msp
@@ -711,7 +712,7 @@ switch-to-msp
 To import records into your vault, use the ```import``` command.  Supported import formats:
 
 * JSON
-* CSV 
+* CSV
 * Keepass (see additional [install instructions](keepercommander/importer/keepass/README.md))
 * LastPass (see additional [install instructions](keepercommander/importer/lastpass/README.md))
 
@@ -722,7 +723,7 @@ LastPass import will transfer the vault passwords directly to Keeper retaining t
 
 **JSON Record Import**
 
-Below is a JSON import file with 2 records. The first record is added to a folder called "My Servers". The second record is added to "My Servers" and also added to a shared folder called "Shared Servers". 
+Below is a JSON import file with 2 records. The first record is added to a folder called "My Servers". The second record is added to "My Servers" and also added to a shared folder called "Shared Servers".
 
 The import file example below is an array of record objects which can import into private folders and shared folders. Note in the example that the Facebook record contains a TOTP seed which will render on the Vault user interface and Commander CLI.
 
@@ -868,7 +869,7 @@ There are more complex import file examples that supports shared folders, folder
 $ keeper import --format=json sample_data/import.json.txt
 ```
 
-The sample file contains "permissions" objects that contain email address or team names.  If the email or team name exists in your Keeper enterprise account, they will be added to the shared folder, otherwise the information is ignored. 
+The sample file contains "permissions" objects that contain email address or team names.  If the email or team name exists in your Keeper enterprise account, they will be added to the shared folder, otherwise the information is ignored.
 
 
 **CSV Record Import**
@@ -879,9 +880,9 @@ File Format:
 Folder,Title,Login,Password,Website Address,Notes,Shared Folder,Custom Fields
 
 * To specify subfolders, use backslash "\\" between folder names
-* To set shared folder permission on the record, use the #edit or #reshare tags as seen below 
+* To set shared folder permission on the record, use the #edit or #reshare tags as seen below
 * Enclose fields in quotes for multi-line or special characters
-* Ensure files are UTF-8 encoded for support of international or double-byte characters 
+* Ensure files are UTF-8 encoded for support of international or double-byte characters
 
 Below is an example csv file that showcases several import features including personal folders, shared folders, subfolders, special characters and multi-line fields.
 
@@ -926,7 +927,7 @@ $ keeper help import
 Keeper supports automatic import of your LastPass vault by providing your LastPass email, Master Password and 2FA code. Make sure to first follow [these instructions](keepercommander/importer/lastpass/README.md) to install the necessary LastPass modules.
 
 ```bash
-$ keeper import --format=lastpass craig@acme-demo.com 
+$ keeper import --format=lastpass craig@acme-demo.com
 Processing... please wait.
 ...             LastPass Password: *******
 Press <Enter> if account is not protected with Multifactor Authentication
@@ -938,7 +939,7 @@ My Vault>
 You can optionally make all top level folders as shared folder object with default permissions.
 
 ```bash
-$ keeper import --format=lastpass --shared --permissions=URES craig@acme-demo.com 
+$ keeper import --format=lastpass --shared --permissions=URES craig@acme-demo.com
 ```
 
 For more options, see the help screen:
@@ -1019,13 +1020,13 @@ To export the report in CSV format use the following command:
 My Vault> security-audit-report --format csv --output security_audit.csv
 ```
 
-### Ad-Hoc Event Reporting 
+### Ad-Hoc Event Reporting
 
 Business customers can now generate advanced ad-hoc event reports with over 100 different event types and custom filters. For help with the syntax of the report, use the below command:
 
 ```
 My Vault> audit-report --syntax-help                                                                                                                                                                        
-``` 
+```
 
 The list of over 100 event types is documented in our Enterprise Guide:
 
@@ -1103,7 +1104,7 @@ My Vault> audit-report --report-type=raw --event-type=login_failure --created=to
 
 To list all possible event types:
 ```
-My Vault> audit-report --report-type=dim --column=audit_event_type 
+My Vault> audit-report --report-type=dim --column=audit_event_type
 ```
 
 There are hundreds of possible report variations possible. If you have any questions, please contact us at commander@keepersecurity.com and we'll help you construct the perfect report syntax.
@@ -1114,7 +1115,7 @@ Commander supports integration with popular SIEM solutions such as Splunk, Sumo 
 
 [https://docs.keeper.io/enterprise-guide/event-reporting](https://docs.keeper.io/enterprise-guide/event-reporting)
 
-Using Commander for SIEM integration works well in an on-prem environment where the HTTP event collector is only available within your network.  The Keeper Admin Console version 13.3+ is capable of integrating our backend event data into your SIEM solution but it requires that you are utilizing a cloud-based SIEM solution. If you need assistance in integrating Keeper into your SIEM solution without Commander, please contact our business support team at business.support@keepersecurity.com. 
+Using Commander for SIEM integration works well in an on-prem environment where the HTTP event collector is only available within your network.  The Keeper Admin Console version 13.3+ is capable of integrating our backend event data into your SIEM solution but it requires that you are utilizing a cloud-based SIEM solution. If you need assistance in integrating Keeper into your SIEM solution without Commander, please contact our business support team at business.support@keepersecurity.com.
 
 **Export of Event Logs in Syslog Format**
 
@@ -1130,7 +1131,7 @@ To export all events and start tracking the last event time exported:
 ```
 My Vault> audit-log --target=syslog
 Do you want to create a Keeper record to store audit log settings? [y/n]: y
-Choose the title for audit log record [Default: Audit Log: Syslog]: 
+Choose the title for audit log record [Default: Audit Log: Syslog]:
 Enter filename for syslog messages.
 ...              Syslog file name: all_events.log
 ...          Gzip messages? (y/N): n
@@ -1179,7 +1180,7 @@ $ keeper --config=my_config_file.json
 
 Keeper can post event logs directly to your on-prem or cloud Splunk instance. Please follow the below steps:
 
-* Login to Splunk enterprise 
+* Login to Splunk enterprise
 * Go to Settings -> Data Inputs -> HTTP Event Collector
 * Click on "New Token" then type in a name, select an index and finish.
 * At the last step, copy the "Token Value" and save it for the next step.
@@ -1195,7 +1196,7 @@ Next set up the Splunk integration with Commander. Commander will create a recor
 $ keeper audit-log --format=splunk
 
 Do you want to create a Keeper record to store audit log settings? [y/n]: y
-Choose the title for audit log record [Default: Audit Log: Splunk]: <enter> 
+Choose the title for audit log record [Default: Audit Log: Splunk]: <enter>
 
 Enter HTTP Event Collector (HEC) endpoint in format [host:port].
 Example: splunk.company.com:8088
@@ -1252,8 +1253,8 @@ $ keeper --config=my_config_file.json
 Keeper can post event logs directly to your Sumo Logic account. Please follow the below steps:
 
 * Login to Sumo Logic
-* Go to Manage Data -> Collection 
-* Click on Add Collector -> Hosted Collector then Add Source -> HTTP Logs & Metrics 
+* Go to Manage Data -> Collection
+* Click on Add Collector -> Hosted Collector then Add Source -> HTTP Logs & Metrics
 * Name the collector and Save. Any other fields are default.
 * Note the HTTP Source Address which is the collector URL  
 * Login to Keeper Commander shell
@@ -1317,8 +1318,8 @@ $ keeper --config=my_config_file.json
 
 **Export of Event Logs in JSON Format**
 
-Commander can export all event logs to a local file in JSON format. The local file is overwritten with every run of Commander. 
-This kind of export can be used with conjunction with other application that process the file. 
+Commander can export all event logs to a local file in JSON format. The local file is overwritten with every run of Commander.
+This kind of export can be used with conjunction with other application that process the file.
 A Keeper record in your vault is used to store a reference to the last event.
 
 ```bash
@@ -1443,7 +1444,7 @@ $ keeper --config=my_config_file.json
 
 By default, Keeper will look for a file pointed to by the environment variable `KEEPER_CONFIG_FILE`, falling back to ```config.json``` in the current working directory, and will use this file for reading and writing session parameters. For example, if you login with two factor authentication, the device token is written to this file. The configuration file loaded can also be customized through the ```config``` parameter. The config file can also be used to automate and schedule commands.
 
-Below is a fully loaded config file. 
+Below is a fully loaded config file.
 
 ```json
 {
@@ -1481,7 +1482,7 @@ To configure Yubikey device authentication, follow the [setup instructions](http
 
 * ```device_token_expiration``` can be set to ```true``` to require 2FA every login.  Otherwise, the 2FA token will not expire. To manually force a 2FA token to expire, login to your Keeper vault (on desktop app, Web Vault or mobile app) and disable then re-enable your Two-Factor Authentication settings. This will invalidate all previously saved tokens across all devices. Note: if a Security Key is attached to an account, this will require prompt every time currently.
 
-### Batch Mode 
+### Batch Mode
 
 You can batch execute a series of commands and pipe the file to STDIN of Commander.  For example, create a text file called ```test.cmd``` with the following lines:
 
@@ -1495,13 +1496,13 @@ To run this file in a batch mode:
 ```bash
 cat test.cmd | keeper --batch-mode shell
 ```
-or 
+or
 ```bash
 cat test.cmd | keeper -
 ```
 
-The batch execution is aborted if some command returns failure. 
-Use `@` in front of the command to suppress the possible command error. 
+The batch execution is aborted if some command returns failure.
+Use `@` in front of the command to suppress the possible command error.
 ```
 add --login=blah@gmail.com --pass=somemasterpass --url=https://google.com --force "Some Record Title"
 @upload-attachment --file="/path/to/some/file.txt" "Some Record Title"
@@ -1528,7 +1529,7 @@ Customers who normally login to their Keeper Vault using Enterprise SSO Login (S
 
 3. Enable the option "Allow users who login with SSO to create a Master Password"
 
-4. Login to the End-User Vault using SSO at [https://keepersecurity.com/vault](https://keepersecurity.com/vault) 
+4. Login to the End-User Vault using SSO at [https://keepersecurity.com/vault](https://keepersecurity.com/vault)
 
 5. Visit the Settings > General screen and setup a Master Password
 
@@ -1604,11 +1605,11 @@ The `get` command allows you to query a stored Keeper password by record UID.  F
 ```bash
 $ keeper --user=<Keeper Email> get --format=password <Record UID>
 ```
-The password retrieved is written to standard output. 
+The password retrieved is written to standard output.
 
 In this case, you will be asked for the Keeper Master Password. There are a few ways to provide Commander with the Master Password. All of these methods make the Keeper Master Password accessible on the filesystem and should be used with caution:
 
-1. `--password` parameter. i.e. `keeper --user=<Keeper Email> --password=<Keeper Password>`. 
+1. `--password` parameter. i.e. `keeper --user=<Keeper Email> --password=<Keeper Password>`.
 
 2. `KEEPER_PASSWORD` environment variable. i.e. `KEEPER_PASSWORD=<Keeper Password> keeper --user<Keeper Email>`. This method is demonstrated in the Jenkins script explained below.
 
@@ -1619,14 +1620,14 @@ In this case, you will be asked for the Keeper Master Password. There are a few 
   "user": "<Keeper Email>",
   "password": "<Keeper Master Password>"
 }
-``` 
+```
 
 ### Jenkins CI Integration
 
 This example demonstrates retrieving a password in Keeper for use in the Jenkins CI environment.
 
 1. Create a Python virtual environment in the jenkins user home directory and install keepercommander package with pip:
- 
+
 ```sh
 jenkins@jenkins:~$ python3 -m venv keeper
 jenkins@jenkins:~/$ cd keeper
@@ -1656,9 +1657,9 @@ node {
    stage('Load') {
        // change working directory to keeper venv
        dir("/var/jenkins_home/keeper") {      
-           // load Keeper credentials into environmenmt variables. Commander uses KEEPER_PASSWORD variable if set 
+           // load Keeper credentials into environmenmt variables. Commander uses KEEPER_PASSWORD variable if set
            withCredentials([usernamePassword(credentialsId: 'Keeper', usernameVariable: 'KEEPER_USERNAME', passwordVariable: 'KEEPER_PASSWORD')]) {
-                    // retrieve the password 
+                    // retrieve the password
                    env.PASSWORD = sh(script: ". bin/activate; keeper --user=${KEEPER_USERNAME} get --format=password <Record UID>", returnStdout: true).trim()
             }
        }
@@ -1681,11 +1682,11 @@ This example demonstrates retrieving a password in Keeper for user in GitHub Act
       ```shell
       keeper shell --user gha@mycompany.com
       ```
-      
+
     - Edit config file
-      
+
       In your current directory where `keeper` command ran you should see a newly generated config file `config.json`. Modify this file by adding password that was used to login. This is the sample of the config file:
-      
+
       ```json
       {
           "user": "gha@mycompany.com",
@@ -1694,16 +1695,16 @@ This example demonstrates retrieving a password in Keeper for user in GitHub Act
           "device_token": "kDbya3s-pco6N7n5mKBqSgUyQMCv9QVim4gh177zBJ11Pg"
       }
       ```
-      
+
 2. GitHub Actions Workflow configuration
-   
+
     In your GitHub Actions workflow add following steps
     - Install Keeper Commander
     - Add `config.json` to the home folder from where Commander's commands will be executed. See note below on the best practices on how to secure the config file.
     - Call Commander's commands
-  
+
     Example Github Actions workflow code:
-  
+
     ```yaml
     name: Commander In GitHub Actions
     on:
@@ -1724,9 +1725,9 @@ This example demonstrates retrieving a password in Keeper for user in GitHub Act
         - name: Install Keeper Commander
           run: |
             pip install keepercommander
-   
+
         - name: Setup Config File
-          env: 
+          env:
             COMMANDER_CONFIG_JSON: ${{ secrets.COMMANDER_CONFIG_JSON }}
           shell: bash
           run: 'echo "$COMMANDER_CONFIG_JSON" > config.json'
@@ -1742,7 +1743,7 @@ Later on this json will be retrieved and stored in the `config.json`, as it is s
 
 ```yaml
 - name: Setup Config File
-  env: 
+  env:
     COMMANDER_CONFIG_JSON: ${{ secrets.COMMANDER_CONFIG_JSON }}
   shell: bash
   run: 'echo "$COMMANDER_CONFIG_JSON" > config.json'
@@ -1755,9 +1756,9 @@ Later on this json will be retrieved and stored in the `config.json`, as it is s
 
 This example demonstrates retrieving a password in Keeper for user in Azure DevOps Pipeline
 
-1. Generate configuration file 
-   
-    See Step 1 in [GitHub Actions Integration](#github-actions-integration) example. 
+1. Generate configuration file
+
+    See Step 1 in [GitHub Actions Integration](#github-actions-integration) example.
 
 2. Azure DevOps Pipeline configuration
 
@@ -1771,28 +1772,28 @@ This example demonstrates retrieving a password in Keeper for user in Azure DevO
     ```yaml
     trigger:
     - main
-    
+
     pool:
       vmImage: ubuntu-latest
-    
+
     steps:
-    
+
     - task: UsePythonVersion@0
       inputs:
         versionSpec: '3.7'
         addToPath: true
         architecture: 'x64'
-    
+
     - task: DownloadSecureFile@1
       name: secureKeeperConfig
       displayName: Download Keeper config file
       inputs:
         secureFile: config.json
-    
+
     - displayName: Install Keeper Commander
       script: |
         pip3 install keepercommander
-        
+
     - displayName: 'Example calling Keeper'
       script: |
         export KEEPER_CONFIG_FILE=$(keeperConfig.secureFilePath)
@@ -1804,7 +1805,7 @@ This example demonstrates retrieving a password in Keeper for user in Azure DevO
 See [this document](https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/utility/download-secure-file?view=azure-devops) on how to securely store files in Azure DevOps Pipeline
 
 
-### Launching and Connecting to Remote Servers 
+### Launching and Connecting to Remote Servers
 
 Using the ```connect``` command, Keeper Commander can launch SSH, RDP or other external connections utilizing content and metadata stored in the Keeper vault record.  Command-line parameters are supplied through custom fields and file attachments. This command is very flexible and can be totally customized to use any 3rd party application or utility for performing the remote connections.
 
@@ -1818,8 +1819,8 @@ In this example, we are showing how to connect to a server through a SSH gateway
 
 Custom Field Name       | Custom Field Value             
 ----------------------- | ------------------------------
-connect:xxx:description | Production Server via Gateway 
-connect:xxx             | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user@server 
+connect:xxx:description | Production Server via Gateway
+connect:xxx             | ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway -W %h:%p" -i ${file:server.pem} ec2-user@server
 File Attachment         | gateway.pem
 File Attachment         | server.pem
 
@@ -1835,7 +1836,7 @@ My Vault> connect my_server
 Connecting to my_server...
 
 Last login: Sat Sep 28 00:25:34 2019 from 12.23.34.5
-ec2-user@my_server:~$ 
+ec2-user@my_server:~$
 ec2-user@my_server:~$ logout
 Connection to my_server closed.
 My Vault>                                                                                           
@@ -1865,7 +1866,7 @@ Here, ```xxx``` is the friendly name of the connection.  ```yyy``` is an optiona
 
 In this example, the first parameter references the private key, the second parameter references the passphrase used to encrypt the private key.
 
-```${password}``` references the value stored in the record's Password field 
+```${password}``` references the value stored in the record's Password field
 
 Here's a screenshot of a Keeper Vault record where the private key is stored in a custom field:
 
@@ -1882,7 +1883,7 @@ My Vault> connect example2
 Connecting to example2...
 
 Last login: Sat Sep 28 00:25:34 2019 from 12.23.34.5
-craig@example2:~$ 
+craig@example2:~$
 craig@example2:~$ logout
 Connection to example2 closed.
 My Vault>                                                                                           
@@ -1898,7 +1899,7 @@ connect:xxx:env:PGPASSWORD | ${password}
 
 Here, ```xxx``` is the friendly name of the connection.  
 
-```${password}``` references the value stored in the record's Password field 
+```${password}``` references the value stored in the record's Password field
 
 Here's a screenshot of a Keeper Vault record:
 
@@ -1930,7 +1931,7 @@ Below is a summary of the fields required to perform connection and rotation:
 
 Name                  | Field         | Comments
 --------------------- | ------------- | ------------
-Login                 | Login         | Set to the username, e.g. **'ec2-user'** in the **'Login'** field. 
+Login                 | Login         | Set to the username, e.g. **'ec2-user'** in the **'Login'** field.
 Password              | Password      | Set to the passphrase to encrypt the SSH key in the **'Password'** field
 cmdr:plugin:xxx       | Custom        | ```sshkey``` "xxx" is the friendly name which can be referenced in command line 'rotate' and 'connect' calls.
 cmdr:host             | Custom        | (Optional, Multiple) Set to hostname or IP address of target server
@@ -1951,9 +1952,9 @@ Vault Record Fields:
 
 Custom Field Name                  | Custom Field Value
 ---------------------------------- | ----------------------------------
-connect:rdp_demo:description       | Remote connection to Demo Server 
-connect:rdp_demo:pre               | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL 
-connect:rdp_demo                   | mstsc ${file:Default.rdp} 
+connect:rdp_demo:description       | Remote connection to Demo Server
+connect:rdp_demo:pre               | cmdkey /generic:12.34.56.78 /user:${login} /pass:${password} > NUL
+connect:rdp_demo                   | mstsc ${file:Default.rdp}
 connect:rdp_demo:post              | cmdkey /delete:12.34.56.78 > NUL
 File Attachment                    | Default.rdp
 
@@ -1967,11 +1968,11 @@ Note: The Default.rdp file is saved from Remote Desktop Connection with your des
 You can customize the commands with parameter substitutions described below:
 
 ```
-${user_email}: Email address of Keeper user 
+${user_email}: Email address of Keeper user
 ${login}: Record login field
 ${password}: Record password field
-${text:<name>}: Custom per-user variable, prompted for value, not shared 
-${mask:<name>}: Custom per-user variable, prompted for value, not shared 
+${text:<name>}: Custom per-user variable, prompted for value, not shared
+${mask:<name>}: Custom per-user variable, prompted for value, not shared
 ${file:<attachment_name>}: Stored in temp file during use and deleted after connection close,
 ${body:<attachment_name>}: Raw content of the attachment file.
 ```
@@ -1983,7 +1984,7 @@ To get a list of available connections, type:
 ```
 My Vault> connect
 ```
- 
+
 #### Initiating connections
 
 To initiate a connection (using the SSH/RDP examples) from Commander simply type:
@@ -2011,7 +2012,7 @@ Notes:
 - Just like any other Keeper vault record, a connection record can be shared among a team, shared to another Keeper user or remain private.
 
 
-### Environmental Variables 
+### Environmental Variables
 
 Custom environmental variables can be created on the command line and through batch script files in order to perform data substitutions.
 
@@ -2029,7 +2030,7 @@ To add a new environmental variable, use the "set" command:
 My Vault> set my_test foo
 ```
 
-To use this variable, use ${my_test} 
+To use this variable, use ${my_test}
 
 The below example will add a record and then share the record with a user:
 
@@ -2038,7 +2039,7 @@ My Vault> add --login "testing123" --pass "12345" --url "https://google.com" "Te
 My Vault> share-record -e another_user@company.com -a grant -w ${last_record_uid}
 ```
 
-### Targeted Password Rotations & Plugins 
+### Targeted Password Rotations & Plugins
 
 Keeper Commander can communicate to internal and external systems for the purpose of rotating a password and synchronizing the change to your Keeper Vault.  We accomplish this by associating a Keeper record with a physical system through the use of custom fields.  For example, you might want to rotate your MySQL password, Active Directory password and local Administrator password automatically.  To support a plugin, simply add a set of **custom field** values to the Keeper record. The custom field values tell Commander which plugin to use, and what system to communicate with when rotating the password.  To modify your Keeper record to include custom fields, login to Keeper on the [Web Vault](https://keepersecurity.com/vault) or [Keeper Desktop](https://keepersecurity.com/download.html) app.  
 
@@ -2054,7 +2055,7 @@ When a plugin is specified in a record, Commander will search in the plugins/ fo
 
 Check out the [plugins folder](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) for all of the available plugins.  Keeper's team adds new plugins on an ongoing basis. If you need a particular plugin created, send us an email to commander@keepersecurity.com.
 
-### Locating the Record UID and other Identifiers 
+### Locating the Record UID and other Identifiers
 
 The Record UID and Shared Folder UID can be found either through the "get", "list", "ls -l" or "search" commands, or through the Web Vault user interface.
 
@@ -2084,7 +2085,7 @@ For more details on Keeper's security architecture, certifications and implement
 
 Keeper has partnered with Bugcrowd to manage our vulnerability disclosure program. Please submit reports through https://bugcrowd.com/keepersecurity or send an email to security@keepersecurity.com.
 
-### Troubleshooting 
+### Troubleshooting
 
 **SSL Certificate Errors**
 
@@ -2104,11 +2105,11 @@ Keeper's Features &amp; Benefits
 
 * Manages all your passwords and secret info
 * Protects you against hackers
-* Encrypts everything in your vault 
+* Encrypts everything in your vault
 * High-strength password generator
 * Login to websites with one click
 * Store private files, photos and videos
-* Take private photos inside vault 
+* Take private photos inside vault
 * Share records with other Keeper users
 * Access on all your devices and computers
 * Keeper DNA&trade; multi-factor authentication
@@ -2123,7 +2124,7 @@ Keeper's Features &amp; Benefits
 * AES-256 encryption
 * Zero-Knowledge security architecture
 * SOC-2 and ISO 27001 Certified
-* GDPR Compliant 
+* GDPR Compliant
 
 ### Keeper Website
 [https://keepersecurity.com](https://keepersecurity.com)
@@ -2171,7 +2172,7 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 [Enterprise Guide](https://docs.keeper.io/enterprise-guide/)
 
-### Sales & Support 
+### Sales & Support
 
 [White Papers & Data Sheets](https://keepersecurity.com/enterprise-resources.html)
 
@@ -2183,7 +2184,7 @@ We're here to help.  If you need help integrating Keeper into your environment, 
 
 Commander can be bundled with [PyInstaller](https://pyinstaller.readthedocs.io/en/stable/) as a single package.
 There are two PyInstaller configuration files `keeper_folder.spec` and `keeper_file.spec` that build
-["One-Folder"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-folder-program-works) and 
+["One-Folder"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-folder-program-works) and
 ["One-File"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-file-program-works) packages accordingly.
 To build a binary package:
 ```shell script
@@ -2197,7 +2198,7 @@ cd Commander
 # install base Commander packages
 pip install -r requirements.txt
 
-# install optional packages 
+# install optional packages
 pip install -r extra_dependencies.txt
 
 # build one-folder package
@@ -2207,4 +2208,4 @@ pyinstaller keeper-folder.spec
 pyinstaller keeper-file.spec
 
 # your packages are in dist/ folder
-``` 
+```

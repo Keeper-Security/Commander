@@ -297,7 +297,8 @@ class RecordAddCommand(Command):
 
             # check for a single valid v3 record type
             types = [x for x in options if 'type' == (x or '').split('=', 1)[0].strip().lower()]
-            if len(types) != 1: # RT either missing or specified more than once
+            uniq = list({x.split('=', 1)[1].strip() for x in types if x.__contains__('=')})
+            if len(uniq) != 1: # RT either missing or specified more than once
                 logging.error(bcolors.FAIL + 'Please specify a valid record type: ' + str(types) + bcolors.ENDC)
                 return
 
@@ -309,7 +310,7 @@ class RecordAddCommand(Command):
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
-        data_opts = recordv3.RecordV3.convert_options_to_json('', rt_def, kwargs) if rt_def else None
+        data_opts = recordv3.RecordV3.convert_options_to_json(params, '', rt_def, kwargs) if rt_def else None
         if not (data_json or data_file or data_opts):
             print("Please provide valid record data as a JSON string, options or file name.")
             self.get_parser().print_help()
@@ -321,6 +322,11 @@ class RecordAddCommand(Command):
                 with open(data_file, 'r') as file:
                     data = file.read()
         if data_opts and not data:
+            if data_opts.get('warnings'):
+                logging.error(bcolors.WARNING + 'Options converted to a record type with warning(s): ' + str(data_opts.get('warnings')) + bcolors.ENDC)
+            if data_opts.get('errors'):
+                logging.error(bcolors.FAIL + 'Error(s) converting options to a record type: ' + str(data_opts.get('errors')) + bcolors.ENDC)
+                return
             if not data_opts.get('errors'):
                 rec = data_opts.get('record')
                 data = json.dumps(rec) if rec else ''
@@ -567,15 +573,69 @@ class RecordEditCommand(Command):
                 logging.error('Conversion failed for record: %s', record_uid)
             return
 
+        # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
+        # v2 record: when no v3 option set - neither -v3d nor -v3f is set
+        # v3 record: when no --legacy flag and no legacy options (--title, --login, --pass, --url, --notes, --custom)
+        # NB! v3 record needs at least one of: -v3d or -v3f or -o to be set
         is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
+        is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option'))
+        rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
         if is_v2:
-            recordv2.RecordEditCommand().execute(params, **kwargs)
+            if rv and rv == 3:
+                logging.error('Record %s is version 3 already. Please use version 3 editing options (--data, --data-file, --option).', record_uid)
+            else:
+                recordv2.RecordEditCommand().execute(params, **kwargs)
             return
+
+        record = api.get_record(params, record_uid)
+        record_data = None
+        if params and params.record_cache and record_uid in params.record_cache:
+            if rv == 3:
+                record_data = params.record_cache[record_uid]['data_unencrypted']
+            else:
+                raise CommandError('edit', 'Record UID "{0}" is not version 3'.format(record_uid))
+        record_data = record_data.decode('utf-8') if record_data and isinstance(record_data, bytes) else record_data
+        record_data = record_data.strip() if record_data else ''
+        rdata_dict = json.loads(record_data or '{}')
+
+        rt_def = ''
+        options = kwargs.get('option') or []
+        if options:
+            # invalid options - no '=' NB! edit allows empty value(s) to be able to delete
+            # inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
+            inv = [x for x in options if not str(x).__contains__('=')]
+            if inv:
+                logging.error(bcolors.FAIL + 'Invalid option(s): ' + str(inv) + bcolors.ENDC)
+                logging.info('Record type options must be in the following format: -o key1=value1 -o key2= ...')
+                return
+
+            # check for a single valid v3 record type
+            types = [x for x in options if 'type' == (x or '').split('=', 1)[0].strip().lower()]
+            uniq = list({x.split('=', 1)[1].strip() for x in types if x.__contains__('=')})
+            if uniq and len(uniq) == 1 and uniq[0] == '':
+                logging.error(bcolors.FAIL + 'Cannot delete the type: "-o type=" is not a valid option.' + bcolors.ENDC)
+                return
+            if not uniq:
+                rtype = rdata_dict.get('type')
+                if rtype:
+                    types.append('type=' + rtype)
+                    uniq.append(rtype)
+            if len(uniq) > 1: # RT specified more than once
+                logging.error(bcolors.FAIL + 'Please specify a valid record type: ' + str(types) + bcolors.ENDC)
+                return
+
+            rt = types[0].split('=', 1)[1].strip()
+            rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt)
+            if not rt_def:
+                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt + bcolors.ENDC)
+                return
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
-        if not (data_json or data_file):
-            print("Please provide valid record data as a json string or file name.")
+        data_opts = recordv3.RecordV3.convert_options_to_json(params, record_data, rt_def, kwargs) if rt_def else None
+        if not (data_json or data_file or data_opts):
+            print("Please provide valid record data as a JSON string, options or file name.")
             self.get_parser().print_help()
             return
 
@@ -584,46 +644,40 @@ class RecordEditCommand(Command):
             if os.path.exists(data_file) and os.path.getsize(data_file) > 0 and os.path.getsize(data_file) <= 32_000:
                 with open(data_file, 'r') as file:
                     data = file.read()
+        if data_opts and not data:
+            if data_opts.get('warnings'):
+                logging.error(bcolors.WARNING + 'Options converted to a record type with warning(s): ' + str(data_opts.get('warnings')) + bcolors.ENDC)
+            if data_opts.get('errors'):
+                logging.error(bcolors.FAIL + 'Error(s) converting options to a record type: ' + str(data_opts.get('errors')) + bcolors.ENDC)
+                return
+            if not data_opts.get('errors'):
+                rec = data_opts.get('record')
+                data = json.dumps(rec) if rec else ''
 
         data = data.strip() if data else None
         if not data:
             print("Empty data. Unable to update record.")
             return
-
-        changed = True if data else False
-
-        record = api.get_record(params, record_uid)
-        record_data = None
-        if params and params.record_cache and record_uid in params.record_cache:
-            if 'version' in params.record_cache[record_uid] and params.record_cache[record_uid]['version'] == 3:
-                record_data = params.record_cache[record_uid]['data_unencrypted']
-            else:
-                raise CommandError('edit', 'Record UID "{0}" is not version 3'.format(record_uid))
-        record_data = record_data.decode('utf-8') if record_data and isinstance(record_data, bytes) else record_data
-        record_data = record_data.strip() if record_data else ''
+        data_dict = json.loads(data)
 
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON
         # dataJSON < kwargs: --generate < kwargs: --password
         if kwargs.get('generate'):
             record.password = generator.generate(16)
-            changed = True
         # Legacy
         # if kwargs.get('password') is not None:
         #     record.password = kwargs['password']
-        #     changed = True
         # else:
         #     if kwargs.get('generate'):
         #         record.password = generator.generate(16)
-        #         changed = True
 
 
-        if record_data and record_data != data:
-            params.record_cache[record_uid]['data_unencrypted'] = data
-            changed = True
-
+        changed = rdata_dict != data_dict
+        # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
         if changed:
+            params.record_cache[record_uid]['data_unencrypted'] = json.dumps(data_dict)
             params.sync_data = True
-            api.update_record(params, record)
+            api.update_record_v3(params, record, **kwargs)
 
 
 class RecordAppendNotesCommand(Command):
@@ -1895,9 +1949,9 @@ class RecordRecordType(Command):
                 logging.error('Cannot add record type without definition.')
                 return
 
-            (is_valid, status) = recordv3.RecordV3.is_valid_record_type_definition(kwargs['data'])
-            if not is_valid:
-                logging.error('Error validating record type definition - ' + status)
+            res = recordv3.RecordV3.is_valid_record_type_definition(kwargs['data'])
+            if not res.get('is_valid'):
+                logging.error('Error validating record type definition - ' + res.get('error'))
                 return
 
             rq = records.RecordType()
@@ -1929,9 +1983,9 @@ class RecordRecordType(Command):
                 logging.warning("To update a record type - please provide both record type ID and new content")
                 return
 
-            (is_valid, status) = recordv3.RecordV3.is_valid_record_type_definition(kwargs['data'])
-            if not is_valid:
-                logging.error('Error validating record type definition - ' + status)
+            res = recordv3.RecordV3.is_valid_record_type_definition(kwargs['data'])
+            if not res.get('is_valid'):
+                logging.error('Error validating record type definition - ' + res.get('error'))
                 return
 
             # TODO: is it ok to change $id - ex. #41 from "$id": "rt1" to "rt2" == delete rt1 and insert rt2 at #41
