@@ -11,7 +11,7 @@ Jump to:
 * [Login V3](#login-v3)
 * [Interactive Shell](#interactive-shell)
 * [Keeper Command Reference](#keeper-command-reference)
-* [Record Types Commands](record-types.md)
+* [Record Types Commands](record_types.md)
 * [Importing Data](#importing-records-into-keeper)
 * [Exporting Data](#exporting-records-from-keeper)
 * [Event Reporting](#ad-hoc-event-reporting)
