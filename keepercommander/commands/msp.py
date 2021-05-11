@@ -209,7 +209,13 @@ class MSPLicensesReportCommand(EnterpriseCommand):
 
             if len(licenses) > 0:
                 for i, lic in enumerate(licenses):
-                    rows = [[ml['product_id'], ml['availableSeats'], ml['seats'], ml['stash']] for j, ml in enumerate(lic['msp_pool'])]
+                    rows = [
+                        [
+                            ml.get('product_id') or '-',
+                            ml.get('availableSeats') or '-',
+                            ml.get('seats') or '-',
+                            ml.get('stash') or '-'
+                        ] for j, ml in enumerate(lic.get('msp_pool'))]
         else:
 
             if not from_date_str or not to_date_str:
