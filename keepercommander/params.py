@@ -111,7 +111,7 @@ class KeeperParams:
         self.device_private_key = None
 
     def clear_session(self):
-        self.auth_verifier = ''
+        self.auth_verifier = None
         self.user = ''
         self.password = ''
         self.mfa_type = 'device_token'
@@ -155,6 +155,10 @@ class KeeperParams:
         self.clone_code = None
         self.device_token = None
         self.device_private_key = None
+        if hasattr(self, 'account_uid_bytes'):
+            self.account_uid_bytes = None
+        if hasattr(self, 'session_token_bytes'):
+            self.session_token_bytes = None
 
     def __get_rest_context(self):
         return self.__rest_context
