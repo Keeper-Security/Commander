@@ -213,6 +213,7 @@ enterprise_push_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
+audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true', help='Anonymize audit log by replacing each user name with corresponding user id.')
 audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
@@ -2600,6 +2601,12 @@ class AuditLogCommand(EnterpriseCommand):
         logged_ids = set()
         chunk_length = log_export.chunk_size()
 
+        anonymize = bool(kwargs.get('anonymize'))
+        deleted_user_ids = {}
+        ent_user_ids = {}
+        if anonymize and params.enterprise and 'users' in params.enterprise:
+            ent_user_ids = { x.get('username'): x.get('enterprise_user_id') for x in params.enterprise['users'] }
+
         while not finished:
             finished = True
             rq = {
@@ -2634,6 +2641,15 @@ class AuditLogCommand(EnterpriseCommand):
                             event_id = event['id']
                             if event_id not in logged_ids:
                                 logged_ids.add(event_id)
+                                if anonymize:
+                                    uname = event.get('email') or event.get('username') or ''
+                                    ent_uid = ent_user_ids.get(uname) or deleted_user_ids.get(uname)
+                                    if not ent_uid:
+                                        md5 = hashlib.md5(uname.encode('utf-8')).hexdigest()
+                                        deleted_user_ids[uname] = 'DELETED-'+md5
+                                        ent_uid = deleted_user_ids.get(uname)
+                                    event['username'] = ent_uid
+                                    event['email'] = ent_uid
                                 events.append(log_export.convert_event(props, event))
 
                         finished = len(events) == 0

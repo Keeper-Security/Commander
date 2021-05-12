@@ -562,6 +562,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
         Note: When disabled (timeout = 0) or not set, clients will use client type default values - Mobile: 10 min, Console, Desktop, Web: 60 min.
 
 * ```audit-log``` Export audit and event logs to SIEM - [See Details](#event-logging-to-siem)
+    - ```--anonymize``` Anonymizes audit log by replacing email and user name with corresponding user id.
     - ```--target=splunk``` Export events to Splunk HTTP Event Collector 
     - ```--target=sumo``` Export events to Sumo Logic HTTP Event Collector
     - ```--target=syslog``` Export events to a local file in syslog format
