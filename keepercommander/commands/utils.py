@@ -580,7 +580,7 @@ This command reads the custom fields for names starting with "connect:"
 
 Connection command may contain template parameters.
 Parameter syntax is ${<parameter_name>}
- 
+
 Supported parameters:
 
     ${user_email}                   Keeper user email address
