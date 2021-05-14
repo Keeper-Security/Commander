@@ -65,7 +65,7 @@ class RecordV3:
     if not rt_title or not rt_title.strip():
       return False, 'Missing record type title'
 
-    return True, 'OK'
+    return { 'is_valid': True, 'error': '' }
 
 
   @staticmethod
@@ -624,7 +624,7 @@ class RecordV3:
       ref = ft.get('$ref')
       result = RecordV3.is_valid_field_type(ref)
 
-      known_keys = ('$ref', 'label', 'requried')
+      known_keys = ('$ref', 'label', 'required')
       unknown_keys = [x for x in ft if x.lower() not in known_keys]
       if unknown_keys:
         logging.warning('Unknown attributes in field reference: ' + str(unknown_keys))
@@ -1101,7 +1101,7 @@ class RecordV3:
         for x in val
       }
       value = (0 if vtype == 'integer'
-        else '""' if vtype == 'string'
+        else '' if vtype == 'string'
         else val[0] if vtype == 'enum'
         else obj if vtype == 'object'
         else '')
