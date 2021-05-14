@@ -64,15 +64,19 @@ def get_totp_code(url):
 class Record:
     """Defines a user-friendly Keeper Record for display purposes"""
 
+    @staticmethod
+    def xstr(s):
+        return str(s or '')
+
     def __init__(self, record_uid='', folder='', title='', login='', password='', login_url='', notes='',
                  custom_fields=None, revision=''):
         self.record_uid = record_uid
-        self.folder = folder
-        self.title = title
-        self.login = login
-        self.password = password
-        self.login_url = login_url
-        self.notes = notes
+        self.folder = Record.xstr(folder)
+        self.title = Record.xstr(title)
+        self.login = Record.xstr(login)
+        self.password = Record.xstr(password)
+        self.login_url = Record.xstr(login_url)
+        self.notes = Record.xstr(notes)
         self.custom_fields = custom_fields or []  # type: list
         self.attachments = None
         self.revision = revision
@@ -80,24 +84,20 @@ class Record:
         self.totp = None
 
     def load(self, data, **kwargs):
-
-        def xstr(s):
-            return str(s or '')
-
         if 'folder' in data:
-            self.folder = xstr(data['folder'])
+            self.folder = Record.xstr(data['folder'])
         if 'title' in data:
-            self.title = xstr(data['title'])
+            self.title = Record.xstr(data['title'])
         if 'secret1' in data:
-            self.login = xstr(data['secret1'])
+            self.login = Record.xstr(data['secret1'])
         if 'secret2' in data:
-            self.password = xstr(data['secret2'])
-        if 'notes' in data:
-            self.notes = xstr(data['notes'])
+            self.password = Record.xstr(data['secret2'])
         if 'link' in data:
-            self.login_url = xstr(data['link'])
+            self.login_url = Record.xstr(data['link'])
+        if 'notes' in data:
+            self.notes = Record.xstr(data['notes'])
         if 'custom' in data:
-            self.custom_fields = data['custom']
+            self.custom_fields = data['custom'] or []
         if 'revision' in kwargs:
             self.revision = kwargs['revision']
         if 'extra' in kwargs and kwargs['extra']:
@@ -280,3 +280,35 @@ class Record:
             'notes': self.notes,
             'custom_fields': self.custom_fields,
         }
+
+    @classmethod
+    def validate_record_data(cls, data, extra, udata):
+        # data - always present (UID, Title, ...)
+        if data:
+            data_types = {
+                'folder': { 'field': 'folder', 'name': 'folder', 'type': '' },
+                'title': { 'field': 'title', 'name': 'title', 'type': '' },
+                'secret1': { 'field': 'secret1', 'name': 'login', 'type': '' },
+                'secret2': { 'field': 'secret2', 'name': 'password', 'type': '' },
+                'link': { 'field': 'link', 'name': 'url', 'type': '' },
+                'notes': { 'field': 'notes', 'name': 'notes', 'type': '' },
+                'custom': { 'field': 'custom', 'name': 'custom', 'type': [] }
+            }
+
+            for item in data_types:
+                if item in data and type(data.get(item)) != type(data_types[item].get('type')):
+                    raise ValueError('Error validating record data - "' + data_types[item].get('name') + '" is invalid!')
+
+            if 'custom' in data and isinstance(data['custom'], list):
+                invalid = [x for x in data['custom'] if not(x)]
+                if invalid:
+                    raise ValueError('Error validating record data - Invalid custom fields! ' + str(invalid))
+        else:
+            raise Exception('Record is empty!')
+
+        # extra and udata sections are optional
+        if extra:
+            fields = extra.get('fields') or []
+            invalid = [x for x in fields if not(x)]
+            if invalid:
+                raise ValueError('Error validating record extra data - Invalid extra fields! ' + str(invalid))
