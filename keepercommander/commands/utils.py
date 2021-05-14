@@ -443,6 +443,9 @@ class VersionCommand(Command):
     def get_parser(self):
         return whoami_parser
 
+    def is_authorised(self):
+        return False
+
     def execute(self, params, **kwargs):
 
         this_app_version = __version__
