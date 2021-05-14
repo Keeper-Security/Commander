@@ -443,6 +443,9 @@ class VersionCommand(Command):
     def get_parser(self):
         return whoami_parser
 
+    def is_authorised(self):
+        return False
+
     def execute(self, params, **kwargs):
 
         this_app_version = __version__
@@ -577,7 +580,7 @@ This command reads the custom fields for names starting with "connect:"
 
 Connection command may contain template parameters.
 Parameter syntax is ${<parameter_name>}
-
+ 
 Supported parameters:
 
     ${user_email}                   Keeper user email address
