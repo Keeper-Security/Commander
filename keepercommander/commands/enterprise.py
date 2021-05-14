@@ -213,7 +213,7 @@ enterprise_push_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
-audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true', help='Anonymize audit log by replacing each user name with corresponding user id.')
+audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true', help='Anonymizes audit log by replacing email and user name with corresponding enterprise user id. If user was removed or if user\'s email was changed then the audit report will show that particular entry as deleted user.')
 audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
@@ -2539,6 +2539,16 @@ class AuditLogCommand(EnterpriseCommand):
     def get_parser(self):
         return audit_log_parser
 
+    def resolve_uid(self, cache, username):
+        uname = username or ''
+        uid = cache.get(uname)
+        if not uid:
+            md5 = hashlib.md5(str(uname).encode('utf-8')).hexdigest()
+            cache[uname] = 'DELETED-'+md5
+            uid = cache.get(uname)
+        return uid
+
+
     def execute(self, params, **kwargs):
         loadSyslogTemplates(params)
 
@@ -2602,7 +2612,6 @@ class AuditLogCommand(EnterpriseCommand):
         chunk_length = log_export.chunk_size()
 
         anonymize = bool(kwargs.get('anonymize'))
-        deleted_user_ids = {}
         ent_user_ids = {}
         if anonymize and params.enterprise and 'users' in params.enterprise:
             ent_user_ids = { x.get('username'): x.get('enterprise_user_id') for x in params.enterprise['users'] }
@@ -2643,13 +2652,15 @@ class AuditLogCommand(EnterpriseCommand):
                                 logged_ids.add(event_id)
                                 if anonymize:
                                     uname = event.get('email') or event.get('username') or ''
-                                    ent_uid = ent_user_ids.get(uname) or deleted_user_ids.get(uname)
-                                    if not ent_uid:
-                                        md5 = hashlib.md5(uname.encode('utf-8')).hexdigest()
-                                        deleted_user_ids[uname] = 'DELETED-'+md5
-                                        ent_uid = deleted_user_ids.get(uname)
+                                    ent_uid = self.resolve_uid(ent_user_ids, uname)
                                     event['username'] = ent_uid
                                     event['email'] = ent_uid
+                                    to_uname = event.get('to_username') or ''
+                                    if to_uname:
+                                        event['to_username'] = self.resolve_uid(ent_user_ids, to_uname)
+                                    from_uname = event.get('from_username') or ''
+                                    if from_uname:
+                                        event['from_username'] = self.resolve_uid(ent_user_ids, from_uname)
                                 events.append(log_export.convert_event(props, event))
 
                         finished = len(events) == 0
