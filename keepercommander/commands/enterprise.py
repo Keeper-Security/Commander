@@ -213,7 +213,7 @@ enterprise_push_parser.exit = suppress_exit
 
 
 audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
-audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true', help='Anonymize audit log by replacing email and user name with corresponding user id.')
+audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true', help='Anonymizes audit log by replacing email and user name with corresponding enterprise user id. If user was removed or if user\'s email was changed then the audit report will show that particular entry as deleted user.')
 audit_log_parser.add_argument('--target', dest='target', choices=['splunk', 'syslog', 'syslog-port', 'sumo', 'azure-la', 'json'], required=True, action='store', help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store', help='keeper record name or UID')
 audit_log_parser.error = raise_parse_exception
