@@ -169,7 +169,7 @@ append_parser.exit = suppress_exit
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
 #download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted')
 download_parser.add_argument('record', action='store', help='record path or UID')
-download_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+#download_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 download_parser.error = raise_parse_exception
 download_parser.exit = suppress_exit
 
@@ -177,7 +177,7 @@ download_parser.exit = suppress_exit
 upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
 upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload')
 upload_parser.add_argument('record', action='store', help='record path or UID')
-upload_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+#upload_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
 
@@ -185,7 +185,7 @@ upload_parser.exit = suppress_exit
 delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
 delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
-delete_attachment_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+#delete_attachment_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
 
@@ -227,6 +227,7 @@ shared_records_report_parser.exit = suppress_exit
 field_types_parser = argparse.ArgumentParser(prog='get-field-types|gft', description='Get field types')
 field_types_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
 field_types_parser.add_argument('--output', dest='output', action='store', help='output file name')
+field_types_parser.add_argument('-s', '--sample', dest='sample', choices=['empty', 'full'], default=None, help='Generate sample field data JSON')
 field_types_parser.add_argument('-b', '--beautify', dest='beautify', action='store_true', help='pretty print JSON')
 field_types_parser.add_argument('type', type=str, nargs='?', default=None, action='store', help='show specific field type')
 field_types_parser.error = raise_parse_exception
@@ -238,7 +239,6 @@ record_types_parser.add_argument('--syntax-help', dest='syntax_help', action='st
 record_types_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format')
 record_types_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 record_types_parser.add_argument('-d', '--update', dest='update', action='store_true', help='force reload all templates from server')
-record_types_parser.add_argument('--categories', dest='categories', action='store', help='show list of available categories')
 command_group = record_types_parser.add_mutually_exclusive_group()
 command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
 command_group.add_argument('-lr', '--record-type', dest='record_type', action='store', default=None, const = '*', nargs='?', help='list record type(s) by $id or name')
@@ -835,11 +835,6 @@ class RecordDownloadAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordDownloadAttachmentCommand().execute(params, **kwargs)
-            return
-
         record_uid = None
         record_version = None
         if name in params.record_cache:
@@ -860,9 +855,19 @@ class RecordDownloadAttachmentCommand(Command):
                                 break
 
         if not record_uid:
-            raise CommandError('download-attachment', 'Enter name or uid of existing record')
+            logging.error('Record UID not found for record name "%s"', str(name))
+            return
+        if not record_version:
+            logging.error('Record Version not found for record "%s"', str(name))
+            return
 
-        if not record_version or record_version != 3:
+        # is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = not record_version or record_version < 3
+        if is_v2:
+            recordv2.RecordDownloadAttachmentCommand().execute(params, **kwargs)
+            return
+
+        if record_version != 3:
             logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
             return
 
@@ -967,11 +972,6 @@ class RecordUploadAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordUploadAttachmentCommand().execute(params, **kwargs)
-            return
-
         record_uid = None
         record_version = None
         if record_name in params.record_cache:
@@ -992,10 +992,19 @@ class RecordUploadAttachmentCommand(Command):
                                 break
 
         if not record_uid:
-            logging.error('Record UID not found for record name "%s"', str(record_name))
+            logging.error('Record UID not found for record "%s"', str(record_name))
+            return
+        if not record_version:
+            logging.error('Record Version not found for record "%s"', str(record_name))
             return
 
-        if not record_version or record_version != 3:
+        # is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = not record_version or record_version < 3
+        if is_v2:
+            recordv2.RecordUploadAttachmentCommand().execute(params, **kwargs)
+            return
+
+        if record_version != 3:
             logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
             return
 
@@ -1148,14 +1157,11 @@ class RecordDeleteAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordDeleteAttachmentCommand().execute(params, **kwargs)
-            return
-
         record_uid = None
+        record_version = None
         if record_name in params.record_cache:
             record_uid = record_name
+            record_version = params.record_cache[record_uid]['version'] if 'version' in params.record_cache[record_uid] else None
         else:
             rs = try_resolve_path(params, record_name)
             if rs is not None:
@@ -1167,10 +1173,25 @@ class RecordDeleteAttachmentCommand(Command):
                             r = api.get_record(params, uid)
                             if r.title.lower() == record_name.lower():
                                 record_uid = uid
+                                record_version = params.record_cache[record_uid]['version'] if 'version' in params.record_cache[record_uid] else None
                                 break
 
-        if record_uid is None:
-            raise CommandError('delete-attachment', 'Enter name or uid of existing record')
+        if not record_uid:
+            logging.error('Record UID not found for record "%s"', str(record_name))
+            return
+        if not record_version:
+            logging.error('Record Version not found for record "%s"', str(record_name))
+            return
+
+        # is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = not record_version or record_version < 3
+        if is_v2:
+            recordv2.RecordDeleteAttachmentCommand().execute(params, **kwargs)
+            return
+
+        if record_version != 3:
+            logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
+            return
 
         record = api.get_record(params, record_uid)
 
@@ -1194,6 +1215,7 @@ class RecordDeleteAttachmentCommand(Command):
         to_remove = set(file_ids) & names
         if names and len(names) > len(to_remove):
             logging.warning('Found only %s files to remove from %s selected.', len(to_remove), len(names))
+            logging.warning('Warning! Record Type V3 requires file reference UID that belongs to the record UID.')
         if not to_remove:
             return
 
@@ -1702,6 +1724,7 @@ class RecordGetFieldTypes(Command):
         beautify = kwargs.get('beautify')
         field_type = kwargs.get('type')
         format = kwargs.get('format') or 'table'
+        sample = kwargs.get('sample') or ''
 
         list_all_field_types = not field_type or field_type.isspace() or field_type == '*'
 
@@ -1722,6 +1745,13 @@ class RecordGetFieldTypes(Command):
             if format == 'json' and val and beautify:
                 val = json.loads(val) if isinstance(val, str) and val.strip().startswith('{') else val
 
+            if sample:
+                if sample == 'empty':
+                    print('{"type":"%s","value":[%s]}'%(field_type, json.dumps(val)))
+                elif sample == 'full':
+                    print('{"type":"%s","value":[%s]}'%(field_type, json.dumps(ft.get('sample'))))
+                return
+
             rows = [(ft['id'], ft['type'], ft['valueType'], val)]
             fields = ('id', 'type', 'valueType', 'value')
             column_names = ('Field Type ID', 'Type', 'Value Type', 'Value Format')
@@ -1739,18 +1769,16 @@ Column Name       Description
   recordTypeId      Record Type Id
   content           Record type description in JSON format
 
---report-type:
+--format:
             csv     CSV format
             json    JSON format
             table   Table format (default)
 
 --update:           Force reloading record templates from server.
                     All templates are initially loaded from server and cached.
-                    By default all record type commands the use cached values.
+                    By default all record type commands use the cached values.
 
---categories:       List record type categories only.
-
---category:         List specific record type category and print all record types
+--category:         List specific record type category and print all record types.
 
 --record-type:      List specific record type - search by ID ($id)
 --record-type-id:   List specific record type - search by Record Type ID
