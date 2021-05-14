@@ -1281,7 +1281,6 @@ def search_teams(params, searchstring):
      
     return search_results
 
-
 def prepare_record(params, record):
     """ Prepares the Record() object to be sent to the Keeper Cloud API
         by serializing and encrypting it in the proper JSON format used for
@@ -1342,6 +1341,7 @@ def prepare_record(params, record):
     data['link'] = record.login_url
     data['notes'] = record.notes
     data['custom'] = record.custom_fields
+    Record.validate_record_data(data, extra, udata)
 
     record_object['data'] = encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
     record_object['extra'] = encrypt_aes(json.dumps(extra).encode('utf-8'), unencrypted_key)

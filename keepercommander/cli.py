@@ -35,7 +35,6 @@ from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
 
-
 stack = []
 command_info = OrderedDict()
 register_commands(commands, aliases, command_info)
@@ -429,6 +428,7 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_while_typing=False)
 
         display.welcome()
+
     else:
         logging.getLogger().setLevel(logging.WARNING)
 

@@ -309,8 +309,10 @@ class RecordAddCommand(Command):
             'secret2': password or '',
             'link': url or '',
             'notes': notes or '',
-            'custom': custom
+            'custom': custom or []
         }
+        Record.validate_record_data(data, None, None)
+
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)

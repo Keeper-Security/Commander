@@ -4,11 +4,13 @@ import io
 import json
 import logging
 import os
-from  urllib.parse import urlparse, urlunparse
+import sys
+from urllib.parse import urlparse, urlunparse
 from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
 
+import requests
 from Cryptodome.Math.Numbers import Integer
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -21,8 +23,7 @@ from google.protobuf.json_format import MessageToDict, MessageToJson
 from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
-from . import api
-from . import cli
+from . import api, __version__, cli
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .display import bcolors
 from .error import KeeperApiError, CommandError
@@ -1052,6 +1053,7 @@ class CommonHelperMethods:
         #     return "win64"
         else:
             return _platform
+
 
     @staticmethod
     def public_key_ecc(params: KeeperParams):

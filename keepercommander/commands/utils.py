@@ -16,6 +16,8 @@ import argparse
 import logging
 import datetime
 import getpass
+import sys
+import platform
 
 import requests
 import tempfile
@@ -37,7 +39,8 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError
-# from ..loginv3 import LoginV3API, CommonHelperMethods
+from .. import __version__
+from ..versioning import is_binary_app, is_up_to_date_version
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -61,12 +64,14 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
+    commands['version'] = VersionCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser]:
+    aliases['v'] = 'version'
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, version_parser]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -131,6 +136,12 @@ help_parser = argparse.ArgumentParser(prog='help', description='Displays help on
 help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
+
+
+version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
+version_parser.error = raise_parse_exception
+version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+version_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -372,7 +383,19 @@ class WhoamiCommand(Command):
                 cp = host.rfind(':')
                 if cp > 0:
                     host = host[:cp]
-                data_center = 'EU' if host.endswith('.eu') else 'US'
+
+                host_str = host.lower()
+
+                if host_str.endswith('.eu'):
+                    data_center = 'EU'
+                elif host_str.endswith('.com'):
+                    data_center = 'US'
+                elif host_str.endswith('.au'):
+                    data_center = 'AU'
+                else:
+                    # Ideally we should determine TLD which might require additional lib
+                    data_center = host_str
+
                 print('{0:>20s}: {1}'.format('Data Center', data_center))
                 environment = ''
                 if host.startswith('dev.'):
@@ -414,6 +437,41 @@ class WhoamiCommand(Command):
 
         else:
             print('{0:>20s}:'.format('Not logged in'))
+
+
+class VersionCommand(Command):
+    def get_parser(self):
+        return whoami_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+
+        this_app_version = __version__
+        version_details = is_up_to_date_version()
+        is_verbose = kwargs.get('verbose') or False
+
+        if not is_verbose:
+            print('{0}: {1}'.format('Commander Version', this_app_version))
+        else:
+            print('{0:>20s}: {1}'.format('Commander Version', __version__))
+            print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
+            print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
+            print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
+            print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
+            print('{0:>20s}: {1}'.format('Executable', sys.executable))
+
+        if not version_details.get('is_up_to_date'):
+
+            latest_version = version_details.get('current_github_version')
+
+            print((bcolors.WARNING +
+                   'Latest Commander Version: %s\n'
+                   'You can download the current version at: %s \n' + bcolors.ENDC)
+                  % (latest_version, version_details.get('new_version_download_url')))
+        if is_binary_app():
+            print("Installation path: {0} ".format(sys._MEIPASS))
 
 
 class LoginCommand(Command):
