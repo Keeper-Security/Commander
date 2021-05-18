@@ -20,6 +20,8 @@ import hashlib
 import logging
 import urllib.parse
 
+from keepercommander import recordv3
+
 from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
@@ -1231,8 +1233,16 @@ def search_records(params, searchstring):
     search_results = []
 
     for record_uid in params.record_cache:
+        target = ''
         rec = get_record(params, record_uid)
-        target = rec.to_lowerstring()
+        cached_rec = params.record_cache[record_uid] or {}
+
+        if cached_rec.get('version') == 3:
+            data = cached_rec.get('data_unencrypted')
+            target = recordv3.RecordV3.values_to_lowerstring(data)
+        else:
+            target = rec.to_lowerstring()
+
         if p.search(target):
             search_results.append(rec)
             
