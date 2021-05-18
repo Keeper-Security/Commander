@@ -690,6 +690,41 @@ class RecordV3:
 
 
   @staticmethod
+  def get_record_type_definition(params, rt_data):
+    from keepercommander.commands.recordv3 import RecordGetRecordTypes
+    result = None
+
+    rt_type = RecordV3.get_record_type_name(rt_data)
+    if rt_type:
+      rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt_type)
+      if rt_def:
+        result = rt_def
+      else:
+        logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) + bcolors.ENDC)
+
+    return result
+
+
+  @staticmethod
+  def get_record_type_name(rt_data):
+    result = None
+
+    rt = {}
+    if rt_data and (isinstance(rt_data, str) or isinstance(rt_data, bytes)):
+      try: rt = json.loads(rt_data or '{}')
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_data) + bcolors.ENDC)
+
+    if rt and isinstance(rt, dict):
+      rtt = rt.get('type')
+      if rtt:
+        result = rtt
+      else:
+        logging.error(bcolors.FAIL + 'Unable to find record type type - JSON: ' + str(rt_data) + bcolors.ENDC)
+
+    return result
+
+
+  @staticmethod
   def change_record_type(params, rt_data, new_rt_name):
     from keepercommander.commands.recordv3 import RecordGetRecordTypes
     # Converts rt_data (dict or JSON) from one valid record type to another
@@ -1055,6 +1090,63 @@ class RecordV3:
     result = True
     return result
 
+  @staticmethod
+  def update_password(password, rt_json, rt_def):
+    # Delete if pass is empty, Upsert if pass is present:
+    # Check if there's password field in fields[], custom[] and replace first instance
+    # If no password in RT but RT definition has a password field - add to fields[]
+    # else add to custom[]
+    result = rt_json
+
+    rt = {}
+    if rt_json:
+      try: rt = json.loads(rt_json or '{}')
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_json) + bcolors.ENDC)
+
+    rtdef = {}
+    if rt_def:
+      try: rtdef = json.loads(rt_def)
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type definition JSON: ' + str(rt_def) + bcolors.ENDC)
+
+    if not rt or not rtdef:
+      logging.error(bcolors.FAIL + 'Failed to update password field!' + bcolors.ENDC)
+      return result
+
+    rtt = rt.get('type')
+    rtdt = rtdef.get('$id')
+    if not rtt or rtt != rtdt:
+      logging.error(bcolors.FAIL + 'Record type missing or doesn\'t match definition! ' + str([rtt, rtdt]) + bcolors.ENDC)
+      return result
+
+    # Look for existing password in fields[] then custom[] and replace
+    fields = rt.get('fields') or []
+    custom = rt.get('custom') or []
+    rtfp = [x for x in fields if 'type' in x and x.get('type') == 'password']
+    rtcp = [x for x in custom if 'type' in x and x.get('type') == 'password']
+    changed = False
+    if rtfp:
+      rtfp[0]['value'] = [password] if password else []
+      changed = True
+    elif rtcp:
+      rtcp[0]['value'] = [password] if password else []
+      changed = True
+    elif password:
+      # no existing password - add to fields[] (if RT definition allows) or to custom[]
+      rtdp = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'password'), False)
+      if rtdp:
+        if 'fields' not in rt:
+          rt['fields'] = []
+        rt['fields'].append({'type': 'password', 'value':[password]})
+      else:
+        if 'custom' not in rt:
+          rt['custom'] = []
+        rt['custom'].append({'type': 'password', 'value':[password]})
+      changed = True
+
+    if changed:
+      result = json.dumps(rt)
+
+    return result
 
   @staticmethod
   def get_field_types():

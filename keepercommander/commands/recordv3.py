@@ -88,13 +88,14 @@ def register_command_info(aliases, command_info):
 
 add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
-add_parser.add_argument('--pass', dest='password', action='store', help='password')
+command_group = add_parser.add_mutually_exclusive_group()
+command_group.add_argument('--pass', dest='password', action='store', help='password')
+command_group.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
-add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 add_parser.add_argument('-t', '--title', dest='title', type=str, action='store', help='record title')
 command_group = add_parser.add_mutually_exclusive_group()
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
@@ -108,11 +109,12 @@ add_parser.exit = suppress_exit
 
 edit_parser = argparse.ArgumentParser(prog='edit', description='Edit a record')
 edit_parser.add_argument('--login', dest='login', action='store', help='login name')
-edit_parser.add_argument('--pass', dest='password', action='store', help='password')
+command_group = edit_parser.add_mutually_exclusive_group()
+command_group.add_argument('--pass', dest='password', action='store', help='password')
+command_group.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
 edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
-edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 command_group = edit_parser.add_mutually_exclusive_group()
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
 command_group.add_argument('-v3f', '--data-file', dest='data_file', action='store', help='load record type json data from file')
@@ -280,10 +282,6 @@ class RecordAddCommand(Command):
         if is_v2:
             recordv2.RecordAddCommand().execute(params, **kwargs)
             return
-
-        password = generator.generate(16) if 'generate' in kwargs and kwargs['generate'] else None
-        if password:
-            kwargs['password'] = password
 
         rt_def = ''
         options = kwargs.get('option') or []
@@ -498,6 +496,14 @@ class RecordAddCommand(Command):
             if not 'fields' in data_dict: data_dict['fields'] = fields
         data = json.dumps(data_dict)
 
+        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
+        # dataJSON/option < kwargs: --generate < kwargs: --password
+        password = kwargs.get('password')
+        if not password and kwargs.get('generate'):
+            password = generator.generate(16)
+        if password:
+            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
         record_key = os.urandom(32)
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -579,7 +585,7 @@ class RecordEditCommand(Command):
         # NB! v3 record needs at least one of: -v3d or -v3f or -o to be set
         is_v2 = bool(kwargs.get('legacy'))
         is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
-        is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option'))
+        is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option') or kwargs.get('generate'))
         rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
         if is_v2:
             if rv and rv == 3:
@@ -634,7 +640,7 @@ class RecordEditCommand(Command):
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
         data_opts = recordv3.RecordV3.convert_options_to_json(params, record_data, rt_def, kwargs) if rt_def else None
-        if not (data_json or data_file or data_opts):
+        if not (data_json or data_file or data_opts or kwargs.get('generate')):
             print("Please provide valid record data as a JSON string, options or file name.")
             self.get_parser().print_help()
             return
@@ -653,25 +659,24 @@ class RecordEditCommand(Command):
             if not data_opts.get('errors'):
                 rec = data_opts.get('record')
                 data = json.dumps(rec) if rec else ''
+        if kwargs.get('generate') and not data:
+            data = record_data
 
         data = data.strip() if data else None
         if not data:
             print("Empty data. Unable to update record.")
             return
+
+        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
+        # dataJSON/option < kwargs: --generate < kwargs: --password
+        password = kwargs.get('password')
+        if not password and kwargs.get('generate'):
+            password = generator.generate(16)
+        if password:
+            record.password = password
+            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
         data_dict = json.loads(data)
-
-        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON
-        # dataJSON < kwargs: --generate < kwargs: --password
-        if kwargs.get('generate'):
-            record.password = generator.generate(16)
-        # Legacy
-        # if kwargs.get('password') is not None:
-        #     record.password = kwargs['password']
-        # else:
-        #     if kwargs.get('generate'):
-        #         record.password = generator.generate(16)
-
-
         changed = rdata_dict != data_dict
         # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
         if changed:
