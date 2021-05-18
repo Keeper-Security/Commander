@@ -1091,6 +1091,34 @@ class RecordV3:
     return result
 
   @staticmethod
+  def values_to_lowerstring(data_json):
+    return RecordV3.values_to_string(data_json).lower()
+
+  @staticmethod
+  def values_to_string(data_json):
+    result = ''
+
+    rt = RecordV3.record_type_to_dict(data_json)
+    result += rt.get('title') or ''
+    result += rt.get('notes') or ''
+
+    fields = rt.get('fields') or []
+    custom = rt.get('custom') or []
+    values = [x.get('value') for x in fields + custom if x.get('value')]
+    values = [x if not isinstance(x[0], dict) else ';'.join(str(v) for v in x[0].values()) for x in values if len(x) > 0]
+    result += str(values)
+
+    return result
+
+  @staticmethod
+  def record_type_to_dict(rt_json):
+    rt = {}
+    if rt_json:
+      try: rt = json.loads(rt_json or '{}')
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_json) + bcolors.ENDC)
+    return rt
+
+  @staticmethod
   def update_password(password, rt_json, rt_def):
     # Delete if pass is empty, Upsert if pass is present:
     # Check if there's password field in fields[], custom[] and replace first instance
