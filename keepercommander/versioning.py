@@ -9,11 +9,8 @@
 # Contact: ops@keepersecurity.com
 #
 import json
-import os
-import sys
 import logging
-
-from pathlib import Path
+import sys
 
 import requests
 
@@ -21,6 +18,10 @@ from . import __version__, display
 
 
 def is_up_to_date_version():
+
+    curr_git_version = None
+    version_comparison = None
+    release_download_url = 'https://github.com/Keeper-Security/Commander/releases'
 
     try:
         release_details = get_latest_release_details()
@@ -30,14 +31,17 @@ def is_up_to_date_version():
 
         version_comparison = __version_compare(this_app_version, curr_git_version)
 
-    except Exception:
-        logging.debug("Unable to retrieve current release version.")
-
-        type, value, traceback = sys.exc_info()
-        logging.debug('Unexpected error %s: %s' % (value.filename, value.strerror))
+    except requests.exceptions.HTTPError as errh:
+        logging.debug("Http Error:", errh)
+    except requests.exceptions.ConnectionError as errc:
+        logging.debug("Error Connecting:", errc)
+    except requests.exceptions.Timeout as errt:
+        logging.debug("Timeout Error:", errt)
+    except requests.exceptions.RequestException as err:
+        logging.debug("Request Error:", err)
 
     return {
-        'is_up_to_date': version_comparison >= 0,
+        'is_up_to_date': version_comparison >= 0 if version_comparison else None,
         'current_github_version': curr_git_version,
         'new_version_download_url': release_download_url
     }
@@ -112,7 +116,11 @@ def welcome_print_version():
     this_app_version = __version__
 
     ver_info = is_up_to_date_version()
-    if not ver_info.get('is_up_to_date'):
+
+    if ver_info.get('is_up_to_date') is None:
+        logging.debug(display.bcolors.WARNING + "It appears that the internet connection is offline." + display.bcolors.ENDC)
+
+    elif not ver_info.get('is_up_to_date'):
         print(display.bcolors.WARNING +
               (" Your version of the Commander CLI is %s, the current version is %s.\n Use the ‘version’ "
                "command for more details.\n") % (this_app_version, ver_info.get('current_github_version')) + display.bcolors.ENDC
