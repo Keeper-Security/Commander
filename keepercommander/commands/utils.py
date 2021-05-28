@@ -462,7 +462,9 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
-        if not version_details.get('is_up_to_date'):
+        if version_details.get('is_up_to_date') is None:
+            logging.debug(bcolors.WARNING + "It appears that internet connection is offline" + bcolors.ENDC)
+        elif not version_details.get('is_up_to_date'):
 
             latest_version = version_details.get('current_github_version')
 
