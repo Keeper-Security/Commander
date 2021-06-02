@@ -5,7 +5,7 @@
 Jump to:
 * [Overview](#password-management-sdk-for-it-admins--developers)
 * [Use Cases](#use-cases)
-* [Installation](#python-installation---linux-and-mac)
+* [Installation](#installation)
 * [Developer Setup](#developer-mode)
 * [Command-line Usage](#command-line-usage)
 * [Login V3](#login-v3)
@@ -53,34 +53,19 @@ If you need any assistance or require specific functionality not supported in Co
 * Schedule and automate commands
 * Initiate remote connections (such as SSH and RDP) 
 
-### Python Installation - Linux and Mac
 
-1. Get Python 3 from [python.org](https://www.python.org).
-2. Install Keeper Commander with pip3:
+### Installation
 
-```bash
-$ pip3 install keepercommander
-```
+The simplest way to install commander is via the binaries. Current binaries are posted in the releases link in the right menu. 
+(https://github.com/Keeper-Security/Commander/releases)
 
-Important: Restart your terminal session after installation
-
-### Python Installation - Windows 
-
-1. Download and install [WinPython](https://winpython.github.io/)
-2. From the install folder of WinPython, run the "WinPython Command Prompt" 
-2. Install Keeper Commander with pip3:
+After running the binary, keeper will be integrated into the native shell. You can either launch the CLI via the app (MacOS) or the shortcut (Windows). Alternatively run the following command to open commander:
 
 ```bash
-$ pip3 install keepercommander
+$ keeper shell
 ```
 
-### Upgrading to Latest Python Code
 
-```bash
-$ pip3 install --upgrade keepercommander
-```
-
-Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
 
 ### .Net SDK and PowerShell Module
 
@@ -2180,6 +2165,36 @@ Keeper is free for local password management on your device.  Premium subscripti
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at commander@keepersecurity.com.
 
+### Legacy: Python Installation - Linux and Mac (We recommend you use the binaries to install commander).
+
+1. Get Python 3 from [python.org](https://www.python.org).
+2. Install Keeper Commander with pip3:
+
+```bash
+$ pip3 install keepercommander
+```
+
+Important: Restart your terminal session after installation
+
+### Legacy: Python Installation - Windows  (We recommend you use the binaries to install commander).
+
+1. Download and install [WinPython](https://winpython.github.io/)
+2. From the install folder of WinPython, run the "WinPython Command Prompt" 
+2. Install Keeper Commander with pip3:
+
+```bash
+$ pip3 install keepercommander
+```
+
+### Upgrading to Latest Python Code
+
+```bash
+$ pip3 install --upgrade keepercommander
+```
+
+Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
+	
+	
 ### Build Binary Package
 
 Commander can be bundled with [PyInstaller](https://pyinstaller.readthedocs.io/en/stable/) as a single package.
