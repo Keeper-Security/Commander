@@ -27,10 +27,11 @@ Jump to:
 * [Launching and Connecting to Remote Servers](#launching-and-connecting-to-remote-servers)
 * [Environmental Variables](#environmental-variables)
 * [Password Rotation](#targeted-password-rotations--plugins)
+* [Configuration File](#configuration-file)
 * [Troubleshooting](#troubleshooting)
+* [Uninstall](#uninstall)
 * [About Keeper](#about-our-security)
 * [Enterprise Resources](#enterprise-resources)
-* [Binary Package](#build-binary-package)
 
 ### Password Management SDK for IT Admins & Developers
 
@@ -56,15 +57,47 @@ If you need any assistance or require specific functionality not supported in Co
 
 ### Installation
 
-The simplest way to install commander is via the binaries. Current binaries are posted in the releases link in the right menu. 
-(https://github.com/Keeper-Security/Commander/releases)
+#### Installer
+The simplest way to install Commander is to use the installer. Current binaries published in the releases section (https://github.com/Keeper-Security/Commander/releases)
 
-After running the binary, keeper will be integrated into the native shell. You can either launch the CLI via the app (MacOS) or the shortcut (Windows). Alternatively run the following command to open commander:
+After running the binary, Keeper CLI will be integrated into the native shell. You can either launch the CLI via the app launcher in MacOS or Start Menu shorcut in Windows.
+Alternatively run the following command to open commander:
 
 ```bash
 $ keeper shell
 ```
 
+*See [Configuration File](#configuration-file) section to learn about location of the config file*
+#### Using Pip
+
+**Linux and Mac**
+
+1. Get Python 3 from [python.org](https://www.python.org).
+2. Install Keeper Commander with pip3:
+
+```bash
+$ pip3 install keepercommander
+```
+
+Important: Restart your terminal session after installation
+
+**Windows**
+
+1. Download and install [WinPython](https://winpython.github.io/)
+2. From the installation folder of WinPython, run the "WinPython Command Prompt" 
+2. Install Keeper Commander with pip3:
+
+```bash
+$ pip3 install keepercommander
+```
+
+### Upgrading to the latest Python Code
+
+```bash
+$ pip3 install --upgrade keepercommander
+```
+
+Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
 
 
 ### .Net SDK and PowerShell Module
@@ -1441,7 +1474,7 @@ Below is a fully loaded config file.
     "debug":false,
     "plugins":[],
     "commands":[],
-    "timedelay":0,
+    "timedelay":0
 }
 ```
 
@@ -2040,6 +2073,27 @@ When a plugin is specified in a record, Commander will search in the plugins/ fo
 
 Check out the [plugins folder](https://github.com/Keeper-Security/Commander/tree/master/keepercommander/plugins) for all of the available plugins.  Keeper's team adds new plugins on an ongoing basis. If you need a particular plugin created, send us an email to commander@keepersecurity.com.
 
+### Configuration File
+
+Location of the configuration file while running CLI commands using installed binary.
+
+#### Windows
+
+- Running as a standalone application that was launched via desktop shortcut or from Start Menu:
+    - Location: `/Users/{Username}/Documents/.keeper/config.json`
+
+- Running from the command prompt interface:
+    - Location: `{Currently working directory}` *Note: to find current working directory use command `cd`*
+
+#### Mac
+
+- Running as a standalone application that was launched using Application launcher:
+    - Location: `/Users/{Username}/.keeper/config.json`
+
+- Running executable from the command line interface:
+    - Location: `{Currently working directory}` *Note: to find current working directory use command `pwd`*
+
+
 ### Locating the Record UID and other Identifiers 
 
 The Record UID and Shared Folder UID can be found either through the "get", "list", "ls -l" or "search" commands, or through the Web Vault user interface.
@@ -2081,6 +2135,28 @@ requests.exceptions.SSLError: HTTPSConnectionPool(host='keepersecurity.com', por
 ```
 
 If you receive this message, please make sure that your network is not attempting to do packet inspection with a proxy.  Due to our advanced encryption, Keeper traffic cannot be intercepted by a network proxy device.  Consult with your IT team to allow traffic to keepersecurity.com on the firewall outbound.
+
+### Uninstall
+
+#### Windows
+
+Uninstall the App: Settings -> App & features -> Keeper Commander -> Uninstall
+
+#### MacOs
+
+```bash
+sudo rm -rf /usr/local/bin/keeper 
+sudo rm -rf /usr/local/keepercommandercli
+sudo rm -rf /Applications/Keeper\ Commander.app
+rm -rf ~/.keeper
+```
+
+#### Python Package
+
+```bash
+pip uninstall keepercommander 
+```
+
 
 ### About Keeper
 
@@ -2164,63 +2240,3 @@ Keeper is free for local password management on your device.  Premium subscripti
 [Contact Sales or Support](https://keepersecurity.com/contact.html)
 
 We're here to help.  If you need help integrating Keeper into your environment, contact us at commander@keepersecurity.com.
-
-### Legacy: Python Installation - Linux and Mac (We recommend you use the binaries to install commander).
-
-1. Get Python 3 from [python.org](https://www.python.org).
-2. Install Keeper Commander with pip3:
-
-```bash
-$ pip3 install keepercommander
-```
-
-Important: Restart your terminal session after installation
-
-### Legacy: Python Installation - Windows  (We recommend you use the binaries to install commander).
-
-1. Download and install [WinPython](https://winpython.github.io/)
-2. From the install folder of WinPython, run the "WinPython Command Prompt" 
-2. Install Keeper Commander with pip3:
-
-```bash
-$ pip3 install keepercommander
-```
-
-### Upgrading to Latest Python Code
-
-```bash
-$ pip3 install --upgrade keepercommander
-```
-
-Please do not upgrade a production system without validation in your test environment as commands and functionality is under rapid development.
-	
-	
-### Build Binary Package
-
-Commander can be bundled with [PyInstaller](https://pyinstaller.readthedocs.io/en/stable/) as a single package.
-There are two PyInstaller configuration files `keeper_folder.spec` and `keeper_file.spec` that build
-["One-Folder"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-folder-program-works) and 
-["One-File"](https://pyinstaller.readthedocs.io/en/stable/operating-mode.html#how-the-one-file-program-works) packages accordingly.
-To build a binary package:
-```shell script
-# create Python environment
-python -m venv installer
-
-# activate environment
-. installer/bin/activate
-cd Commander
-
-# install base Commander packages
-pip install -r requirements.txt
-
-# install optional packages 
-pip install -r extra_dependencies.txt
-
-# build one-folder package
-pyinstaller keeper-folder.spec
-
-# or build one-file package
-pyinstaller keeper-file.spec
-
-# your packages are in dist/ folder
-``` 
