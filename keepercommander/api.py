@@ -20,7 +20,7 @@ import hashlib
 import logging
 import urllib.parse
 
-from keepercommander import recordv3
+from keepercommander import cli, recordv3
 
 from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -898,8 +898,77 @@ def sync_down(params):
     except:
         pass
 
+    try:
+        # parse v3 commands
+        for cmd in v3_commands:
+            if not v3_commands[cmd] and cmd in cli.commands:
+                prog = cli.commands[cmd].get_parser().prog
+                parts = prog.split('|')
+                alias = parts[-1] if len(parts) == 2 else None
+                v3_commands[cmd]['command'] = { cmd: cli.commands[cmd] }
+                if prog in cli.command_info:
+                    v3_commands[cmd]['command_info'] = { prog: cli.command_info[prog] }
+                if alias in cli.aliases:
+                    v3_commands[cmd]['alias'] = { alias: cli.aliases[alias] }
+
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if v3_enabled:
+            rq = records.RecordTypesRequest()
+            rq.standard = True
+            rq.user = True
+            rq.enterprise = True
+            rs = communicate_rest(params, rq, 'vault/get_record_types')
+            record_types_rs = records.RecordTypesResponse()
+            record_types_rs.ParseFromString(rs)
+
+            if len(record_types_rs.recordTypes) > 0:
+                params.record_type_cache = {}
+                for rt in record_types_rs.recordTypes:
+                    params.record_type_cache[rt.recordTypeId] = rt.content
+
+            # add v3 commands
+            added = []
+            for cmd in v3_commands:
+                cdic = v3_commands[cmd].get('command') or {}
+                cname = next(iter(cdic), None)
+                if cname and cname not in cli.commands:
+                    added.append(cname)
+                    cli.commands[cname] = cdic[cname]
+                    ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+                    if ciname:
+                        cli.command_info[ciname] = v3_commands[cmd]['command_info'][ciname]
+                    aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+                    if aname:
+                        cli.aliases[aname] = v3_commands[cmd]['alias'][aname]
+
+            # RT activation during live session - only a full sync will pull any pre-existing v3 records
+            full_sync = response_json.get('full_sync') or False
+            if added and not full_sync:
+                logging.warning(bcolors.WARNING + 'Record types - enabled. Please logout and login again if you have existing v3 records.' + bcolors.ENDC)
+        else:
+            # remove v3 commands
+            for cmd in v3_commands:
+                cdic = v3_commands[cmd].get('command') or {}
+                cname = next(iter(cdic), None)
+                if cname and cname in cli.commands:
+                    cli.commands.pop(cname)
+                    ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+                    if ciname:
+                        cli.command_info.pop(ciname)
+                    aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+                    if aname:
+                        cli.aliases.pop(aname)
+    except:
+        pass
+
     if 'full_sync' in response_json:
         logging.info('Decrypted [%s] record(s)', len(params.record_cache))
+
+
+v3_commands = {
+    'record-type': {},
+    'record-type-info': {}
+}
 
 
 def convert_to_folders(params):
@@ -1232,12 +1301,15 @@ def search_records(params, searchstring):
     p = re.compile(searchstring.lower())
     search_results = []
 
+    v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
     for record_uid in params.record_cache:
         target = ''
         rec = get_record(params, record_uid)
         cached_rec = params.record_cache[record_uid] or {}
 
         if cached_rec.get('version') == 3:
+            if not v3_enabled:
+                continue
             data = cached_rec.get('data_unencrypted')
             target = recordv3.RecordV3.values_to_lowerstring(data)
         else:
@@ -1379,7 +1451,7 @@ def prepare_record_v3(params, record):
         encrypted record key is sent to the server.  If the record is in a
         shared folder, must send shared folder UID for edit permission.
     """
-    from keepercommander.commands.recordv3 import RecordGetRecordTypes
+    from keepercommander.commands.recordv3 import RecordTypeInfo
 
     if not record.record_uid:
         logging.debug('Generated Record UID: %s', record.record_uid)
@@ -1406,7 +1478,7 @@ def prepare_record_v3(params, record):
         try:
             d = json.loads(data)
             rt_name = d.get('type') or ''
-            rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt_name)
+            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
             res = RecordV3.is_valid_record_type(data, rt_def)
             if not res.get('is_valid'):
                 logging.error('Error validating record type - ' + res.get('error'))
@@ -1416,9 +1488,6 @@ def prepare_record_v3(params, record):
             return None
 
         data = pad_aes_gcm(data)
-
-        # if data.get('secret2') != record.password:
-        #    params.queue_audit_event('record_password_change', record_uid=record.record_uid)
 
         unencrypted_key = rec['record_key_unencrypted']
         record_object['revision'] = rec['revision']
@@ -1771,7 +1840,7 @@ def add_record_v3(params, record, **kwargs):
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
-    from keepercommander.commands.recordv3 import RecordGetRecordTypes
+    from keepercommander.commands.recordv3 import RecordTypeInfo
 
     record_rq = record
     if record_rq is None:
@@ -1798,7 +1867,7 @@ def add_record_v3(params, record, **kwargs):
     try:
         d = json.loads(data)
         rt_name = d.get('type') or ''
-        rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt_name)
+        rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
         res = RecordV3.is_valid_record_type(data, rt_def)
         if not res.get('is_valid'):
             logging.error('Error validating record type - ' + res.get('error'))
@@ -1900,7 +1969,7 @@ def add_record_v3(params, record, **kwargs):
             return False
 
         if not kwargs.get('silent'):
-            logging.info('Add record successful for record_uid=%s, revision=%d', record_rq['record_uid'], new_revision)
+            logging.debug('Add record successful for record_uid=%s, revision=%d', record_rq['record_uid'], new_revision)
 
         record_rq['revision'] = new_revision
 

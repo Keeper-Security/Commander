@@ -578,8 +578,10 @@ class RecordListCommand(Command):
     def execute(self, params, **kwargs):
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_records(params, pattern or '')
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         # hide v3 attachments (a.k.a. fileRef/v4) - they are shown in Gallery/file-report command
-        results = [x for x in results if x.record_uid not in params.record_cache or params.record_cache[x.record_uid]['version'] != 4]
+        hidden = (4,) if v3_enabled else (3, 4)
+        results = [x for x in results if x.record_uid not in params.record_cache or params.record_cache[x.record_uid]['version'] not in hidden]
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])

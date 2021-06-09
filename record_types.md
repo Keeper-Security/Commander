@@ -16,67 +16,59 @@ Record types use the same command syntax as legacy records with minor modificati
 
 ```add  --data '{"type":"login", "title":"MyLogin", "fields":[{"type": "login", "value": ["UserName"]}, {"type": "password", "value": ["Password"]}]}'```
 
-```add  --data-file MyLogin.json```
+```add  --from-file MyLogin.json```
 
-```add  --option type=login -o title=MyLogin -o "notes=Record type notes"```
+```add  type=login title=MyLogin "notes=Record type notes"```
 
-```add  -o type=login -o title=MyLoginToo -o fields.login=user -o fields.password=pass```
+```add  type=login title=MyLoginToo fields.login=user fields.password=pass```
 
-```add  -o type=contact -o title=MyContact -o f.name.first=John -o f.name.last=Doe```
+```add  type=contact title=MyContact f.name.first=John f.name.last=Doe```
 
-```add  -o type=contact -o title=MyContact -o "note=Record type notes" -o "custom.notes=Very important note"```
+```add  type=contact title=MyContact "note=Record type notes" "custom.notes=Very important note"```
 
-Note: Dot notations using ```--option```  (or short version ```-o```) can handle only a single field per given type - if there are more fields of the same type (ex. in custom[] section) please use JSON format for full record types capabilities.
+Note: Dot notations can handle only a single field per given type - if there are more fields of the same type (ex. in custom[] section) please use JSON format for full record types capabilities.
 
 * ```edit``` Edit a record in the vault. Requires record type data as a JSON string or loaded from file or provided as a command line options using dot notation (see examples below)
 
-```edit <UID> --data '{"type": "login", "title": "NewTitle", "notes": "Record type notes","fields": [{"type": "fileRef","value": []}]}'```
+```edit -r <UID> --data '{"type": "login", "title": "NewTitle", "notes": "Record type notes","fields": [{"type": "fileRef","value": []}]}'```
 
-```edit <UID> -o title=NewTitleToo```
+```edit -r <UID> title=NewTitleToo```
 
-Note: To get the data as a JSON string for an existing record use ```get``` command with the following option ```--format=json``` For example to change just the title when using JSON format - just copy `data` JSON from ``get`` command then replace title only and use the modified JSON string in ```edit``` command, or use dot notation with ```--option``` to change only the title.
+Note: To get the data as a JSON string for an existing record use ```get``` command with the following option ```--format=json``` For example to change just the title when using JSON format - just copy `data` JSON from ``get`` command then replace title only and use the modified JSON string in ```edit``` command, or use dot notation to change only the title.
 
 **Record Types Management Commands**
 
 To create, update and delete custom record types use `record-type` command:
 
-```record-type --add-type --data '{"$id": "newType", "categories": ["note"], "fields":[{"$ref": "note"}]}'```
+```record-type --action add --data '{"$id": "newType", "categories": ["note"], "fields":[{"$ref": "note"}]}'```
 
-```record-type --update-type <RTID>  --data '{"$id": "newType", "categories": ["address"], "fields":[{"$ref": "note"},{"$ref": "address"}]}'```
+```record-type --action update <RTID>  --data '{"$id": "newType", "categories": ["address"], "fields":[{"$ref": "note"},{"$ref": "address"}]}'```
 
-```record-type --remove-type <RTID>```
+```record-type --action remove <RTID>```
 
-To show available record types definitions use `get-record-types` command:
-
-```
-get-record-types -d --category
-get-record-types -d --category login
-grt -lc
-grt -lc login
-```
+To show available record types definitions use `record-type-info` command:
 
 ```
-get-record-types --record-type
-get-record-types --record-type 1
-get-record-types --record-type login
-grt -lr
-grt -lr login
+record-type-info --list-record
+record-type-info --list-record 1
+record-type-info --list-record login
+rti -lr
+rti -lr login
 ```
 
 ```
-get-record-types --record-type --format=csv
-grt -lr --format=json --output record_types.json
+record-type-info --list-record --format=csv
+rti -lr --format=json --output record_types.json
 ```
 
 Note: Output file name is ignored for table format.
 
-To show available field types definitions use `get-field-types` command:
+To show available field types definitions use `record-type-info --list-field *` command:
 
 ```
-get-field-types
-gft login
-gft name
-gft name --format=json
-gft phone --sample empty
-gft phone -s full
+record-type-info --list-field *
+record-type-info --list-field login
+rti -lf name
+rti -lf name --format=json
+rti -lf phone --example
 ```
