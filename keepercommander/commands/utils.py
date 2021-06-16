@@ -8,7 +8,8 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
+import hashlib
+import hmac
 import re
 import os
 import base64
@@ -29,15 +30,18 @@ from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
-from ..APIRequest_pb2 import ApplicationShareRequest, ApiRequestPayload, ApplicationShareType
-from ..api import decrypt_data
+from .recordv3 import get_record
+from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppShareRequest, AddAppClientRequest, \
+    GetAppInfoRequest, GetAppInfoResponse, AppClient
+from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api, rest_api, loginv3
-from .base import raise_parse_exception, suppress_exit, user_choice, Command
-from ..rest_api import execute_rest, decrypt_aes
+from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
+from ..record_pb2 import RecordsAddRequest, RecordAdd, RecordsModifyResponse, RecordModifyResult
+from ..rest_api import execute_rest
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
@@ -66,13 +70,18 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
-    commands['app-share'] = AppShareCommand()
+    commands['app-share'] = AppShareRegistrationCommand()
+    commands['app-client'] = AppClientRegistrationCommand()
+    # commands['app-share-info'] = AppInfoCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, app_share_parser]:
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
+              app_share_parser, app_share_registration_parser,
+              # app_info_parser
+              ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
@@ -140,9 +149,40 @@ help_parser.exit = suppress_exit
 
 app_share_parser = argparse.ArgumentParser(prog='app-share', description='One-Time Binding App Token (BAT) command')
 app_share_parser.add_argument('--uid', type=str, action='store', help='Record UID')
-app_share_parser.add_argument('--app_name', type=str, action='store', help='Application Name')
+app_share_parser.add_argument('--app-name', type=str, action='store', help='Application Name')
 app_share_parser.error = raise_parse_exception
 app_share_parser.exit = suppress_exit
+
+app_share_registration_parser = argparse.ArgumentParser(prog='app-share', description='Add a record or a Shared Folder to the App')
+app_share_registration_parser.add_argument('--secret', type=str, action='store', help='Record UID') # TODO: Make it an array
+app_share_registration_parser.add_argument('--app', type=str, action='store', help='Application Name or UID')
+# app_share_registration_parser.add_argument('add-share')
+app_share_registration_parser.error = raise_parse_exception
+app_share_registration_parser.exit = suppress_exit
+
+
+app_client_registration_parser = argparse.ArgumentParser(prog='app-client', description='Create One-Time Client Key(s)')
+app_client_registration_parser.add_argument('app', type=str, action='store', help='Application Name or UID')
+app_client_registration_parser.add_argument('--count', '-c', type=int, dest='count', action='store', help='Number of tokens to return', default=1)
+# app_client_registration_parser.add_argument('add-share')
+app_client_registration_parser.error = raise_parse_exception
+app_client_registration_parser.exit = suppress_exit
+
+# app_info_parser = argparse.ArgumentParser(prog='app-share-info', description='?????')
+# app_info_parser.add_argument('uids', nargs='*', type=str, action='store', help='Application UID')
+# # app_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+# #                                     default='table', help='output format. applicable to users, teams, and roles.')
+# # app_info_parser.add_argument('--output', dest='output', action='store',
+# #                                     help='output file name. (ignored for table format)')
+# app_info_parser.error = raise_parse_exception
+# app_info_parser.exit = suppress_exit
+
+
+def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
+    dt = datetime.datetime.fromtimestamp(ms // 1000)
+    df_frmt_str = dt.strftime(frmt)
+
+    return df_frmt_str
 
 
 class SyncDownCommand(Command):
@@ -505,70 +545,363 @@ class CheckEnforcementsCommand(Command):
                     del params.settings['share_account_to']
 
 
-class AppShareCommand(Command):
+class AppShareRegistrationCommand(Command):
+
     def get_parser(self):
-        return app_share_parser
+        return app_share_registration_parser
 
     def execute(self, params, **kwargs):
 
-        uid = kwargs['uid'] if 'uid' in kwargs else None
-        app_name = kwargs['app_name'] if 'app_name' in kwargs else None
+        uid = kwargs['secret'] if 'secret' in kwargs else None
+        app_name = kwargs['app'] if 'app' in kwargs else None
 
-        secret_key = os.urandom(32)
-        logging.debug("secret_key=[%s]" % CommonHelperMethods.bytes_to_url_safe_str(secret_key))
+        if app_name:
+            app_record = AppShareRegistrationCommand.get_or_add_new_app_secret_record(params, app_name)
 
-        binding_token = api.hashlib.sha256(secret_key).digest()
+        if not app_name and not uid:
+            AppShareRegistrationCommand.print_all_apps_records(params)
+            return
+        elif app_name and not uid:
+            AppShareRegistrationCommand.get_and_print_app_info(params, app_record.get('uid'))
+            return
 
         if api.is_shared_folder(params, uid):
-
             cached_sf = params.shared_folder_cache[uid]
-
             shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
-
-            encrypted_key = rest_api.encrypt_aes(shared_folder_key_unencrypted, secret_key)
-
             share_type = 'SHT_FOLDER'
+            share_key = shared_folder_key_unencrypted
 
         else:
-            # TODO: Search shared records as well, not just owned
+            # TODO: Should we also search shared records as well, not just owned once?
+            if uid not in params.record_cache:
+               logging.warning("Record %s not found." % uid)
+               return
+
             rec = params.record_cache[uid]
-
-            # print(rec['record_key_unencrypted'])
-
-
-            encrypted_key = rest_api.encrypt_aes(rec['record_key_unencrypted'], secret_key)
-            # print("encryptedKey=%s" % encryptedKey)
-
             share_type = 'SHT_RECORD'
+            share_key = rec['record_key_unencrypted']
 
+        master_key_str = app_record.get('data').get('fields')[0].get('value')[0]
+        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
 
-        logging.debug("binding_token (HASH)=[%s]" % CommonHelperMethods.bytes_to_url_safe_str(binding_token))
+        AppShareRegistrationCommand.share_secret(
+            params=params,
+            app_uid=app_record.get('uid'),
+            master_key=master_key,
+            secret_uid=uid,
+            share_key_decrypted=share_key,
+            share_type_str=share_type
+        )
 
-        # secretUid = CommonHelperMethods.normal64Bytes(rec['record_uid'])
+    @staticmethod
+    def record_data_as_dict(record_dict):
+        data_json_str = record_dict.get('data_unencrypted').decode("utf-8")
+        data_dict = json.loads(data_json_str)
+        return data_dict
 
-        rq = ApplicationShareRequest()
+    @staticmethod
+    def print_all_apps_records(params):
 
-        rq.applicationName = app_name
-        rq.shareType = ApplicationShareType.Value(share_type)
-        rq.secretUid = CommonHelperMethods.url_safe_str_to_bytes(uid)
-        rq.encryptedSecretKey = encrypted_key
-        rq.bindingToken = binding_token
+        print("\nList of all Applications\n")
+        recs = params.record_cache
+
+        apps_table_fields = ['Title', 'Uid']
+        apps_table = []
+        for uid in recs:
+
+            r = recs[uid]
+
+            if r.get('version') == 3:
+                data_json_str = r.get('data_unencrypted').decode("utf-8")
+                data_dict = json.loads(data_json_str)
+
+                if data_dict.get('type') == 'app':
+                    apps_table.append([data_dict.get('title'), uid])
+
+        apps_table.sort(key=lambda x: x[0].lower())
+
+        dump_report_data(apps_table, apps_table_fields, fmt='table')
+
+    @staticmethod
+    def get_and_print_app_info(params, uid):
+
+        rq = GetAppInfoRequest()
+        rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(uid)
+
+        rs = communicate_rest(params, rq, 'vault/get_app_info')
+
+        get_app_info_rs = GetAppInfoResponse()
+        get_app_info_rs.ParseFromString(rs)
+
+        print("CLIENT\n---------")
+        clients = get_app_info_rs.clients
+        if clients:
+            clients_table_fields = ['ID', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
+                                    'IP Address']
+            clients_table = []
+            for c in clients:
+                id = c.id
+                client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+                created_on = ms_to_str(c.createdOn)
+                first_access = '-' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
+                last_access = '-' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
+                lock_ip = 'Enabled' if c.lockIp else 'Disabled'
+                ip_address = c.ipAddress
+                # public_key = c.publicKey
+
+                row = [id, client_id, created_on, first_access, last_access, lock_ip, ip_address]
+
+                clients_table.append(row)
+
+            clients_table.sort(key=lambda x: x[2].lower())
+
+            dump_report_data(clients_table, clients_table_fields, fmt='table')
+        else:
+            print('\tNo clients registered for this app')
+
+        print("\nSHARES\n--------")
+
+        shares = get_app_info_rs.shares
+
+        if shares:
+
+            recs = params.record_cache
+
+            shares_table_fields = ['Share Type', 'UID', 'Title']
+            shares_table = []
+
+            for s in shares:
+
+                uid_str = CommonHelperMethods.bytes_to_url_safe_str(s.secretUid)
+                sht = ApplicationShareType.Name(s.shareType)
+
+                if sht == 'SHT_RECORD':
+                    record = recs.get(uid_str)
+                    record_data_dict = AppShareRegistrationCommand.record_data_as_dict(record)
+                    row = ['RECORD', uid_str, record_data_dict.get('title')]
+                elif sht == 'SHT_FOLDER':
+                    cached_sf = params.shared_folder_cache[uid_str]
+                    shf_name = cached_sf.get('name_unencrypted')
+                    # shf_num_of_records = len(cached_sf.get('records'))
+
+                    row = ['FOLDER', uid_str, shf_name]
+                else:
+                    logging.warning("Unknown Share Type %s" % sht)
+                    continue
+
+                shares_table.append(row)
+
+            shares_table.sort(key=lambda x: x[2].lower())
+            dump_report_data(shares_table, shares_table_fields, fmt='table')
+        else:
+            print('\tNo shared secrets to this app')
+
+    @staticmethod
+    def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type_str):
+        encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
+
+        add_app_share_rq = AddAppShareRequest()
+        add_app_share_rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
+        add_app_share_rq.shareType = ApplicationShareType.Value(share_type_str)
+        add_app_share_rq.secretUid = CommonHelperMethods.url_safe_str_to_bytes(secret_uid)
+        add_app_share_rq.encryptedSecretKey = encrypted_secret_key
 
         api_request_payload = ApiRequestPayload()
-        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.payload = add_app_share_rq.SerializeToString()
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
 
-        rs = execute_rest(params.rest_context, 'vault/application_share', api_request_payload)
+        rs = execute_rest(params.rest_context, 'vault/add_app_share', api_request_payload)
 
         if type(rs) is bytes:
-
-            print("------------------------------------------------------------------------------------")
-            print("Binding Key (One Time Token): [%s]" % CommonHelperMethods.bytes_to_url_safe_str(secret_key))
-            print("------------------------------------------------------------------------------------")
+            logging.info("Successfully added new %s uid=%s to app uid=%s" % (share_type_str, secret_uid, app_uid))
+            return True
 
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
 
+        return True
+
+    @staticmethod
+    def get_or_add_new_app_secret_record(params, app_name):
+
+        found_records = search_records(params, app_name)
+
+        if len(found_records) > 1:
+
+            raise Exception("More than two apps with the title '%s' found. uids=" %
+                            app_name,
+                            (', '.join([str(x.record_uid) for x in found_records]))
+                            )
+
+        if not found_records:
+
+            master_key_bytes = os.urandom(32)
+            master_key_str = loginv3.CommonHelperMethods.bytes_to_url_safe_str(master_key_bytes)
+
+            record_data = {
+                'title': app_name,
+                'type': 'app',
+                'fields': [
+                    {
+                        'type': 'password',
+                        'value': [master_key_str]
+                    }
+                ]
+            }
+
+            AppShareRegistrationCommand.add_new_v3_rec(params, record_data)
+
+            logging.debug("")
+
+        found_records = AppShareRegistrationCommand.search_app_records(params, app_name)
+
+        return found_records[0]
+
+    @staticmethod
+    def search_app_records(params, search_str):
+
+        search_results_rec_data = []
+
+        for record_uid in params.record_cache:
+
+            rec = get_record(params, record_uid)
+
+            if rec.get('version') == 3:
+                data = json.loads(rec.get('data_unencrypted'))
+                rec_uid = rec.get('record_uid')
+                rec_title = data.get('title')
+                rec_type = data.get('type')
+
+                if rec_type == 'app':
+                    if rec_uid == search_str.strip() or rec_title.lower() == search_str.strip().lower():
+                        search_results_rec_data.append(
+                            {
+                                'uid': rec_uid,
+                                'data': data
+                            })
+
+        return search_results_rec_data
+
+    @staticmethod
+    def add_new_v3_rec(params, data_dict):
+
+        data_json = json.dumps(data_dict)
+
+        record_key_unencrypted = os.urandom(32)
+        record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
+
+        record_uid_str = api.generate_record_uid()
+        record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_uid_str)
+
+        data = data_json.decode('utf-8') if isinstance(data_json, bytes) else data_json
+        data = pad_aes_gcm(data)
+
+        rdata = bytes(data, 'utf-8')
+        rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
+        rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
+        rdata = loginv3.CommonHelperMethods.url_safe_str_to_bytes(rdata)
+
+        client_modif_time = api.current_milli_time()
+
+        ra = RecordAdd()
+        ra.record_uid = record_uid
+        ra.record_key = record_key_encrypted
+        ra.client_modified_time = client_modif_time
+        ra.data = rdata
+
+        rq = RecordsAddRequest()
+        rq.records.append(ra)
+
+        rs = communicate_rest(params, rq, 'vault/records_add')
+
+        records_modify_rs = RecordsModifyResponse()
+        records_modify_rs.ParseFromString(rs)
+
+        for r in records_modify_rs.records:
+            ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+            success = (r.status == RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+            status = RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
+
+            if not success:
+                logging.error(bcolors.FAIL + 'Error: App record add failed with status - %s' + bcolors.ENDC, status)
+                return False
+
+            new_revision = 0
+            if success and ruid == record_uid:
+                new_revision = records_modify_rs.revision
+                logging.debug("Successfully added new app %s" % data_dict.get('app_name'))
+
+        sync_down(params)
+
+
+class AppClientRegistrationCommand(Command):
+    def get_parser(self):
+        return app_client_registration_parser
+
+    def execute(self, params, **kwargs):
+
+        app_name = kwargs.get('app') or None
+        count = kwargs['count']
+
+        if not app_name:
+            raise Exception("No app provided")
+
+        app_record = AppShareRegistrationCommand.get_or_add_new_app_secret_record(params, app_name)
+
+        # master_key = app_record.
+        print("App uid=%s" % app_record.get('uid'))
+
+        master_key_str = app_record.get('data').get('fields')[0].get('value')[0]
+        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+
+        keys_str = ""
+
+        for i in range(count):
+            client_key = os.urandom(32)
+
+            client_id = hmac.digest(client_key, b'KEEPER_SECRETS_MANAGER_CLIENT_ID', 'sha512')
+
+            encrypted_master_key = rest_api.encrypt_aes(master_key, client_key)
+
+            rq = AddAppClientRequest()
+            rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_record.get('uid'))
+            rq.encryptedMasterKey = encrypted_master_key
+            rq.clientId = client_id
+
+            api_request_payload = ApiRequestPayload()
+            api_request_payload.payload = rq.SerializeToString()
+            api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+            rs = execute_rest(params.rest_context, 'vault/add_app_client', api_request_payload)
+
+            if type(rs) is bytes:
+                if keys_str:
+                    keys_str += '\n'
+
+                keys_str += "One Time Client Key: %s" % CommonHelperMethods.bytes_to_url_safe_str(client_key)
+            if type(rs) is dict:
+                raise KeeperApiError(rs['error'], rs['message'])
+
+        print("------------------------------------------------------------------------------------")
+        print(keys_str)
+        print("------------------------------------------------------------------------------------")
+
+
+# class AppInfoCommand(Command):
+#
+#     def get_parser(self):  # type: () -> argparse.ArgumentParser or None
+#         return app_info_parser
+#
+#     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+#
+#         app_uids = kwargs.get('uids') or None
+#
+#         if app_uids:
+#             for uid in app_uids:
+#                 AppShareRegistrationCommand.get_and_print_app_info(params, uid)
+#         else:
+#             AppShareRegistrationCommand.print_all_apps_records(params)
+#
 
 class LogoutCommand(Command):
     def get_parser(self):
