@@ -24,7 +24,7 @@ Record types use the same command syntax as legacy records with minor modificati
 
 ```add  type=contact title=MyContact f.name.first=John f.name.last=Doe```
 
-```add  type=contact title=MyContact "note=Record type notes" "custom.notes=Very important note"```
+```add  type=contact title=MyContact f.name.first=John f.name.last=Doe "notes=Record type notes" "custom.note=Very important note"```
 
 Note: Dot notations can handle only a single field per given type - if there are more fields of the same type (ex. in custom[] section) please use JSON format for full record types capabilities.
 
