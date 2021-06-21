@@ -46,6 +46,8 @@ To create, update and delete custom record types use `record-type` command:
 
 ```record-type --action remove <RTID>```
 
+The `--data` parameter expects record type definition JSON in the same format as the one provided by `record-type-info` - ex. `rti -lr login`
+
 To show available record types definitions use `record-type-info` command:
 
 ```

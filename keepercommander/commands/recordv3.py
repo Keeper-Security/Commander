@@ -235,16 +235,16 @@ command_group = record_type_info_parser.add_mutually_exclusive_group()
 command_group.add_argument('-e', '--example', dest='example', action='store_true', help='generate example JSON')
 command_group = record_type_info_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
-command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type(s) by $id or name')
-command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name - use * to list all')
+command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type by name or use * to list all')
+command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name or use * to list all')
 record_type_info_parser.error = raise_parse_exception
 record_type_info_parser.exit = suppress_exit
 
 
-record_type_parser = argparse.ArgumentParser(prog='record-type|rt', description='Record type add/update/delete')
-record_type_parser.add_argument('record_type_id', default=None, nargs='?', type=int, action='store', help='Record Type ID to update/delete')
-record_type_parser.add_argument('--data', dest='data', action='store', help='record type content')
-record_type_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'update', 'remove'], required=True, help='record type action to perform')
+record_type_parser = argparse.ArgumentParser(prog='record-type|rt', description='Add, modify or delete record type definition')
+record_type_parser.add_argument('record_type_id', default=None, nargs='?', type=int, action='store', help='record Type ID to update/delete')
+record_type_parser.add_argument('--data', dest='data', action='store', help='record type definition in JSON format - use rti command to see existing definitions: ex. rti -lr login')
+record_type_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'update', 'remove'], required=True, help='record type definition - add, update or remove')
 # command_group = record_type_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-a', '--add-type', dest='add_type', action='store_true', help='add new custom record type')
 # command_group.add_argument('-u', '--update-type', dest='update_type', action='store_true', help='update existing custom record type')
