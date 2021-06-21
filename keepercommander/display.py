@@ -75,8 +75,8 @@ def formatted_records(records, **kwargs):
                 if fuid and fuid in params.shared_folder_cache:
                     shared_folder = params.shared_folder_cache[fuid]
 
-        table = [[i + 1, r.record_uid, abbreviate_text(r.title, 32), r.login, abbreviate_text(r.login_url, 32)] for i, r in enumerate(records)]
-        headers = ["#", 'Record UID', 'Title', 'Login', 'URL']
+        table = [[i + 1, r.record_uid, abbreviate_text(r.record_type, 32), abbreviate_text(r.title, 32), r.login, abbreviate_text(r.login_url, 32)] for i, r in enumerate(records)]
+        headers = ["#", 'Record UID', 'Type', 'Title', 'Login', 'URL']
         if shared_folder and 'records' in shared_folder:
             headers.append('Flags')
             for row in table:
