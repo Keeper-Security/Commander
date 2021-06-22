@@ -109,9 +109,12 @@ class KeeperParams:
         self.clone_code = None
         self.device_token = None
         self.device_private_key = None
+        self.account_uid_bytes = None
+        self.session_token_bytes = None
+        self.record_type_cache = {} # RT definitions only
 
     def clear_session(self):
-        self.auth_verifier = ''
+        self.auth_verifier = None
         self.user = ''
         self.password = ''
         self.mfa_type = 'device_token'
@@ -155,6 +158,9 @@ class KeeperParams:
         self.clone_code = None
         self.device_token = None
         self.device_private_key = None
+        self.account_uid_bytes = None
+        self.session_token_bytes = None
+        self.record_type_cache = {}
 
     def __get_rest_context(self):
         return self.__rest_context

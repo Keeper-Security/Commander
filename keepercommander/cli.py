@@ -35,7 +35,6 @@ from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
 
-
 stack = []
 command_info = OrderedDict()
 register_commands(commands, aliases, command_info)
@@ -152,7 +151,7 @@ def command_and_args_from_cmd(command_line):
         cmd = command_line[:pos]
         args = command_line[pos + 1:].strip()
     else:
-        cmd = command_line
+        cmd = command_line.strip()
 
     return cmd, args
 
@@ -429,6 +428,7 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_while_typing=False)
 
         display.welcome()
+
     else:
         logging.getLogger().setLevel(logging.WARNING)
 
@@ -501,7 +501,13 @@ def loop(params):  # type: (KeeperParams) -> int
             else:
                 logging.warning('%s', e.message)
         except CommunicationError as e:
-            logging.error("Communication Error: %s", e.message)
+
+            if e.result_code == 'restricted_client_type':
+
+                logging.error("Error code: %s\n%s" % e.result_code, loginv3.permissions_error_msg)
+            else:
+                logging.error("Error code: %s\nCommunication Error: %s" % (e.result_code, e.message))
+
         except AuthenticationError as e:
             logging.error("AuthenticationError Error: %s", e.message)
         except Exception as e:

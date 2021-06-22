@@ -17,6 +17,8 @@ import argparse
 import logging
 import datetime
 import getpass
+import sys
+import platform
 
 import requests
 import tempfile
@@ -47,6 +49,8 @@ from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
 # from ..loginv3 import LoginV3API, CommonHelperMethods
+from .. import __version__
+from ..versioning import is_binary_app, is_up_to_date_version
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -73,12 +77,14 @@ def register_commands(commands):
     commands['app-share'] = AppShareRegistrationCommand()
     commands['app-client'] = AppClientRegistrationCommand()
     # commands['app-share-info'] = AppInfoCommand()
+    commands['version'] = VersionCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
+    aliases['v'] = 'version'
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, version_parser,
               app_share_parser, app_share_registration_parser,
               # app_info_parser
               ]:
@@ -176,6 +182,11 @@ app_client_registration_parser.exit = suppress_exit
 # #                                     help='output file name. (ignored for table format)')
 # app_info_parser.error = raise_parse_exception
 # app_info_parser.exit = suppress_exit
+
+version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
+version_parser.error = raise_parse_exception
+version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+version_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
@@ -275,8 +286,10 @@ class ThisDeviceCommand(Command):
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('ip_disable_auto_approve', value)
-            loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
+            # invert ip_auto_approve value before passing it to ip_disable_auto_approve
+            value_extracted = '0' if value_extracted == '1' else '1' if value_extracted == '0' else value_extracted
+            loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
             print("Successfully " + msg + " 'ip_auto_approve'")
 
         elif action == 'timeout' or action == 'to':
@@ -296,12 +309,12 @@ class ThisDeviceCommand(Command):
         value = value.lower()
 
         if name == 'persistent_login' or name == 'ip_disable_auto_approve':
-            if value == 'yes' or value == 'y' or value == 'on' or value == '1' or value.lower() == 'true':
+            if value and value.lower() in (val.lower() for val in ('yes', 'y', 'on', '1', 'true')):
                 final_val = '1'
-            elif value == 'no' or value == 'n' or value == 'off' or value == '0' or value.lower() == 'false':
+            elif value and value.lower() in (val.lower() for val in ('no', 'n', 'off', '0', 'false')):
                 final_val = '0'
             else:
-                raise Exception("Unknown value. Available values 'on', 'off', 'yes', 'y', 'no' or 'n'")
+                raise Exception("Unknown value. Available values 'yes'/'no', 'y'/'n', 'on'/'off', '1'/'0', 'true'/'false'")
         elif name == 'logout_timer':
             if not loginv3.CommonHelperMethods.check_int(value):
                 raise Exception("Entered value is not an integer. Please enter integer")
@@ -352,12 +365,16 @@ class ThisDeviceCommand(Command):
 
         if 'ipDisableAutoApprove' in acct_summary_dict['settings']:
             ipDisableAutoApprove = acct_summary_dict['settings']['ipDisableAutoApprove']
+            # ip_disable_auto_approve - If enabled, the device is NOT automatically approved
+            # If disabled, the device will be auto approved
+            ipAutoApprove = not ipDisableAutoApprove
             print("{:>20}: {}".format('IP Auto Approve',
                                       (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
-                                      if ipDisableAutoApprove else
+                                      if ipAutoApprove else
                                       (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
         else:
-            print("{:>20}: {}".format('IP Auto Approve', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+            print("{:>20}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
+            # ip_disable_auto_approve = 0 / disabled (default) <==> IP Auto Approve :ON
 
         if 'persistentLogin' in acct_summary_dict['settings']:
             persistentLogin = acct_summary_dict['settings']['persistentLogin']
@@ -418,7 +435,19 @@ class WhoamiCommand(Command):
                 cp = host.rfind(':')
                 if cp > 0:
                     host = host[:cp]
-                data_center = 'EU' if host.endswith('.eu') else 'US'
+
+                host_str = host.lower()
+
+                if host_str.endswith('.eu'):
+                    data_center = 'EU'
+                elif host_str.endswith('.com'):
+                    data_center = 'US'
+                elif host_str.endswith('.au'):
+                    data_center = 'AU'
+                else:
+                    # Ideally we should determine TLD which might require additional lib
+                    data_center = host_str
+
                 print('{0:>20s}: {1}'.format('Data Center', data_center))
                 environment = ''
                 if host.startswith('dev.'):
@@ -460,6 +489,43 @@ class WhoamiCommand(Command):
 
         else:
             print('{0:>20s}:'.format('Not logged in'))
+
+
+class VersionCommand(Command):
+    def get_parser(self):
+        return whoami_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+
+        this_app_version = __version__
+        version_details = is_up_to_date_version()
+        is_verbose = kwargs.get('verbose') or False
+
+        if not is_verbose:
+            print('{0}: {1}'.format('Commander Version', this_app_version))
+        else:
+            print('{0:>20s}: {1}'.format('Commander Version', __version__))
+            print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
+            print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
+            print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
+            print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
+            print('{0:>20s}: {1}'.format('Executable', sys.executable))
+
+        if version_details.get('is_up_to_date') is None:
+            logging.debug(bcolors.WARNING + "It appears that internet connection is offline" + bcolors.ENDC)
+        elif not version_details.get('is_up_to_date'):
+
+            latest_version = version_details.get('current_github_version')
+
+            print((bcolors.WARNING +
+                   'Latest Commander Version: %s\n'
+                   'You can download the current version at: %s \n' + bcolors.ENDC)
+                  % (latest_version, version_details.get('new_version_download_url')))
+        if is_binary_app():
+            print("Installation path: {0} ".format(sys._MEIPASS))
 
 
 class LoginCommand(Command):

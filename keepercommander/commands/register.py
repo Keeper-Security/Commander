@@ -11,6 +11,7 @@
 
 import argparse
 import getpass
+from keepercommander.recordv3 import RecordV3
 import re
 import os
 import base64
@@ -767,6 +768,7 @@ class ShareRecordCommand(Command):
         if record_uid is None:
             raise CommandError('share-record', 'Enter name or uid of existing record')
 
+        RecordV3.validate_access(params, record_uid)
         public_keys = {}
         rq = {
             'command': 'public_keys',
@@ -1597,7 +1599,8 @@ class RecordPermissionCommand(Command):
                             code = status['status']
                             if code != 'success':
                                 record_uid = status['record_uid']
-                                table.append([len(table) + 1, record_uid, status['username'], code, rs['message']])
+                                username = status.get('username') or status.get('to_username')
+                                table.append([len(table) + 1, record_uid, username, code, status.get('message')])
 
                 if len(table) > 0:
                     headers = ['#', 'Record UID', 'Email', 'Error Code', 'Message']

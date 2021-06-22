@@ -9,9 +9,12 @@
 # Contact: ops@keepersecurity.com
 #
 
+import copy
 import datetime
 import json
+from keepercommander.params import KeeperParams
 import logging
+import re
 import requests.exceptions
 import urllib.parse
 
@@ -39,32 +42,91 @@ class RecordV3:
 
 
   @staticmethod
-  def is_valid_record_type(record_type_json):
+  def is_valid_record_type(record_type_json: str, rt_definition_json: str) -> dict:
     # validate record type (a.k.a. record v3) data
     # https://github.com/Keeper-Security/record-templates/tree/master/standard_templates
     rt = {}
     try:
       rt = json.loads(record_type_json)
     except ValueError:
-      return (False, 'Invalid record type JSON')
+      return { 'is_valid': False, 'error': 'Invalid record type JSON' }
     except Exception:
-      return (False, 'Invalid record type')
+      return { 'is_valid': False, 'error': 'Invalid record type' }
+
+    res = RecordV3.is_valid_record_type_definition(rt_definition_json)
+    if not res.get('is_valid'):
+      return res
+    rtd = json.loads(rt_definition_json)
 
     # Implicit fields - always present on any record, no need to be specified in the template: title, custom, notes
+    rtd_type = rtd.get('$id') or ''
     rt_type = rt.get('type') or ''
-    if not rt_type or not rt_type.strip():
-      return (False, 'Missing record type type')
     rt_title = rt.get('title') or ''
+    rt_notes = rt.get('notes') or ''
+    rt_fields = rt.get('fields') or []
+    rt_custom = rt.get('custom') or []
+
+    if not isinstance(rt_type, str):
+      return { 'is_valid': False, 'error': 'Record type "type" should be string: ' + str(rt_type) }
+    if not isinstance(rt_title, str):
+      return { 'is_valid': False, 'error': 'Record type "title" should be string: ' + str(rt_title) }
+    if not isinstance(rt_notes, str):
+      return { 'is_valid': False, 'error': 'Record type "notes" should be string: ' + str(rt_notes) }
+    if not isinstance(rt_fields, list):
+      return { 'is_valid': False, 'error': 'Record type "fields" should be array: ' + str(rt_fields) }
+    if not isinstance(rt_custom, list):
+      return { 'is_valid': False, 'error': 'Record type "custom" should be array: ' + str(rt_custom) }
+
+    if not rt_type or not rt_type.strip():
+      return { 'is_valid': False, 'error': 'Missing record type type' }
+    if rt_type.strip() != rtd_type.strip():
+      return { 'is_valid': False, 'error': 'Type mistmatch - RT "type" should match "$id" in RT definition: ' + rt_type + " != " + rtd_type }
+
     if not rt_title or not rt_title.strip():
-      return (False, 'Missing record type title')
+      return { 'is_valid': False, 'error': 'Missing record type title' }
 
-    rt_definition_json = '' # todo: read rt from grt cmd
+    # Top level RT attributes - unknown attribute(s) generate error
+    # All known attribute(s) from RT definition that don't belong to RT data also generate error
+    tlod = [x for x in rtd]
+    tlor = [x for x in rt]
+    rtdef_only = ('$id', 'categories', 'description', 'label') # these are in RT definitions only
+    ilist = [x for x in tlor if x in rtdef_only]
+    if ilist:
+      return { 'is_valid': False, 'error': 'Record has atributes that should be present in record type definitions only: ' + str(ilist) }
 
-    return (True, 'OK')
+    #ulist = [x for x in tlor if x not in ('type', 'title', 'notes', 'fields', 'custom')]
+    ulist = [x for x in tlor if x not in tlod + [*RecordV3.record_fields.keys()]]
+    if ulist:
+      return { 'is_valid': False, 'error': 'Unknown record type attribute(s): ' + str(ulist) }
+
+    # Allow only valid/known field types - field types are case sensitive?
+    badf = [x for x in rt_fields if not RecordV3.field_types.__contains__(x.get('type'))]
+    if badf:
+      return { 'is_valid': False, 'error': 'Unknown field types in "fields": ' + str(badf) }
+    badf = [x for x in rt_custom if not RecordV3.field_types.__contains__(x.get('type'))]
+    if badf:
+      return { 'is_valid': False, 'error': 'Unknown field types in "custom": ' + str(badf) }
+
+    # only one FT of type password allowed in record v3
+    pwdf = [x for x in rt_fields if x.get('type') == 'password']
+    pwdc = [x for x in rt_custom if x.get('type') == 'password']
+    pwds = pwdf + pwdc
+    if len(pwds) > 1:
+      return { 'is_valid': False, 'error': 'Error: Only one password allowed per record! ' + str(pwds) }
+    elif len(pwds) == 1:
+      rtdp = next((True for x in (rtd.get('fields') or []) if '$ref' in x and x.get('$ref') == 'password'), False)
+      if rtdp:
+        if pwdc: return { 'is_valid': False, 'error': 'Password must be in fields[] section as defined by record type! ' + str(pwds) }
+      else:
+        if not pwdc: return { 'is_valid': False, 'error': 'Password must be in custom[] section - this record type does not allow password in fields[]! ' + str(pwds) }
+
+
+
+    return { 'is_valid': True, 'error': '' }
 
 
   @staticmethod
-  def is_valid_record_type_definition(record_type_definition_json):
+  def is_valid_record_type_definition(record_type_definition_json: str) -> dict:
     # validate record type (a.k.a. record v3) definition
     # https://github.com/Keeper-Security/record-templates/tree/master/standard_templates
 
@@ -72,21 +134,51 @@ class RecordV3:
     try:
       rt = json.loads(record_type_definition_json)
     except ValueError:
-      return (False, 'Invalid record type JSON')
+      return { 'is_valid': False, 'error': 'Invalid record type JSON' }
     except Exception:
-      return (False, 'Invalid record type')
+      return { 'is_valid': False, 'error': 'Invalid record type definition' }
 
     rtid = rt.get('$id') or ''
     if not rtid or not rtid.strip():
-      return (False, 'Missing record type name')
+      return { 'is_valid': False, 'error': 'Missing record type name' }
 
     # Min RT definition: {"$id": "Name"} - allows only implicit (custom) fields
     # Max RT definition: {"$id": "Name", "categories": ["note"], "description": "Description", "fields":[]}
     # Implicit fields - always present on any record, no need to be specified in the template: title, custom, notes
-    implicit_field_names = ('title', 'custom', 'notes')
-    implicit_fields = [rt.get(r) for r in rt if r in implicit_field_names]
+    implicit_field_names = [x for x in RecordV3.record_implicit_fields]
+    implicit_fields = [r for r in rt if r in implicit_field_names]
+    if implicit_fields:
+      return { 'is_valid': False, 'error': 'Implicit fields not allowed in record type definition: ' + str(implicit_fields) }
 
-    return (True, 'OK')
+    rt_attributes = ('$id', 'categories', 'description', 'fields')
+    bada = [r for r in rt if r not in rt_attributes and r not in implicit_field_names]
+    if bada:
+      return { 'is_valid': False, 'error': 'Unknown attributes in record type definition: ' + str(bada) }
+
+    # Allow only valid/known field types - field types are case sensitive?
+    flds = rt.get('fields') or []
+    # Record type definitions without fields are OK? They still have title and custom[]
+    # if not flds:
+    #   return { 'is_valid': False, 'error': 'Missing fields list' }
+
+    badf = [x for x in flds if not x.get('$ref')]
+    if badf:
+      return { 'is_valid': False, 'error': 'Missing field type reference (ex. {"$ref": "login"}): ' + str(badf) }
+
+    badf = [x for x in flds if not RecordV3.field_types.__contains__(x.get('$ref'))]
+    if badf:
+      return { 'is_valid': False, 'error': 'Unknown field types: ' + str(badf) }
+
+    known_ft_atributes = {'$ref', 'label', 'required'}
+    unknown_ft_atributes = [x for x in flds if not set(x.keys()).issubset(known_ft_atributes)]
+    if unknown_ft_atributes:
+      return { 'is_valid': False, 'error': 'Unknown field atributes: ' + str(unknown_ft_atributes) }
+
+    badf = [x for x in flds if not RecordV3.is_valid_field_type_ref(json.dumps(x))]
+    if badf:
+      return { 'is_valid': False, 'error': 'Invalid field types: ' + str(badf) }
+
+    return { 'is_valid': True, 'error': '' }
 
 
   # Implicit fields - The following fields are always present on any record and do not need to be specified in the template:
@@ -205,6 +297,11 @@ class RecordV3:
   # https://github.com/Keeper-Security/record-templates/blob/master/fields.json
   # NB! All field_types must have corresponding field_values
   field_types = {
+    # 2021-05-06 FT 'text' added for compatibility with web vault
+    'text': {
+      '$id': 'text',
+      'type': 'text'
+    },
     'title': {
       '$id': 'title',
       'type': 'text'
@@ -296,14 +393,15 @@ class RecordV3:
       'type': 'url',
       'multiple': 'optional'
     },
-    'photo': {
-      '$id': 'photo',
-      'type': 'file'
-    },
-    'file': {
-      '$id': 'file',
-      'type': 'file'
-    },
+    # 2021-05-06 Unused photo, file - removed for compatibility with web vault
+    # 'photo': {
+    #   '$id': 'photo',
+    #   'type': 'file'
+    # },
+    # 'file': {
+    #   '$id': 'file',
+    #   'type': 'file'
+    # },
     'fileRef': {
       '$id': 'fileRef',
       'type': 'fileRef',
@@ -360,11 +458,12 @@ class RecordV3:
       'value_description': 'multiline text',
       'value': '' # string
     },
-    'file': {
-      'type': 'file',
-      'value_description': 'large binary object, picture or other file',
-      'value': '' # ???
-    },
+    # 2021-05-06 Unused file type - removed for compatibility with web vault
+    # 'file': {
+    #   'type': 'file',
+    #   'value_description': 'large binary object, picture or other file',
+    #   'value': '' # ???
+    # },
     'fileRef': {
       'type': 'fileRef',
       'value_description': 'reference to the file field on another record',
@@ -397,11 +496,18 @@ class RecordV3:
       'type': 'name',
       'value_description': 'multiple fields to capture name',
       'value': {          # object
-        'firstName': '',  # string
-        'middleName': '', # string
-        'lastName': ''    # string
+        'first': '',  # string
+        'middle': '', # string
+        'last': ''    # string
       },
-      'required': ['firstName', 'lastName'] # required parts of field value - enforced only when RT specify that field is required
+      'required': ['first', 'last'] # required parts of field value - enforced only when RT specify that field is required
+      # 2021-04-01 use reference implementation (webVault - above) != from documentation (Record+Format+V3+draft - below)
+      # 'value': {          # object
+      #   'firstName': '',  # string
+      #   'middleName': '', # string
+      #   'lastName': ''    # string
+      # },
+      # 'required': ['firstName', 'lastName']
     },
     'address': {
       'type': 'address',
@@ -495,11 +601,15 @@ class RecordV3:
 
   @classmethod
   def is_valid_field(cls, field_json):
-    #"fields":[{"type":"login","value":[]}
-    ft = 'field_type'
-    fv = 'field_value'
-    valid_type = RecordV3.is_valid_field_type('type')
-    valid_value = RecordV3.is_valid_field_value('val')
+    ft_dict = {}
+    if field_json:
+      try: ft_dict = json.loads(field_json)
+      except: ft_dict = {}
+
+    ft = ft_dict.get('type')
+    fv = ft_dict.get('value') or []
+    valid_type = RecordV3.is_valid_field_type(ft)
+    valid_value = RecordV3.is_valid_field_value(ft, fv)
     result = valid_type and valid_value
     return result
 
@@ -511,8 +621,53 @@ class RecordV3:
 
 
   @classmethod
-  def is_valid_field_value(cls, field_value_json):
-    print('')
+  def is_valid_field_value(cls, field_type, field_value):
+    result = False
+    if field_type and RecordV3.is_valid_field_type(field_type):
+      # empty value is OK
+      if field_value == []:
+        result = True
+
+      if not result and isinstance(field_value, list):
+        fdef = cls.field_types.get(field_type) or {}
+        ftyp = fdef.get('type')
+        fvt = cls.field_values.get(ftyp)
+        fval = fvt.get('value')
+        results = True
+        if ftyp in ('fileRef', 'cardRef', 'addressRef'):
+          for fv in field_value:
+            results = results and RecordV3.is_valid_ref_uid(fv)
+        elif isinstance(fval, int):
+          for fv in field_value:
+            results = results and (isinstance(fv, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(fv))))
+        elif isinstance(fval, str):
+          for fv in field_value:
+            results = results and isinstance(fv, str) and bool(fv)
+        elif isinstance(fval, tuple):
+          for fv in field_value:
+            results = results and fval.__contains__(str(fv).strip())
+        elif isinstance(fval, dict):
+          for fv in field_value:
+            results = results and isinstance(fv, dict)
+            if not results: break
+            for fvv in fv:
+              val1 = fval.get(fvv)
+              val2 = fv.get(fvv)
+              res = bool(val2)
+              if isinstance(val1, int):
+                res = res and (isinstance(val2, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(val2))))
+              elif isinstance(val1, str):
+                res = res and isinstance(val2, str) and bool(val2)
+              elif isinstance(val1, tuple):
+                res = res and val1.__contains__(str(val2).strip())
+              else:
+                res = False
+              results = results and res
+        else:
+          results = False
+        result = results
+
+    return result
 
 
   @classmethod
@@ -526,10 +681,11 @@ class RecordV3:
       ref = ft.get('$ref')
       result = RecordV3.is_valid_field_type(ref)
 
-      known_keys = ('$ref', 'label', 'requried')
+      known_keys = ('$ref', 'label', 'required')
       unknown_keys = [x for x in ft if x.lower() not in known_keys]
       if unknown_keys:
-        logging.warning('Unknown keys in field reference: ' + str(unknown_keys))
+        logging.warning('Unknown attributes in field reference: ' + str(unknown_keys))
+
     return result
 
 
@@ -553,7 +709,7 @@ class RecordV3:
 
   @staticmethod
   def get_custom_list(custom_list):
-    # pasrse a list of key-value pairs - accepted formats: json, csv, list
+    # parse a list of key-value pairs - accepted formats: json, csv, list
     custom = []
     error = ''
     if custom_list:
@@ -591,10 +747,127 @@ class RecordV3:
 
 
   @staticmethod
-  def convert_options_to_json(rt_json, rt_def, kwargs):
+  def get_record_password(rt_data):
+    # Records v3 allow only one password to be stored either in fields[] or in custom[]
+    rt = RecordV3.record_type_to_dict(rt_data)
+    flds = (rt.get('fields') or []) + (rt.get('custom') or [])
+    passwords = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'password']
+    result = passwords[0][0] if passwords and passwords[0] else None
+    return result
+
+
+  @staticmethod
+  def get_record_type_definition(params, rt_data):
+    from keepercommander.commands.recordv3 import RecordTypeInfo
+    result = None
+
+    rt_type = RecordV3.get_record_type_name(rt_data)
+    if rt_type:
+      rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_type)
+      if rt_def:
+        result = rt_def
+      else:
+        logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
+                    ' - to get list of all available record types use: get-record-types -lr' + bcolors.ENDC)
+
+    return result
+
+
+  @staticmethod
+  def get_record_type_name(rt_data):
+    result = None
+
+    rt = {}
+    if rt_data and (isinstance(rt_data, str) or isinstance(rt_data, bytes)):
+      try: rt = json.loads(rt_data or '{}')
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_data) + bcolors.ENDC)
+
+    if rt and isinstance(rt, dict):
+      rtt = rt.get('type')
+      if rtt:
+        result = rtt
+      else:
+        logging.error(bcolors.FAIL + 'Unable to find record type type - JSON: ' + str(rt_data) + bcolors.ENDC)
+
+    return result
+
+
+  @staticmethod
+  def change_record_type(params, rt_data, new_rt_name):
+    from keepercommander.commands.recordv3 import RecordTypeInfo
+    # Converts rt_data (dict or JSON) from one valid record type to another
+    # by moving required fields between fields[] and custom[]
+
+    result = {
+      'errors': [],
+      'warnings': [],
+      'record': {}
+    }
+
+    r = rt_data if isinstance(rt_data, dict) else {}
+    if isinstance(rt_data, str) or isinstance(rt_data, bytes):
+      try: r = json.loads(rt_data)
+      except: result['errors'].append('Unable to parse record type data JSON: ' + str(rt_data))
+
+    newrtd = {}
+    rt_def = RecordTypeInfo().resolve_record_type_by_name(params, new_rt_name)
+    if rt_def:
+      try: newrtd = json.loads(rt_def)
+      except: result['errors'].append('Unable to parse record type definition JSON: ' + str(rt_def))
+    else:
+      result['errors'].append('Record type definition not found for type: ' + str(new_rt_name) + ' - to get list of all available record types use: get-record-types -lr')
+    if result['errors']: return result
+
+    rt = copy.deepcopy(r)
+    newf = newrtd.get('fields') or []
+    newf = [x.get('$ref') for x in newf if isinstance(x, dict)]
+    flds = rt.get('fields') or []
+    cust = rt.get('custom') or []
+
+    keep = [x for x in flds if isinstance(x, dict) and x.get('type') in newf]
+    move = [x for x in flds if isinstance(x, dict) and x.get('type') not in newf]
+    del flds[:]
+    flds.extend(keep)
+    cust.extend(move)
+
+    cmove = [x for x in cust if isinstance(x, dict) and x.get('type') in newf]
+    ckeep = [x for x in cust if isinstance(x, dict) and x.get('type') not in newf]
+    cset = {x.get('type') for x in cmove if isinstance(x, dict) and x.get('type')}
+    # move only first/one instance per field type
+    cmoved = []
+    for x in cmove:
+      if x.get('type') in cset:
+        cmoved.append(x)
+        cset.remove(x.get('type'))
+      else:
+        ckeep.append(x)
+    del cust[:]
+    flds.extend(cmoved)
+    cust.extend(ckeep)
+
+    rt['fields'] = flds
+    rt['custom'] = cust
+    rt['type'] = new_rt_name
+
+    if not result['errors']:
+      r = rt
+
+    result['record'] = r
+    return result
+
+
+  @staticmethod
+  def is_valid_ref_uid(uid: str) -> bool:
+    # UID length is 22 and all characters are valid base64 urlsafe characters
+    result = bool(re.search('^[A-Za-z0-9-_]{22}$', uid or ''))
+    return result
+
+  @staticmethod
+  def convert_options_to_json(params, rt_json, rt_def, kwargs):
     # Converts dot notation options string to JSON string representing a valid record type
     # NB! Currently duplicate field types cannot be added or edited using dot notation syntax
     # Use JSON representation for full add/edit capabilites
+
     result = {
       'errors': [],
       'warnings': [],
@@ -605,18 +878,42 @@ class RecordV3:
 
     rt = {}
     if rt_json:
-      try: rt = json.loads(rt_json)
-      except: result['errors'].append('Unable to parse record type JSON string: ' + str(rt_json))
+      try: rt = json.loads(rt_json or '{}')
+      except: result['errors'].append('Unable to parse record type JSON: ' + str(rt_json))
 
     rtdef = {}
     if rt_def:
       try: rtdef = json.loads(rt_def)
-      except: result['errors'].append('Unable to parse record type definition from JSON string: ' + str(rt_def))
+      except: result['errors'].append('Unable to parse record type definition JSON: ' + str(rt_def))
     if result['errors']: return result
 
     options = kwargs.get('option') or []
     opts = [(x or '').split("=", 1) for x in options]
+    if not options:
+      return result
+
+    # normalize prefixes: f. -> fields., c. -> custom.
+    # so f.name.first is treated as duplicate of fields.name.first
+    for x in opts:
+      if x and x[0]:
+        x[0] = re.sub('^\s*fields\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub('^\s*custom\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub('^\s*f\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub('^\s*c\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
+
+    # check for duplicate keys or keys with more than one value
+    dupes = [x for x in opts if x and len(x) != 2] # keys with multiple values
+    if dupes:
+      result['errors'].append('Found keys with multiple values: ' + str(dupes))
+    groups = {} # duplicate key(s)
+    for x, *values in opts: groups[x] = 1 + (groups.get(x) or 0)
+    multi = [{x: groups[x]} for x in groups if groups[x] > 1]
+    if multi:
+      result['errors'].append('Found duplicate keys/values: ' + str(multi))
+    if result['errors']: return result
+
     rt_type = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'type'), None)
+    if not rt_type and is_edit and isinstance(rt, dict): rt_type = rt.get('type')
     rt_title = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'title'), None)
     rt_notes = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'notes'), None)
     rt_fields = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'fields'), None)
@@ -628,16 +925,161 @@ class RecordV3:
       result['errors'].append('Array types fields[] and custom[] cannot be assigned directly')
     if result['errors']: return result
 
-    # Top level RT options - unknown attribute(s) generate warnings and are silently ignored
+    # Top level RT options - unknown attribute(s) generate error
+    # All known attribute(s) /from RT definition/ generate а warning and are silently ignored
     tlo = [x for x in opts if x and not x[0].__contains__('.')]
-    # if unknonw tlo warning+= 
+    ignored = ('$id', 'categories', 'description', 'label') # these are in RT definitions only
+    ilist = [x for x in tlo if x and x[0] in ignored]
+    if ilist:
+      tlo = [x for x in tlo if x not in ilist]
+      result['warnings'].append('Removed record type attributes that should be present in record type definitions only: ' + str(ilist))
+
+    ulist = [x for x in tlo if x and x[0].strip() not in ('type', 'title', 'notes')]
+    if ulist:
+      result['errors'].append('Unknown top level attributes: ' + str(ulist))
+
+    # field type options - ex. -o field.name.first=Jane -o f.name.last=Doe
+    flo = [x for x in opts if x and x[0].__contains__('.')]
+
+    # All fields must be either in fields[] or custom[] arrays
+    badg = [x for x in flo if x[0].split('.', 1)[0].strip().lower() not in ('fields', 'custom') ]
+    if badg:
+      result['errors'].append('Unknown field group (not fields[] and not custom[]): ' + str(badg))
+
+    # Allow only valid/known field types - field types are case sensitive?
+    badf = [x for x in flo if not RecordV3.field_types.__contains__(x[0].split('.', 2)[1].strip())]
+    if badf:
+      result['errors'].append('Unknown field types: ' + str(badf))
     if result['errors']: return result
 
-    # field options
-    flo = [x for x in opts if x and x[0].__contains__('.')]
-    # if not is_edit and key has[] - err 'indexing is allowed in edit mode only'
+    # only one FT of type password allowed in record v3
+    pwds = [x for x in flo if x and x[0].startswith(('fields.password','f.password','custom.password','c.password'))]
+    if len(pwds) > 1:
+      result['errors'].append('Error: Only one password allowed per record! ' + str(pwds))
+    elif len(pwds) == 1:
+      rtdp = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'password'), False)
+      pwdc = pwds[0][0] and pwds[0][0].lower().startswith('custom.')
+      if rtdp:
+        if pwdc: result['errors'].append('Password must be in fields[] section as defined by record type! ' + str(pwds))
+      else:
+        if not pwdc: result['errors'].append('Password must be in custom[] section - record type does not allow password in fields[]! ' + str(pwds))
+    if result['errors']: return result
 
-    result['record'] = rt
+    # All fields with prefix f./fields. must be in record type definition
+    # Don't move f./fileds. not in RT definition to custom[] - undefined order on duplicates, might break scripts
+    rtdf = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x]
+    flds = [x for x in flo if x and x[0].startswith(('fields.','f.'))]
+    cust = [x for x in flo if x and x[0].startswith(('custom.','c.'))]
+    badf = [x for x in flds if not x[0].split('.', 2)[1].strip() in rtdf]
+    if badf:
+      result['errors'].append('This record type doesn\'t allow "fields." prefix for these (move to custom): ' + str(badf))
+    # fileRef must use upload-attachment/delete-attachment commands instead
+    refs = [x for x in flds + cust if x[0].split('.', 2)[1].strip().lower() == 'fileref']
+    if refs:
+      result['errors'].append('File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead.' + str(refs))
+    if result['errors']: return result
+
+    # edit command: JSON validation before update
+    # add command: fields[] must contain all 'requried' fields (and requried value parts)
+    if not is_edit:
+      reqd = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x and 'required' in x]
+      for fld in reqd:
+        ft = (RecordV3.field_types.get(fld) or {}).get('type')
+        ftr = (RecordV3.field_values.get(ft) or {}).get('required') or []
+        if ftr:
+          ftr = ['fields.' + fld + '.' + x for x in ftr]
+          flon = [x[0] for x in flo if x and x[0]]
+          ftrm = [x for x in ftr if x not in flon]
+          if ftrm:
+            result['errors'].append('Missing requried fields: ' + str(ftrm) + '   Use `rti -lf field_name --example` to generate valid field sample.')
+        else:
+          result['warnings'].append('Couldn\'t find requried fields for filed type: ' + str(ft))
+    if result['errors']: return result
+
+    # NB! cmdline labels override RT definition labels which override FT definition labels
+    r = {}
+    if is_edit and rt_type != rt.get('type'):
+      res = RecordV3.change_record_type(params, rt_json, rt_type)
+      if not res.get('errors'):
+        r = res.get('record') or r
+      if res.get('errors'): result['errors'].extend(res['errors'])
+      if res.get('warnings'): result['warnings'].extend(res['warnings'])
+    else:
+      r = copy.deepcopy(rt) # for edited or deleted items
+      if not r: r = { 'type': rt_type } # add command
+      if rt_title: r['title'] = rt_title
+      if is_edit and rt_title == '': r['title'] = '' # edit: delete title
+      if rt_notes: r['notes'] = rt_notes
+      if is_edit and rt_notes == '': r['notes'] = '' # edit: delete notes
+      if not 'fields' in r: r['fields'] = []
+      if not 'custom' in r: r['custom'] = []
+      for lst in [flds, cust]:
+        for f in lst:
+          if f and len(f) == 2:
+            val = f[1]
+            path = f[0].split('.')
+            forc = path[0].strip() if path else '' # fields or custom
+            fname = path[1].strip() if path and len(path) > 1 else ''  # field name
+            fvname = path[2].strip() if path and len(path) > 2 else '' # field attribute (if any)
+            if fname:
+              if not forc in r: r[forc] = [] # create fields[] or custom[]
+              fv = next((x for x in r[forc] if isinstance(x, dict) and x.get('type') == fname), {})
+              if not fv:
+                fv = { 'type': fname, 'value': [] }
+                r[forc].append(fv)
+              if not 'value' in fv: fv['value'] = []
+              if fvname:
+                # NB! required:true/false comes from RT definition and should not be re/set here
+                if fvname.lower() == 'required':
+                  result['warnings'].append('Skipped "required" field attribute which comes from record type definition and should not be set here! ' + str(f))
+                  continue
+                # check if fvname is FT attribute vs FT value object parts - ex. c.name.label vs. c.name.first
+                if fvname.lower() == 'label':
+                  fv['label'] = val
+                elif is_edit and not val: # delete
+                  if forc in r:
+                    v = next((x.get('value') or [] for x in r[forc] if isinstance(x, dict) and x.get('type') == fname), [])
+                    # v = next((x for x in v if isinstance(x, dict) and fvname in x), {})
+                    v = next((x for x in v if isinstance(x, dict)), {})
+                    v.pop(fvname, None)
+                elif bool(val):  # upsert
+                  # v = next((x for x in fv['value'] if isinstance(x, dict) and fvname in x), None)
+                  v = next((x for x in fv['value'] if isinstance(x, dict)), None)
+                  if v: v[fvname] = val
+                  else: fv['value'].append({fvname: val})
+                  ok = RecordV3.is_valid_field_value(fname, [{fvname: val}])
+                  if not ok: result['errors'].append('Invalid field value: ' + str({fname: [{fvname: val}]}))
+                else:
+                  result['warnings'].append('Skipped empty field value: ' + str(f))
+              else: # simple value str/int assign directly - ex. c.login=MyLogin
+                if bool(val):
+                  del fv['value'][:]
+                  fv['value'].append(val)
+                elif 'value' in fv and isinstance(fv['value'], list): # delete
+                  del fv['value'][:]
+          else:
+            result['errors'].append('Miltiple field values per single option aren\'t allowed. Use multiple options: -o f.name.first=A -o f.name.last=B ' + str(f))
+
+    # add command could pass multiple custom options - ex. --custom='{"name1":"value1", "name2":"value: 2,3,4"}'
+    # since dot format can't handle duplicate keys we pass these as kwargs['custom_list']
+    if not is_edit:
+      custom_list = kwargs.get('custom_list') or []
+      custom = [ {
+        'type': 'text',
+        'label': x.get('name') or '',
+        'value': [x.get('value')] if x.get('value') else []
+      } for x in custom_list if x.get('name') or x.get('value') ]
+      if custom:
+        r['custom'] = (r.get('custom') or []) + custom
+
+    if r and not result['errors']:
+      if not r.get('custom'): r.pop('custom', None)
+      if not r.get('fields'): r.pop('fields', None)
+      rt = r
+
+    if not result['errors']:
+      result['record'] = rt
+
     return result
 
   @staticmethod
@@ -728,6 +1170,94 @@ class RecordV3:
     result = True
     return result
 
+  @staticmethod
+  def values_to_lowerstring(data_json):
+    return RecordV3.values_to_string(data_json).lower()
+
+  @staticmethod
+  def values_to_string(data_json):
+    result = ''
+
+    rt = RecordV3.record_type_to_dict(data_json)
+    result += rt.get('title') or ''
+    result += rt.get('notes') or ''
+
+    fields = rt.get('fields') or []
+    custom = rt.get('custom') or []
+    values = [x.get('value') for x in fields + custom if x.get('value')]
+    values = [x if not isinstance(x[0], dict) else ';'.join(str(v) for v in x[0].values()) for x in values if len(x) > 0]
+    result += str(values)
+
+    return result
+
+  @staticmethod
+  def record_type_to_dict(rt_json):
+    rt = {}
+    if rt_json:
+      try:
+        rt = json.loads(rt_json or '{}')
+      except:
+        rt = {}
+        logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_json) + bcolors.ENDC)
+    return rt
+
+  @staticmethod
+  def update_password(password, rt_json, rt_def):
+    # Delete if pass is empty, Upsert if pass is present:
+    # Check if there's password field in fields[], custom[] and replace first instance
+    # If no password in RT but RT definition has a password field - add to fields[]
+    # else add to custom[]
+    result = rt_json
+
+    rt = {}
+    if rt_json:
+      try: rt = json.loads(rt_json or '{}')
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_json) + bcolors.ENDC)
+
+    rtdef = {}
+    if rt_def:
+      try: rtdef = json.loads(rt_def)
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type definition JSON: ' + str(rt_def) + bcolors.ENDC)
+
+    if not rt or not rtdef:
+      logging.error(bcolors.FAIL + 'Failed to update password field!' + bcolors.ENDC)
+      return result
+
+    rtt = rt.get('type')
+    rtdt = rtdef.get('$id')
+    if not rtt or rtt != rtdt:
+      logging.error(bcolors.FAIL + 'Record type missing or doesn\'t match definition! ' + str([rtt, rtdt]) + bcolors.ENDC)
+      return result
+
+    # Look for existing password in fields[] then custom[] and replace
+    fields = rt.get('fields') or []
+    custom = rt.get('custom') or []
+    rtfp = [x for x in fields if 'type' in x and x.get('type') == 'password']
+    rtcp = [x for x in custom if 'type' in x and x.get('type') == 'password']
+    changed = False
+    if rtfp:
+      rtfp[0]['value'] = [password] if password else []
+      changed = True
+    elif rtcp:
+      rtcp[0]['value'] = [password] if password else []
+      changed = True
+    elif password:
+      # no existing password - add to fields[] (if RT definition allows) or to custom[]
+      rtdp = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'password'), False)
+      if rtdp:
+        if 'fields' not in rt:
+          rt['fields'] = []
+        rt['fields'].append({'type': 'password', 'value':[password]})
+      else:
+        if 'custom' not in rt:
+          rt['custom'] = []
+        rt['custom'].append({'type': 'password', 'value':[password]})
+      changed = True
+
+    if changed:
+      result = json.dumps(rt)
+
+    return result
 
   @staticmethod
   def get_field_types():
@@ -748,6 +1278,7 @@ class RecordV3:
 
   @staticmethod
   def get_field_type(id):
+    STR_VALUE = 'text'
     ftypes = [ { **RecordV3.field_types.get(fkey), **RecordV3.field_values.get(vkey) }
         for fkey in RecordV3.field_types
           for vkey in RecordV3.field_values
@@ -768,18 +1299,18 @@ class RecordV3:
       }
       obj_sample = val if vtype != 'object' else {
         x: 0 if isinstance(val[x], int)
-          else '_value' if isinstance(val[x], str)
+          else STR_VALUE if isinstance(val[x], str)
           else val[x][0] if isinstance(val[x], tuple)
           else val
         for x in val
       }
       value = (0 if vtype == 'integer'
-        else '""' if vtype == 'string'
+        else '' if vtype == 'string'
         else val[0] if vtype == 'enum'
         else obj if vtype == 'object'
         else '')
       sample = (0 if vtype == 'integer'
-        else '_value' if vtype == 'string'
+        else STR_VALUE if vtype == 'string'
         else val[0] if vtype == 'enum'
         else obj_sample if vtype == 'object'
         else '')
@@ -794,16 +1325,76 @@ class RecordV3:
     return result
 
   @staticmethod
+  def get_record_type_example(params, rt_name: str) -> str:
+    from keepercommander.commands.recordv3 import RecordTypeInfo
+    STR_VALUE = 'text'
+
+    result = ''
+    rte = {}
+    rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
+    if rt_def:
+      rtdd = RecordV3.record_type_to_dict(rt_def)
+      rtdf = rtdd.get('fields') or []
+
+      rte = {
+        'type': rt_name,
+        'title': STR_VALUE,
+        'notes': STR_VALUE,
+        'fields': [],
+        'custom': []
+      }
+
+      rtdef= {}
+      try:
+        rtdef = json.loads(rt_def)
+      except:
+        logging.error(bcolors.FAIL + 'Unable to parse record type definition JSON: ' + str(rt_def) + bcolors.ENDC)
+
+      fields = rtdef.get('fields') or []
+      fields = [x.get('$ref') for x in fields]
+      for fname in fields:
+        ft = RecordV3.get_field_type(fname)
+        if not ft or not ft.get('id'):
+          logging.error(bcolors.FAIL + 'Error - Unknown field type: ' + fname + bcolors.ENDC)
+          continue
+
+        val = {
+          'type': fname,
+          'value': []
+        }
+
+        if fname not in ('fileRef', 'addressRef', 'cardRef'):
+          # Fix for webVault - fails if phone's region is not valid country code
+          if fname == 'phone' and 'sample' in ft and 'region' in ft['sample']:
+            ft['sample']['region'] = 'US'
+
+          val['value'].append(ft.get('sample'))
+          required = next((x.get('required') for x in rtdf if x.get('$ref') == fname), None)
+          if required:
+            val['required'] = required
+          label = next((x.get('label') for x in rtdf if x.get('$ref') == fname), None)
+          if label:
+            val['label'] = label
+
+        rte['fields'].append(val)
+    else:
+      logging.error(bcolors.FAIL + 'Unable to find record type definition for type: ' + str(rt_name) +
+        '   To show available record types definitions use `record-type-info --list-record *` command'+ bcolors.ENDC)
+
+    result = json.dumps(rte) if rte else ''
+    return result
+
+  @staticmethod
   def display(r, **kwargs):
-    ruid = r['record_uid']
+    record_uid = r['record_uid']
     print('')
-    # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link', ruid))
-    print('{0:>20s}: {1:<20s}'.format('UID', ruid))
-    if 'version' in r: print('{0:>20s}: {1:<20s}'.format('Version', str(r['version'])))
+    # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link', record_uid))
+    print('{0:>20s}: {1:<20s}'.format('UID', record_uid))
+    # if 'version' in r: print('{0:>20s}: {1:<20s}'.format('Version', str(r['version'])))
     params = None
     if 'params' in kwargs:
         params = kwargs['params']
-        folders = [get_folder_path(params, x) for x in find_folders(params, ruid)]
+        folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
         for i in range(len(folders)):
             print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
 
@@ -827,35 +1418,28 @@ class RecordV3:
     # fields[] * print Field# NN - atrib: value
 
     for c in fields + custom:
-      if not 'type' in c: c['type'] = ''
-      if not 'value' in c: c['value'] = ''
-      print('{0:>20s}: {1:<s}'.format(str(c['type']), str(c['value'])))
-
-    # if self.notes:
-    #     lines = self.notes.split('\n')
-    #     for i in range(len(lines)):
-    #         print('{0:>21s} {1}'.format('Notes:' if i == 0 else '', lines[i].strip()))
-
-    # if self.attachments:
-    #     for i in range(len(self.attachments)):
-    #         atta = self.attachments[i]
-    #         size = atta.get('size') or 0
-    #         scale = 'b'
-    #         if size > 0:
-    #             if size > 1000:
-    #                 size = size / 1024
-    #                 scale = 'Kb'
-    #             if size > 1000:
-    #                 size = size / 1024
-    #                 scale = 'Mb'
-    #             if size > 1000:
-    #                 size = size / 1024
-    #                 scale = 'Gb'
-    #         sz = '{0:.2f}'.format(size).rstrip('0').rstrip('.')
-    #         print('{0:>21s} {1:<20s} {2:>6s}{3:<2s} {4:>6s}: {5}'.format('Attachments:' if i == 0 else '',
-    #                                                                       atta.get('title') or atta.get('name'),
-    #                                                                       sz, scale, 'ID',
-    #                                                                       atta.get('id')))
+      ftyp = c.get('type') or ''
+      flds = c.get('value') or []
+      fval = flds
+      if len(flds) == 1 and flds[0]:
+        if isinstance(flds[0], dict):
+          k = list(flds[0].keys())[0]
+          fval = str(k) + ': ' + str(flds[0][k])
+        else:
+          fval = flds[0]
+      if fval:
+        print('{0:>20s}: {1:<s}'.format(str(ftyp), str(fval)))
+        if ftyp == 'fileRef':
+          for fuid in flds:
+            frec = params.record_cache.get(fuid) or {}
+            fdat = frec.get('data_unencrypted') or '{}'
+            fdic = RecordV3.record_type_to_dict(fdat)
+            name = fdic.get('name') or ''
+            size = fdic.get('size') or ''
+            if isinstance(size, str) and size.isdigit():
+              size = int(size)
+            size = HumanBytes.format(size or 0) if isinstance(size, int) else size
+            print('{0:>20s}: {1:>22s}   {2:<12s}   {3:<s}'.format(str(ftyp), str(fuid), str(size), str(name)))
 
     totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
     totp = totp[0] if totp else totp
@@ -863,60 +1447,72 @@ class RecordV3:
       code, remain, _ = get_totp_code(totp)
       if code: print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
 
-    # if params is not None:
-    #     if self.record_uid in params.record_cache:
-    #         rec = params.record_cache[self.record_uid]
-    #         if 'shares' in rec:
-    #             no = 0
-    #             if 'user_permissions' in rec['shares']:
-    #                 perm = rec['shares']['user_permissions'].copy()
-    #                 perm.sort(key=lambda r: (' 1' if r.get('owner') else ' 2' if r.get(
-    #                     'editable') else ' 3' if r.get('sharable') else '') + r.get('username'))
-    #                 for uo in perm:
-    #                     flags = ''
-    #                     if uo.get('owner'):
-    #                         flags = 'Owner'
-    #                     elif uo.get('awaiting_approval'):
-    #                         flags = 'Awaiting Approval'
-    #                     else:
-    #                         if uo.get('editable'):
-    #                             flags = 'Edit'
-    #                         if uo.get('sharable'):
-    #                             if flags:
-    #                                 flags = flags + ', '
-    #                             flags = flags + 'Share'
-    #                     if not flags:
-    #                         flags = 'View'
+    if params is not None:
+        if record_uid in params.record_cache:
+            rec = params.record_cache[record_uid]
+            if 'shares' in rec:
+                no = 0
+                if 'user_permissions' in rec['shares']:
+                    perm = rec['shares']['user_permissions'].copy()
+                    perm.sort(key=lambda r: (' 1' if r.get('owner') else ' 2' if r.get(
+                        'editable') else ' 3' if r.get('sharable') else '') + r.get('username'))
+                    for uo in perm:
+                        flags = ''
+                        if uo.get('owner'):
+                            flags = 'Owner'
+                        elif uo.get('awaiting_approval'):
+                            flags = 'Awaiting Approval'
+                        else:
+                            if uo.get('editable'):
+                                flags = 'Edit'
+                            if uo.get('sharable'):
+                                if flags:
+                                    flags = flags + ', '
+                                flags = flags + 'Share'
+                        if not flags:
+                            flags = 'View'
 
-    #                     print('{0:>21s} {1} ({2}) {3}'.format('Shared Users:' if no == 0 else '', uo['username'],
-    #                                                           flags,
-    #                                                           'self' if uo['username'] == params.user else ''))
-    #                     no = no + 1
-    #             no = 0
-    #             if 'shared_folder_permissions' in rec['shares']:
-    #                 for sfo in rec['shares']['shared_folder_permissions']:
-    #                     flags = ''
-    #                     if sfo.get('editable'):
-    #                         flags = 'Edit'
-    #                     if sfo.get('reshareable'):
-    #                         if flags:
-    #                             flags = flags + ', '
-    #                         flags = flags + 'Share'
-    #                     if not flags:
-    #                         flags = 'View'
-    #                     sf_uid = sfo['shared_folder_uid']
-    #                     for f_uid in find_folders(params, self.record_uid):
-    #                         if f_uid in params.subfolder_cache:
-    #                             fol = params.folder_cache[f_uid]
-    #                             if fol.type in {BaseFolderNode.SharedFolderType,
-    #                                             BaseFolderNode.SharedFolderFolderType}:
-    #                                 sfid = fol.uid if fol.type == BaseFolderNode.SharedFolderType else fol.shared_folder_uid
-    #                                 if sf_uid == sfid:
-    #                                     print('{0:>21s} {1:<20s}'.format('Shared Folders:' if no == 0 else '',
-    #                                                                       fol.name))
-    #                                     no = no + 1
+                        print('{0:>21s} {1} ({2}) {3}'.format('Shared Users:' if no == 0 else '', uo['username'],
+                                                              flags,
+                                                              'self' if uo['username'] == params.user else ''))
+                        no = no + 1
+                no = 0
+                if 'shared_folder_permissions' in rec['shares']:
+                    for sfo in rec['shares']['shared_folder_permissions']:
+                        flags = ''
+                        if sfo.get('editable'):
+                            flags = 'Edit'
+                        if sfo.get('reshareable'):
+                            if flags:
+                                flags = flags + ', '
+                            flags = flags + 'Share'
+                        if not flags:
+                            flags = 'View'
+                        sf_uid = sfo['shared_folder_uid']
+                        for f_uid in find_folders(params, record_uid):
+                            if f_uid in params.subfolder_cache:
+                                fol = params.folder_cache[f_uid]
+                                if fol.type in {BaseFolderNode.SharedFolderType,
+                                                BaseFolderNode.SharedFolderFolderType}:
+                                    sfid = fol.uid if fol.type == BaseFolderNode.SharedFolderType else fol.shared_folder_uid
+                                    if sf_uid == sfid:
+                                        print('{0:>21s} {1:<20s}'.format('Shared Folders:' if no == 0 else '',
+                                                                          fol.name))
+                                        no = no + 1
 
     print('')
+
+  @staticmethod
+  def validate_access(params: KeeperParams, ruid: str):
+    if ruid:
+      v3_enabled = False
+      if params and params.settings and isinstance(params.settings.get('record_types_enabled'), bool):
+        v3_enabled = params.settings.get('record_types_enabled')
+      if not v3_enabled:
+        if params and params.record_cache and ruid in params.record_cache:
+          rv = params.record_cache[ruid].get('version') or None
+          if rv and rv in (3, 4):
+            raise TypeError('Record ' + ruid + ' not found. You don\'t have Record Types enabled.')
 
   @staticmethod
   def get_audit_url(url: str) -> str:
@@ -941,4 +1537,69 @@ class RecordV3:
             clean_url = url[0:80] if url else ''
     return clean_url
 
+  @staticmethod
+  def custom_options_to_list(options_list: str) -> list:
+    custom = []
+    if options_list:
+        if type(options_list) == str:
+            if options_list[0] == '{' and options_list[-1] == '}':
+                try:
+                    custom_json = json.loads(options_list)
+                    for k,v in custom_json.items():
+                        custom.append({
+                            'name': k,
+                            'value': str(v)
+                        })
+                except ValueError as e:
+                    raise TypeError('Invalid custom fields JSON input: {0}'.format(e))
+            else:
+                pairs = options_list.split(',')
+                for pair in pairs:
+                    idx = pair.find(':')
+                    if idx > 0:
+                        custom.append({
+                            'name': pair[:idx].strip(),
+                            'value': pair[idx+1:].strip()
+                        })
+                    else:
+                        raise TypeError('Invalid custom fields input. Expected: "Key:Value". Got: "{0}"'.format(pair))
+
+        elif type(options_list) == list:
+            for c in options_list:
+                if type(c) == dict:
+                    name = c.get('name')
+                    value = c.get('value')
+                    if name and value:
+                        custom.append({
+                            'name': name,
+                            'value': value
+                        })
+    return custom
+
+class HumanBytes:
+    # Human-readable formatting of bytes, using binary (powers of 1024) or metric (powers of 1000) representation.
+    METRIC_LABELS = ["bytes", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
+    BINARY_LABELS = ["bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"]
+    PRECISION_OFFSETS = [0.5, 0.05, 0.005, 0.0005]
+    PRECISION_FORMATS = ["{}{:.0f} {}", "{}{:.1f} {}", "{}{:.2f} {}", "{}{:.3f} {}"]
+
+    @classmethod
+    def format(cls, num,  metric=False, precision=1) -> str:
+        assert isinstance(precision, int) and precision >= 0 and precision <= 3, "precision must be an int (range 0-3)"
+        unit_labels = cls.METRIC_LABELS if metric else cls.BINARY_LABELS
+        last_label = unit_labels[-1]
+        unit_step = 1000 if metric else 1024
+        unit_step_thresh = unit_step - cls.PRECISION_OFFSETS[precision]
+
+        is_negative = num < 0
+        if is_negative:
+            num = abs(num)
+        if num < unit_step: # return exact bytes when size is too small
+            return cls.PRECISION_FORMATS[0].format('-' if is_negative else '', num, unit_labels[0])
+        for unit in unit_labels:
+            if num < unit_step_thresh:
+                break
+            if unit != last_label:
+                num /= unit_step
+        return cls.PRECISION_FORMATS[precision].format('-' if is_negative else '', num, unit)
 

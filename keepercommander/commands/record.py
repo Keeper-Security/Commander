@@ -19,9 +19,11 @@ import base64
 import tempfile
 import logging
 import threading
+
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
 
+from ..display import bcolors
 from ..team import Team
 from .. import api, display, generator
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
@@ -82,6 +84,7 @@ record_history_parser.exit = suppress_exit
 
 
 totp_parser = argparse.ArgumentParser(prog='totp', description='Display the Two Factor Code for a record.')
+totp_parser.add_argument('-p', '--print', dest='print', action='store_true', help='print TOTP code to standard output')
 totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
@@ -101,7 +104,7 @@ add_parser.add_argument('--login', dest='login', action='store', help='login nam
 add_parser.add_argument('--pass', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-add_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
 add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
@@ -115,7 +118,7 @@ edit_parser.add_argument('--login', dest='login', action='store', help='login na
 edit_parser.add_argument('--pass', dest='password', action='store', help='password')
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
-edit_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 edit_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 edit_parser.error = raise_parse_exception
@@ -306,8 +309,10 @@ class RecordAddCommand(Command):
             'secret2': password or '',
             'link': url or '',
             'notes': notes or '',
-            'custom': custom
+            'custom': custom or []
         }
+        Record.validate_record_data(data, None, None)
+
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)
@@ -573,8 +578,10 @@ class RecordListCommand(Command):
     def execute(self, params, **kwargs):
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         results = api.search_records(params, pattern or '')
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         # hide v3 attachments (a.k.a. fileRef/v4) - they are shown in Gallery/file-report command
-        results = [x for x in results if x.record_uid not in params.record_cache or params.record_cache[x.record_uid]['version'] != 4]
+        hidden = (4,) if v3_enabled else (3, 4)
+        results = [x for x in results if x.record_uid not in params.record_cache or params.record_cache[x.record_uid]['version'] not in hidden]
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
@@ -1451,23 +1458,29 @@ class TotpCommand(Command):
                     else:
                         raise CommandError('totp', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
+        print_totp = kwargs.get('print')
         if record_uid:
             rec = api.get_record(params, record_uid)
-            tmer = None     # type: threading.Timer or None
-            done = False
-            def print_code():
-                global tmer
-                if not done:
-                    TotpCommand.display_code(rec.totp)
-                    tmer = threading.Timer(1, print_code).start()
-            try:
-                print('Press <Enter> to exit\n')
-                print_code()
-                input()
-            finally:
-                done = True
-                if tmer:
-                    tmer.cancel()
+            if print_totp:
+                if rec.totp:
+                    code, remains, total = get_totp_code(rec.totp)
+                    if code: print(code)
+            else:
+                tmer = None     # type: threading.Timer or None
+                done = False
+                def print_code():
+                    global tmer
+                    if not done:
+                        TotpCommand.display_code(rec.totp)
+                        tmer = threading.Timer(1, print_code).start()
+                try:
+                    print('Press <Enter> to exit\n')
+                    print_code()
+                    input()
+                finally:
+                    done = True
+                    if tmer:
+                        tmer.cancel()
         else:
             TotpCommand.find_endpoints(params)
             logging.info('')
@@ -1483,6 +1496,9 @@ class TotpCommand(Command):
             table.sort(key=lambda x: x[2])
             print(tabulate(table, headers=headers))
             print('')
+
+        if print_totp and not record_uid:
+            logging.warning(bcolors.FAIL + '--print option requires valid record UID' + bcolors.ENDC)
 
     LastDisplayedCode = ''
     @staticmethod

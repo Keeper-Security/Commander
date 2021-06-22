@@ -53,11 +53,11 @@ def rotate(record, newpassword):
             record.password = newpassword
             result = True
         else:
-            print('Error with adpasswd change: ' + conn.result)
+            print('Error with adpasswd change: ' + str(conn.result))
 
         conn.unbind()
 
     except Exception as e:
-        print("Error during connection to AD server: %s" % e)
+        print("Error during connection to AD server: %s" % str(e))
 
     return result

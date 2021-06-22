@@ -55,8 +55,7 @@ def register_commands(commands):
     commands['record-history'] = RecordHistoryCommand()
     commands['totp'] = TotpCommand()
     commands['shared-records-report'] = SharedRecordsReport()
-    commands['get-field-types'] = RecordGetFieldTypes()
-    commands['get-record-types'] = RecordGetRecordTypes()
+    commands['record-type-info'] = RecordTypeInfo()
     commands['record-type'] = RecordRecordType()
     commands['file-report'] = RecordFileReportCommand()
 
@@ -74,13 +73,12 @@ def register_command_info(aliases, command_info):
     aliases['cc'] = 'clipboard-copy'
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
     aliases['rh'] = 'record-history'
-    aliases['gft'] = 'get-field-types'
-    aliases['grt'] = 'get-record-types'
+    aliases['rti'] = 'record-type-info'
     aliases['rt'] = 'record-type'
 
     for p in [add_parser, edit_parser, rm_parser, search_parser, list_parser, get_info_parser, append_parser,
                 download_parser, upload_parser, delete_attachment_parser, clipboard_copy_parser, record_history_parser,
-                totp_parser, shared_records_report_parser, field_types_parser, record_types_parser, record_type_parser, file_report_parser]:
+                totp_parser, shared_records_report_parser, record_type_info_parser, record_type_parser, file_report_parser]:
         command_info[p.prog] = p.description
     command_info['list-sf|lsf'] = 'Display all shared folders'
     command_info['list-team|lt'] = 'Display all teams'
@@ -88,39 +86,43 @@ def register_command_info(aliases, command_info):
 
 add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
-add_parser.add_argument('--pass', dest='password', action='store', help='password')
+command_group = add_parser.add_mutually_exclusive_group()
+command_group.add_argument('--pass', dest='password', action='store', help='password')
+command_group.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
-add_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
+add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 add_parser.add_argument('--folder', dest='folder', action='store', help='folder path or UID where record is to be created')
 add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for omitted fields')
-add_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 add_parser.add_argument('-t', '--title', dest='title', type=str, action='store', help='record title')
 command_group = add_parser.add_mutually_exclusive_group()
+command_group.add_argument('-v2', '--legacy', dest='legacy', action='store_true', help='add legacy record')
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
-command_group.add_argument('-v3f', '--data-file', dest='data_file', action='store', help='load record type json data from file')
-command_group.add_argument('-o', '--option', dest='option', action='append', help='load record type data from string with dot notation')
+command_group.add_argument('-v3f', '--from-file', dest='data_file', action='store', help='load record type json data from file')
+# command_group.add_argument('-o', '--option', dest='option', action='append', help='load record type data from string with dot notation')
+add_parser.add_argument('option', nargs='*', type=str, action='store', help='load record type data from strings with dot notation')
 add_parser.add_argument('-a', '--attach', dest='attach', action='append', help='file name to upload')
-add_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 add_parser.error = raise_parse_exception
 add_parser.exit = suppress_exit
 
 
 edit_parser = argparse.ArgumentParser(prog='edit', description='Edit a record')
 edit_parser.add_argument('--login', dest='login', action='store', help='login name')
-edit_parser.add_argument('--pass', dest='password', action='store', help='password')
+command_group = edit_parser.add_mutually_exclusive_group()
+command_group.add_argument('--pass', dest='password', action='store', help='password')
+command_group.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
-edit_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. name:value pairs separated by comma. Example: "name1: value1, name2: value2"')
-edit_parser.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
+edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
 command_group = edit_parser.add_mutually_exclusive_group()
+# command_group.add_argument('-v2', '--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
-command_group.add_argument('-v3f', '--data-file', dest='data_file', action='store', help='load record type json data from file')
-command_group.add_argument('-o', '--option', dest='option', action='append', help='load record type data from string with dot notation')
-edit_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+command_group.add_argument('-v3f', '--from-file', dest='data_file', action='store', help='load record type json data from file')
+# command_group.add_argument('-o', '--option', dest='option', action='append', help='load record type data from string with dot notation')
+edit_parser.add_argument('option', nargs='*', type=str, action='store', help='load record type data from strings with dot notation')
+edit_parser.add_argument('-r', '--record', dest='record', required=True, type=str, action='store', help='record path or UID')
 command_group = edit_parser.add_mutually_exclusive_group()
 command_group.add_argument('-c', '--convert', dest='convert', action='store_true', help='convert record v2 to v3 (type: General)')
-command_group.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 edit_parser.error = raise_parse_exception
 edit_parser.exit = suppress_exit
 
@@ -169,7 +171,7 @@ append_parser.exit = suppress_exit
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
 #download_parser.add_argument('--files', dest='files', action='store', help='file names comma separated. All files if omitted')
 download_parser.add_argument('record', action='store', help='record path or UID')
-download_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+#download_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 download_parser.error = raise_parse_exception
 download_parser.exit = suppress_exit
 
@@ -177,7 +179,7 @@ download_parser.exit = suppress_exit
 upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
 upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload')
 upload_parser.add_argument('record', action='store', help='record path or UID')
-upload_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+#upload_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
 
@@ -185,7 +187,7 @@ upload_parser.exit = suppress_exit
 delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
 delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
-delete_attachment_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+#delete_attachment_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
 
@@ -224,35 +226,31 @@ shared_records_report_parser.error = raise_parse_exception
 shared_records_report_parser.exit = suppress_exit
 
 
-field_types_parser = argparse.ArgumentParser(prog='get-field-types|gft', description='Get field types')
-field_types_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
-field_types_parser.add_argument('--output', dest='output', action='store', help='output file name')
-field_types_parser.add_argument('-b', '--beautify', dest='beautify', action='store_true', help='pretty print JSON')
-field_types_parser.add_argument('type', type=str, nargs='?', default=None, action='store', help='show specific field type')
-field_types_parser.error = raise_parse_exception
-field_types_parser.exit = suppress_exit
-
-
-record_types_parser = argparse.ArgumentParser(prog='get-record-types|grt', description='Get record types')
-record_types_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
-record_types_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format')
-record_types_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-record_types_parser.add_argument('-d', '--update', dest='update', action='store_true', help='force reload all templates from server')
-record_types_parser.add_argument('--categories', dest='categories', action='store', help='show list of available categories')
-command_group = record_types_parser.add_mutually_exclusive_group()
-command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
-command_group.add_argument('-lr', '--record-type', dest='record_type', action='store', default=None, const = '*', nargs='?', help='list record type(s) by $id or name')
-record_types_parser.error = raise_parse_exception
-record_types_parser.exit = suppress_exit
+record_type_info_parser = argparse.ArgumentParser(prog='record-type-info|rti', description='Get record type info')
+record_type_info_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display extended help on record types parameters')
+record_type_info_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format')
+record_type_info_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+command_group = record_type_info_parser.add_mutually_exclusive_group()
+# command_group.add_argument('-d', '--description', dest='description', action='store_true', help='generate descriptive sample JSON')
+command_group.add_argument('-e', '--example', dest='example', action='store_true', help='generate example JSON')
+command_group = record_type_info_parser.add_mutually_exclusive_group()
+# command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
+command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type(s) by $id or name')
+command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name - use * to list all')
+record_type_info_parser.error = raise_parse_exception
+record_type_info_parser.exit = suppress_exit
 
 
 record_type_parser = argparse.ArgumentParser(prog='record-type|rt', description='Record type add/update/delete')
 record_type_parser.add_argument('record_type_id', default=None, nargs='?', type=int, action='store', help='Record Type ID to update/delete')
 record_type_parser.add_argument('--data', dest='data', action='store', help='record type content')
-command_group = record_type_parser.add_mutually_exclusive_group()
-command_group.add_argument('-a', '--add-type', dest='add_type', action='store_true', help='add new custom record type')
-command_group.add_argument('-u', '--update-type', dest='update_type', action='store_true', help='update existing custom record type')
-command_group.add_argument('-r', '--remove-type', dest='remove_type', action='store_true', help='delete custom record type')
+record_type_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'update', 'remove'], required=True, help='record type action to perform')
+# command_group = record_type_parser.add_mutually_exclusive_group()
+# command_group.add_argument('-a', '--add-type', dest='add_type', action='store_true', help='add new custom record type')
+# command_group.add_argument('-u', '--update-type', dest='update_type', action='store_true', help='update existing custom record type')
+# command_group.add_argument('-r', '--remove-type', dest='remove_type', action='store_true', help='delete custom record type')
+record_type_parser.error = raise_parse_exception
+record_type_parser.exit = suppress_exit
 
 
 file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments')
@@ -268,48 +266,86 @@ class RecordAddCommand(Command):
         return add_parser
 
     def execute(self, params, **kwargs):
+        options = kwargs.get('option') or []
+        options = [] if options == [None] else options
+        has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
+        has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
+        if has_v2_options and has_v3_options:
+            logging.error(bcolors.FAIL + 'Legacy options (--title --pass etc.) are not allowed with new style options (--data --from-file etc.).' + bcolors.ENDC)
+            return
+
         # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
         # v2 record: when no v3 option set - neither -v3d nor -v3f is set
         # v3 record: when no --legacy flag and no legacy options (--title, --login, --pass, --url, --notes, --custom)
         # NB! v3 record needs at least one of: -v3d or -v3f or -o to be set
         is_v2 = bool(kwargs.get('legacy'))
-        is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
-        is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option'))
-        if is_v2:
+        # 2021-06-02 Legacy/v2 record is created only with -v2|--legacy option otherwise create v3 type=login from legacy options
+        # is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
+        # is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option'))
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if is_v2 or (has_v2_options and not v3_enabled):
             recordv2.RecordAddCommand().execute(params, **kwargs)
             return
 
-        password = generator.generate(16) if 'generate' in kwargs and kwargs['generate'] else None
-        if password:
-            kwargs['password'] = password
+        if not v3_enabled:
+            logging.error(bcolors.FAIL + 'Record Types are NOT enabled for this account. Please contact your enterprise administrator.' + bcolors.ENDC)
+            return
+
+        # positional aguments can't be in a mutually exclusive groups
+        if has_v3_options and options and bool(kwargs.get('data') or kwargs.get('data_file')):
+            logging.error(bcolors.FAIL + 'Positional arguments [option...]: not allowed with argument -v3d/--data or -v3f/--from-file' + bcolors.ENDC)
+            return
+
+        if has_v2_options:
+            options.append('type=login')
+            if kwargs.get('title'):
+                options.append('title='+ str(kwargs.get('title')))
+                kwargs['title'] = None
+            if kwargs.get('notes'):
+                options.append('notes='+ str(kwargs.get('notes')))
+                kwargs['notes'] = None
+            if kwargs.get('login'):
+                options.append('f.login='+ str(kwargs.get('login')))
+                kwargs['login'] = None
+            if kwargs.get('password'):
+                options.append('f.password='+ str(kwargs.get('password')))
+                kwargs['password'] = None
+            if kwargs.get('url'):
+                options.append('f.url='+ str(kwargs.get('url')))
+                kwargs['url'] = None
+            if kwargs.get('custom'):
+                kwargs['custom_list'] = recordv3.RecordV3.custom_options_to_list(kwargs.get('custom'))
+                kwargs['custom'] = None
+            kwargs['option'] = options
 
         rt_def = ''
-        options = kwargs.get('option') or []
         if options:
             # invalid options - no '=' or empty key or value
             inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
             if inv:
                 logging.error(bcolors.FAIL + 'Invalid option(s): ' + str(inv) + bcolors.ENDC)
-                logging.info('Record type options must be in the following format: -o key1=value1 -o key2=value2 ...')
+                logging.info('Record type options must be in the following format: key1=value1 key2=value2 ...')
                 return
 
             # check for a single valid v3 record type
             types = [x for x in options if 'type' == (x or '').split('=', 1)[0].strip().lower()]
-            if len(types) != 1: # RT either missing or specified more than once
+            uniq = list({x.split('=', 1)[1].strip() for x in types if x.__contains__('=')})
+            if len(uniq) != 1: # RT either missing or specified more than once
                 logging.error(bcolors.FAIL + 'Please specify a valid record type: ' + str(types) + bcolors.ENDC)
                 return
 
             rt = types[0].split('=', 1)[1].strip()
-            rt_def = RecordGetRecordTypes().resolve_record_type_by_name(params, rt)
+            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
             if not rt_def:
-                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt + bcolors.ENDC)
+                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
+                    ' - to get list of all available record types use: get-record-types -lr' + bcolors.ENDC)
                 return
 
-        data_opts = recordv3.RecordV3.convert_options_to_json('', rt_def, kwargs) if rt_def else None
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
+        data_opts = recordv3.RecordV3.convert_options_to_json(params, '', rt_def, kwargs) if rt_def else None
         if not (data_json or data_file or data_opts):
-            print("Please provide valid record data as a JSON string, options or file name.")
+            logging.error(bcolors.FAIL + "Please provide valid record data as a JSON string, options or file name." + bcolors.ENDC)
             self.get_parser().print_help()
             return
 
@@ -319,21 +355,25 @@ class RecordAddCommand(Command):
                 with open(data_file, 'r') as file:
                     data = file.read()
         if data_opts and not data:
+            if data_opts.get('warnings'):
+                logging.error(bcolors.WARNING + 'Options converted to a record type with warning(s): ' + str(data_opts.get('warnings')) + bcolors.ENDC)
+            if data_opts.get('errors'):
+                logging.error(bcolors.FAIL + 'Error(s) converting options to a record type: ' + str(data_opts.get('errors')) + bcolors.ENDC)
+                return
             if not data_opts.get('errors'):
-                data = data_opts.get('json')
+                rec = data_opts.get('record')
+                data = json.dumps(rec) if rec else ''
 
         data = data.strip() if data else None
         if not data:
-            print("Empty data. Unable to insert record.")
+            logging.error(bcolors.FAIL + "Empty data. Unable to insert record." + bcolors.ENDC)
             return
 
         data_dict = json.loads(data)
         title = data_dict['title'] if 'title' in data_dict else None
         if not title:
-            print ('Record title is required')
+            logging.error(bcolors.FAIL + 'Record title is required' + bcolors.ENDC)
             return
-
-        custom = []
 
         folder = None
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
@@ -357,7 +397,7 @@ class RecordAddCommand(Command):
                 for uid in params.subfolder_record_cache[folder_uid]:
                     r = api.get_record(params, uid)
                     if r.title == title:
-                        raise CommandError('add', 'Record with title "{0}" already exists'.format(title))
+                        raise CommandError('add', 'Record with title "{0}" already exists. Use --force to create a new record with same title.'.format(title))
 
         # add any attachments
         files = []
@@ -420,8 +460,8 @@ class RecordAddCommand(Command):
                 success = (f.status == records.FileAddResult.DESCRIPTOR.values_by_name['FA_SUCCESS'].number)
                 url = f.url
                 parameters = f.parameters
-                tp = f.thumbnail_parameters
-                stats_code = f.success_status_code
+                # tp = f.thumbnail_parameters
+                # stats_code = f.success_status_code
 
                 if not success:
                     logging.error(bcolors.FAIL + 'Error: upload failed with status - %s' + bcolors.ENDC, status)
@@ -489,6 +529,14 @@ class RecordAddCommand(Command):
             if not 'fields' in data_dict: data_dict['fields'] = fields
         data = json.dumps(data_dict)
 
+        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
+        # dataJSON/option < kwargs: --generate < kwargs: --password
+        password = kwargs.get('password')
+        if not password and kwargs.get('generate'):
+            password = generator.generate(16)
+        if password:
+            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+
         record_key = os.urandom(32)
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -519,10 +567,10 @@ class RecordAddCommand(Command):
                 rq['folder_uid'] = folder.uid
 
         params.sync_data = True
-        api.add_record_v3(params, record, **{'record_links': record_links, 'rq': rq})
-
-        params.environment_variables[LAST_RECORD_UID] = record_uid
-        return record_uid
+        res = api.add_record_v3(params, record, **{'record_links': record_links, 'rq': rq})
+        if res:
+            params.environment_variables[LAST_RECORD_UID] = record_uid
+            return record_uid
 
 
 class RecordEditCommand(Command):
@@ -554,6 +602,41 @@ class RecordEditCommand(Command):
         if record_uid is None:
             raise CommandError('edit', 'Enter name or uid of existing record')
 
+        options = kwargs.get('option') or []
+        options = [] if options == [None] else options
+        has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
+        has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
+        if has_v2_options and has_v3_options:
+            logging.error(bcolors.FAIL + 'Legacy options (--title --pass etc.) are not allowed with new style options (--data --from-file etc.).' + bcolors.ENDC)
+            return
+
+        # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
+        # v2 record: when no v3 option set - neither -v3d nor -v3f is set
+        # v3 record: when no --legacy flag and no legacy options (--title, --login, --pass, --url, --notes, --custom)
+        # NB! v3 record needs at least one of: -v3d or -v3f or -o to be set
+        is_v2 = bool(kwargs.get('legacy'))
+        # 2021-06-02 Legacy/v2 record is created only with -v2|--legacy option otherwise create v3 type=login from legacy options
+        # is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
+        # is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option') or kwargs.get('generate'))
+        # 2021-06-08 --legacy option is ignored - use record version and v3_enabled flag
+        rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if is_v2:
+            if rv and rv in (3, 4):
+                if v3_enabled:
+                    logging.error('Record %s is version 3 already. Please use version 3 editing options (--data, --from-file, option)', record_uid)
+                else:
+                    logging.error(bcolors.FAIL + 'Record Types are NOT enabled for this account. Please contact your enterprise administrator.' + bcolors.ENDC)
+            else:
+                recordv2.RecordEditCommand().execute(params, **kwargs)
+            return
+
+        #if has_v2_options and not has_v3_options and not v3_enabled:
+        if has_v2_options and rv not in (3, 4):
+            recordv2.RecordEditCommand().execute(params, **kwargs)
+            return
+
+        recordv3.RecordV3.validate_access(params, record_uid)
         convert = bool(kwargs.get('convert'))
         if convert:
             if recordv3.RecordV3.convert_to_record_type(record_uid, params=params):
@@ -564,15 +647,83 @@ class RecordEditCommand(Command):
                 logging.error('Conversion failed for record: %s', record_uid)
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordEditCommand().execute(params, **kwargs)
+        # positional aguments can't be in a mutually exclusive groups
+        if has_v3_options and options and bool(kwargs.get('data') or kwargs.get('data_file')):
+            logging.error(bcolors.FAIL + 'Positional arguments [option...]: not allowed with argument -v3d/--data or -v3f/--from-file' + bcolors.ENDC)
             return
+
+        # Mixing v2 and v3 options not allowed for `edit` command
+        # v2 to v3 conversion will fail if v3 record is NOT type=login
+        # if has_v2_options:
+        #     options.append('type=login')
+        #     if kwargs.get('title'):
+        #         options.append('title='+ str(kwargs.get('title')))
+        #         kwargs['title'] = None
+        #     if kwargs.get('notes'):
+        #         options.append('notes='+ str(kwargs.get('notes')))
+        #         kwargs['notes'] = None
+        #     if kwargs.get('login'):
+        #         options.append('f.login='+ str(kwargs.get('login')))
+        #         kwargs['login'] = None
+        #     if kwargs.get('password'):
+        #         options.append('f.password='+ str(kwargs.get('password')))
+        #         kwargs['password'] = None
+        #     if kwargs.get('url'):
+        #         options.append('f.url='+ str(kwargs.get('url')))
+        #         kwargs['url'] = None
+        #     if kwargs.get('custom'):
+        #         kwargs['custom_list'] = recordv3.RecordV3.custom_options_to_list(kwargs.get('custom'))
+        #         kwargs['custom'] = None
+        #     kwargs['option'] = options
+
+        record = api.get_record(params, record_uid)
+        record_data = None
+        if params and params.record_cache and record_uid in params.record_cache:
+            if rv == 3:
+                record_data = params.record_cache[record_uid]['data_unencrypted']
+            else:
+                raise CommandError('edit', 'Record UID "{0}" is not version 3. Use legacy options (--title --pass etc.)'.format(record_uid))
+        record_data = record_data.decode('utf-8') if record_data and isinstance(record_data, bytes) else record_data
+        record_data = record_data.strip() if record_data else ''
+        rdata_dict = json.loads(record_data or '{}')
+
+        rt_def = ''
+        if options:
+            # invalid options - no '=' NB! edit allows empty value(s) to be able to delete
+            # inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
+            inv = [x for x in options if not str(x).__contains__('=')]
+            if inv:
+                logging.error(bcolors.FAIL + 'Invalid option(s): ' + str(inv) + bcolors.ENDC)
+                logging.info('Record type options must be in the following format: -o key1=value1 -o key2= ...')
+                return
+
+            # check for a single valid v3 record type
+            types = [x for x in options if 'type' == (x or '').split('=', 1)[0].strip().lower()]
+            uniq = list({x.split('=', 1)[1].strip() for x in types if x.__contains__('=')})
+            if uniq and len(uniq) == 1 and uniq[0] == '':
+                logging.error(bcolors.FAIL + 'Cannot delete the type: "-o type=" is not a valid option.' + bcolors.ENDC)
+                return
+            if not uniq:
+                rtype = rdata_dict.get('type')
+                if rtype:
+                    types.append('type=' + rtype)
+                    uniq.append(rtype)
+            if len(uniq) > 1: # RT specified more than once
+                logging.error(bcolors.FAIL + 'Please specify a valid record type: ' + str(types) + bcolors.ENDC)
+                return
+
+            rt = types[0].split('=', 1)[1].strip()
+            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
+            if not rt_def:
+                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
+                    ' - to get list of all available record types use: get-record-types -lr' + bcolors.ENDC)
+                return
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
-        if not (data_json or data_file):
-            print("Please provide valid record data as a json string or file name.")
+        data_opts = recordv3.RecordV3.convert_options_to_json(params, record_data, rt_def, kwargs) if rt_def else None
+        if not (data_json or data_file or data_opts or kwargs.get('generate')):
+            logging.error(bcolors.FAIL + "Please provide valid record data as a JSON string, options or file name." + bcolors.ENDC)
             self.get_parser().print_help()
             return
 
@@ -581,46 +732,45 @@ class RecordEditCommand(Command):
             if os.path.exists(data_file) and os.path.getsize(data_file) > 0 and os.path.getsize(data_file) <= 32_000:
                 with open(data_file, 'r') as file:
                     data = file.read()
+        if data_opts and not data:
+            if data_opts.get('warnings'):
+                logging.error(bcolors.WARNING + 'Options converted to a record type with warning(s): ' + str(data_opts.get('warnings')) + bcolors.ENDC)
+            if data_opts.get('errors'):
+                logging.error(bcolors.FAIL + 'Error(s) converting options to a record type: ' + str(data_opts.get('errors')) + bcolors.ENDC)
+                return
+            if not data_opts.get('errors'):
+                rec = data_opts.get('record')
+                data = json.dumps(rec) if rec else ''
+        if kwargs.get('generate') and not data:
+            data = record_data
 
         data = data.strip() if data else None
         if not data:
-            print("Empty data. Unable to update record.")
+            logging.error(bcolors.FAIL + "Empty data. Unable to update record." + bcolors.ENDC)
             return
 
-        changed = True if data else False
+        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
+        # dataJSON/option < kwargs: --generate < kwargs: --password
+        password = kwargs.get('password')
+        if not password and kwargs.get('generate'):
+            password = generator.generate(16)
+        if password:
+            record.password = password
+            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
-        record = api.get_record(params, record_uid)
-        record_data = None
-        if params and params.record_cache and record_uid in params.record_cache:
-            if 'version' in params.record_cache[record_uid] and params.record_cache[record_uid]['version'] == 3:
-                record_data = params.record_cache[record_uid]['data_unencrypted']
-            else:
-                raise CommandError('edit', 'Record UID "{0}" is not version 3'.format(record_uid))
-        record_data = record_data.decode('utf-8') if record_data and isinstance(record_data, bytes) else record_data
-        record_data = record_data.strip() if record_data else ''
-
-        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON
-        # dataJSON < kwargs: --generate < kwargs: --password
-        if kwargs.get('generate'):
-            record.password = generator.generate(16)
-            changed = True
-        # Legacy
-        # if kwargs.get('password') is not None:
-        #     record.password = kwargs['password']
-        #     changed = True
-        # else:
-        #     if kwargs.get('generate'):
-        #         record.password = generator.generate(16)
-        #         changed = True
-
-
-        if record_data and record_data != data:
-            params.record_cache[record_uid]['data_unencrypted'] = data
-            changed = True
-
+        data_dict = json.loads(data)
+        changed = rdata_dict != data_dict
+        # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
         if changed:
+            params.record_cache[record_uid]['data_unencrypted'] = json.dumps(data_dict)
             params.sync_data = True
-            api.update_record(params, record)
+            api.update_record_v3(params, record, **kwargs)
+
+            newpass = recordv3.RecordV3.get_record_password(data) or ''
+            oldpass = recordv3.RecordV3.get_record_password(record_data) or ''
+            if newpass != oldpass:
+                params.queue_audit_event('record_password_change', record_uid=record.record_uid)
+
 
 
 class RecordAppendNotesCommand(Command):
@@ -676,6 +826,14 @@ class RecordRemoveCommand(Command):
 
         if record_uid is None:
             raise CommandError('rm', 'Enter name of existing record')
+
+        rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
+        if rv in (3, 4):
+            recordv3.RecordV3.validate_access(params, record_uid)
+        else:
+            recordv2.RecordRemoveCommand().execute(params, **kwargs)
+            return
+
 
         if kwargs.get('purge'):
             is_owner = False
@@ -778,11 +936,6 @@ class RecordDownloadAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordDownloadAttachmentCommand().execute(params, **kwargs)
-            return
-
         record_uid = None
         record_version = None
         if name in params.record_cache:
@@ -803,9 +956,20 @@ class RecordDownloadAttachmentCommand(Command):
                                 break
 
         if not record_uid:
-            raise CommandError('download-attachment', 'Enter name or uid of existing record')
+            logging.error('Record UID not found for record name "%s"', str(name))
+            return
+        if not record_version:
+            logging.error('Record Version not found for record "%s"', str(name))
+            return
 
-        if not record_version or record_version != 3:
+        # is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = not record_version or record_version < 3
+        if is_v2:
+            recordv2.RecordDownloadAttachmentCommand().execute(params, **kwargs)
+            return
+
+        recordv3.RecordV3.validate_access(params, record_uid)
+        if record_version != 3:
             logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
             return
 
@@ -910,11 +1074,6 @@ class RecordUploadAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordUploadAttachmentCommand().execute(params, **kwargs)
-            return
-
         record_uid = None
         record_version = None
         if record_name in params.record_cache:
@@ -935,10 +1094,20 @@ class RecordUploadAttachmentCommand(Command):
                                 break
 
         if not record_uid:
-            logging.error('Record UID not found for record name "%s"', str(record_name))
+            logging.error('Record UID not found for record "%s"', str(record_name))
+            return
+        if not record_version:
+            logging.error('Record Version not found for record "%s"', str(record_name))
             return
 
-        if not record_version or record_version != 3:
+        # is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = not record_version or record_version < 3
+        if is_v2:
+            recordv2.RecordUploadAttachmentCommand().execute(params, **kwargs)
+            return
+
+        recordv3.RecordV3.validate_access(params, record_uid)
+        if record_version != 3:
             logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
             return
 
@@ -1091,14 +1260,11 @@ class RecordDeleteAttachmentCommand(Command):
             self.get_parser().print_help()
             return
 
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            recordv2.RecordDeleteAttachmentCommand().execute(params, **kwargs)
-            return
-
         record_uid = None
+        record_version = None
         if record_name in params.record_cache:
             record_uid = record_name
+            record_version = params.record_cache[record_uid]['version'] if 'version' in params.record_cache[record_uid] else None
         else:
             rs = try_resolve_path(params, record_name)
             if rs is not None:
@@ -1110,10 +1276,26 @@ class RecordDeleteAttachmentCommand(Command):
                             r = api.get_record(params, uid)
                             if r.title.lower() == record_name.lower():
                                 record_uid = uid
+                                record_version = params.record_cache[record_uid]['version'] if 'version' in params.record_cache[record_uid] else None
                                 break
 
-        if record_uid is None:
-            raise CommandError('delete-attachment', 'Enter name or uid of existing record')
+        if not record_uid:
+            logging.error('Record UID not found for record "%s"', str(record_name))
+            return
+        if not record_version:
+            logging.error('Record Version not found for record "%s"', str(record_name))
+            return
+
+        # is_v2 = bool(kwargs.get('legacy'))
+        is_v2 = not record_version or record_version < 3
+        if is_v2:
+            recordv2.RecordDeleteAttachmentCommand().execute(params, **kwargs)
+            return
+
+        recordv3.RecordV3.validate_access(params, record_uid)
+        if record_version != 3:
+            logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
+            return
 
         record = api.get_record(params, record_uid)
 
@@ -1137,6 +1319,7 @@ class RecordDeleteAttachmentCommand(Command):
         to_remove = set(file_ids) & names
         if names and len(names) > len(to_remove):
             logging.warning('Found only %s files to remove from %s selected.', len(to_remove), len(names))
+            logging.warning('Warning! Record Type V3 requires file reference UID that belongs to the record UID.')
         if not to_remove:
             return
 
@@ -1203,6 +1386,7 @@ class ClipboardCommand(Command):
                 else:
                     raise CommandError('clipboard-copy', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
+        recordv3.RecordV3.validate_access(params, record_uid)
         rec = api.get_record(params, record_uid)
         txt = rec.login if kwargs.get('login') else rec.password
         if txt:
@@ -1544,6 +1728,7 @@ class TotpCommand(Command):
             recordv2.TotpCommand().execute(params, **kwargs)
             return
 
+        recordv3.RecordV3.validate_access(params, record_uid)
         if version != 3:
             raise CommandError('get', 'Record is not version 3 (record type)')
 
@@ -1636,45 +1821,6 @@ class SharedRecordsReport(Command):
         recordv2.SharedRecordsReport().execute(params, **kwargs)
 
 
-class RecordGetFieldTypes(Command):
-    def get_parser(self):
-        return field_types_parser
-
-    def execute(self, params, **kwargs):
-        output = kwargs.get('output')
-        beautify = kwargs.get('beautify')
-        field_type = kwargs.get('type')
-        format = kwargs.get('format') or 'table'
-
-        list_all_field_types = not field_type or field_type.isspace() or field_type == '*'
-
-        rows = []
-        fields = ()
-        column_names = ()
-        if list_all_field_types:
-            rows = recordv3.RecordV3.get_field_types()
-            fields = ('id', 'type', 'lookup', 'multiple', 'description')
-            column_names = ('Field Type ID', 'Type', 'Lookup', 'Multiple', 'Description')
-        else:
-            ft = recordv3.RecordV3.get_field_type(field_type)
-            if not ft or not ft.get('id'):
-                logging.error(bcolors.FAIL + 'Error - Unknown field type: ' + field_type + bcolors.ENDC)
-                return
-
-            val = ft.get('value')
-            if format == 'json' and val and beautify:
-                val = json.loads(val) if isinstance(val, str) and val.strip().startswith('{') else val
-
-            rows = [(ft['id'], ft['type'], ft['valueType'], val)]
-            fields = ('id', 'type', 'valueType', 'value')
-            column_names = ('Field Type ID', 'Type', 'Value Type', 'Value Format')
-
-        field_descriptions = column_names if format == 'table' else fields
-
-        table = [list(row) for row in rows]
-        dump_report_data(table, field_descriptions, fmt=format, filename=output)
-
-
 get_record_types_description = '''
 Get Record Types Command Syntax Description:
 
@@ -1682,59 +1828,34 @@ Column Name       Description
   recordTypeId      Record Type Id
   content           Record type description in JSON format
 
---report-type:
+--format:
             csv     CSV format
             json    JSON format
             table   Table format (default)
 
---update:           Force reloading record templates from server.
-                    All templates are initially loaded from server and cached.
-                    By default all record type commands the use cached values.
+--example|-e:       Print example JSON for the field or record type
 
---categories:       List record type categories only.
-
---category:         List specific record type category and print all record types
-
---record-type:      List specific record type - search by ID ($id)
---record-type-id:   List specific record type - search by Record Type ID
+--list-record|-lr:  List specific record type - search by name or ID
+--list-field|-lf:   List specific field type - search by name
 '''
 
 
-class RecordGetRecordTypes(Command):
-    def __init__(self):
-        self.record_types_lookup = None
-
+class RecordTypeInfo(Command):
     def get_parser(self):
-        return record_types_parser
+        return record_type_info_parser
 
-    def get_record_types(self, params, reload):
-        if reload or self.record_types_lookup is None:
-            rq = records.RecordTypesRequest()
-            rq.standard = True
-            rq.user = True
-            rq.enterprise = True
-            rs = api.communicate_rest(params, rq, 'vault/get_record_types')
-            record_types_rs = records.RecordTypesResponse()
-            record_types_rs.ParseFromString(rs)
-
-            if len(record_types_rs.recordTypes) > 0:
-                self.record_types_lookup = {}
-                for rt in record_types_rs.recordTypes:
-                    self.record_types_lookup[rt.recordTypeId] = rt.content
-
-    def resolve_record_type(self, record_type_id):
+    def resolve_record_type(self, params, record_type_id):
         record_type_info = {}
-        if self.record_types_lookup is not None and record_type_id in self.record_types_lookup:
-            record_type_info = { record_type_id: self.record_types_lookup[record_type_id] }
+        if params.record_type_cache and record_type_id in params.record_type_cache:
+            record_type_info = { record_type_id: params.record_type_cache.get(record_type_id) }
 
         return record_type_info
 
     def resolve_record_type_by_name(self, params, record_type_name):
         record_type_info = None
         if record_type_name:
-            self.get_record_types(params, reload=False)
-            if self.record_types_lookup:
-                for v in self.record_types_lookup.values():
+            if params.record_type_cache:
+                for v in params.record_type_cache.values():
                     dict = json.loads(v)
                     # TODO: Is 'type' case sensitive
                     if dict and dict.get('$id').lower() == record_type_name.lower():
@@ -1743,23 +1864,23 @@ class RecordGetRecordTypes(Command):
 
         return record_type_info
 
-    def resolve_record_types(self, record_type_id):
+    def resolve_record_types(self, params, record_type_id):
         records = [] # (count, category, recordTypeId, content)
-        if self.record_types_lookup is not None:
+        if params.record_type_cache:
             if record_type_id and (type(record_type_id) == int or record_type_id.isdigit()):
                 record_type_id = int(record_type_id)
-                if record_type_id in self.record_types_lookup:
-                    content = self.record_types_lookup[record_type_id]
+                if record_type_id in params.record_type_cache:
+                    content = params.record_type_cache.get(record_type_id)
                     dict = json.loads(content)
                     #content = json.dumps(dict, indent=2) # breaks csv, json
                     categories = dict['categories'] if 'categories' in dict else []
                     records.append((1, categories, record_type_id, content))
                 else:
-                    print(bcolors.WARNING + 'Record Type ID: ' + str(record_type_id) + ' not found!' + bcolors.ENDC)
+                    logging.warning(bcolors.WARNING + 'Record Type ID: ' + str(record_type_id) + ' not found!' + bcolors.ENDC)
             else:
                 show_all = not record_type_id or record_type_id.isspace() or record_type_id == '*'
-                for rtid in self.record_types_lookup:
-                    content = self.record_types_lookup[rtid]
+                for rtid in params.record_type_cache:
+                    content = params.record_type_cache.get(rtid)
                     dict = json.loads(content)
                     #content = json.dumps(dict, indent=2) # breaks csv, json
                     categories = dict['categories'] if 'categories' in dict else []
@@ -1768,18 +1889,18 @@ class RecordGetRecordTypes(Command):
                     if show_all or (record_type_id and name and record_type_id == name):
                         records.append((1, categories, rtid, content))
                 if not show_all and not records:
-                    print(bcolors.WARNING + 'Record Type "' + str(record_type_id) + '" not found!' + bcolors.ENDC)
+                    logging.warning(bcolors.WARNING + 'Record Type "' + str(record_type_id) + '" not found!' + bcolors.ENDC)
 
         return records
 
-    def resolve_categories(self, category):
+    def resolve_categories(self, params, category):
         categories = [] # count, category, recordTypeId, content
         should_resolve_all = not category or category.isspace() or category == '*'
-        if self.record_types_lookup is not None:
+        if params.record_type_cache:
             if should_resolve_all:
                 cats = {}
-                for rtid in self.record_types_lookup:
-                    json_content = self.record_types_lookup[rtid]
+                for rtid in params.record_type_cache:
+                    json_content = params.record_type_cache.get(rtid)
                     content = json.loads(json_content)
                     cat_list = content['categories'] if 'categories' in content else [' ']
                     for category in cat_list:
@@ -1787,14 +1908,14 @@ class RecordGetRecordTypes(Command):
                 for cat_name, count in cats.items():
                     categories.append((count, cat_name, 0, None))
             else:
-                for rtid in self.record_types_lookup:
-                    json_content = self.record_types_lookup[rtid]
+                for rtid in params.record_type_cache:
+                    json_content = params.record_type_cache.get(rtid)
                     content = json.loads(json_content)
                     cat_list = content['categories'] if 'categories' in content else [' ']
                     if cat_list and category in cat_list:
                         categories.append((1, category, rtid, content))
                 if not should_resolve_all and not categories:
-                    print(bcolors.WARNING + 'Category "' + str(category) + '" not found!' + bcolors.ENDC)
+                    logging.warning(bcolors.WARNING + 'Category "' + str(category) + '" not found!' + bcolors.ENDC)
 
         return categories
 
@@ -1803,27 +1924,77 @@ class RecordGetRecordTypes(Command):
             logging.info(get_record_types_description)
             return
 
-        format = 'table'
-        if kwargs.get('format'):
-            format = kwargs['format']
+        format = kwargs.get('format') or 'table'
+        # reload = kwargs.get('update') or False
 
-        reload = kwargs['update']
-        self.get_record_types(params, reload)
+        output = kwargs.get('output')
+        sample = kwargs.get('description') # generate descriptive sample - incl. all possible enum values
+        example = kwargs.get('example') # generate working example - JSON ready to copy/paste, includes single/valid enum value
+        lcid = kwargs.get('category')
+        lfid = kwargs.get('field_name')
+        lrid = kwargs.get('record_name')
 
-        lcid = kwargs['category']
-        lrid = kwargs['record_type']
         has_categories_only = not lrid and (not lcid or lcid.isspace() or lcid == '*')
-        has_record_type_names_only = not lrid or lrid.isspace() or lrid == '*'
+        has_record_type_names_only = not lcid and (not lrid or lrid.isspace() or lrid == '*')
+        if (sample or example) and not((lfid and lfid != '*') or (lrid and lrid != '*')):
+            logging.warning(bcolors.WARNING + 'Ignored options: --description/--example options require a single record/field type name' + bcolors.ENDC)
 
-        row_data = []
-        if lcid is not None:
-            row_data = self.resolve_categories(lcid)
-        elif lrid is not None:
-            row_data = self.resolve_record_types(lrid)
-        else:
-            count = len(self.record_types_lookup) if self.record_types_lookup is not None else 0
-            print('Cached ' + str(count) + ' record types.')
+        if lfid:
+            field_name = lfid
+            list_all_field_types = not field_name or field_name.isspace() or field_name == '*'
+            rows = []
+            fields = ()
+            column_names = ()
+            if list_all_field_types:
+                rows = recordv3.RecordV3.get_field_types()
+                fields = ('id', 'type', 'lookup', 'multiple', 'description')
+                column_names = ('Field Type ID', 'Type', 'Lookup', 'Multiple', 'Description')
+            else:
+                ft = recordv3.RecordV3.get_field_type(field_name)
+                if not ft or not ft.get('id'):
+                    logging.error(bcolors.FAIL + 'Error - Unknown field type: ' + field_name + bcolors.ENDC)
+                    return
+
+                val = ft.get('value')
+                if val and format == 'json':
+                    val = json.loads(val) if isinstance(val, str) and val.strip().startswith('{') else val
+
+                if field_name and field_name != '*' and (sample or example):
+                    # ignore --description/sample - it is shown in [Value Format] column for the field anyways
+                    if sample:
+                        print('{"type":"%s","value":[%s]}'%(field_name, json.dumps(val)))
+                    elif example:
+                        print('{"type":"%s","value":[%s]}'%(field_name, json.dumps(ft.get('sample'))))
+                    return
+
+                rows = [(ft['id'], ft['type'], ft['valueType'], val)]
+                fields = ('id', 'type', 'valueType', 'value')
+                column_names = ('Field Type ID', 'Type', 'Value Type', 'Value Format')
+
+            field_descriptions = column_names if format == 'table' else fields
+
+            table = [list(row) for row in rows]
+            dump_report_data(table, field_descriptions, fmt=format, filename=output)
             return
+
+        record_name = lrid
+        if record_name and record_name != '*' and example:
+            rtex = recordv3.RecordV3.get_record_type_example(params, record_name)
+            print (rtex)
+            return
+
+        # row_data = []
+        # if lcid is not None:
+        #     row_data = self.resolve_categories(params, lcid)
+        # elif lrid is not None:
+        #     row_data = self.resolve_record_types(params, lrid)
+        # else:
+        #     count = len(params.record_type_cache)
+        #     print('Cached ' + str(count) + ' record types.')
+        #     return
+        # 2021-06-07 if no record_name or field_name specified - list all record types
+        has_categories_only = False
+        row_data = self.resolve_record_types(params, lrid)
 
         rows = []
         for count, cat, rtid, content in row_data:
@@ -1839,13 +2010,27 @@ class RecordGetRecordTypes(Command):
         field_descriptions = fields
         if format == 'table':
             field_descriptions = ('Record Types', 'Category') if has_categories_only else ('Category', 'Record Type ID', 'Content')
-            if has_record_type_names_only: field_descriptions = ('Category', 'Record Type ID', 'Record Type Name')
+            if has_record_type_names_only:
+                field_descriptions = ('Category', 'Record Type ID', 'Record Type Name')
             if not has_categories_only:
                 for row in rows:
                     if 'content' in row and row['content']:
                         if isinstance(row['content'], str) and row['content'].strip().startswith('{'):
                             row['content'] = json.loads(row['content'])
-                        row['content'] = json.dumps(row['content'], indent=2)
+                        row['content'] = json.dumps(row['content'], indent=2) if not isinstance(row['content'], str) else row['content']
+
+        # recordTypeId must be first column
+        if 'recordTypeId' in fields:
+            i = fields.index('recordTypeId')
+            fields = ('recordTypeId',) + (fields[:i] + fields[i+1:])
+            field_descriptions = ('Record Type ID',) + (field_descriptions[:i] + field_descriptions[i+1:])
+        # Hide categories from the ui for now
+        if 'category' in fields:
+            i = fields.index('category')
+            fields = (fields[:i] + fields[i+1:])
+            field_descriptions = (field_descriptions[:i] + field_descriptions[i+1:])
+        if format != 'table':
+            field_descriptions = fields
 
         table = []
         for raw in rows:
@@ -1853,7 +2038,7 @@ class RecordGetRecordTypes(Command):
             for f in fields:
                 row.append(raw[f])
             table.append(row)
-        dump_report_data(table, field_descriptions, fmt=format, filename=kwargs.get('output'))
+        dump_report_data(table, field_descriptions, fmt=format, filename=output)
 
 
 record_type_description = '''
@@ -1884,92 +2069,91 @@ class RecordRecordType(Command):
         if not params.enterprise:
             logging.error('This command is restricted to Keeper Enterprise administrators.')
             return
+
+        changed = False
         scope = records.RecordTypeScope.DESCRIPTOR.values_by_name['RT_ENTERPRISE'].number
 
-        if 'add_type' in kwargs and kwargs['add_type']:
-            if not('data' in kwargs and kwargs['data']):
-                logging.error('Cannot add record type without definition.')
+        rtid = kwargs.get('record_type_id')
+        data = kwargs.get('data')
+        action = kwargs.get('action')
+
+        if not action in ('add', 'update', 'remove'):
+            logging.error('the following arguments are required: -a/--action (choose from "add", "update", "remove")')
+            return
+
+        if action == 'add':
+            # add requires --data and no RTID
+            if rtid:
+                logging.error('Option --action=add cannot be used with positional argument: record_type_id')
+                return
+            if not data:
+                logging.error('Cannot add record type without definition. Option --data is required for --action=add')
                 return
 
-            (is_valid, status) = recordv3.RecordV3.is_valid_record_type_definition(kwargs['data'])
-            if not is_valid:
-                logging.error('Error validating record type definition - ' + status)
+            res = recordv3.RecordV3.is_valid_record_type_definition(data)
+            if not res.get('is_valid'):
+                logging.error('Error validating record type definition - ' + res.get('error'))
                 return
 
             rq = records.RecordType()
-            rq.content = kwargs['data']
+            rq.content = data
             rq.scope = scope
             rs = api.communicate_rest(params, rq, 'vault/record_type_add')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
-            print('Record added - new record type ID: ' + str(record_type_rs.recordTypeId))
+            changed = True
+            print('Record type added - new record type ID: ' + str(record_type_rs.recordTypeId))
 
-        if 'remove_type' in kwargs and kwargs['remove_type']:
-            if not('record_type_id' in kwargs and kwargs['record_type_id']):
-                logging.warning('To remove a record type - please provide the record type ID')
+        elif action == 'remove':
+            # remove requires RTID and no --data
+            if not rtid:
+                logging.error('To remove a record type - please provide the record type ID')
+                return
+            if data:
+                logging.error('Option --data cannot be used with --action=add')
                 return
 
             rq = records.RecordType()
-            rq.recordTypeId = kwargs['record_type_id']
+            rq.recordTypeId = rtid
             rq.scope = scope
             rs = api.communicate_rest(params, rq, 'vault/record_type_delete')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
-            print('Record deleted - record type ID: ' + str(record_type_rs.recordTypeId))
+            changed = True
+            print('Record type deleted - record type ID: ' + str(record_type_rs.recordTypeId))
 
-        if 'update_type' in kwargs and kwargs['update_type']:
-            if not('record_type_id' in kwargs and kwargs['record_type_id']
-                    and 'data' in kwargs and kwargs['data']):
-                logging.warning("To update a record type - please provide both record type ID and new content")
+        elif action == 'update':
+            # update requires --data and RTID
+            if not rtid or not data:
+                logging.error("To update a record type - please provide both record type ID and new content in --data option")
                 return
 
-            (is_valid, status) = recordv3.RecordV3.is_valid_record_type_definition(kwargs['data'])
-            if not is_valid:
-                logging.error('Error validating record type definition - ' + status)
+            res = recordv3.RecordV3.is_valid_record_type_definition(data)
+            if not res.get('is_valid'):
+                logging.error('Error validating record type definition - ' + res.get('error'))
                 return
 
             # TODO: is it ok to change $id - ex. #41 from "$id": "rt1" to "rt2" == delete rt1 and insert rt2 at #41
             # is there a record type definition (change) history ~ like record history
             rq = records.RecordType()
-            rq.recordTypeId = kwargs['record_type_id']
-            rq.content = kwargs['data']
+            rq.recordTypeId = rtid
+            rq.content = data
             rq.scope = scope
             rs = api.communicate_rest(params, rq, 'vault/record_type_update')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
-            print('Record updated - record type ID: ' + str(record_type_rs.recordTypeId))
+            changed = True
+            print('Record type updated - record type ID: ' + str(record_type_rs.recordTypeId))
+        else:
+            logging.error('Unknown argument "' + action + '" for -a/--action (choose from "add", "update", "remove")')
+
+        if changed:
+            params.sync_data = True
 
 
 class RecordFileReportCommand(Command):
     def get_parser(self):
         return file_report_parser
-
-    class HumanBytes:
-        # Human-readable formatting of bytes, using binary (powers of 1024) or metric (powers of 1000) representation.
-        METRIC_LABELS = ["bytes", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
-        BINARY_LABELS = ["bytes", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"]
-        PRECISION_OFFSETS = [0.5, 0.05, 0.005, 0.0005]
-        PRECISION_FORMATS = ["{}{:.0f} {}", "{}{:.1f} {}", "{}{:.2f} {}", "{}{:.3f} {}"]
-
-        @classmethod
-        def format(cls, num,  metric=False, precision=1) -> str:
-            assert isinstance(precision, int) and precision >= 0 and precision <= 3, "precision must be an int (range 0-3)"
-            unit_labels = cls.METRIC_LABELS if metric else cls.BINARY_LABELS
-            last_label = unit_labels[-1]
-            unit_step = 1000 if metric else 1024
-            unit_step_thresh = unit_step - cls.PRECISION_OFFSETS[precision]
-
-            is_negative = num < 0
-            if is_negative:
-                num = abs(num)
-            if num < unit_step: # return exact bytes when size is too small
-                return cls.PRECISION_FORMATS[0].format('-' if is_negative else '', num, unit_labels[0])
-            for unit in unit_labels:
-                if num < unit_step_thresh:
-                    break
-                if unit != last_label:
-                    num /= unit_step
-            return cls.PRECISION_FORMATS[precision].format('-' if is_negative else '', num, unit)
 
     def execute(self, params, **kwargs):
         is_v2 = bool(kwargs.get('legacy'))
@@ -1977,10 +2161,16 @@ class RecordFileReportCommand(Command):
             FileReportCommand().execute(params, **kwargs)
             return
 
-        print('Legacy record attachments:')
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if v3_enabled:
+            print('Legacy records attachments:')
+
         FileReportCommand().execute(params, **kwargs)
 
-        print('Records v3 attachments:')
+        if not v3_enabled:
+            return
+
+        print('Record types attachments:')
         headers = ['#', 'Title', 'Record UID', 'File ID', 'Downloadable', 'File Size', 'File Name']
         table = []
         for record_uid in params.record_cache:
@@ -2007,7 +2197,7 @@ class RecordFileReportCommand(Command):
                 file_data = file_rec.get('data_unencrypted') or '{}'
                 file_data = json.loads(file_data)
                 file_info[fuid] = {
-                    'size': self.HumanBytes.format(file_data.get('size') or 0),
+                    'size': recordv3.HumanBytes.format(file_data.get('size') or 0),
                     'name': file_data.get('name') or '',
                     'status': '-',
                     'url': ''
@@ -2059,73 +2249,77 @@ class RecordGetUidCommand(Command):
             recordv2.RecordGetUidCommand().execute(params, **kwargs)
             return
 
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if version in (3, 4) and not v3_enabled:
+            raise TypeError('Record ' + uid + ' not found. You don\'t have Record Types enabled.')
+
         if version != 3:
             raise CommandError('get', 'Record is not version 3 (record type)')
 
         fmt = kwargs.get('format') or 'detail'
 
-        # if api.is_shared_folder(params, uid):
-        #     sf = api.get_shared_folder(params, uid)
-        #     if fmt == 'json':
-        #         sfo = {
-        #             "shared_folder_uid": sf.shared_folder_uid,
-        #             "name": sf.name,
-        #             "manage_users": sf.default_manage_users,
-        #             "manage_records": sf.default_manage_records,
-        #             "can_edit": sf.default_can_edit,
-        #             "can_share": sf.default_can_share
-        #         }
-        #         if sf.records:
-        #             sfo['records'] = [{
-        #                 'record_uid': r['record_uid'],
-        #                 'can_edit': r['can_edit'],
-        #                 'can_share': r['can_share']
-        #             } for r in sf.records]
-        #         if sf.users:
-        #             sfo['users'] = [{
-        #                 'username': u['username'],
-        #                 'manage_records': u['manage_records'],
-        #                 'manage_users': u['manage_users']
-        #             } for u in sf.users]
-        #         if sf.teams:
-        #             sfo['teams'] = [{
-        #                 'name': t['name'],
-        #                 'manage_records': t['manage_records'],
-        #                 'manage_users': t['manage_users']
-        #             } for t in sf.teams]
+        if api.is_shared_folder(params, uid):
+            sf = api.get_shared_folder(params, uid)
+            if fmt == 'json':
+                sfo = {
+                    "shared_folder_uid": sf.shared_folder_uid,
+                    "name": sf.name,
+                    "manage_users": sf.default_manage_users,
+                    "manage_records": sf.default_manage_records,
+                    "can_edit": sf.default_can_edit,
+                    "can_share": sf.default_can_share
+                }
+                if sf.records:
+                    sfo['records'] = [{
+                        'record_uid': r['record_uid'],
+                        'can_edit': r['can_edit'],
+                        'can_share': r['can_share']
+                    } for r in sf.records]
+                if sf.users:
+                    sfo['users'] = [{
+                        'username': u['username'],
+                        'manage_records': u['manage_records'],
+                        'manage_users': u['manage_users']
+                    } for u in sf.users]
+                if sf.teams:
+                    sfo['teams'] = [{
+                        'name': t['name'],
+                        'manage_records': t['manage_records'],
+                        'manage_users': t['manage_users']
+                    } for t in sf.teams]
 
-        #         print(json.dumps(sfo, indent=2))
-        #     else:
-        #         sf.display()
-        #     return
+                print(json.dumps(sfo, indent=2))
+            else:
+                sf.display()
+            return
 
-        # if api.is_team(params, uid):
-        #     team = api.get_team(params, uid)
-        #     if fmt == 'json':
-        #         to = {
-        #             'team_uid': team.team_uid,
-        #             'name': team.name,
-        #             'restrict_edit': team.restrict_edit,
-        #             'restrict_view': team.restrict_view,
-        #             'restrict_share': team.restrict_share
-        #         }
-        #         print(json.dumps(to, indent=2))
-        #     else:
-        #         team.display()
-        #     return
+        if api.is_team(params, uid):
+            team = api.get_team(params, uid)
+            if fmt == 'json':
+                to = {
+                    'team_uid': team.team_uid,
+                    'name': team.name,
+                    'restrict_edit': team.restrict_edit,
+                    'restrict_view': team.restrict_view,
+                    'restrict_share': team.restrict_share
+                }
+                print(json.dumps(to, indent=2))
+            else:
+                team.display()
+            return
 
-        # if uid in params.folder_cache:
-        #     f = params.folder_cache[uid]
-        #     if fmt == 'json':
-        #         fo = {
-        #             'folder_uid': f.uid,
-        #             'type': f.type,
-        #             'name': f.name
-        #         }
-        #         print(json.dumps(fo, indent=2))
-        #     else:
-        #         f.display(params=params)
-        #     return
+        if uid in params.folder_cache:
+            f = params.folder_cache[uid]
+            if fmt == 'json':
+                fo = {
+                    'folder_uid': f.uid,
+                    'type': f.type,
+                    'name': f.name
+                }
+                print(json.dumps(fo, indent=2))
+            else:
+                f.display(params=params)
+            return
 
         if uid in params.record_cache:
             api.get_record_shares(params, [uid])
@@ -2155,33 +2349,35 @@ class RecordGetUidCommand(Command):
 
                     print(json.dumps(ro, indent=2))
                 elif fmt == 'password':
-                    print(r.password) # todo: which password (if there are multiple password fields)
+                    password = str(recordv3.RecordV3.get_record_password(r.get('data_unencrypted')) or '')
+                    if password and password.strip():
+                        print(password)
                 else:
                     recordv3.RecordV3.display(r, params=params)
                 return
 
-        # if params.available_team_cache is None:
-        #     api.load_available_teams(params)
+        if params.available_team_cache is None:
+            api.load_available_teams(params)
 
-        # if params.available_team_cache:
-        #     for team in params.available_team_cache:
-        #         if team.get('team_uid') == uid:
-        #             team_uid = team['team_uid']
-        #             team_name = team['team_name']
-        #             if fmt == 'json':
-        #                 fo = {
-        #                     'team_uid': team_uid,
-        #                     'name': team_name
-        #                 }
-        #                 print(json.dumps(fo, indent=2))
-        #             else:
-        #                 print('')
-        #                 print('User {0} does not belong to team {1}'.format(params.user, team_name))
-        #                 print('')
-        #                 print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
-        #                 print('{0:>20s}: {1}'.format('Name', team_name))
-        #                 print('')
-        #             return
+        if params.available_team_cache:
+            for team in params.available_team_cache:
+                if team.get('team_uid') == uid:
+                    team_uid = team['team_uid']
+                    team_name = team['team_name']
+                    if fmt == 'json':
+                        fo = {
+                            'team_uid': team_uid,
+                            'name': team_name
+                        }
+                        print(json.dumps(fo, indent=2))
+                    else:
+                        print('')
+                        print('User {0} does not belong to team {1}'.format(params.user, team_name))
+                        print('')
+                        print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
+                        print('{0:>20s}: {1}'.format('Name', team_name))
+                        print('')
+                    return
 
         raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 

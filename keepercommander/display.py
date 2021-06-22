@@ -14,7 +14,8 @@ from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
-
+from keepercommander import __version__
+from keepercommander import versioning
 
 init()
 
@@ -36,11 +37,12 @@ def welcome():
     print(bcolors.OKBLUE,'| |/ /___ ___ _ __  ___ _ _ ' + bcolors.ENDC)
     print(bcolors.OKBLUE,'| \' </ -_) -_) \'_ \\/ -_) \'_|' + bcolors.ENDC)
     print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
-    print(bcolors.OKBLUE,'             |_|            ' + bcolors.ENDC)
+    print(bcolors.OKBLUE + ' v{0:<12}|_|'.format(__version__) + bcolors.ENDC)
     print('')
-    print(bcolors.FAIL,'password manager & digital vault' + bcolors.ENDC)
+    print(bcolors.FAIL, 'password manager & digital vault' + bcolors.ENDC)
     print('')
-    print('')
+
+    versioning.welcome_print_version()
 
 
 def formatted_records(records, **kwargs):
