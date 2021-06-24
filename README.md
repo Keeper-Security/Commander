@@ -323,7 +323,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```cd``` Change current folder
 
-* ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
+* ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format. NOTE: If the Record UID starts with a dash, make sure to use "--" in front of the UID parameter. For example: get -- -xxxxxxxxxxxxxx
 
 * ```find-password``` or ```clipboard-copy``` Copy the specified Keeper Record password field to the system output or clipboard
   accordingly. Command accepts record UID or record path. If record is not found then command matches records by title.
