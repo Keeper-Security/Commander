@@ -900,8 +900,9 @@ def sync_down(params):
 
     try:
         # parse v3 commands
+        init_v3_commands()
         for cmd in v3_commands:
-            if not v3_commands[cmd] and cmd in cli.commands:
+            if not v3_commands[cmd].get('command') and cmd in cli.commands:
                 prog = cli.commands[cmd].get_parser().prog
                 parts = prog.split('|')
                 alias = parts[-1] if len(parts) == 2 else None
@@ -926,13 +927,15 @@ def sync_down(params):
                 for rt in record_types_rs.recordTypes:
                     params.record_type_cache[rt.recordTypeId] = rt.content
 
-            # add v3 commands
-            added = []
+            # add/replace v3 commands
+            modified = []
             for cmd in v3_commands:
                 cdic = v3_commands[cmd].get('command') or {}
                 cname = next(iter(cdic), None)
-                if cname and cname not in cli.commands:
-                    added.append(cname)
+                cmdc = cli.commands.get(cmd) or 2
+                cmdv = ((v3_commands.get(cmd) or {}).get('command') or {}).get(cmd) or 3
+                if cname and (cname not in cli.commands or cmdc != cmdv):
+                    modified.append(cname)
                     cli.commands[cname] = cdic[cname]
                     ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
                     if ciname:
@@ -943,32 +946,76 @@ def sync_down(params):
 
             # RT activation during live session - only a full sync will pull any pre-existing v3 records
             full_sync = response_json.get('full_sync') or False
-            if added and not full_sync:
+            if modified and not full_sync:
                 logging.warning(bcolors.WARNING + 'Record types - enabled. Please logout and login again if you have existing v3 records.' + bcolors.ENDC)
         else:
-            # remove v3 commands
+            # remove/replace v3 commands
             for cmd in v3_commands:
                 cdic = v3_commands[cmd].get('command') or {}
                 cname = next(iter(cdic), None)
                 if cname and cname in cli.commands:
-                    cli.commands.pop(cname)
+                    subs = v3_commands[cmd].get('substitute')
+                    subs = subs if isinstance(subs, dict) else {}
+                    sub_class =  subs.get('command')
+                    if sub_class:
+                        cli.commands[cname] = sub_class
+                    else:
+                        cli.commands.pop(cname)
+
                     ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+                    sub_ciname = next(iter(subs.get('command_info') or {}), None)
                     if ciname:
-                        cli.command_info.pop(ciname)
+                        if ciname == sub_ciname:
+                            cli.command_info[ciname] = subs['command_info'][sub_ciname]
+                        else:
+                            cli.command_info.pop(ciname)
+                            if sub_ciname and subs['command_info'][sub_ciname]:
+                                cli.command_info[sub_ciname] = subs['command_info'][sub_ciname]
+
                     aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+                    sub_aname = next(iter(subs.get('alias') or {}), None)
                     if aname:
-                        cli.aliases.pop(aname)
-    except:
-        pass
+                        if aname == sub_aname:
+                            cli.aliases[aname] = subs['alias'][sub_aname]
+                        else:
+                            cli.aliases.pop(aname)
+                            if sub_aname and subs['alias'][sub_aname]:
+                                cli.aliases[aname] = subs['alias'][sub_aname]
+
+    except Exception as e:
+        logging.debug(e)
 
     if 'full_sync' in response_json:
         logging.info('Decrypted [%s] record(s)', len(params.record_cache))
 
 
-v3_commands = {
-    'record-type': {},
-    'record-type-info': {}
-}
+v3_commands = {}
+
+def init_v3_commands():
+    from .commands.record import RecordAddCommand, RecordEditCommand, add_parser, edit_parser
+    global v3_commands
+    if v3_commands:
+        return
+    v3_commands = {
+        'record-type': {},
+        'record-type-info': {},
+        'add': {
+            'substitute': {
+                'command': RecordAddCommand(),
+                'parser': add_parser,
+                'command_info': { add_parser.prog: add_parser.description },
+                'alias': { 'a': 'add' }
+            }
+        },
+        'edit': {
+            'substitute': {
+                'command': RecordEditCommand(),
+                'parser': edit_parser,
+                'command_info': { edit_parser.prog: edit_parser.description },
+                'alias': {}
+            }
+        }
+    }
 
 
 def convert_to_folders(params):
