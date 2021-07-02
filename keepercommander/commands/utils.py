@@ -19,6 +19,7 @@ import datetime
 import getpass
 import sys
 import platform
+from distutils.util import strtobool
 
 import requests
 import tempfile
@@ -160,8 +161,12 @@ app_share_parser.error = raise_parse_exception
 app_share_parser.exit = suppress_exit
 
 app_share_registration_parser = argparse.ArgumentParser(prog='app-share', description='Add a record or a Shared Folder to the App')
-app_share_registration_parser.add_argument('--secret', type=str, action='store', help='Record UID') # TODO: Make it an array
-app_share_registration_parser.add_argument('--app', type=str, action='store', help='Application Name or UID')
+app_share_registration_parser.add_argument('--secret', '-s', type=str, action='store',
+                                           help='Record UID')   # TODO: Make it an array
+app_share_registration_parser.add_argument('--app', '-a', type=str, action='store',
+                                           help='Application Name or UID')
+app_share_registration_parser.add_argument('--editable', '-e', type=str, action='store',
+                                           help='Is this share going to be editable or not', default='false')
 # app_share_registration_parser.add_argument('add-share')
 app_share_registration_parser.error = raise_parse_exception
 app_share_registration_parser.exit = suppress_exit
@@ -620,6 +625,9 @@ class AppShareRegistrationCommand(Command):
 
         uid = kwargs['secret'] if 'secret' in kwargs else None
         app_name = kwargs['app'] if 'app' in kwargs else None
+        is_editable_str = kwargs.get('editable')
+
+        is_editable = bool(strtobool(is_editable_str))
 
         if app_name:
             app_record = AppShareRegistrationCommand.get_or_add_new_app_secret_record(params, app_name)
@@ -640,8 +648,8 @@ class AppShareRegistrationCommand(Command):
         else:
             # TODO: Should we also search shared records as well, not just owned once?
             if uid not in params.record_cache:
-               logging.warning("Record %s not found." % uid)
-               return
+                logging.warning("Record %s not found." % uid)
+                return
 
             rec = params.record_cache[uid]
             share_type = 'SHT_RECORD'
@@ -656,7 +664,8 @@ class AppShareRegistrationCommand(Command):
             master_key=master_key,
             secret_uid=uid,
             share_key_decrypted=share_key,
-            share_type_str=share_type
+            share_type_str=share_type,
+            is_editable=is_editable
         )
 
     @staticmethod
@@ -763,7 +772,7 @@ class AppShareRegistrationCommand(Command):
             print('\tNo shared secrets to this app')
 
     @staticmethod
-    def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type_str):
+    def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type_str, is_editable = False):
         encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
 
         add_app_share_rq = AddAppShareRequest()
@@ -771,6 +780,7 @@ class AppShareRegistrationCommand(Command):
         add_app_share_rq.shareType = ApplicationShareType.Value(share_type_str)
         add_app_share_rq.secretUid = CommonHelperMethods.url_safe_str_to_bytes(secret_uid)
         add_app_share_rq.encryptedSecretKey = encrypted_secret_key
+        add_app_share_rq.editable = is_editable
 
         api_request_payload = ApiRequestPayload()
         api_request_payload.payload = add_app_share_rq.SerializeToString()
