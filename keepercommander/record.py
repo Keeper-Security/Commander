@@ -71,6 +71,7 @@ class Record:
     def __init__(self, record_uid='', folder='', title='', login='', password='', login_url='', notes='',
                  custom_fields=None, revision=''):
         self.record_uid = record_uid
+        self.record_type = ''
         self.folder = Record.xstr(folder)
         self.title = Record.xstr(title)
         self.login = Record.xstr(login)

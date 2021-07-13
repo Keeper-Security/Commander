@@ -12,6 +12,7 @@
 import copy
 import datetime
 import json
+from keepercommander.error import Error
 from keepercommander.params import KeeperParams
 import logging
 import re
@@ -118,9 +119,43 @@ class RecordV3:
       if rtdp:
         if pwdc: return { 'is_valid': False, 'error': 'Password must be in fields[] section as defined by record type! ' + str(pwds) }
       else:
-        if not pwdc: return { 'is_valid': False, 'error': 'Password must be in custom[] section - this record type does not allow password in fields[]! ' + str(pwds) }
+        if pwdf: return { 'is_valid': False, 'error': 'Password must be in custom[] section - this record type does not allow password in fields[]! ' + str(pwds) }
 
+    # All fields in fields[] must be in record type definition
+    rtdf = [x.get('$ref') for x in (rtd.get('fields') or []) if '$ref' in x]
+    badf = [x for x in rt_fields if x.get('type') not in rtdf]
+    if badf:
+      return { 'is_valid': False, 'error': 'This record type doesn\'t allow these in fields[] (move to custom): ' + str(badf) }
 
+    # fileRef use upload-attachment/delete-attachment commands
+    # remove from validation to allow for cros referencing same fileRef from multiple records v3
+    # refs = [x for x in rt_fields + rt_custom if x.get('type') == 'fileRef' and x.get('value')]
+    # if refs:
+    #   return { 'is_valid': False, 'error': 'File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead. ' + str(refs) }
+
+    # fields[] must contain all 'requried' fields (and requried value parts) - custom[] is not in RT definition
+    reqd = [x.get('$ref') for x in (rtd.get('fields') or []) if '$ref' in x and 'required' in x]
+    reqf = [x for x in rt_fields if x.get('type') in reqd]
+    regf = [x for x in rt_fields if x.get('type') not in reqd] + rt_custom
+
+    # all fields required by RT definition must be present
+    miss = set(reqd) - set([x.get('type') for x in reqf])
+    if miss:
+      return { 'is_valid': False, 'error': 'Missing requried fields: ' + str(miss) }
+
+    # validate field values
+    fver = []
+    for fld in reqf:
+      err = RecordV3.is_valid_field_data(fld, True)
+      fver.extend(err)
+    if fver:
+      return { 'is_valid': False, 'error': 'Error(s) validating requried fields: ' + str(fver) }
+
+    for fld in regf:
+      err = RecordV3.is_valid_field_data(fld, False)
+      fver.extend(err)
+    if fver:
+      return { 'is_valid': False, 'error': 'Error(s) validating fields: ' + str(fver) }
 
     return { 'is_valid': True, 'error': '' }
 
@@ -287,7 +322,7 @@ class RecordV3:
   #   type|$type - used to tell the UI how to render and edit the field
   #   lookup - optional flag: lookup values are shared based on the field reference. 
   #     ex. all 'login' fields will share the same set of lookup values but will not see the lookup values from 'company' field
-  #   multiple - optional flag: If specified, the UI should allow populating multiple instances of the filed on the record
+  #   multiple - optional flag: If specified, the UI should allow populating multiple instances of the field on the record
   #   label - optional modifier: If specified, the UI display the label instead of the translated value
   #   default - optional modifier: Defines the default value for the field
   #   readonly -  flag: restrict editable field to be readonly or relax readonly field to be editable
@@ -353,6 +388,11 @@ class RecordV3:
     # },
     'date': {
       '$id': 'date',
+      'type': 'date'
+    },
+    # 2021-06-18 One RT added expirationDate probably just a date value
+    'expirationDate': {
+      '$id': 'expirationDate',
       'type': 'date'
     },
     'birthDate': {
@@ -671,6 +711,83 @@ class RecordV3:
 
 
   @classmethod
+  def is_valid_field_data(cls, field_data, required=False):
+    errors = []
+
+    # ex. {"type": "name", "value": [{"first": "", "middle": "", "last": ""}]}
+    ft = field_data if isinstance(field_data, dict) else RecordV3.record_type_to_dict(field_data)
+    ftype = ft.get('type')
+    fvalue = ft.get('value') or []
+    reqd = required or bool(ft.get('required')) or False
+    if ftype and RecordV3.is_valid_field_type(ftype):
+      # empty value is OK for non-required fields
+      if not fvalue:
+        if reqd:
+          errors.append('Field missing required value: ' + str(field_data))
+        return errors
+
+      if isinstance(fvalue, list):
+        fdef = cls.field_types.get(ftype) or {}
+        ftyp = fdef.get('type')
+        fvt = cls.field_values.get(ftyp) or {}
+        fval = fvt.get('value')
+        freq = (fvt.get('required') or []) if reqd else []
+        # warnings.append('Couldn\'t find requried fields for field type: ' + str(ftyp))
+
+        if ftyp in ('fileRef', 'cardRef', 'addressRef'):
+          for fv in fvalue:
+            # if reqd and not fv: errors.append('Missing required Ref UID: ' + fv)
+            if fv and not RecordV3.is_valid_ref_uid(fv):
+              errors.append('Invalid Ref UID: ' + fv)
+        elif isinstance(fval, int):
+          for fv in fvalue:
+            # if reqd and not fv: errors.append('Missing required integer value: ' + fv)
+            if not((isinstance(fv, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(fv))))):
+              errors.append('Invalid integer value: ' + fv)
+        elif isinstance(fval, str):
+          for fv in fvalue:
+            # if reqd and not fv: errors.append('Missing required string value: ' + fv)
+            if not isinstance(fv, str): # and bool(fv)
+              errors.append('Invalid string value: ' + fv)
+        elif isinstance(fval, tuple):
+          for fv in fvalue:
+            # if reqd and not fv: errors.append('Missing required enum value: ' + fv)
+            if not fval.__contains__(str(fv).strip()):
+              errors.append('Invalid enum value: ' + fv)
+        elif isinstance(fval, dict):
+          for fv in fvalue:
+            if not isinstance(fv, dict):
+              errors.append('Invalid object value: ' + fv)
+            if errors: break
+            for fvv in fv:
+              val1 = fval.get(fvv)
+              val2 = fv.get(fvv)
+              res = bool(val2)
+              if reqd and fvv in freq and not res:
+                errors.append('Missing required object field value: ' + fvv)
+              if not errors:
+                if isinstance(val1, int):
+                  if not((isinstance(val2, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(val2))))):
+                    errors.append('Invalid integer object value: ' + fvv)
+                elif isinstance(val1, str):
+                  if not isinstance(val2, str): # and bool(val2)
+                    errors.append('Invalid string object value: ' + fvv)
+                elif isinstance(val1, tuple):
+                  if not val1.__contains__(str(val2).strip()):
+                    errors.append('Invalid enum object value: ' + fvv)
+                else:
+                  errors.append('Invalid object value type: ' + fvv)
+        else:
+          errors.append('Invalid value type: ' + fval)
+      else:
+        errors.append('Expected an array of field values: ' + str(ftype))
+    else:
+      errors.append('Field has unknown type: ' + str(ftype))
+
+    return errors
+
+
+  @classmethod
   def is_valid_field_type_ref(cls, field_type_json):
     # field ref inside record type definition - ex. {"$ref":"name", "required":true, "label":"placeName"}
     # 2021-04-26 currently the only used options in field ref are - $ref, label, requried
@@ -697,13 +814,13 @@ class RecordV3:
     if field_type_json:
       try: ft = json.loads(field_type_json)
       except: ft = {}
-      ref = ft.get('$ref')
+      ref = ft.get('type')
       result = True if ref and cls.field_types.get(ref) else False
 
-      known_keys = ('$ref', 'label', 'requried')
+      known_keys = ('type', 'label', 'requried')
       unknown_keys = [x for x in ft if x.lower() not in known_keys]
       if unknown_keys:
-        logging.warning('Unknown keys in field reference: ' + str(unknown_keys))
+        logging.warning('Unknown attributes in field type data: ' + str(unknown_keys))
     return result
 
 
@@ -757,6 +874,17 @@ class RecordV3:
 
 
   @staticmethod
+  def get_record_field_value(rt_data, field_name, printable = True):
+    rt = RecordV3.record_type_to_dict(rt_data)
+    flds = (rt.get('fields') or []) + (rt.get('custom') or [])
+    values = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == field_name]
+    result = values[0][0] if values and values[0] else ''
+    if printable:
+      result = str(result)
+    return result
+
+
+  @staticmethod
   def get_record_type_definition(params, rt_data):
     from keepercommander.commands.recordv3 import RecordTypeInfo
     result = None
@@ -768,7 +896,7 @@ class RecordV3:
         result = rt_def
       else:
         logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
-                    ' - to get list of all available record types use: get-record-types -lr' + bcolors.ENDC)
+                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
 
     return result
 
@@ -777,7 +905,7 @@ class RecordV3:
   def get_record_type_name(rt_data):
     result = None
 
-    rt = {}
+    rt = rt_data if isinstance(rt_data, dict) else {}
     if rt_data and (isinstance(rt_data, str) or isinstance(rt_data, bytes)):
       try: rt = json.loads(rt_data or '{}')
       except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_data) + bcolors.ENDC)
@@ -788,6 +916,25 @@ class RecordV3:
         result = rtt
       else:
         logging.error(bcolors.FAIL + 'Unable to find record type type - JSON: ' + str(rt_data) + bcolors.ENDC)
+
+    return result
+
+
+  @staticmethod
+  def get_record_type_title(rt_data):
+    result = None
+
+    rt = rt_data if isinstance(rt_data, dict) else {}
+    if rt_data and (isinstance(rt_data, str) or isinstance(rt_data, bytes)):
+      try: rt = json.loads(rt_data or '{}')
+      except: logging.error(bcolors.FAIL + 'Unable to parse record type JSON: ' + str(rt_data) + bcolors.ENDC)
+
+    if rt and isinstance(rt, dict):
+      rtt = rt.get('title')
+      if rtt:
+        result = rtt
+      else:
+        logging.error(bcolors.FAIL + 'Unable to find record type title - JSON: ' + str(rt_data) + bcolors.ENDC)
 
     return result
 
@@ -815,7 +962,7 @@ class RecordV3:
       try: newrtd = json.loads(rt_def)
       except: result['errors'].append('Unable to parse record type definition JSON: ' + str(rt_def))
     else:
-      result['errors'].append('Record type definition not found for type: ' + str(new_rt_name) + ' - to get list of all available record types use: get-record-types -lr')
+      result['errors'].append('Record type definition not found for type: ' + str(new_rt_name) + ' - to get list of all available record types use: record-type-info -lr')
     if result['errors']: return result
 
     rt = copy.deepcopy(r)
@@ -966,7 +1113,7 @@ class RecordV3:
     if result['errors']: return result
 
     # All fields with prefix f./fields. must be in record type definition
-    # Don't move f./fileds. not in RT definition to custom[] - undefined order on duplicates, might break scripts
+    # Don't move f./fields. not in RT definition to custom[] - undefined order on duplicates, might break scripts
     rtdf = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x]
     flds = [x for x in flo if x and x[0].startswith(('fields.','f.'))]
     cust = [x for x in flo if x and x[0].startswith(('custom.','c.'))]
@@ -976,7 +1123,7 @@ class RecordV3:
     # fileRef must use upload-attachment/delete-attachment commands instead
     refs = [x for x in flds + cust if x[0].split('.', 2)[1].strip().lower() == 'fileref']
     if refs:
-      result['errors'].append('File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead.' + str(refs))
+      result['errors'].append('File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead. ' + str(refs))
     if result['errors']: return result
 
     # edit command: JSON validation before update
@@ -993,7 +1140,7 @@ class RecordV3:
           if ftrm:
             result['errors'].append('Missing requried fields: ' + str(ftrm) + '   Use `rti -lf field_name --example` to generate valid field sample.')
         else:
-          result['warnings'].append('Couldn\'t find requried fields for filed type: ' + str(ft))
+          result['warnings'].append('Couldn\'t find requried fields for the field type: ' + str(ft))
     if result['errors']: return result
 
     # NB! cmdline labels override RT definition labels which override FT definition labels
@@ -1398,12 +1545,6 @@ class RecordV3:
         for i in range(len(folders)):
             print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
 
-    if 'shared' in r: print('{0:>20s}: {1:<20s}'.format('Shared', str(r['shared'])))
-    if 'client_modified_time' in r:
-      dt = datetime.datetime.fromtimestamp(r['client_modified_time']/1000.0)
-      print('{0:>20s}: {1:<20s}'.format('Last Modified', dt.strftime('%Y-%m-%d %H:%M:%S')))
-    if 'revision' in r: print('{0:>20s}: {1:<20s}'.format('Revision', str(r['revision'])))
-
     data = {}
     if 'data_unencrypted' in r:
       data = r['data_unencrypted'].decode() if isinstance(r['data_unencrypted'], bytes) else r['data_unencrypted']
@@ -1423,23 +1564,20 @@ class RecordV3:
       fval = flds
       if len(flds) == 1 and flds[0]:
         if isinstance(flds[0], dict):
-          k = list(flds[0].keys())[0]
-          fval = str(k) + ': ' + str(flds[0][k])
+          if ftyp.lower() == 'name':
+            fval = ' '.join(flds[0].values())
+          else:
+            fval = ' | '.join(flds[0].values())
+        elif RecordV3.get_field_type(ftyp).get('type') == 'date' and flds[0] and bool(re.match('^[+-]?[0-9]+$', str(flds[0]).strip())):
+          dt = datetime.datetime.fromtimestamp(flds[0]/1000.0)
+          fval = str(dt)
         else:
           fval = flds[0]
       if fval:
-        print('{0:>20s}: {1:<s}'.format(str(ftyp), str(fval)))
-        if ftyp == 'fileRef':
-          for fuid in flds:
-            frec = params.record_cache.get(fuid) or {}
-            fdat = frec.get('data_unencrypted') or '{}'
-            fdic = RecordV3.record_type_to_dict(fdat)
-            name = fdic.get('name') or ''
-            size = fdic.get('size') or ''
-            if isinstance(size, str) and size.isdigit():
-              size = int(size)
-            size = HumanBytes.format(size or 0) if isinstance(size, int) else size
-            print('{0:>20s}: {1:>22s}   {2:<12s}   {3:<s}'.format(str(ftyp), str(fuid), str(size), str(name)))
+        if ftyp in ('fileRef', 'cardRef', 'addressRef'):
+          RecordV3.display_ref(ftyp, fval, **kwargs)
+        else:
+          print('{0:>20s}: {1:<s}'.format(str(ftyp), str(fval)))
 
     totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
     totp = totp[0] if totp else totp
@@ -1500,7 +1638,51 @@ class RecordV3:
                                                                           fol.name))
                                         no = no + 1
 
+    if kwargs.get('format') == 'detail':
+      if 'shared' in r: print('{0:>20s}: {1:<20s}'.format('Shared', str(r['shared'])))
+      if 'client_modified_time' in r:
+        dt = datetime.datetime.fromtimestamp(r['client_modified_time']/1000.0)
+        print('{0:>20s}: {1:<20s}'.format('Last Modified', dt.strftime('%Y-%m-%d %H:%M:%S')))
+      if 'revision' in r: print('{0:>20s}: {1:<20s}'.format('Revision', str(r['revision'])))
+
     print('')
+
+  @staticmethod
+  def display_ref(ftype, fvalue, **kwargs):
+    params = kwargs.get('params')
+    if ftype == 'fileRef':
+      for fuid in fvalue:
+        frec = params.record_cache.get(fuid) or {}
+        fdat = frec.get('data_unencrypted') or '{}'
+        fdic = RecordV3.record_type_to_dict(fdat)
+        name = fdic.get('name') or ''
+        size = fdic.get('size') or ''
+        if isinstance(size, str) and size.isdigit():
+          size = int(size)
+        size = HumanBytes.format(size or 0) if isinstance(size, int) else size
+        print('{0:>20s}: {1:>22s}   {2:<12s}   {3:<s}'.format(str(ftype), str(fuid), str(size), str(name)))
+    elif ftype == 'cardRef':
+        frec = params.record_cache.get(fvalue) or {}
+        fdat = frec.get('data_unencrypted') or '{}'
+        fdic = RecordV3.record_type_to_dict(fdat)
+        title = RecordV3.get_record_type_title(fdat) or ''
+        name = RecordV3.get_record_field_value(fdat, 'text', False) or ''
+        pin = RecordV3.get_record_field_value(fdat, 'pinCode', False) or ''
+        card = RecordV3.get_record_field_value(fdat, 'paymentCard', False) or '{}'
+        card_line = 'Name: ' + name + ' | ' + ' Pin: ' + pin + ' | Card: ' + ' | '.join(str(x) for x in card.values())
+        print('{0:>20s}: {1:<s}'.format('address.' + str(title), str(card_line)))
+    elif ftype == 'addressRef':
+        frec = params.record_cache.get(fvalue) or {}
+        fdat = frec.get('data_unencrypted') or '{}'
+        fdic = RecordV3.record_type_to_dict(fdat)
+        title = RecordV3.get_record_type_title(fdat) or ''
+        addr = RecordV3.get_record_field_value(fdat, 'address', False) or '{}'
+        addr = addr if isinstance(addr, dict) else RecordV3.record_type_to_dict(addr)
+        addr_line = ' | '.join(str(x) for x in addr.values())
+        print('{0:>20s}: {1:<s}'.format('address.' + str(title), str(addr_line)))
+    else:
+      logging.error(bcolors.FAIL + 'Unknown field reference type: ' + str(ftype) + ' for ' + str(fvalue) + bcolors.ENDC)
+
 
   @staticmethod
   def validate_access(params: KeeperParams, ruid: str):

@@ -235,16 +235,16 @@ command_group = record_type_info_parser.add_mutually_exclusive_group()
 command_group.add_argument('-e', '--example', dest='example', action='store_true', help='generate example JSON')
 command_group = record_type_info_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
-command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type(s) by $id or name')
-command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name - use * to list all')
+command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type by name or use * to list all')
+command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name or use * to list all')
 record_type_info_parser.error = raise_parse_exception
 record_type_info_parser.exit = suppress_exit
 
 
-record_type_parser = argparse.ArgumentParser(prog='record-type|rt', description='Record type add/update/delete')
-record_type_parser.add_argument('record_type_id', default=None, nargs='?', type=int, action='store', help='Record Type ID to update/delete')
-record_type_parser.add_argument('--data', dest='data', action='store', help='record type content')
-record_type_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'update', 'remove'], required=True, help='record type action to perform')
+record_type_parser = argparse.ArgumentParser(prog='record-type|rt', description='Add, modify or delete record type definition')
+record_type_parser.add_argument('record_type_id', default=None, nargs='?', type=int, action='store', help='record Type ID to update/delete')
+record_type_parser.add_argument('--data', dest='data', action='store', help='record type definition in JSON format - use rti command to see existing definitions: ex. rti -lr login')
+record_type_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'update', 'remove'], required=True, help='record type definition - add, update or remove')
 # command_group = record_type_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-a', '--add-type', dest='add_type', action='store_true', help='add new custom record type')
 # command_group.add_argument('-u', '--update-type', dest='update_type', action='store_true', help='update existing custom record type')
@@ -271,7 +271,7 @@ class RecordAddCommand(Command):
         has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
         has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
         if has_v2_options and has_v3_options:
-            logging.error(bcolors.FAIL + 'Legacy options (--title --pass etc.) are not allowed with new style options (--data --from-file etc.).' + bcolors.ENDC)
+            logging.error(bcolors.FAIL + 'Use either legacy arguments only (--title, --pass, --login --url, --notes, --custom) or record type options only (type=login title=MyRecord etc.) see. https://github.com/Keeper-Security/Commander/blob/master/record-types.md' + bcolors.ENDC)
             return
 
         # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
@@ -283,7 +283,8 @@ class RecordAddCommand(Command):
         # is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
         # is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option'))
         v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-        if is_v2 or (has_v2_options and not v3_enabled):
+        # if is_v2 or (has_v2_options and not v3_enabled):
+        if is_v2 or (not v3_enabled and not has_v3_options):
             recordv2.RecordAddCommand().execute(params, **kwargs)
             return
 
@@ -338,7 +339,7 @@ class RecordAddCommand(Command):
             rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
             if not rt_def:
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
-                    ' - to get list of all available record types use: get-record-types -lr' + bcolors.ENDC)
+                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 return
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
@@ -607,7 +608,7 @@ class RecordEditCommand(Command):
         has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
         has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
         if has_v2_options and has_v3_options:
-            logging.error(bcolors.FAIL + 'Legacy options (--title --pass etc.) are not allowed with new style options (--data --from-file etc.).' + bcolors.ENDC)
+            logging.error(bcolors.FAIL + 'Use either legacy arguments only (--title, --pass, --login --url, --notes, --custom) or record type options only (type=login title=MyRecord etc.) see. https://github.com/Keeper-Security/Commander/blob/master/record-types.md' + bcolors.ENDC)
             return
 
         # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
@@ -632,8 +633,14 @@ class RecordEditCommand(Command):
             return
 
         #if has_v2_options and not has_v3_options and not v3_enabled:
-        if has_v2_options and rv not in (3, 4):
-            recordv2.RecordEditCommand().execute(params, **kwargs)
+        if has_v2_options:
+            if rv in (3, 4):
+                if v3_enabled:
+                    logging.error('Record %s is version 3 already. Please use version 3 editing options (--data, --from-file, option)', record_uid)
+                else:
+                    logging.error(bcolors.FAIL + 'Record Types are NOT enabled for this account. Please contact your enterprise administrator.' + bcolors.ENDC)
+            else:
+                recordv2.RecordEditCommand().execute(params, **kwargs)
             return
 
         recordv3.RecordV3.validate_access(params, record_uid)
@@ -716,7 +723,7 @@ class RecordEditCommand(Command):
             rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
             if not rt_def:
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
-                    ' - to get list of all available record types use: get-record-types -lr' + bcolors.ENDC)
+                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 return
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
@@ -1937,7 +1944,7 @@ class RecordTypeInfo(Command):
         has_categories_only = not lrid and (not lcid or lcid.isspace() or lcid == '*')
         has_record_type_names_only = not lcid and (not lrid or lrid.isspace() or lrid == '*')
         if (sample or example) and not((lfid and lfid != '*') or (lrid and lrid != '*')):
-            logging.warning(bcolors.WARNING + 'Ignored options: --description/--example options require a single record/field type name' + bcolors.ENDC)
+            logging.warning(bcolors.WARNING + 'Ignored options: --description/--example options require a single record/field type name, please use --example with -lr|lf NAME option' + bcolors.ENDC)
 
         if lfid:
             field_name = lfid
@@ -2353,7 +2360,7 @@ class RecordGetUidCommand(Command):
                     if password and password.strip():
                         print(password)
                 else:
-                    recordv3.RecordV3.display(r, params=params)
+                    recordv3.RecordV3.display(r, **{'params': params, 'format': fmt})
                 return
 
         if params.available_team_cache is None:

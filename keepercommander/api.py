@@ -805,7 +805,7 @@ def sync_down(params):
 
             if record_key:
                 try:
-                    if 'version' in record and record['version'] in (3, 4):
+                    if 'version' in record and record['version'] in (3, 4, 5):
                         decoded_data = base64.urlsafe_b64decode(record['data'] + '==')
                         record['data_unencrypted'] = decrypt_aes_plain(decoded_data, record_key)
                     else:
@@ -1126,19 +1126,22 @@ def get_record(params,record_uid):
         rec.load(data, revision=cached_rec['revision'], extra=extra)
         if not resolve_record_view_path(params, record_uid):
             rec.mask_password()
-        if 'version' in cached_rec and cached_rec['version'] in (3, 4):
-            if 'data_unencrypted' in cached_rec:
-                version = cached_rec.get('version') or 0
-                data_unencrypted = json.loads(cached_rec['data_unencrypted'])
-                if version == 3:
-                    rec_type = data_unencrypted['type'] if 'type' in data_unencrypted else ''
-                    if (rec_type and rec_type.strip()):
-                        rec.login = 'type: ' + rec_type.strip()
-                        # rec.login_url = rec_type.strip()
-                elif version == 4:
-                    fname = data_unencrypted['name'] if 'name' in data_unencrypted else ''
-                    if (fname and fname.strip()):
-                        rec.login = 'file: ' + fname.strip()
+        if cached_rec.get('version') == 3:
+            rec.record_type = recordv3.RecordV3.get_record_type_name(data)
+            rec.login = recordv3.RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'login')
+            rec.login_url = recordv3.RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'url')
+        # if 'version' in cached_rec and cached_rec['version'] in (3, 4):
+        #     if 'data_unencrypted' in cached_rec:
+        #         version = cached_rec.get('version') or 0
+        #         data_unencrypted = json.loads(cached_rec['data_unencrypted'])
+        #         if version == 3:
+        #             rec_type = data_unencrypted.get('type') or ''
+        #             if (rec_type and rec_type.strip()):
+        #                 rec.login = 'type: ' + rec_type.strip()
+        #         elif version == 4:
+        #             fname = data_unencrypted.get('name') or ''
+        #             if (fname and fname.strip()):
+        #                 rec.login = 'file: ' + fname.strip()
     except:
         logging.error('**** Error decrypting record %s', record_uid)
 
@@ -1311,6 +1314,7 @@ def search_records(params, searchstring):
             if not v3_enabled:
                 continue
             data = cached_rec.get('data_unencrypted')
+            rec.record_type = recordv3.RecordV3.get_record_type_name(data)
             target = recordv3.RecordV3.values_to_lowerstring(data)
         else:
             target = rec.to_lowerstring()

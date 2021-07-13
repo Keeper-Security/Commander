@@ -20,7 +20,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   syntax='proto3',
   serialized_options=b'\n\030com.keepersecurity.protoB\007Records',
   create_key=_descriptor._internal_create_key,
-  serialized_pb=b'\n\x0crecord.proto\x12\x07Records\"\\\n\nRecordType\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\'\n\x05scope\x18\x03 \x01(\x0e\x32\x18.Records.RecordTypeScope\"H\n\x12RecordTypesRequest\x12\x10\n\x08standard\x18\x01 \x01(\x08\x12\x0c\n\x04user\x18\x02 \x01(\x08\x12\x12\n\nenterprise\x18\x03 \x01(\x08\"\x88\x01\n\x13RecordTypesResponse\x12(\n\x0brecordTypes\x18\x01 \x03(\x0b\x32\x13.Records.RecordType\x12\x17\n\x0fstandardCounter\x18\x02 \x01(\x05\x12\x13\n\x0buserCounter\x18\x03 \x01(\x05\x12\x19\n\x11\x65nterpriseCounter\x18\x04 \x01(\x05\"A\n\x18RecordTypeModifyResponse\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ounter\x18\x02 \x01(\x05\"=\n\x11RecordsGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xd1\x01\n\x06Record\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12/\n\x0frecord_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\r\n\x05\x65xtra\x18\x05 \x01(\x0c\x12\x0f\n\x07version\x18\x06 \x01(\x05\x12\x1c\n\x14\x63lient_modified_time\x18\x07 \x01(\x03\x12\x10\n\x08revision\x18\x08 \x01(\x03\x12\x10\n\x08\x66ile_ids\x18\t \x03(\x0c\"M\n\x0f\x46olderRecordKey\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_uid\x18\x02 \x01(\x0c\x12\x12\n\nrecord_key\x18\x03 \x01(\x0c\"a\n\x06\x46older\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nfolder_key\x18\x02 \x01(\x0c\x12/\n\x0f\x66older_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\"\x95\x01\n\x04Team\x12\x10\n\x08team_uid\x18\x01 \x01(\x0c\x12\x10\n\x08team_key\x18\x02 \x01(\x0c\x12\x18\n\x10team_private_key\x18\x03 \x01(\x0c\x12-\n\rteam_key_type\x18\x04 \x01(\x0e\x32\x16.Records.RecordKeyType\x12 \n\x07\x66olders\x18\x05 \x03(\x0b\x32\x0f.Records.Folder\"\xac\x01\n\x12RecordsGetResponse\x12 \n\x07records\x18\x01 \x03(\x0b\x32\x0f.Records.Record\x12\x34\n\x12\x66older_record_keys\x18\x02 \x03(\x0b\x32\x18.Records.FolderRecordKey\x12 \n\x07\x66olders\x18\x03 \x03(\x0b\x32\x0f.Records.Folder\x12\x1c\n\x05teams\x18\x04 \x03(\x0b\x32\r.Records.Team\"4\n\nRecordLink\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\",\n\x0bRecordAudit\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\xa0\x02\n\tRecordAdd\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12.\n\x0b\x66older_type\x18\x06 \x01(\x0e\x32\x19.Records.RecordFolderType\x12\x12\n\nfolder_uid\x18\x07 \x01(\x0c\x12\x12\n\nfolder_key\x18\x08 \x01(\x0c\x12)\n\x0crecord_links\x18\t \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\n \x01(\x0b\x32\x14.Records.RecordAudit\"M\n\x11RecordsAddRequest\x12#\n\x07records\x18\x01 \x03(\x0b\x32\x12.Records.RecordAdd\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xea\x01\n\x0cRecordUpdate\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x02 \x01(\x03\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12-\n\x10record_links_add\x18\x06 \x03(\x0b\x32\x13.Records.RecordLink\x12\x1b\n\x13record_links_remove\x18\x07 \x03(\x0c\x12#\n\x05\x61udit\x18\x08 \x01(\x0b\x32\x14.Records.RecordAudit\"S\n\x14RecordsUpdateRequest\x12&\n\x07records\x18\x01 \x03(\x0b\x32\x15.Records.RecordUpdate\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\'\n\x14RecordsRemoveRequest\x12\x0f\n\x07records\x18\x01 \x03(\x0c\"f\n\x12RecordModifyStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.Records.RecordModifyResult\x12\x0f\n\x07message\x18\x03 \x01(\t\"W\n\x15RecordsModifyResponse\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordModifyStatus\x12\x10\n\x08revision\x18\x02 \x01(\x03\"a\n\x04\x46ile\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x10\n\x08\x66ileSize\x18\x04 \x01(\x03\x12\x11\n\tthumbSize\x18\x05 \x01(\x05\"D\n\x0f\x46ilesAddRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.Records.File\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xa7\x01\n\rFileAddStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileAddResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x12\n\nparameters\x18\x04 \x01(\t\x12\x1c\n\x14thumbnail_parameters\x18\x05 \x01(\t\x12\x1b\n\x13success_status_code\x18\x06 \x01(\x05\"9\n\x10\x46ilesAddResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileAddStatus\"f\n\x0f\x46ilesGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x16\n\x0e\x66or_thumbnails\x18\x02 \x01(\x08\x12&\n\x1e\x65mergency_access_account_owner\x18\x03 \x01(\t\"u\n\rFileGetStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileGetResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x1b\n\x13success_status_code\x18\x04 \x01(\x05\"9\n\x10\x46ilesGetResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileGetStatus*B\n\x0fRecordTypeScope\x12\x0f\n\x0bRT_STANDARD\x10\x00\x12\x0b\n\x07RT_USER\x10\x01\x12\x11\n\rRT_ENTERPRISE\x10\x02*S\n\rRecordKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x19\n\x15\x45NCRYPTED_BY_DATA_KEY\x10\x01\x12\x1b\n\x17\x45NCRYPTED_BY_PUBLIC_KEY\x10\x02*P\n\x10RecordFolderType\x12\x0f\n\x0buser_folder\x10\x00\x12\x11\n\rshared_folder\x10\x01\x12\x18\n\x14shared_folder_folder\x10\x02*\x99\x01\n\x12RecordModifyResult\x12\x0e\n\nRS_SUCCESS\x10\x00\x12\x12\n\x0eRS_OUT_OF_SYNC\x10\x01\x12\x14\n\x10RS_ACCESS_DENIED\x10\x02\x12\x13\n\x0fRS_SHARE_DENIED\x10\x03\x12\x14\n\x10RS_RECORD_EXISTS\x10\x04\x12\x1e\n\x1aRS_OLD_RECORD_VERSION_TYPE\x10\x05*-\n\rFileAddResult\x12\x0e\n\nFA_SUCCESS\x10\x00\x12\x0c\n\x08\x46\x41_ERROR\x10\x01*C\n\rFileGetResult\x12\x0e\n\nFG_SUCCESS\x10\x00\x12\x0c\n\x08\x46G_ERROR\x10\x01\x12\x14\n\x10\x46G_ACCESS_DENIED\x10\x02\x42#\n\x18\x63om.keepersecurity.protoB\x07Recordsb\x06proto3'
+  serialized_pb=b'\n\x0crecord.proto\x12\x07Records\"\\\n\nRecordType\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\'\n\x05scope\x18\x03 \x01(\x0e\x32\x18.Records.RecordTypeScope\"H\n\x12RecordTypesRequest\x12\x10\n\x08standard\x18\x01 \x01(\x08\x12\x0c\n\x04user\x18\x02 \x01(\x08\x12\x12\n\nenterprise\x18\x03 \x01(\x08\"\x88\x01\n\x13RecordTypesResponse\x12(\n\x0brecordTypes\x18\x01 \x03(\x0b\x32\x13.Records.RecordType\x12\x17\n\x0fstandardCounter\x18\x02 \x01(\x05\x12\x13\n\x0buserCounter\x18\x03 \x01(\x05\x12\x19\n\x11\x65nterpriseCounter\x18\x04 \x01(\x05\"A\n\x18RecordTypeModifyResponse\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ounter\x18\x02 \x01(\x05\"=\n\x11RecordsGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xd1\x01\n\x06Record\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12/\n\x0frecord_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\r\n\x05\x65xtra\x18\x05 \x01(\x0c\x12\x0f\n\x07version\x18\x06 \x01(\x05\x12\x1c\n\x14\x63lient_modified_time\x18\x07 \x01(\x03\x12\x10\n\x08revision\x18\x08 \x01(\x03\x12\x10\n\x08\x66ile_ids\x18\t \x03(\x0c\"M\n\x0f\x46olderRecordKey\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_uid\x18\x02 \x01(\x0c\x12\x12\n\nrecord_key\x18\x03 \x01(\x0c\"a\n\x06\x46older\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nfolder_key\x18\x02 \x01(\x0c\x12/\n\x0f\x66older_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\"\x95\x01\n\x04Team\x12\x10\n\x08team_uid\x18\x01 \x01(\x0c\x12\x10\n\x08team_key\x18\x02 \x01(\x0c\x12\x18\n\x10team_private_key\x18\x03 \x01(\x0c\x12-\n\rteam_key_type\x18\x04 \x01(\x0e\x32\x16.Records.RecordKeyType\x12 \n\x07\x66olders\x18\x05 \x03(\x0b\x32\x0f.Records.Folder\"\xac\x01\n\x12RecordsGetResponse\x12 \n\x07records\x18\x01 \x03(\x0b\x32\x0f.Records.Record\x12\x34\n\x12\x66older_record_keys\x18\x02 \x03(\x0b\x32\x18.Records.FolderRecordKey\x12 \n\x07\x66olders\x18\x03 \x03(\x0b\x32\x0f.Records.Folder\x12\x1c\n\x05teams\x18\x04 \x03(\x0b\x32\r.Records.Team\"4\n\nRecordLink\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\",\n\x0bRecordAudit\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\xa0\x02\n\tRecordAdd\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12.\n\x0b\x66older_type\x18\x06 \x01(\x0e\x32\x19.Records.RecordFolderType\x12\x12\n\nfolder_uid\x18\x07 \x01(\x0c\x12\x12\n\nfolder_key\x18\x08 \x01(\x0c\x12)\n\x0crecord_links\x18\t \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\n \x01(\x0b\x32\x14.Records.RecordAudit\"M\n\x11RecordsAddRequest\x12#\n\x07records\x18\x01 \x03(\x0b\x32\x12.Records.RecordAdd\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xea\x01\n\x0cRecordUpdate\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x02 \x01(\x03\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12-\n\x10record_links_add\x18\x06 \x03(\x0b\x32\x13.Records.RecordLink\x12\x1b\n\x13record_links_remove\x18\x07 \x03(\x0c\x12#\n\x05\x61udit\x18\x08 \x01(\x0b\x32\x14.Records.RecordAudit\"S\n\x14RecordsUpdateRequest\x12&\n\x07records\x18\x01 \x03(\x0b\x32\x15.Records.RecordUpdate\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\'\n\x14RecordsRemoveRequest\x12\x0f\n\x07records\x18\x01 \x03(\x0c\"f\n\x12RecordModifyStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.Records.RecordModifyResult\x12\x0f\n\x07message\x18\x03 \x01(\t\"W\n\x15RecordsModifyResponse\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordModifyStatus\x12\x10\n\x08revision\x18\x02 \x01(\x03\"H\n\x12RecordAddAuditData\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\"C\n\x13\x41\x64\x64\x41uditDataRequest\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordAddAuditData\"a\n\x04\x46ile\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x10\n\x08\x66ileSize\x18\x04 \x01(\x03\x12\x11\n\tthumbSize\x18\x05 \x01(\x05\"D\n\x0f\x46ilesAddRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.Records.File\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xa7\x01\n\rFileAddStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileAddResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x12\n\nparameters\x18\x04 \x01(\t\x12\x1c\n\x14thumbnail_parameters\x18\x05 \x01(\t\x12\x1b\n\x13success_status_code\x18\x06 \x01(\x05\"9\n\x10\x46ilesAddResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileAddStatus\"f\n\x0f\x46ilesGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x16\n\x0e\x66or_thumbnails\x18\x02 \x01(\x08\x12&\n\x1e\x65mergency_access_account_owner\x18\x03 \x01(\t\"u\n\rFileGetStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileGetResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x1b\n\x13success_status_code\x18\x04 \x01(\x05\"9\n\x10\x46ilesGetResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileGetStatus\"h\n\x15\x41pplicationAddRequest\x12\x0f\n\x07\x61pp_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c*B\n\x0fRecordTypeScope\x12\x0f\n\x0bRT_STANDARD\x10\x00\x12\x0b\n\x07RT_USER\x10\x01\x12\x11\n\rRT_ENTERPRISE\x10\x02*S\n\rRecordKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x19\n\x15\x45NCRYPTED_BY_DATA_KEY\x10\x01\x12\x1b\n\x17\x45NCRYPTED_BY_PUBLIC_KEY\x10\x02*P\n\x10RecordFolderType\x12\x0f\n\x0buser_folder\x10\x00\x12\x11\n\rshared_folder\x10\x01\x12\x18\n\x14shared_folder_folder\x10\x02*\x99\x01\n\x12RecordModifyResult\x12\x0e\n\nRS_SUCCESS\x10\x00\x12\x12\n\x0eRS_OUT_OF_SYNC\x10\x01\x12\x14\n\x10RS_ACCESS_DENIED\x10\x02\x12\x13\n\x0fRS_SHARE_DENIED\x10\x03\x12\x14\n\x10RS_RECORD_EXISTS\x10\x04\x12\x1e\n\x1aRS_OLD_RECORD_VERSION_TYPE\x10\x05*-\n\rFileAddResult\x12\x0e\n\nFA_SUCCESS\x10\x00\x12\x0c\n\x08\x46\x41_ERROR\x10\x01*C\n\rFileGetResult\x12\x0e\n\nFG_SUCCESS\x10\x00\x12\x0c\n\x08\x46G_ERROR\x10\x01\x12\x14\n\x10\x46G_ACCESS_DENIED\x10\x02\x42#\n\x18\x63om.keepersecurity.protoB\x07Recordsb\x06proto3'
 )
 
 _RECORDTYPESCOPE = _descriptor.EnumDescriptor(
@@ -48,8 +48,8 @@ _RECORDTYPESCOPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=2885,
-  serialized_end=2951,
+  serialized_start=3134,
+  serialized_end=3200,
 )
 _sym_db.RegisterEnumDescriptor(_RECORDTYPESCOPE)
 
@@ -79,8 +79,8 @@ _RECORDKEYTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=2953,
-  serialized_end=3036,
+  serialized_start=3202,
+  serialized_end=3285,
 )
 _sym_db.RegisterEnumDescriptor(_RECORDKEYTYPE)
 
@@ -110,8 +110,8 @@ _RECORDFOLDERTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=3038,
-  serialized_end=3118,
+  serialized_start=3287,
+  serialized_end=3367,
 )
 _sym_db.RegisterEnumDescriptor(_RECORDFOLDERTYPE)
 
@@ -156,8 +156,8 @@ _RECORDMODIFYRESULT = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=3121,
-  serialized_end=3274,
+  serialized_start=3370,
+  serialized_end=3523,
 )
 _sym_db.RegisterEnumDescriptor(_RECORDMODIFYRESULT)
 
@@ -182,8 +182,8 @@ _FILEADDRESULT = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=3276,
-  serialized_end=3321,
+  serialized_start=3525,
+  serialized_end=3570,
 )
 _sym_db.RegisterEnumDescriptor(_FILEADDRESULT)
 
@@ -213,8 +213,8 @@ _FILEGETRESULT = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=3323,
-  serialized_end=3390,
+  serialized_start=3572,
+  serialized_end=3639,
 )
 _sym_db.RegisterEnumDescriptor(_FILEGETRESULT)
 
@@ -1207,6 +1207,84 @@ _RECORDSMODIFYRESPONSE = _descriptor.Descriptor(
 )
 
 
+_RECORDADDAUDITDATA = _descriptor.Descriptor(
+  name='RecordAddAuditData',
+  full_name='Records.RecordAddAuditData',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='record_uid', full_name='Records.RecordAddAuditData.record_uid', index=0,
+      number=1, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='revision', full_name='Records.RecordAddAuditData.revision', index=1,
+      number=2, type=3, cpp_type=2, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='data', full_name='Records.RecordAddAuditData.data', index=2,
+      number=3, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=2205,
+  serialized_end=2277,
+)
+
+
+_ADDAUDITDATAREQUEST = _descriptor.Descriptor(
+  name='AddAuditDataRequest',
+  full_name='Records.AddAuditDataRequest',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='records', full_name='Records.AddAuditDataRequest.records', index=0,
+      number=1, type=11, cpp_type=10, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=2279,
+  serialized_end=2346,
+)
+
+
 _FILE = _descriptor.Descriptor(
   name='File',
   full_name='Records.File',
@@ -1262,8 +1340,8 @@ _FILE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2205,
-  serialized_end=2302,
+  serialized_start=2348,
+  serialized_end=2445,
 )
 
 
@@ -1301,8 +1379,8 @@ _FILESADDREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2304,
-  serialized_end=2372,
+  serialized_start=2447,
+  serialized_end=2515,
 )
 
 
@@ -1368,8 +1446,8 @@ _FILEADDSTATUS = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2375,
-  serialized_end=2542,
+  serialized_start=2518,
+  serialized_end=2685,
 )
 
 
@@ -1400,8 +1478,8 @@ _FILESADDRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2544,
-  serialized_end=2601,
+  serialized_start=2687,
+  serialized_end=2744,
 )
 
 
@@ -1446,8 +1524,8 @@ _FILESGETREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2603,
-  serialized_end=2705,
+  serialized_start=2746,
+  serialized_end=2848,
 )
 
 
@@ -1499,8 +1577,8 @@ _FILEGETSTATUS = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2707,
-  serialized_end=2824,
+  serialized_start=2850,
+  serialized_end=2967,
 )
 
 
@@ -1531,8 +1609,61 @@ _FILESGETRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=2826,
-  serialized_end=2883,
+  serialized_start=2969,
+  serialized_end=3026,
+)
+
+
+_APPLICATIONADDREQUEST = _descriptor.Descriptor(
+  name='ApplicationAddRequest',
+  full_name='Records.ApplicationAddRequest',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='app_uid', full_name='Records.ApplicationAddRequest.app_uid', index=0,
+      number=1, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='record_key', full_name='Records.ApplicationAddRequest.record_key', index=1,
+      number=2, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='client_modified_time', full_name='Records.ApplicationAddRequest.client_modified_time', index=2,
+      number=3, type=3, cpp_type=2, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='data', full_name='Records.ApplicationAddRequest.data', index=3,
+      number=4, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=3028,
+  serialized_end=3132,
 )
 
 _RECORDTYPE.fields_by_name['scope'].enum_type = _RECORDTYPESCOPE
@@ -1554,6 +1685,7 @@ _RECORDUPDATE.fields_by_name['audit'].message_type = _RECORDAUDIT
 _RECORDSUPDATEREQUEST.fields_by_name['records'].message_type = _RECORDUPDATE
 _RECORDMODIFYSTATUS.fields_by_name['status'].enum_type = _RECORDMODIFYRESULT
 _RECORDSMODIFYRESPONSE.fields_by_name['records'].message_type = _RECORDMODIFYSTATUS
+_ADDAUDITDATAREQUEST.fields_by_name['records'].message_type = _RECORDADDAUDITDATA
 _FILESADDREQUEST.fields_by_name['files'].message_type = _FILE
 _FILEADDSTATUS.fields_by_name['status'].enum_type = _FILEADDRESULT
 _FILESADDRESPONSE.fields_by_name['files'].message_type = _FILEADDSTATUS
@@ -1578,6 +1710,8 @@ DESCRIPTOR.message_types_by_name['RecordsUpdateRequest'] = _RECORDSUPDATEREQUEST
 DESCRIPTOR.message_types_by_name['RecordsRemoveRequest'] = _RECORDSREMOVEREQUEST
 DESCRIPTOR.message_types_by_name['RecordModifyStatus'] = _RECORDMODIFYSTATUS
 DESCRIPTOR.message_types_by_name['RecordsModifyResponse'] = _RECORDSMODIFYRESPONSE
+DESCRIPTOR.message_types_by_name['RecordAddAuditData'] = _RECORDADDAUDITDATA
+DESCRIPTOR.message_types_by_name['AddAuditDataRequest'] = _ADDAUDITDATAREQUEST
 DESCRIPTOR.message_types_by_name['File'] = _FILE
 DESCRIPTOR.message_types_by_name['FilesAddRequest'] = _FILESADDREQUEST
 DESCRIPTOR.message_types_by_name['FileAddStatus'] = _FILEADDSTATUS
@@ -1585,6 +1719,7 @@ DESCRIPTOR.message_types_by_name['FilesAddResponse'] = _FILESADDRESPONSE
 DESCRIPTOR.message_types_by_name['FilesGetRequest'] = _FILESGETREQUEST
 DESCRIPTOR.message_types_by_name['FileGetStatus'] = _FILEGETSTATUS
 DESCRIPTOR.message_types_by_name['FilesGetResponse'] = _FILESGETRESPONSE
+DESCRIPTOR.message_types_by_name['ApplicationAddRequest'] = _APPLICATIONADDREQUEST
 DESCRIPTOR.enum_types_by_name['RecordTypeScope'] = _RECORDTYPESCOPE
 DESCRIPTOR.enum_types_by_name['RecordKeyType'] = _RECORDKEYTYPE
 DESCRIPTOR.enum_types_by_name['RecordFolderType'] = _RECORDFOLDERTYPE
@@ -1726,6 +1861,20 @@ RecordsModifyResponse = _reflection.GeneratedProtocolMessageType('RecordsModifyR
   })
 _sym_db.RegisterMessage(RecordsModifyResponse)
 
+RecordAddAuditData = _reflection.GeneratedProtocolMessageType('RecordAddAuditData', (_message.Message,), {
+  'DESCRIPTOR' : _RECORDADDAUDITDATA,
+  '__module__' : 'record_pb2'
+  # @@protoc_insertion_point(class_scope:Records.RecordAddAuditData)
+  })
+_sym_db.RegisterMessage(RecordAddAuditData)
+
+AddAuditDataRequest = _reflection.GeneratedProtocolMessageType('AddAuditDataRequest', (_message.Message,), {
+  'DESCRIPTOR' : _ADDAUDITDATAREQUEST,
+  '__module__' : 'record_pb2'
+  # @@protoc_insertion_point(class_scope:Records.AddAuditDataRequest)
+  })
+_sym_db.RegisterMessage(AddAuditDataRequest)
+
 File = _reflection.GeneratedProtocolMessageType('File', (_message.Message,), {
   'DESCRIPTOR' : _FILE,
   '__module__' : 'record_pb2'
@@ -1774,6 +1923,13 @@ FilesGetResponse = _reflection.GeneratedProtocolMessageType('FilesGetResponse', 
   # @@protoc_insertion_point(class_scope:Records.FilesGetResponse)
   })
 _sym_db.RegisterMessage(FilesGetResponse)
+
+ApplicationAddRequest = _reflection.GeneratedProtocolMessageType('ApplicationAddRequest', (_message.Message,), {
+  'DESCRIPTOR' : _APPLICATIONADDREQUEST,
+  '__module__' : 'record_pb2'
+  # @@protoc_insertion_point(class_scope:Records.ApplicationAddRequest)
+  })
+_sym_db.RegisterMessage(ApplicationAddRequest)
 
 
 DESCRIPTOR._options = None
