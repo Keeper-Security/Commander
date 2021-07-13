@@ -77,7 +77,7 @@ def register_commands(commands):
     commands['help'] = HelpCommand()
     commands['ksm-app-create'] = KSMAppCreateCommand()
     commands['ksm-app-share'] = KSMAppShareCommand()
-    commands['ksm-app-client'] = KSMAppClientAdd()
+    commands['ksm-app-add-client'] = KSMAppClientAdd()
     # commands['app-share-info'] = AppInfoCommand()
     commands['version'] = VersionCommand()
 
@@ -178,7 +178,7 @@ app_share_registration_parser.error = raise_parse_exception
 app_share_registration_parser.exit = suppress_exit
 
 
-app_client_registration_parser = argparse.ArgumentParser(prog='ksm-app-client', description='Create One-Time Client Key(s)')
+app_client_registration_parser = argparse.ArgumentParser(prog='ksm-app-add-client', description='Create One-Time Client Key(s)')
 app_client_registration_parser.add_argument('app', type=str, action='store', help='Application Name or UID')
 app_client_registration_parser.add_argument('--count', '-c', type=int, dest='count', action='store', help='Number of tokens to return', default=1)
 app_client_registration_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store', help='Lock IP Address', default='false')
@@ -722,15 +722,10 @@ class KSMAppShareCommand(Command):
         dump_report_data(apps_table, apps_table_fields, fmt='table')
 
     @staticmethod
-    def get_and_print_app_info(params, uids):
-
-        uids_bytes = []
-
-        for uid in uids:
-            uids_bytes.append(CommonHelperMethods.url_safe_str_to_bytes(uid))
+    def get_and_print_app_info(params, uid):
 
         rq = GetAppInfoRequest()
-        rq.appRecordUid = uids_bytes
+        rq.appRecordUid.append(CommonHelperMethods.url_safe_str_to_bytes(uid))
 
         rs = communicate_rest(params, rq, 'vault/get_app_info')
 
@@ -738,67 +733,71 @@ class KSMAppShareCommand(Command):
         get_app_info_rs.ParseFromString(rs)
 
         print("CLIENT\n---------")
-        clients = get_app_info_rs.clients
-        if clients:
-            clients_table_fields = ['ID', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
-                                    'IP Address']
-            clients_table = []
-            for c in clients:
-                id = c.id
-                client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
-                created_on = ms_to_str(c.createdOn)
-                first_access = '-' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
-                last_access = '-' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
-                lock_ip = 'Enabled' if c.lockIp else 'Disabled'
-                ip_address = c.ipAddress
-                # public_key = c.publicKey
-
-                row = [id, client_id, created_on, first_access, last_access, lock_ip, ip_address]
-
-                clients_table.append(row)
-
-            clients_table.sort(key=lambda x: x[2].lower())
-
-            dump_report_data(clients_table, clients_table_fields, fmt='table')
-        else:
+        if len(get_app_info_rs.appInfo) == 0:
             print('\tNo clients registered for this app')
 
-        print("\nSHARES\n--------")
-
-        shares = get_app_info_rs.shares
-
-        if shares:
-
-            recs = params.record_cache
-
-            shares_table_fields = ['Share Type', 'UID', 'Title']
-            shares_table = []
-
-            for s in shares:
-
-                uid_str = CommonHelperMethods.bytes_to_url_safe_str(s.secretUid)
-                sht = ApplicationShareType.Name(s.shareType)
-
-                if sht == 'SHT_RECORD':
-                    record = recs.get(uid_str)
-                    record_data_dict = KSMAppShareCommand.record_data_as_dict(record)
-                    row = ['RECORD', uid_str, record_data_dict.get('title')]
-                elif sht == 'SHT_FOLDER':
-                    cached_sf = params.shared_folder_cache[uid_str]
-                    shf_name = cached_sf.get('name_unencrypted')
-                    # shf_num_of_records = len(cached_sf.get('records'))
-
-                    row = ['FOLDER', uid_str, shf_name]
-                else:
-                    logging.warning("Unknown Share Type %s" % sht)
-                    continue
-
-                shares_table.append(row)
-
-            shares_table.sort(key=lambda x: x[2].lower())
-            dump_report_data(shares_table, shares_table_fields, fmt='table')
+            return
         else:
-            print('\tNo shared secrets to this app')
+            for ai in get_app_info_rs.appInfo:
+
+                if len(ai.clients) > 0:
+                    clients_table_fields = ['ID', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
+                                            'IP Address']
+                    clients_table = []
+                    for c in ai.clients:
+                        id = c.id
+                        client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+                        created_on = ms_to_str(c.createdOn)
+                        first_access = '-' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
+                        last_access = '-' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
+                        lock_ip = 'Enabled' if c.lockIp else 'Disabled'
+                        ip_address = c.ipAddress
+                        # public_key = c.publicKey
+
+                        row = [id, client_id, created_on, first_access, last_access, lock_ip, ip_address]
+
+                        clients_table.append(row)
+
+                    clients_table.sort(key=lambda x: x[2].lower())
+
+                    dump_report_data(clients_table, clients_table_fields, fmt='table')
+                else:
+                    print('\tNo clients registered for this app')
+
+                print("\nSHARES\n--------")
+
+                if ai.shares:
+
+                    recs = params.record_cache
+
+                    shares_table_fields = ['Share Type', 'UID', 'Title']
+                    shares_table = []
+
+                    for s in ai.shares:
+
+                        uid_str = CommonHelperMethods.bytes_to_url_safe_str(s.secretUid)
+                        sht = ApplicationShareType.Name(s.shareType)
+
+                        if sht == 'SHT_RECORD':
+                            record = recs.get(uid_str)
+                            record_data_dict = KSMAppShareCommand.record_data_as_dict(record)
+                            row = ['RECORD', uid_str, record_data_dict.get('title')]
+                        elif sht == 'SHT_FOLDER':
+                            cached_sf = params.shared_folder_cache[uid_str]
+                            shf_name = cached_sf.get('name_unencrypted')
+                            # shf_num_of_records = len(cached_sf.get('records'))
+
+                            row = ['FOLDER', uid_str, shf_name]
+                        else:
+                            logging.warning("Unknown Share Type %s" % sht)
+                            continue
+
+                        shares_table.append(row)
+
+                    shares_table.sort(key=lambda x: x[2].lower())
+                    dump_report_data(shares_table, shares_table_fields, fmt='table')
+                else:
+                    print('\tNo shared secrets to this app')
 
     @staticmethod
     def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type, is_editable = False):
