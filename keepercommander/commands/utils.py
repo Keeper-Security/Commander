@@ -642,40 +642,45 @@ class KSMAppShareCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        uid = kwargs['secret'] if 'secret' in kwargs else None
-        app_name = kwargs['app'] if 'app' in kwargs else None
+        secret_uid = kwargs['secret'] if 'secret' in kwargs else None
+        app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
         is_editable_str = kwargs.get('editable')
 
         is_editable = bool(strtobool(is_editable_str))
 
         app_record_uid = None
 
-        if app_name:
-            rec_cache_val = KSMAppShareCommand.get_app_record(params, app_name)
+        if app_name_or_uid:
+            rec_cache_val = KSMAppShareCommand.get_app_record(params, app_name_or_uid)
+
+            if rec_cache_val is None:
+                logging.warning('Application "%s" not found.' % app_name_or_uid)
+                return
+
             app_record_uid = rec_cache_val.get('record_uid')
             r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
             app_record = json.loads(r_unencr_json_data)
 
-        if not app_name and not uid:
+        if not app_name_or_uid and not secret_uid:
             KSMAppShareCommand.print_all_apps_records(params)
             return
-        elif app_name and not uid:
+        elif app_name_or_uid and not secret_uid:
             KSMAppShareCommand.get_and_print_app_info(params, app_record_uid)
             return
 
-        if api.is_shared_folder(params, uid):
-            cached_sf = params.shared_folder_cache[uid]
+        if api.is_shared_folder(params, secret_uid):
+            cached_sf = params.shared_folder_cache[secret_uid]
             shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
             share_type = 'SHT_FOLDER'
             share_key = shared_folder_key_unencrypted
 
         else:
             # TODO: Should we also search shared records as well, not just owned once?
-            if uid not in params.record_cache:
-                logging.warning('Record "%s" not found.' % uid)
+            if secret_uid not in params.record_cache:
+                logging.warning('Record "%s" not found.' % secret_uid)
                 return
 
-            rec = params.record_cache[uid]
+            rec = params.record_cache[secret_uid]
             share_type = 'SHT_RECORD'
             share_key = rec['record_key_unencrypted']
 
@@ -686,7 +691,7 @@ class KSMAppShareCommand(Command):
             params=params,
             app_uid=app_record_uid,
             master_key=master_key,
-            secret_uid=uid,
+            secret_uid=secret_uid,
             share_key_decrypted=share_key,
             share_type=share_type,
             is_editable=is_editable
@@ -832,16 +837,16 @@ class KSMAppShareCommand(Command):
         return True
 
     @staticmethod
-    def get_app_record(params, app_name):
+    def get_app_record(params, app_name_or_uid):
 
         for rec_cache_val in params.record_cache.values():
 
             if rec_cache_val.get('version') == 5:
-
+                r_uid = rec_cache_val.get('record_uid')
                 r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
                 r_unencr_dict = json.loads(r_unencr_json_data)
 
-                if r_unencr_dict.get('title') == app_name:
+                if r_unencr_dict.get('title') == app_name_or_uid or r_uid == app_name_or_uid:
                     return rec_cache_val
 
         return None
