@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# This helped sift through the warnings to keep and eliminate.  It's not needed normally, but it does serve as documentation
+# of what pylint warnings we do care about.
+
+grep -F -v '*************' \
+	| grep -F -v '(no-member)' \
+	| grep -F -v '(unused-variable)' \
+	| grep -F -v '(import-error)' \
+	| grep -F -v '(unsubscriptable-object)' \
+	| grep -F -v '(unsupported-membership-test)' \
+	| grep -F -v '(redefined-outer-name)' \
+	| grep -F -v '(arguments-renamed)' \
+	| grep -F -v '(not-callable)' \
+	| grep -F -v '(anomalous-backslash-in-string)' \
+	| grep -F -v '(deprecated-method)' \
+	| grep -F -v '(trailing-comma-tuple)' \
+	| grep -F -v '(not-an-iterable)' \
+	| grep -F -v '(signature-differs)' \
+	| grep -F -v '(assignment-from-none)' \
+	| grep -F -v '(c-extension-no-member)' \
+	| grep -F -v '(unreachable)' \
+	| grep -F -v '(function-redefined)' \
+	| grep -F -v '(undefined-variable)' \
+	| grep -F -v '(raising-bad-type)' \
+	| grep -F -v '(expression-not-assigned)' \
+

@@ -54,6 +54,13 @@ If you need any assistance or require specific functionality not supported in Co
 * Schedule and automate commands
 * Initiate remote connections (such as SSH and RDP)
 
+### Binary Installation - Mac and Windows
+
+We now provide customers with a simple binary installer for Mac and Windows.
+
+[View Releases](https://github.com/Keeper-Security/Commander/releases)
+
+
 ### Python Installation - Linux and Mac
 
 1. Get Python 3 from [python.org](https://www.python.org).
@@ -323,7 +330,7 @@ _Note:_ Some commands accept record or shared folder UID parameter. UID values m
 
 * ```cd``` Change current folder
 
-* ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format.
+* ```get``` Retrieve and display specified Keeper Record/Folder/Team in printable or JSON format. NOTE: If the Record UID starts with a dash, make sure to use "--" in front of the UID parameter. For example: get -- -xxxxxxxxxxxxxx
 
 * ```find-password``` or ```clipboard-copy``` Copy the specified Keeper Record password field to the system output or clipboard
   accordingly. Command accepts record UID or record path. If record is not found then command matches records by title.

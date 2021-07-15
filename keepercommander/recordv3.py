@@ -337,6 +337,11 @@ class RecordV3:
       '$id': 'text',
       'type': 'text'
     },
+    # 2021-06-24 One RT added new FT 'secret' - type is yet unknown
+    'secret': {
+      '$id': 'secret',
+      'type': 'text'
+    },
     'title': {
       '$id': 'title',
       'type': 'text'
@@ -390,7 +395,7 @@ class RecordV3:
       '$id': 'date',
       'type': 'date'
     },
-    # 2021-06-18 One RT added expirationDate probably just a date value
+    # 2021-06-18 One RT added new FT expirationDate probably just a date value
     'expirationDate': {
       '$id': 'expirationDate',
       'type': 'date'
