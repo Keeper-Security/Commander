@@ -75,6 +75,7 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
+    # commands['ksm'] = KSMCommand()
     commands['ksm-app-create'] = KSMAppCreateCommand()
     commands['ksm-app-share'] = KSMAppShareCommand()
     commands['ksm-app-add-client'] = KSMAppClientAdd()
@@ -86,9 +87,8 @@ def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
     aliases['v'] = 'version'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, version_parser,
-              app_share_parser, app_share_registration_parser,
-              # app_info_parser
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
+              version_parser, ksm_app_create_parser, app_share_registration_parser, app_client_registration_parser
               ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
@@ -155,18 +155,18 @@ help_parser.add_argument('command', action='store', type=str, help='Commander\'s
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
-app_share_parser = argparse.ArgumentParser(prog='app-share', description='One-Time Binding App Token (BAT) command')
-app_share_parser.add_argument('--uid', type=str, action='store', help='Record UID')
-app_share_parser.add_argument('--app-name', type=str, action='store', help='Application Name')
-app_share_parser.error = raise_parse_exception
-app_share_parser.exit = suppress_exit
+# ksm_parser = argparse.ArgumentParser(prog='ksm', description='KSM Applications')
+# ksm_parser.add_argument('entity', type=str, action='store', help='Entity: app, client, share')
+# ksm_parser.add_argument('action', type=str, action='store', help='Entity: app, client, share')
+# ksm_parser.error = raise_parse_exception
+# ksm_parser.exit = suppress_exit
 
 ksm_app_create_parser = argparse.ArgumentParser(prog='ksm-app-create', description='Create new KSM Application')
-ksm_app_create_parser.add_argument('name', type=str, action='store', help='')
+ksm_app_create_parser.add_argument('name', type=str, action='store', help='Application name')
 ksm_app_create_parser.error = raise_parse_exception
 ksm_app_create_parser.exit = suppress_exit
 
-app_share_registration_parser = argparse.ArgumentParser(prog='ksm-app-share', description='Add a record or a Shared Folder to the App')
+app_share_registration_parser = argparse.ArgumentParser(prog='ksm-app-share', description='Add a record or a Shared Folder to the KSM Application')
 app_share_registration_parser.add_argument('--secret', '-s', type=str, action='store',
                                            help='Record UID')   # TODO: Make it an array
 app_share_registration_parser.add_argument('--app', '-a', type=str, action='store',
@@ -178,24 +178,17 @@ app_share_registration_parser.error = raise_parse_exception
 app_share_registration_parser.exit = suppress_exit
 
 
-app_client_registration_parser = argparse.ArgumentParser(prog='ksm-app-add-client', description='Create One-Time Client Key(s)')
+app_client_registration_parser = argparse.ArgumentParser(prog='ksm-app-add-client', description='Add a new Client to KSM Application')
 app_client_registration_parser.add_argument('app', type=str, action='store', help='Application Name or UID')
 app_client_registration_parser.add_argument('--count', '-c', type=int, dest='count', action='store', help='Number of tokens to return', default=1)
 app_client_registration_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store', help='Lock IP Address', default='false')
+app_client_registration_parser.add_argument('--first-access-expires-in', '-e', type=int, dest='firstAccessExpiresIn', action='store', help='Time for the first request to expire in minutes from the time when this command ran. Maximum 1440 minutes (24 hrs).', default=60)
 # app_client_registration_parser.add_argument('add-share')
 app_client_registration_parser.error = raise_parse_exception
 app_client_registration_parser.exit = suppress_exit
 
-# app_info_parser = argparse.ArgumentParser(prog='app-share-info', description='?????')
-# app_info_parser.add_argument('uids', nargs='*', type=str, action='store', help='Application UID')
-# # app_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-# #                                     default='table', help='output format. applicable to users, teams, and roles.')
-# # app_info_parser.add_argument('--output', dest='output', action='store',
-# #                                     help='output file name. (ignored for table format)')
-# app_info_parser.error = raise_parse_exception
-# app_info_parser.exit = suppress_exit
 
-version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
+version_parser = argparse.ArgumentParser(prog='version|v', description='Displays version of the installed Commander.')
 version_parser.error = raise_parse_exception
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.exit = suppress_exit
@@ -623,6 +616,29 @@ class CheckEnforcementsCommand(Command):
                     del params.settings['share_account_to']
 
 
+# class KSMCommand(Command):
+#
+#     def get_parser(self):
+#         return ksm_parser
+#
+#     def execute(self, params, **kwargs):
+#
+#         entity = kwargs.get('entity')
+#         action = kwargs.get('action')
+#
+#         rs = communicate_rest(params, None, 'vault/get_applications_summary')
+#
+#
+#         get_apps_rs = GetApplicationsSummaryResponse()
+#         get_apps_rs.ParseFromString(rs)
+#
+#
+#
+#         apps_summary = get_apps_rs.applicationSummary
+#
+#         print(apps_summary)
+
+
 class KSMAppCreateCommand(Command):
 
     def get_parser(self):
@@ -986,11 +1002,12 @@ class KSMAppClientAdd(Command):
     def execute(self, params, **kwargs):
 
         app_name = kwargs.get('app') or None
-        count = kwargs['count']
+        count = kwargs.get('count')
 
-        lock_ip = kwargs['lockIp']
+        lock_ip = kwargs.get('lockIp')
 
         is_ip_locked = bool(strtobool(lock_ip))
+        firstAccessExpireOn = kwargs.get('firstAccessExpiresIn')
 
         if not app_name:
             raise Exception("No app provided")
@@ -1019,6 +1036,7 @@ class KSMAppClientAdd(Command):
             rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(rec_cache_val.get('record_uid'))
             rq.encryptedAppKey = encrypted_master_key
             rq.lockIp = is_ip_locked
+            rq.firstAccessExpireOn = firstAccessExpireOn
             rq.clientId = client_id
 
             api_request_payload = ApiRequestPayload()
