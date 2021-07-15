@@ -7,7 +7,7 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
-
+import logging
 import os
 import random
 import string
@@ -16,9 +16,23 @@ import string
 def randomSample(sampleLength=0, sampleString=''):
     sample = ''
 
+    use_secrets = False
+
+    try:
+        # Older version of Python (before 3.6) don't have this module.
+        # If not installed, fall back to the original version of the code
+        import secrets
+        logging.debug("module 'secrets' is installed")
+        use_secrets = True
+    except ModuleNotFoundError:
+        logging.warning("module 'secrets' is not installed")
+
     for i in range(sampleLength):
-        pos = int.from_bytes(os.urandom(2), 'big') % len(sampleString)
-        sample += sampleString[pos]
+        if use_secrets:
+            sample += secrets.choice(sampleString)
+        else:
+            pos = int.from_bytes(os.urandom(2), 'big') % len(sampleString)
+            sample += sampleString[pos]
 
     return sample
 

@@ -54,6 +54,13 @@ If you need any assistance or require specific functionality not supported in Co
 * Schedule and automate commands
 * Initiate remote connections (such as SSH and RDP)
 
+### Binary Installation - Mac and Windows
+
+We now provide customers with a simple binary installer for Mac and Windows.
+
+[View Releases](https://github.com/Keeper-Security/Commander/releases)
+
+
 ### Python Installation - Linux and Mac
 
 1. Get Python 3 from [python.org](https://www.python.org).
