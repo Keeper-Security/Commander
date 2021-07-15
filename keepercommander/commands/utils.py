@@ -19,6 +19,7 @@ import datetime
 import getpass
 import sys
 import platform
+from time import time
 from distutils.util import strtobool
 
 import requests
@@ -1009,6 +1010,10 @@ class KSMAppClientAdd(Command):
         is_ip_locked = bool(strtobool(lock_ip))
         firstAccessExpireOn = kwargs.get('firstAccessExpiresIn')
 
+        curr_ms = int(time() * 1000)
+
+        first_access_expire_on_ms = curr_ms + (firstAccessExpireOn * 1000)
+
         if not app_name:
             raise Exception("No app provided")
 
@@ -1036,7 +1041,7 @@ class KSMAppClientAdd(Command):
             rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(rec_cache_val.get('record_uid'))
             rq.encryptedAppKey = encrypted_master_key
             rq.lockIp = is_ip_locked
-            rq.firstAccessExpireOn = firstAccessExpireOn
+            rq.firstAccessExpireOn = first_access_expire_on_ms
             rq.clientId = client_id
 
             api_request_payload = ApiRequestPayload()

@@ -445,7 +445,7 @@ def sync_down(params):
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': ['sfheaders', 'sfrecords', 'sfusers', 'teams', 'folders', 'typed_record']
+        'include': ['sfheaders', 'sfrecords', 'sfusers', 'teams', 'folders', 'typed_record', 'app_record']
     }
     response_json = communicate(params, rq)
 
