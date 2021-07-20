@@ -50,7 +50,6 @@ from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
-# from ..loginv3 import LoginV3API, CommonHelperMethods
 from .. import __version__
 from ..versioning import is_binary_app, is_up_to_date_version
 
@@ -80,7 +79,6 @@ def register_commands(commands):
     commands['ksm-app-create'] = KSMAppCreateCommand()
     commands['ksm-app-share'] = KSMAppShareCommand()
     commands['ksm-app-add-client'] = KSMAppClientAdd()
-    # commands['app-share-info'] = AppInfoCommand()
     commands['version'] = VersionCommand()
 
 
@@ -94,6 +92,14 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
+
+available_ksm_commands = "\tView Apps              - " + bcolors.OKGREEN + "ksm app list" + bcolors.ENDC + "\n" \
+                         "\tGet App by UID or Name - " + bcolors.OKGREEN + "ksm app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
+                         "\tCreate App             - " + bcolors.OKGREEN + "ksm app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
+                         "\tAdd Share to the App   - " + bcolors.OKGREEN + "kms share add -a " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "-s " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" + bcolors.OKGREEN + " -e " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
+                         "\tAdd Client to the App  - " + bcolors.OKGREEN + "ksm client add -a " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "-x " + bcolors.OKBLUE + "[TIME] " + bcolors.OKGREEN + "-l " + bcolors.OKBLUE + "[IP_LOCK] " + bcolors.OKGREEN + "-c " + bcolors.OKBLUE + "[COUNT]" + bcolors.ENDC + "\n" \
+                         "\t\tNote: if your UID contains dash (-) in the beginning, the value should be wrapped in quoted and appended with equal sign.\n" \
+                         "\t\t      " + bcolors.BOLD + "kms share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -156,23 +162,23 @@ help_parser.add_argument('command', action='store', type=str, help='Commander\'s
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
-# - kms add share APP-NAME-OR-UID  SECRET-OR-SF-UID
-# - ksm add client APP-NAME-OR-UID                  TIME IP_LOCK
 
-
-ksm_parser = argparse.ArgumentParser(prog='ksm', description='KSM Applications')
+ksm_parser = argparse.ArgumentParser(prog='ksm', description='KSM Applications', usage="\n" + available_ksm_commands)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*", help='Action: list')
 ksm_parser.add_argument('--secret', '-s', type=str, action='store', required=False,
                                            help='Record UID')   # TODO: Make it an array
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
                                            help='Application Name or UID')
-ksm_parser.add_argument('--first-access-expires-in', '-x', type=int, dest='firstAccessExpiresIn', action='store', help='Time for the first request to expire in minutes from the time when this command ran. Maximum 1440 minutes (24 hrs).', default=60)
+ksm_parser.add_argument('--first-access-expires-in', '-x', type=int, dest='firstAccessExpiresIn', action='store',
+                        help='Time for the first request to expire in minutes from the time when this command ran. Maximum 1440 minutes (24 hrs). Default: 60',
+                        default=60)
 
-ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store', help='Number of tokens to return',
-                                            default=1)
+ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
+                        help='Number of tokens to return. Default: 1', default=1)
 ksm_parser.add_argument('--editable', '-e', type=str, action='store', required=False,
-                                           help='Is this share going to be editable or not', default='false')
-ksm_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store', help='Lock IP Address', default='false')
+                        help='Is this share going to be editable or not. Default: false', default='false')
+ksm_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store',
+                        help='Lock IP Address. Default: false', default='false')
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -645,28 +651,22 @@ class KSMCommand(Command):
 
         if len(ksm_command) == 0:
             print("Keeper Secrets Management. Available commands:")
-            print("\tView Apps                   - " + bcolors.OKGREEN + "ksm list apps" + bcolors.ENDC + "\n" +
-                "\tView Clients (NA)           - " + bcolors.OKGREEN + "ksm list clients" + bcolors.ENDC + "\n" +
-                "\tGet App by UID or Name      - " + bcolors.OKGREEN + "ksm get app [UID or NAME]" + bcolors.ENDC + "\n" +
-                "\tGet Client by ID (NA)       - " + bcolors.OKGREEN + "ksm get client [UID or NAME]" + bcolors.ENDC + "\n" +
-                "\tCreate App                  - " + bcolors.OKGREEN + "ksm create app [NAME]" + bcolors.ENDC + "\n" +
-                "\tAdd Share to the App        - " + bcolors.OKGREEN + "kms add share -a [APP NAME or APP UID] -s [SECRET UID or SHARED FODLER UID]" + bcolors.ENDC + "\n" +
-                "\tAdd Client to the App       - " + bcolors.OKGREEN + "ksm add client -a [APP NAME or APP UID] -x [TIME] -l [IP_LOCK] -c [COUNT]" + bcolors.ENDC + "\n"
-            )
+            print(available_ksm_commands)
             return
 
-        ksm_action = ksm_command[0]
-        ksm_obj = ksm_command[1]
+        ksm_obj = ksm_command[0]
+        ksm_action = ksm_command[1] if len(ksm_command) > 1 else None
 
-        if ksm_action == 'list' and ksm_obj in ['app', 'apps']:
+        if ksm_obj == 'apps' or \
+                (ksm_obj in ['app', 'apps'] and ksm_action == 'list'):
             KSMAppShareCommand.print_all_apps_records(params)
             return
 
-        if ksm_action == 'list' and ksm_obj in ['client', 'clients']:
-            print("Listing clients is not available")
+        if ksm_obj == 'clients' or (ksm_obj in ['client', 'clients'] and ksm_action == 'list'):
+            print(bcolors.WARNING + "Listing clients is not available" + bcolors.ENDC)
             return
 
-        if ksm_action == 'get' and ksm_obj in ['app']:
+        if ksm_obj in ['app'] and ksm_action == 'get':
 
             if len(ksm_command) != 3:
                 print(bcolors.WARNING + "Application name is required. Example: ksm get app MyApp" + bcolors.ENDC)
@@ -683,18 +683,18 @@ class KSMCommand(Command):
             KSMAppShareCommand.get_and_print_app_info(params, ksm_app.get('record_uid'))
             return
 
-        if ksm_action == 'get' and ksm_obj in ['client']:
+        if ksm_obj in ['client'] and ksm_action == 'get':
             ksm_obj_uid = ksm_command[2]
-            print("Viewing clients is not available")
+            print(bcolors.WARNING + "Viewing clients is not available" + bcolors.ENDC)
             return
 
-        if ksm_action in ['add', 'create'] and ksm_obj in ['app']:
+        if ksm_obj in ['app'] and ksm_action in ['add', 'create']:
             ksm_app_name = ksm_command[2]
             KSMAppShareCommand.add_new_v5_app(params, ksm_app_name)
             return
 
-        if ksm_action in ['add', 'create'] and ksm_obj in ['share']:
-            # kms add share APP-NAME-OR-UID SECRET-OR-SF-UID IS_EDITABLE
+        if ksm_obj in ['share'] and ksm_action in ['add', 'create']:
+
             app_name_or_uid = kwargs.get('app')
             secret_uid = kwargs.get('secret')
             is_editable_str = kwargs.get('editable')
@@ -702,8 +702,9 @@ class KSMCommand(Command):
             is_editable = bool(strtobool(is_editable_str))
 
             KSMAppShareCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
+            return
 
-        if ksm_action in ['add', 'create'] and ksm_obj in ['client']:
+        if ksm_obj in ['client'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
 
@@ -718,8 +719,10 @@ class KSMCommand(Command):
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
 
             KSMAppShareCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on)
+            return
 
-
+        print("Unknown combination of KSM commands. Available commands:")
+        print(available_ksm_commands)
 
 
 class KSMAppCreateCommand(Command):
@@ -852,7 +855,7 @@ class KSMAppShareCommand(Command):
         get_app_info_rs.ParseFromString(rs)
 
         if len(get_app_info_rs.appInfo) == 0:
-            print(bcolors.WARNING + 'No Application Information. Please create a client and share secret to this application' + bcolors.ENDC)
+            print(bcolors.WARNING + 'This app does not have shares.' + bcolors.ENDC)
             return
         else:
             print("CLIENTS\n---------")
