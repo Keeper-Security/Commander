@@ -5,6 +5,7 @@ Keeper Commander is a command-line and SDK interface to Keeper® Password Manage
 
 ### Documentation 
 To read the Keeper Commander documentation please click here:
+
 [https://docs.keeper.io/secrets-manager/commander-cli/overview](https://docs.keeper.io/secrets-manager/commander-cli/overview)
 
 ### About Keeper Security
