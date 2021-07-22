@@ -75,8 +75,8 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['sar'] = 'security-audit-report'
 
-    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
-              enterprise_team_parser,
+    for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
+              enterprise_role_parser, enterprise_team_parser,
               enterprise_push_parser,
               team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
@@ -86,6 +86,9 @@ def register_command_info(aliases, command_info):
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
+
+enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down|ed',
+                                                                          description='Download & decrypt enterprise data.')
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei',
                                                  description='Display a tree structure of your enterprise.',
@@ -283,6 +286,9 @@ def get_user_status_dict(user):
 
 
 class GetEnterpriseDataCommand(Command):
+    def get_parser(self):
+        return enterprise_data_parser
+
     def execute(self, params, **kwargs):
         api.query_enterprise(params)
 
