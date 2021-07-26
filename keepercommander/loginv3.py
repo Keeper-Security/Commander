@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 from urllib.parse import urlparse, urlunparse
 from collections import OrderedDict
@@ -119,7 +120,6 @@ class LoginV3Flow:
             elif resp.loginState == proto.REGION_REDIRECT:
                 p = urlparse(params.server)
                 new_server = urlunparse((p.scheme, resp.stateSpecificValue, '', None, None, None))
-
 
                 warn_msg = \
                     "\n'%s' has indicated that this account was originally created in a different region." \
@@ -496,6 +496,11 @@ class LoginV3Flow:
             raise NotImplementedError("Unhandled channel type %s" % channel_type)
 
         if mfa_prompt:
+            config_expiration = params.config.get('mfa_duration') or 'login'
+            mfa_expiration = \
+                proto.TWO_FA_EXP_IMMEDIATELY if config_expiration == 'login' else \
+                    proto.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
+                        proto.TWO_FA_EXP_30_DAYS
 
             prompt_str = "Enter 2FA Code"
 
@@ -506,13 +511,39 @@ class LoginV3Flow:
             elif channel_type == 'TWO_FA_CT_SMS':
                 prompt_str = prompt_str + " (use code sent to)"
 
-            otp_code: str = input('\n' + prompt_str + ': ')
+            otp_code = ''
+            show_duration = True
+            mfa_pattern = re.compile(r'2fa_duration\s*=\s*(.+)', re.IGNORECASE)
+            while not otp_code:
+                if show_duration:
+                    show_duration = False
+                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration=login|30_days|forever' \
+                        .format('Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
+                                'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
+                                'Ask Every 30 days')
+                    print(prompt_exp)
+
+                answer = input('\n' + prompt_str + ': ')
+                m_duration = re.match(mfa_pattern, answer)
+                if m_duration:
+                    show_duration = True
+                    answer = m_duration.group(1).strip().lower()
+                    if answer == 'login':
+                        mfa_expiration = proto.TWO_FA_EXP_IMMEDIATELY
+                    elif answer == '30_days':
+                        mfa_expiration = proto.TWO_FA_EXP_30_DAYS
+                    elif answer == 'forever':
+                        mfa_expiration = proto.TWO_FA_EXP_NEVER
+                    else:
+                        print('Invalid 2FA Duration: {0}'.format(answer))
+                else:
+                    otp_code = answer
 
             rs = LoginV3API.twoFactorValidateMessage(
                 params,
                 encryptedLoginToken,
                 otp_code,
-                proto.TWO_FA_EXP_IMMEDIATELY
+                mfa_expiration
             )
 
             if type(rs) == bytes:
@@ -526,6 +557,7 @@ class LoginV3Flow:
             else:
                 warning_msg = bcolors.WARNING + "Unable to verify 2FA code '" + otp_code + "'. Regenerate the code and try again." + bcolors.ENDC
                 logging.warning(warning_msg)
+
 
 class LoginV3API:
 
@@ -651,7 +683,7 @@ class LoginV3API:
                     msg = "%s.\n\n%s" % (rs['message'], permissions_error_msg)
                     raise KeeperApiError(rs['error'], msg)
                 else:
-                   raise KeeperApiError(rs['error'], rs['message'])
+                    raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
     def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
@@ -799,7 +831,6 @@ class LoginV3API:
 
         return True
 
-
     @staticmethod
     def register_device_in_region(params: KeeperParams):
         rq = proto.RegisterDeviceInRegionRequest()
@@ -807,7 +838,6 @@ class LoginV3API:
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.deviceName = CommonHelperMethods.get_device_name()
         rq.devicePublicKey = CommonHelperMethods.public_key_ecc(params)
-
 
         # TODO: refactor into util for handling Standard Rest Authentication Errors
         # try:
@@ -821,7 +851,6 @@ class LoginV3API:
         #     return False
         # else:
         #     return True
-
 
     @staticmethod
     def set_user_setting(params: KeeperParams, name: str, value: str):
@@ -976,12 +1005,11 @@ class LoginV3API:
         # Create user (will send email to the user)
         # loginv3.LoginV3API().create_user(params, email)
 
-
     @staticmethod
     def provision_user_in_enterprise(params: KeeperParams,
-                               email,
-                               node,
-                               displayname):
+                                     email,
+                                     node,
+                                     displayname):
 
         if params.enterprise:
             node_id = None
@@ -1053,7 +1081,6 @@ class CommonHelperMethods:
         #     return "win64"
         else:
             return _platform
-
 
     @staticmethod
     def public_key_ecc(params: KeeperParams):
@@ -1151,7 +1178,6 @@ class CommonHelperMethods:
             except IOError as ioe:
                 logging.warning('Error: Unable to open config file %s: %s', params.config_filename, ioe)
 
-
     @staticmethod
     def config_file_get_property_as_bytes(params: KeeperParams, key):
         val_str = CommonHelperMethods.config_file_get_property_as_str(params, key)
@@ -1160,7 +1186,6 @@ class CommonHelperMethods:
             return val_bytes
         else:
             return None
-
 
     @staticmethod
     def config_file_set_property(params: KeeperParams, key: str, val: str):
@@ -1176,7 +1201,6 @@ class CommonHelperMethods:
         params.config[key] = val
 
         logging.debug("set property: " + key + ":"+val + ".\t Conf. file: " + params.config_filename)
-
 
     @staticmethod
     def get_encrypted_device_data_key(params: KeeperParams):
@@ -1202,7 +1226,6 @@ class CommonHelperMethods:
 
         clone_code_str = CommonHelperMethods.bytes_to_url_safe_str(params.clone_code)
         CommonHelperMethods.config_file_set_property(params, "clone_code", clone_code_str)
-
 
     @staticmethod
     def generate_random_bytes(length):
