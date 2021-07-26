@@ -93,13 +93,13 @@ def register_command_info(aliases, command_info):
     command_info['sync-down|d'] = 'Download & decrypt data'
 
 
-available_ksm_commands = "\tView Apps              - " + bcolors.OKGREEN + "ksm app list" + bcolors.ENDC + "\n" \
-                         "\tGet App by UID or Name - " + bcolors.OKGREEN + "ksm app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
-                         "\tCreate App             - " + bcolors.OKGREEN + "ksm app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
-                         "\tAdd Share to the App   - " + bcolors.OKGREEN + "kms share add -a " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "-s " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" + bcolors.OKGREEN + " -e " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
-                         "\tAdd Client to the App  - " + bcolors.OKGREEN + "ksm client add -a " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "-x " + bcolors.OKBLUE + "[TIME] " + bcolors.OKGREEN + "-l " + bcolors.OKBLUE + "[IP_LOCK] " + bcolors.OKGREEN + "-c " + bcolors.OKBLUE + "[COUNT]" + bcolors.ENDC + "\n" \
-                         "\t\tNote: if your UID contains dash (-) in the beginning, the value should be wrapped in quoted and appended with equal sign.\n" \
-                         "\t\t      " + bcolors.BOLD + "kms share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
+available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "ksm app list" + bcolors.ENDC + "\n" \
+                         "  Get App               - " + bcolors.OKGREEN + "ksm app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
+                         "  Create App            - " + bcolors.OKGREEN + "ksm app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
+                         "  Add Share to the App  - " + bcolors.OKGREEN + "kms share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
+                         "  Add Client to the App - " + bcolors.OKGREEN + "ksm client add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--first-access-expires-in " + bcolors.OKBLUE + "[TIME] " + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[IP_LOCK] " + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[COUNT]" + bcolors.ENDC + "\n" \
+                         "    Note: if UID you are using contains dash (-) in the beginning, the value should be wrapped in quoted and prepended with an equal sign.\n" \
+                         "          " + bcolors.BOLD + "kms share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -178,7 +178,7 @@ ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
 ksm_parser.add_argument('--editable', '-e', type=str, action='store', required=False,
                         help='Is this share going to be editable or not. Default: false', default='false')
 ksm_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store',
-                        help='Lock IP Address. Default: false', default='false')
+                        help='Lock IP Address. Default: true', default='true')
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -669,7 +669,7 @@ class KSMCommand(Command):
         if ksm_obj in ['app'] and ksm_action == 'get':
 
             if len(ksm_command) != 3:
-                print(bcolors.WARNING + "Application name is required. Example: ksm get app MyApp" + bcolors.ENDC)
+                print(bcolors.WARNING + "Application name is required.\n  Example: ksm get app MyApp" + bcolors.ENDC)
                 return
 
             ksm_app_uid_or_name = ksm_command[2]
@@ -677,7 +677,7 @@ class KSMCommand(Command):
             ksm_app = KSMAppShareCommand.get_app_record(params, ksm_app_uid_or_name)
 
             if not ksm_app:
-                print((bcolors.WARNING + "Application %s not found." + bcolors.ENDC) % ksm_app_uid_or_name)
+                print((bcolors.WARNING + "Application '%s' not found." + bcolors.ENDC) % ksm_app_uid_or_name)
                 return
 
             KSMAppShareCommand.get_and_print_app_info(params, ksm_app.get('record_uid'))
@@ -710,6 +710,7 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
+                print("  kms share add --app [APP NAME or APP UID] --secret [SECRET UID or SHARED FODLER UID] --editable [true or false]")
                 return
 
             count = kwargs.get('count')
@@ -841,7 +842,10 @@ class KSMAppShareCommand(Command):
 
         apps_table.sort(key=lambda x: x[0].lower())
 
-        dump_report_data(apps_table, apps_table_fields, fmt='table')
+        if len(apps_table) == 0:
+            print(bcolors.WARNING + 'No Applications to list.' + bcolors.ENDC + "\nTo create new application, use command 'ksm app create [NAME]'\n")
+        else:
+            dump_report_data(apps_table, apps_table_fields, fmt='table')
 
     @staticmethod
     def get_and_print_app_info(params, uid):
@@ -858,7 +862,7 @@ class KSMAppShareCommand(Command):
             print(bcolors.WARNING + 'This app does not have shares.' + bcolors.ENDC)
             return
         else:
-            print("CLIENTS\n---------")
+            print(bcolors.BOLD + "CLIENTS\n" + bcolors.ENDC)
             for ai in get_app_info_rs.appInfo:
 
                 if len(ai.clients) > 0:
@@ -885,7 +889,7 @@ class KSMAppShareCommand(Command):
                 else:
                     print('\tNo clients registered for this app')
 
-                print("\nSHARES\n--------")
+                print(bcolors.BOLD + "\nSHARES\n" + bcolors.ENDC)
 
                 if ai.shares:
 
@@ -993,7 +997,7 @@ class KSMAppShareCommand(Command):
         return search_results_rec_data
 
     @staticmethod
-    def add_new_v5_app(params, app_name, force_to_add):
+    def add_new_v5_app(params, app_name, force_to_add=False):
 
         logging.debug("Creating new KSM Application named '%s'" % app_name)
 
