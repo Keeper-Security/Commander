@@ -927,26 +927,6 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 else:
                     print('Unexpected result: ', rs)
                 continue
-                # I've seen two errors from this code:
-                # This one was for no authentication data:
-                # {'additional_info': 'no session token supplied',
-                #  'error': 'session_token',
-                #  'location': 'session_token_filter',
-                #  'message': 'session_token'}
-                #
-                # This one was for an intentionally-bad URI
-                # {'error': 'invalid_path_or_method',
-                #              'location': 'default exception manager - NotFoundException',
-                #              'message': 'An error has occurred.  Please check if an update is available '
-                #              'for your device on the App Store or the Keeper Security website.  '
-                #              'If you continue to receive this error, please email '
-                #              'support@keepersecurity.com or contact us at '
-                #              'https://keepersecurity.com/support.html and let us know that '
-                #              'error code (bad_path) has occurred.',
-                #  'path': 'https://dev.keepersecurity.com/api/rest/xenterprise/set_restrict_visibility, '
-                #          'POST, python-requests/2.26.0'}
-                #
-                # When things are happy, rs is b''
         else:
             for node_name in unmatched_nodes:
                 logging.warning('Node \'%s\' is not found: Skipping', node_name)
