@@ -45,7 +45,7 @@ from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, EnterpriseUserDataKeys)
+                             ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
 def register_commands(commands):
@@ -122,6 +122,7 @@ enterprise_node_parser.add_argument('--add', dest='add', action='store_true', he
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
 enterprise_node_parser.add_argument('--name', dest='displayname', action='store', help='set node display name')
 enterprise_node_parser.add_argument('--delete', dest='delete', action='store_true', help='delete node')
+enterprise_node_parser.add_argument('--toggle-isolated', dest='toggle_isolated', action='store_true', help='Render node invisible')
 enterprise_node_parser.add_argument('node', type=str, nargs='+', help='Node Name or ID. Can be repeated.')
 enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
@@ -900,6 +901,52 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     'encrypted_data': encrypted_data
                 }
                 request_batch.append(rq)
+        elif kwargs.get('toggle_isolated'):
+            if not matched_nodes:
+                raise CommandError('enterprise-node', 'No nodes to toggle.')
+
+            for mn in matched_nodes:
+                node_id = mn['node_id']
+                data = mn['data']
+                displayname = data['displayname']
+                request = SetRestrictVisibilityRequest()
+                request.nodeId = node_id
+                api_request_payload = proto.ApiRequestPayload()
+                api_request_payload.payload = request.SerializeToString()
+                api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+                rs = rest_api.execute_rest(params.rest_context, 'enterprise/set_restrict_visibility', api_request_payload)
+                # FIXME: Should this error checking/reporting be in a reusuble callable instead?
+                if rs == b'':
+                    print('good result: {}'.format(displayname))
+                elif isinstance(rs, dict):
+                    if 'error' in rs:
+                        print('bad result: {}:'.format(displayname))
+                        print('error: {}'.format(rs['error']))
+                        if 'additional_info' in rs:
+                            print('additional_info: {}'.format(rs['additional_info']))
+                else:
+                    print('Unexpected result: ', rs)
+                continue
+                # I've seen two errors from this code:
+                # This one was for no authentication data:
+                # {'additional_info': 'no session token supplied',
+                #  'error': 'session_token',
+                #  'location': 'session_token_filter',
+                #  'message': 'session_token'}
+                #
+                # This one was for an intentionally-bad URI
+                # {'error': 'invalid_path_or_method',
+                #              'location': 'default exception manager - NotFoundException',
+                #              'message': 'An error has occurred.  Please check if an update is available '
+                #              'for your device on the App Store or the Keeper Security website.  '
+                #              'If you continue to receive this error, please email '
+                #              'support@keepersecurity.com or contact us at '
+                #              'https://keepersecurity.com/support.html and let us know that '
+                #              'error code (bad_path) has occurred.',
+                #  'path': 'https://dev.keepersecurity.com/api/rest/xenterprise/set_restrict_visibility, '
+                #          'POST, python-requests/2.26.0'}
+                #
+                # When things are happy, rs is b''
         else:
             for node_name in unmatched_nodes:
                 logging.warning('Node \'%s\' is not found: Skipping', node_name)
