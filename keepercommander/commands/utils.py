@@ -96,10 +96,10 @@ def register_command_info(aliases, command_info):
 available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "ksm app list" + bcolors.ENDC + "\n" \
                          "  Get App               - " + bcolors.OKGREEN + "ksm app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
                          "  Create App            - " + bcolors.OKGREEN + "ksm app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
-                         "  Add Share to the App  - " + bcolors.OKGREEN + "kms share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
+                         "  Add Share to the App  - " + bcolors.OKGREEN + "ksm share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
                          "  Add Client to the App - " + bcolors.OKGREEN + "ksm client add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--first-access-expires-in " + bcolors.OKBLUE + "[TIME] " + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[IP_LOCK] " + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[COUNT]" + bcolors.ENDC + "\n" \
                          "    Note: if UID you are using contains dash (-) in the beginning, the value should be wrapped in quoted and prepended with an equal sign.\n" \
-                         "          " + bcolors.BOLD + "kms share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
+                         "          " + bcolors.BOLD + "ksm share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -710,7 +710,7 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print("  kms share add --app [APP NAME or APP UID] --secret [SECRET UID or SHARED FODLER UID] --editable [true or false]")
+                print("  ksm share add --app [APP NAME or APP UID] --secret [SECRET UID or SHARED FODLER UID] --editable [true or false]")
                 return
 
             count = kwargs.get('count')
