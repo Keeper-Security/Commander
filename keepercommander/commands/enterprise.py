@@ -45,7 +45,7 @@ from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
 from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, EnterpriseUserDataKeys)
+                             ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
 def register_commands(commands):
@@ -75,8 +75,8 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['sar'] = 'security-audit-report'
 
-    for p in [enterprise_info_parser, enterprise_node_parser, enterprise_user_parser, enterprise_role_parser,
-              enterprise_team_parser,
+    for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
+              enterprise_role_parser, enterprise_team_parser,
               enterprise_push_parser,
               team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
@@ -86,6 +86,9 @@ def register_command_info(aliases, command_info):
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
+
+enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down|ed',
+                                                                          description='Download & decrypt enterprise data.')
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei',
                                                  description='Display a tree structure of your enterprise.',
@@ -119,6 +122,7 @@ enterprise_node_parser.add_argument('--add', dest='add', action='store_true', he
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
 enterprise_node_parser.add_argument('--name', dest='displayname', action='store', help='set node display name')
 enterprise_node_parser.add_argument('--delete', dest='delete', action='store_true', help='delete node')
+enterprise_node_parser.add_argument('--toggle-isolated', dest='toggle_isolated', action='store_true', help='Render node invisible')
 enterprise_node_parser.add_argument('node', type=str, nargs='+', help='Node Name or ID. Can be repeated.')
 enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
@@ -283,6 +287,9 @@ def get_user_status_dict(user):
 
 
 class GetEnterpriseDataCommand(Command):
+    def get_parser(self):
+        return enterprise_data_parser
+
     def execute(self, params, **kwargs):
         api.query_enterprise(params)
 
@@ -894,6 +901,32 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     'encrypted_data': encrypted_data
                 }
                 request_batch.append(rq)
+        elif kwargs.get('toggle_isolated'):
+            if not matched_nodes:
+                raise CommandError('enterprise-node', 'No nodes to toggle.')
+
+            for mn in matched_nodes:
+                node_id = mn['node_id']
+                data = mn['data']
+                displayname = data['displayname']
+                request = SetRestrictVisibilityRequest()
+                request.nodeId = node_id
+                api_request_payload = proto.ApiRequestPayload()
+                api_request_payload.payload = request.SerializeToString()
+                api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+                rs = rest_api.execute_rest(params.rest_context, 'enterprise/set_restrict_visibility', api_request_payload)
+                # FIXME: Should this error checking/reporting be in a reusuble callable instead?
+                if rs == b'':
+                    print('good result: {}'.format(displayname))
+                elif isinstance(rs, dict):
+                    if 'error' in rs:
+                        print('bad result: {}:'.format(displayname))
+                        print('error: {}'.format(rs['error']))
+                        if 'additional_info' in rs:
+                            print('additional_info: {}'.format(rs['additional_info']))
+                else:
+                    print('Unexpected result: ', rs)
+                continue
         else:
             for node_name in unmatched_nodes:
                 logging.warning('Node \'%s\' is not found: Skipping', node_name)
