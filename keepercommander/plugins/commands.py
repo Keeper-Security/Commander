@@ -128,6 +128,16 @@ class RotateEndpoint:
         self.record_title = record_title
         self.paths = paths
 
+    def __repr__(self):
+        return 'name: {}, type: {}, description: {}, record_uid: {}, record_title: {}, self.paths: {}'.format(
+            self.name,
+            self.type,
+            self.description,
+            self.record_uid,
+            self.record_title,
+            self.paths,
+        )
+
 
 rotate_pattern =  re.compile(r'^cmdr:plugin(:[^:]*)?$')
 rotate_desc_pattern =  re.compile(r'^cmdr:plugin:([^:]+):description$')
