@@ -76,9 +76,9 @@ def register_commands(commands):
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
     commands['ksm'] = KSMCommand()
-    commands['ksm-app-create'] = KSMAppCreateCommand()
-    commands['ksm-app-share'] = KSMAppShareCommand()
-    commands['ksm-app-add-client'] = KSMAppClientAdd()
+    commands['ksm-app-create'] = KSMAppCreateCommand()  # TODO: remove
+    commands['ksm-app-share'] = KSMAppShareCommand()    # TODO: remove
+    commands['ksm-app-add-client'] = KSMAppClientAdd()  # TODO: remove
     commands['version'] = VersionCommand()
 
 
@@ -87,7 +87,7 @@ def register_command_info(aliases, command_info):
     aliases['delete_all'] = 'delete-all'
     aliases['v'] = 'version'
     for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
-              version_parser, ksm_app_create_parser, app_share_registration_parser, app_client_registration_parser
+              version_parser, ksm_parser
               ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
@@ -96,8 +96,15 @@ def register_command_info(aliases, command_info):
 available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "ksm app list" + bcolors.ENDC + "\n" \
                          "  Get App               - " + bcolors.OKGREEN + "ksm app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
                          "  Create App            - " + bcolors.OKGREEN + "ksm app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
-                         "  Add Share to the App  - " + bcolors.OKGREEN + "ksm share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
-                         "  Add Client to the App - " + bcolors.OKGREEN + "ksm client add --app " + bcolors.OKBLUE + "[APP NAME or APP UID] " + bcolors.OKGREEN + "--first-access-expires-in " + bcolors.OKBLUE + "[TIME] " + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[IP_LOCK] " + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[COUNT]" + bcolors.ENDC + "\n" \
+                         "  Add Share to the App  - " + bcolors.OKGREEN + "ksm share add --app "+ bcolors.OKBLUE + "[APP NAME or APP UID]" \
+                                                                                                + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" \
+                                                                                                + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
+                         "  Add Client to the App - " + bcolors.OKGREEN + "ksm client add --app " \
+                                                                                                + bcolors.OKBLUE + "[APP NAME or APP UID] " \
+                                                                                                + bcolors.OKGREEN + "--first-access-expires-in-min " + bcolors.OKBLUE + "[MIN] " \
+                                                                                                + bcolors.OKGREEN + "--access-expire-in-min " + bcolors.OKBLUE + "[MIN] " \
+                                                                                                + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[TRUE] " \
+                                                                                                + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[NUM]" + bcolors.ENDC + "\n" \
                          "    Note: if UID you are using contains dash (-) in the beginning, the value should be wrapped in quoted and prepended with an equal sign.\n" \
                          "          " + bcolors.BOLD + "ksm share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
 
@@ -163,15 +170,20 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-ksm_parser = argparse.ArgumentParser(prog='ksm', description='KSM Applications', usage="\n" + available_ksm_commands)
+ksm_parser = argparse.ArgumentParser(prog='ksm', description='Keeper Secrets Management (KSM) Commands', usage="\n" + available_ksm_commands)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*", help='Action: list')
 ksm_parser.add_argument('--secret', '-s', type=str, action='store', required=False,
                                            help='Record UID')   # TODO: Make it an array
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
                                            help='Application Name or UID')
-ksm_parser.add_argument('--first-access-expires-in', '-x', type=int, dest='firstAccessExpiresIn', action='store',
-                        help='Time for the first request to expire in minutes from the time when this command ran. Maximum 1440 minutes (24 hrs). Default: 60',
+ksm_parser.add_argument('--first-access-expires-in-min', '-x', type=int, dest='firstAccessExpiresIn', action='store',
+                        help='Time for the first request to expire in minutes from the time when this command is '
+                             'executed. Maximum 1440 minutes (24 hrs). Default: 60',
                         default=60)
+ksm_parser.add_argument('--access-expire-in-min', '-o', type=int, dest='accessExpireInMin', action='store',
+                        help='Time interval that this client can access the KSM application. After this time, access '
+                             'is denied. Time is entered in minutes starting from the time when command is executed. '
+                             'Default: Not expiration')
 
 ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
                         help='Number of tokens to return. Default: 1', default=1)
@@ -179,6 +191,8 @@ ksm_parser.add_argument('--editable', '-e', type=str, action='store', required=F
                         help='Is this share going to be editable or not. Default: false', default='false')
 ksm_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store',
                         help='Lock IP Address. Default: true', default='true')
+ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
+                        help='Return Tokens', default='false')
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -206,7 +220,14 @@ app_client_registration_parser = argparse.ArgumentParser(prog='ksm-app-add-clien
 app_client_registration_parser.add_argument('app', type=str, action='store', help='Application Name or UID')
 app_client_registration_parser.add_argument('--count', '-c', type=int, dest='count', action='store', help='Number of tokens to return', default=1)
 app_client_registration_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store', help='Lock IP Address', default='false')
-app_client_registration_parser.add_argument('--first-access-expires-in', '-e', type=int, dest='firstAccessExpiresIn', action='store', help='Time for the first request to expire in minutes from the time when this command ran. Maximum 1440 minutes (24 hrs).', default=60)
+app_client_registration_parser.add_argument('--first-access-expires-in-min', '-x', type=int, dest='firstAccessExpiresIn', action='store',
+                        help='Time for the first request to expire in minutes from the time when this command is '
+                             'executed. Maximum 1440 minutes (24 hrs). Default: 60',
+                        default=60)
+app_client_registration_parser.add_argument('--access-expire-in-min', '-o', type=int, dest='accessExpireInMin', action='store',
+                        help='Time interval that this client can access the KSM application. After this time, access is'
+                             'denied. Time is entered in minutes starting from the time when command is executed. '
+                             'Default: Not expiration')
 # app_client_registration_parser.add_argument('add-share')
 app_client_registration_parser.error = raise_parse_exception
 app_client_registration_parser.exit = suppress_exit
@@ -718,9 +739,12 @@ class KSMCommand(Command):
             lock_ip = bool(strtobool(lock_ip_str))
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
+            access_expire_in_min = kwargs.get('accessExpireInMin')
 
-            KSMAppShareCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on)
-            return
+            is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
+
+            tokens = KSMAppShareCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on, access_expire_in_min)
+            return tokens if is_return_tokens else None
 
         print("Unknown combination of KSM commands. Available commands:")
         print(available_ksm_commands)
@@ -922,7 +946,7 @@ class KSMAppShareCommand(Command):
                     shares_table.sort(key=lambda x: x[2].lower())
                     dump_report_data(shares_table, shares_table_fields, fmt='table')
                 else:
-                    print('\tNo shared secrets to this app')
+                    print('\tThere are no shared secrets to this application')
 
     @staticmethod
     def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type, is_editable = False):
@@ -980,7 +1004,7 @@ class KSMAppShareCommand(Command):
 
             rec = get_record(params, record_uid)
 
-            if rec.get('version') == 3:
+            if rec.get('version') == 5:
                 data = json.loads(rec.get('data_unencrypted'))
                 rec_uid = rec.get('record_uid')
                 rec_title = data.get('title')
@@ -1051,7 +1075,7 @@ class KSMAppShareCommand(Command):
         params.sync_data = True
 
     @staticmethod
-    def add_client(params, app_name_or_uid, count, lock_ip, firstAccessExpireOn):
+    def add_client(params, app_name_or_uid, count, lock_ip, firstAccessExpireOn, access_expire_in_min):
 
         if lock_ip is str:
             is_ip_locked = bool(strtobool(lock_ip))
@@ -1061,10 +1085,16 @@ class KSMAppShareCommand(Command):
 
         first_access_expire_on_ms = curr_ms + (int(firstAccessExpireOn) * 60 * 1000)
 
+        if access_expire_in_min:
+            access_expire_on_ms = curr_ms + (int(access_expire_in_min) * 60 * 1000)
+
         if not app_name_or_uid:
             raise Exception("No app provided")
 
         rec_cache_val = KSMAppShareCommand.get_app_record(params, app_name_or_uid)
+
+        if not rec_cache_val:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
 
         r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
         app_record = json.loads(r_unencr_json_data)
@@ -1076,6 +1106,8 @@ class KSMAppShareCommand(Command):
         master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
 
         keys_str = ""
+
+        tokens = []
 
         for i in range(count):
             one_time_token = os.urandom(32)
@@ -1089,6 +1121,10 @@ class KSMAppShareCommand(Command):
             rq.encryptedAppKey = encrypted_master_key
             rq.lockIp = is_ip_locked
             rq.firstAccessExpireOn = first_access_expire_on_ms
+
+            if access_expire_in_min:
+                rq.accessExpireOn = access_expire_on_ms
+
             rq.clientId = client_id
 
             api_request_payload = ApiRequestPayload()
@@ -1108,14 +1144,25 @@ class KSMAppShareCommand(Command):
                 exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
                     first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
 
-                keys_str += ("One-Time Access Token: " + bcolors.OKGREEN + "%s" + bcolors.ENDC + " (IP Lock: %s, Expire on: %s)") % (
-                            CommonHelperMethods.bytes_to_url_safe_str(one_time_token), lock_ip_stat, exp_date_str)
+                if access_expire_in_min:
+                    app_expire_on_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                        access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
+                else:
+                    app_expire_on_str = bcolors.WARNING + "Never Expire" + bcolors.ENDC
+
+                token = CommonHelperMethods.bytes_to_url_safe_str(one_time_token)
+                tokens.append(token)
+                keys_str += ("One-Time Access Token: " + bcolors.OKGREEN + "%s" + bcolors.ENDC + " (IP Lock: %s, Token Expire on: %s, App Access Expire on: %s)") % (
+                            token, lock_ip_stat, exp_date_str, app_expire_on_str)
             if type(rs) is dict:
                 raise KeeperApiError(rs['error'], rs['message'])
 
-        print("-----------------------------------------------------------------------------------------------------------------")
+        print("-------------------------------------------------------------------------------------------------------------------------------------------------------------")
         print(keys_str)
-        print("-----------------------------------------------------------------------------------------------------------------")
+        print("-------------------------------------------------------------------------------------------------------------------------------------------------------------")
+
+
+        return tokens
 
 
 class KSMAppClientAdd(Command):
@@ -1127,8 +1174,9 @@ class KSMAppClientAdd(Command):
         count = kwargs.get('count')
         lock_ip = kwargs.get('lockIp')
         firstAccessExpireOn = kwargs.get('firstAccessExpiresIn')
+        access_expire_in_min = kwargs.get('accessExpireInMin')
 
-        KSMAppShareCommand.add_client(params, app_name, count, lock_ip, firstAccessExpireOn)
+        KSMAppShareCommand.add_client(params, app_name, count, lock_ip, firstAccessExpireOn, access_expire_in_min)
 
 
 # class AppInfoCommand(Command):
