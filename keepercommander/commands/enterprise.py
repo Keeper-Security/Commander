@@ -1869,13 +1869,20 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         node_id = None
         if kwargs.get('node'):
-            for node in params.enterprise['nodes']:
-                if kwargs['node'] in {str(node['node_id']), node['data'].get('displayname')}:
-                    node_id = node['node_id']
-                    break
-                elif not node.get('parent_id') and kwargs['node'] == params.enterprise['enterprise_name']:
-                    node_id = node['node_id']
-                    break
+            parent_node = kwargs.get('node')
+
+            if parent_node:
+                for node in params.enterprise['nodes']:
+                    if parent_node in {str(node['node_id']), node['data'].get('displayname')}:
+                        node_id = node['node_id']
+                        break
+                    elif not node.get('parent_id') and parent_node == params.enterprise['enterprise_name']:
+                        node_id = node['node_id']
+                        break
+
+                if not node_id:
+                    logging.warning("Node %s does not exist", parent_node)
+                    return
 
         matched = {}
         team_names = set()
