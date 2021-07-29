@@ -21,17 +21,6 @@ if os.name == 'posix':
 else:
     raise Exception('Not available on Windows')
 
-"""Commander Plugin for SSH Command
-   Dependencies: s
-       pip3 install pexpect
-"""
-
-
-class KeychainFailure(Exception):
-    """An exception to raise when Keychain password update fails."""
-
-    pass
-
 
 def rotate(record, newpassword):
     """
@@ -46,11 +35,17 @@ def rotate(record, newpassword):
     user = record.login
     oldpassword = record.password
 
-    port = 22
-    if hasattr(record, 'port'):
-        port = int(record.port)
-
     result = False
+
+    optional_port = record.get('cmdr:port')
+    if optional_port is None:
+        port = 22
+    else:
+        try:
+            port = int(optional_port)
+        except ValueError:
+            print('port {} could not be converted to int'.format(port))
+            return result
 
     host = record.get('cmdr:host')
 
@@ -75,36 +70,19 @@ def rotate(record, newpassword):
         s.sendline(newpassword)
         s.prompt()
 
-        pass_result = str(s.before)
+        pass_result = str(s.before).lower()
 
         if "success" in pass_result:
             logging.info("Password changed successfully")
             record.password = newpassword
             result = True
-        elif 'This tool does not update the login keychain password' in pass_result:
-            # This means we need to update keychain too. It's a macOS thing.
-            s.sendline('security set-keychain-password')
-            if s.expect('[Oo]ld [Pp]assword') != 0:
-                raise KeychainFailure
-            s.sendline(oldpassword)
-            if s.expect('[Nn]ew [Pp]assword') != 0:
-                raise KeychainFailure
-            s.sendline(newpassword)
-            if s.expect("Retype [Nn]ew.*[Pp]assword:") != 0:
-                raise KeychainFailure
-            s.sendline(newpassword)
-            index = s.expect('A default keychain could not be found')
-            if index == 0:
-                # This seems like a failure, but really it's a success; if there's no keychain to update, then we don't
-                # need to do anything further with keychain.
-                logging.info("Password changed successfully; no Keychain found")
-                record.password = newpassword
-                result = True
-            elif 1 == 2:
-                # FIXME: We should deal with a successful Keychain update here.
-                pass
-            else:
-                logging.error("Keychain change failed: {}".format(str(pass_result)))
+        elif 'this tool does not update the login keychain password' in pass_result:
+            # This is a macOS thing.  The passwd command warns about updating the keychain.  We pass a little of that
+            # up to the user.
+            logging.info("Password changed successfully")
+            logging.info("Consider updating login keychain with: security set-keychain-password ~/Library/Keychains/login-db")
+            record.password = newpassword
+            result = True
         else:
             logging.error("Password change failed: {}".format(str(pass_result)))
 
@@ -113,7 +91,5 @@ def rotate(record, newpassword):
         logging.error("Timed out waiting for response.")
     except pxssh.ExceptionPxssh as e:
         logging.error("Failed to login with ssh: {}".format(str(e)))
-    except KeychainFailure:
-        logging.error("Keychain change failed: {}".format(str(pass_result)))
 
     return result
