@@ -901,7 +901,7 @@ class RecordV3:
         result = rt_def
       else:
         logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
-                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
+                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
 
     return result
 
@@ -967,7 +967,7 @@ class RecordV3:
       try: newrtd = json.loads(rt_def)
       except: result['errors'].append('Unable to parse record type definition JSON: ' + str(rt_def))
     else:
-      result['errors'].append('Record type definition not found for type: ' + str(new_rt_name) + ' - to get list of all available record types use: record-type-info -lr')
+      result['errors'].append('Record type definition not found for type: ' + str(new_rt_name) + ' - to get list of all available record types use: record-type-info -lr')
     if result['errors']: return result
 
     rt = copy.deepcopy(r)

@@ -339,7 +339,7 @@ class RecordAddCommand(Command):
             rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
             if not rt_def:
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
-                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
+                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 return
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
@@ -723,7 +723,7 @@ class RecordEditCommand(Command):
             rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
             if not rt_def:
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
-                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
+                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
                 return
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
