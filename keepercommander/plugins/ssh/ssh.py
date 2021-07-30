@@ -38,13 +38,13 @@ def rotate(record, newpassword):
     result = False
 
     optional_port = record.get('cmdr:port')
-    if optional_port is None:
+    if not optional_port:
         port = 22
     else:
         try:
             port = int(optional_port)
         except ValueError:
-            print('port {} could not be converted to int'.format(port))
+            print('port {} could not be converted to int'.format(optional_port))
             return result
 
     host = record.get('cmdr:host')
