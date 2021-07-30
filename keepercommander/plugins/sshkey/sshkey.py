@@ -39,9 +39,9 @@ def rotate(record, newpassword):
 
     try:
         # The openssl command unfortunately fails to return a nonzero return code on private key creation failure.  :(
-        pipe = subprocess.Popen(['openssl', 'genrsa', '-aes128', '-passout', 'pass:{0}'.format(newpassword), '2048'],
+        pipe = subprocess.Popen(['openssl', 'genrsa', '-aes128', '-passout', 'stdin', '2048'],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        (output1, error1) = pipe.communicate(timeout=3)
+        (output1, error1) = pipe.communicate(input=newpassword.encode(), timeout=3)
         returncode1 = pipe.poll()
         if returncode1 != 0:
             print('Obtaining new private key using openssl failed with return code {0}: {1}'.format(returncode1, error1))
