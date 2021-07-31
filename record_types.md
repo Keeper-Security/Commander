@@ -34,6 +34,10 @@ Note: Dot notations can handle only a single field per given type - if there are
 
 ```edit -r <UID> title=NewTitleToo```
 
+```edit -r <UID> fields.login=NewLogin f.password=NewPassword```
+
+```edit -r <UID> f.name.first=Jane f.name.last=Doe```
+
 Note: To get the data as a JSON string for an existing record use ```get``` command with the following option ```--format=json``` For example to change just the title when using JSON format - just copy `data` JSON from ``get`` command then replace title only and use the modified JSON string in ```edit``` command, or use dot notation to change only the title.
 
 **Record Types Management Commands**
