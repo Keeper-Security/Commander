@@ -75,7 +75,7 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
-    commands['ksm'] = KSMCommand()
+    commands['secrets-manager'] = KSMCommand()
     commands['ksm-app-create'] = KSMAppCreateCommand()  # TODO: remove
     commands['ksm-app-share'] = KSMAppShareCommand()    # TODO: remove
     commands['ksm-app-add-client'] = KSMAppClientAdd()  # TODO: remove
@@ -86,6 +86,9 @@ def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
     aliases['v'] = 'version'
+    aliases['sm'] = 'secrets-manager'
+    aliases['secrets'] = 'secrets-manager'
+    aliases['ksm'] = 'secrets-manager'
     for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser
               ]:
@@ -93,13 +96,13 @@ def register_command_info(aliases, command_info):
     command_info['sync-down|d'] = 'Download & decrypt data'
 
 
-available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "ksm app list" + bcolors.ENDC + "\n" \
-                         "  Get App               - " + bcolors.OKGREEN + "ksm app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
-                         "  Create App            - " + bcolors.OKGREEN + "ksm app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
-                         "  Add Share to the App  - " + bcolors.OKGREEN + "ksm share add --app "+ bcolors.OKBLUE + "[APP NAME or APP UID]" \
+available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "secrets-manager app list" + bcolors.ENDC + "\n" \
+                         "  Get App               - " + bcolors.OKGREEN + "secrets-manager app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
+                         "  Create App            - " + bcolors.OKGREEN + "secrets-manager app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
+                         "  Add Secret to the App - " + bcolors.OKGREEN + "secrets-manager share add --app "+ bcolors.OKBLUE + "[APP NAME or APP UID]" \
                                                                                                 + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" \
                                                                                                 + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
-                         "  Add Client to the App - " + bcolors.OKGREEN + "ksm client add --app " \
+                         "  Add Client to the App - " + bcolors.OKGREEN + "secrets-manager client add --app " \
                                                                                                 + bcolors.OKBLUE + "[APP NAME or APP UID] " \
                                                                                                 + bcolors.OKGREEN + "--first-access-expires-in-min " + bcolors.OKBLUE + "[MIN] " \
                                                                                                 + bcolors.OKGREEN + "--access-expire-in-min " + bcolors.OKBLUE + "[MIN] " \
@@ -180,7 +183,7 @@ ksm_parser.add_argument('--first-access-expires-in-min', '-x', type=int, dest='f
                         help='Time for the first request to expire in minutes from the time when this command is '
                              'executed. Maximum 1440 minutes (24 hrs). Default: 60',
                         default=60)
-ksm_parser.add_argument('--access-expire-in-min', '-o', type=int, dest='accessExpireInMin', action='store',
+ksm_parser.add_argument('--access-expire-in-min', '-p', type=int, dest='accessExpireInMin', action='store',
                         help='Time interval that this client can access the KSM application. After this time, access '
                              'is denied. Time is entered in minutes starting from the time when command is executed. '
                              'Default: Not expiration')
@@ -714,7 +717,7 @@ class KSMCommand(Command):
             KSMAppShareCommand.add_new_v5_app(params, ksm_app_name)
             return
 
-        if ksm_obj in ['share'] and ksm_action in ['add', 'create']:
+        if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs.get('app')
             secret_uid = kwargs.get('secret')
@@ -810,6 +813,10 @@ class KSMAppShareCommand(Command):
         r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
         app_record = json.loads(r_unencr_json_data)
 
+        if api.is_regular_folder(params, secret_uid):
+            logging.warning('Trying to add a regular folder uid="%s". Only individual records or shared folders can be '
+                            'added to the application.' % secret_uid)
+            return
         if api.is_shared_folder(params, secret_uid):
             cached_sf = params.shared_folder_cache[secret_uid]
             shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')

@@ -1195,6 +1195,15 @@ def get_record(params,record_uid):
     return rec
 
 
+def is_regular_folder(params, uid):
+    uid = uid.strip()
+
+    if uid in params.folder_cache:
+        return True
+
+    return False
+
+
 def is_shared_folder(params,shared_folder_uid):
     shared_folder_uid = shared_folder_uid.strip()
 
