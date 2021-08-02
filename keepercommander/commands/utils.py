@@ -109,7 +109,7 @@ available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "secre
                                                                                                 + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[TRUE] " \
                                                                                                 + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[NUM]" + bcolors.ENDC + "\n" \
                          "    Note: if UID you are using contains dash (-) in the beginning, the value should be wrapped in quoted and prepended with an equal sign.\n" \
-                         "          " + bcolors.BOLD + "ksm share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
+                         "          " + bcolors.BOLD + "secrets-manager share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -874,7 +874,7 @@ class KSMAppShareCommand(Command):
         apps_table.sort(key=lambda x: x[0].lower())
 
         if len(apps_table) == 0:
-            print(bcolors.WARNING + 'No Applications to list.' + bcolors.ENDC + "\nTo create new application, use command 'ksm app create [NAME]'\n")
+            print(bcolors.WARNING + 'No Applications to list.' + bcolors.ENDC + "\nTo create new application, use command 'secrets-manager app create [NAME]'\n")
         else:
             dump_report_data(apps_table, apps_table_fields, fmt='table')
 
