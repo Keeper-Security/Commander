@@ -76,9 +76,6 @@ def register_commands(commands):
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
     commands['secrets-manager'] = KSMCommand()
-    commands['ksm-app-create'] = KSMAppCreateCommand()  # TODO: remove
-    commands['ksm-app-share'] = KSMAppShareCommand()    # TODO: remove
-    commands['ksm-app-add-client'] = KSMAppClientAdd()  # TODO: remove
     commands['version'] = VersionCommand()
 
 
@@ -173,7 +170,7 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-ksm_parser = argparse.ArgumentParser(prog='ksm', description='Keeper Secrets Management (KSM) Commands', usage="\n" + available_ksm_commands)
+ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands', usage="\n" + available_ksm_commands)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*", help='Action: list')
 ksm_parser.add_argument('--secret', '-s', type=str, action='store', required=False,
                                            help='Record UID')   # TODO: Make it an array
@@ -201,39 +198,6 @@ ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
 ksm_parser.error = raise_parse_exception
 ksm_parser.exit = suppress_exit
-
-ksm_app_create_parser = argparse.ArgumentParser(prog='ksm-app-create', description='Create new KSM Application')
-ksm_app_create_parser.add_argument('name', type=str, action='store', help='Application name')
-ksm_app_create_parser.error = raise_parse_exception
-ksm_app_create_parser.exit = suppress_exit
-
-app_share_registration_parser = argparse.ArgumentParser(prog='ksm-app-share', description='Add a record or a Shared Folder to the KSM Application')
-app_share_registration_parser.add_argument('--secret', '-s', type=str, action='store',
-                                           help='Record UID')   # TODO: Make it an array
-app_share_registration_parser.add_argument('--app', '-a', type=str, action='store',
-                                           help='Application Name or UID')
-app_share_registration_parser.add_argument('--editable', '-e', type=str, action='store',
-                                           help='Is this share going to be editable or not', default='false')
-# app_share_registration_parser.add_argument('add-share')
-app_share_registration_parser.error = raise_parse_exception
-app_share_registration_parser.exit = suppress_exit
-
-
-app_client_registration_parser = argparse.ArgumentParser(prog='ksm-app-add-client', description='Add a new Client to KSM Application')
-app_client_registration_parser.add_argument('app', type=str, action='store', help='Application Name or UID')
-app_client_registration_parser.add_argument('--count', '-c', type=int, dest='count', action='store', help='Number of tokens to return', default=1)
-app_client_registration_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store', help='Lock IP Address', default='false')
-app_client_registration_parser.add_argument('--first-access-expires-in-min', '-x', type=int, dest='firstAccessExpiresIn', action='store',
-                        help='Time for the first request to expire in minutes from the time when this command is '
-                             'executed. Maximum 1440 minutes (24 hrs). Default: 60',
-                        default=60)
-app_client_registration_parser.add_argument('--access-expire-in-min', '-o', type=int, dest='accessExpireInMin', action='store',
-                        help='Time interval that this client can access the KSM application. After this time, access is'
-                             'denied. Time is entered in minutes starting from the time when command is executed. '
-                             'Default: Not expiration')
-# app_client_registration_parser.add_argument('add-share')
-app_client_registration_parser.error = raise_parse_exception
-app_client_registration_parser.exit = suppress_exit
 
 
 version_parser = argparse.ArgumentParser(prog='version|v', description='Displays version of the installed Commander.')
@@ -683,7 +647,7 @@ class KSMCommand(Command):
 
         if ksm_obj == 'apps' or \
                 (ksm_obj in ['app', 'apps'] and ksm_action == 'list'):
-            KSMAppShareCommand.print_all_apps_records(params)
+            KSMCommand.print_all_apps_records(params)
             return
 
         if ksm_obj == 'clients' or (ksm_obj in ['client', 'clients'] and ksm_action == 'list'):
@@ -698,13 +662,13 @@ class KSMCommand(Command):
 
             ksm_app_uid_or_name = ksm_command[2]
 
-            ksm_app = KSMAppShareCommand.get_app_record(params, ksm_app_uid_or_name)
+            ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_or_name)
 
             if not ksm_app:
                 print((bcolors.WARNING + "Application '%s' not found." + bcolors.ENDC) % ksm_app_uid_or_name)
                 return
 
-            KSMAppShareCommand.get_and_print_app_info(params, ksm_app.get('record_uid'))
+            KSMCommand.get_and_print_app_info(params, ksm_app.get('record_uid'))
             return
 
         if ksm_obj in ['client'] and ksm_action == 'get':
@@ -714,7 +678,7 @@ class KSMCommand(Command):
 
         if ksm_obj in ['app'] and ksm_action in ['add', 'create']:
             ksm_app_name = ksm_command[2]
-            KSMAppShareCommand.add_new_v5_app(params, ksm_app_name)
+            KSMCommand.add_new_v5_app(params, ksm_app_name)
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
@@ -725,7 +689,7 @@ class KSMCommand(Command):
 
             is_editable = bool(strtobool(is_editable_str))
 
-            KSMAppShareCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
+            KSMCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
             return
 
         if ksm_obj in ['client'] and ksm_action in ['add', 'create']:
@@ -746,64 +710,17 @@ class KSMCommand(Command):
 
             is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
 
-            tokens = KSMAppShareCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on, access_expire_in_min)
+            tokens = KSMCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on, access_expire_in_min)
             return tokens if is_return_tokens else None
 
         print("Unknown combination of KSM commands. Available commands:")
         print(available_ksm_commands)
 
 
-class KSMAppCreateCommand(Command):
-
-    def get_parser(self):
-        return ksm_app_create_parser
-
-    def execute(self, params, **kwargs):
-
-        app_name = kwargs.get('name')
-
-        KSMAppShareCommand.add_new_v5_app(params, app_name)
-
-
-class KSMAppShareCommand(Command):
-
-    def get_parser(self):
-        return app_share_registration_parser
-
-    def execute(self, params, **kwargs):
-
-        secret_uid = kwargs['secret'] if 'secret' in kwargs else None
-        app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
-        is_editable_str = kwargs.get('editable')
-
-        is_editable = bool(strtobool(is_editable_str))
-
-        app_record_uid = None
-
-        if app_name_or_uid:
-            rec_cache_val = KSMAppShareCommand.get_app_record(params, app_name_or_uid)
-
-            if rec_cache_val is None:
-                logging.warning('Application "%s" not found.' % app_name_or_uid)
-                return
-
-            app_record_uid = rec_cache_val.get('record_uid')
-            r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
-            app_record = json.loads(r_unencr_json_data)
-
-        if not app_name_or_uid and not secret_uid:
-            KSMAppShareCommand.print_all_apps_records(params)
-            return
-        elif app_name_or_uid and not secret_uid:
-            KSMAppShareCommand.get_and_print_app_info(params, app_record_uid)
-            return
-
-        KSMAppShareCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
-
     @staticmethod
     def add_app_share(params, secret_uid, app_name_or_uid, is_editable):
 
-        rec_cache_val = KSMAppShareCommand.get_app_record(params, app_name_or_uid)
+        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
 
         if rec_cache_val is None:
             logging.warning('Application "%s" not found.' % app_name_or_uid)
@@ -836,7 +753,7 @@ class KSMAppShareCommand(Command):
         master_key_str = app_record.get('fields')[0].get('value')[0] # TODO: Get
         master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
 
-        KSMAppShareCommand.share_secret(
+        KSMCommand.share_secret(
             params=params,
             app_uid=app_record_uid,
             master_key=master_key,
@@ -936,7 +853,7 @@ class KSMAppShareCommand(Command):
 
                         if sht == 'SHT_RECORD':
                             record = recs.get(uid_str)
-                            record_data_dict = KSMAppShareCommand.record_data_as_dict(record)
+                            record_data_dict = KSMCommand.record_data_as_dict(record)
                             row = ['RECORD', uid_str, record_data_dict.get('title')]
                         elif sht == 'SHT_FOLDER':
                             cached_sf = params.shared_folder_cache[uid_str]
@@ -1032,7 +949,7 @@ class KSMAppShareCommand(Command):
 
         logging.debug("Creating new KSM Application named '%s'" % app_name)
 
-        found_app = KSMAppShareCommand.get_app_record(params, app_name)
+        found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
             logging.warning('Application with the same name already exists. Use -f flag to ignore this warning.' % app_name)
             return
@@ -1098,7 +1015,7 @@ class KSMAppShareCommand(Command):
         if not app_name_or_uid:
             raise Exception("No app provided")
 
-        rec_cache_val = KSMAppShareCommand.get_app_record(params, app_name_or_uid)
+        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
 
         if not rec_cache_val:
             raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
@@ -1168,19 +1085,6 @@ class KSMAppShareCommand(Command):
 
         return tokens
 
-
-class KSMAppClientAdd(Command):
-    def get_parser(self):
-        return app_client_registration_parser
-
-    def execute(self, params, **kwargs):
-        app_name = kwargs.get('app') or None
-        count = kwargs.get('count')
-        lock_ip = kwargs.get('lockIp')
-        firstAccessExpireOn = kwargs.get('firstAccessExpiresIn')
-        access_expire_in_min = kwargs.get('accessExpireInMin')
-
-        KSMAppShareCommand.add_client(params, app_name, count, lock_ip, firstAccessExpireOn, access_expire_in_min)
 
 
 # class AppInfoCommand(Command):
