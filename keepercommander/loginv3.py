@@ -575,7 +575,9 @@ class LoginV3API:
 
         encrypted_device_token_str = None
 
-        if 'device_token' in params.config:
+        if params.device_token:
+            encrypted_device_token_str = params.device_token
+        elif 'device_token' in params.config:
             if params.config['device_token']:
                 encrypted_device_token_str = params.config['device_token']
 
@@ -1124,6 +1126,11 @@ class CommonHelperMethods:
 
     @staticmethod
     def startup_check(params: KeeperParams):
+        if not params.config_filename:
+            return
+
+
+
         if os.path.isfile(params.config_filename) and os.access(params.config_filename, os.R_OK):
             # checks if file exists
             logging.debug("Configuration file '" + params.config_filename + "' exists and is readable")
@@ -1136,7 +1143,9 @@ class CommonHelperMethods:
     @staticmethod
     def get_private_key_ecc(params: KeeperParams):
 
-        if 'private_key' not in params.config:
+        if params.device_private_key:
+            private_key_str = params.device_private_key
+        elif 'private_key' not in params.config:
             encryption_key_bytes = CommonHelperMethods.generate_encryption_key_bytes()
             private_key_str = CommonHelperMethods.bytes_to_url_safe_str(encryption_key_bytes)
 
@@ -1189,6 +1198,10 @@ class CommonHelperMethods:
 
     @staticmethod
     def config_file_set_property(params: KeeperParams, key: str, val: str):
+
+        if not params.config_filename:
+            return
+
         with open(params.config_filename, 'r') as json_file:
             config_data = json.load(json_file)
             json_file.close()
