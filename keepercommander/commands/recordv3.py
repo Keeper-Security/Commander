@@ -604,6 +604,7 @@ class RecordEditCommand(Command):
         if record_uid is None:
             raise CommandError('edit', 'Enter name or uid of existing record')
 
+        rt_name = ''
         options = kwargs.get('option') or []
         options = [] if options == [None] else options
         rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
@@ -706,7 +707,7 @@ class RecordEditCommand(Command):
         record_data = record_data.strip() if record_data else ''
         rdata_dict = json.loads(record_data or '{}')
 
-        rt_def = ''
+        rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name) or ''
         if options:
             # invalid options - no '=' NB! edit allows empty value(s) to be able to delete
             # inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
@@ -815,6 +816,20 @@ class RecordEditCommand(Command):
                     kvp = '{}{}={}'.format('f.' if x.get('is_field') else '', dest, str(oval))
                     options.append(kvp)
                     kwargs[dest] = None
+
+        copt = kwargs.get('custom')
+        if copt:
+            clst = recordv3.RecordV3.custom_options_to_list(copt)
+
+            # any custom.text field conflicts with any legacy --custom option text fields
+            # ex. c.text.label=abc c.text=abc will overwrite first legacy --custom text field
+            # err = [(x, 'c.text.label='+x.get('name')) for x in clst if any([y for y in options if y.startswith('c.text.label='+x.get('name'))])]
+            ctxt = [y for y in options if re.search(r'(?:c|custom)\.text(?:=|\.label=)', y, re.IGNORECASE)]
+            if ctxt:
+                errors += 'Conflicting legacy/v2 and v3 options: --custom {} and {}'.format(copt, ctxt)
+
+            kwargs['custom_list'] = clst
+            kwargs['custom'] = None
 
         if not errors:
             kwargs['option'] = options

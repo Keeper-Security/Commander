@@ -1041,7 +1041,7 @@ class RecordV3:
 
     options = kwargs.get('option') or []
     opts = [(x or '').split("=", 1) for x in options]
-    if not options:
+    if not options and not kwargs.get('custom_list'):
       return result
 
     # normalize prefixes: f. -> fields., c. -> custom.
@@ -1179,7 +1179,7 @@ class RecordV3:
               if not fv:
                 fv = { 'type': fname, 'value': [] }
                 r[forc].append(fv)
-              if not 'value' in fv: fv['value'] = []
+              if 'value' not in fv: fv['value'] = []
               if fvname:
                 # NB! required:true/false comes from RT definition and should not be re/set here
                 if fvname.lower() == 'required':
@@ -1214,15 +1214,24 @@ class RecordV3:
 
     # add command could pass multiple custom options - ex. --custom='{"name1":"value1", "name2":"value: 2,3,4"}'
     # since dot format can't handle duplicate keys we pass these as kwargs['custom_list']
-    if not is_edit:
-      custom_list = kwargs.get('custom_list') or []
-      custom = [ {
-        'type': 'text',
-        'label': x.get('name') or '',
-        'value': [x.get('value')] if x.get('value') else []
-      } for x in custom_list if x.get('name') or x.get('value') ]
-      if custom:
-        r['custom'] = (r.get('custom') or []) + custom
+    custom_list = kwargs.get('custom_list') or []
+    custom = [ {
+      'type': 'text',
+      'label': x.get('name') or '',
+      'value': [x.get('value')] if x.get('value') else []
+    } for x in custom_list if x.get('name') or x.get('value') ]
+    if custom:
+      r['custom'] = (r.get('custom') or [])
+      if is_edit:
+        # update value of existing custom field or insert new one
+        for cr in custom:
+          cold = next((x for x in r['custom'] if x.get('type') == 'text' and x.get('label') == cr.get('label') and cr.get('label') is not None), None)
+          if cold:
+            cold['value'] = cr.get('value')
+          else:
+            r['custom'].append(cr)
+      else:
+        r['custom'] = r['custom'] + custom
 
     if r and not result['errors']:
       if not r.get('custom'): r.pop('custom', None)
