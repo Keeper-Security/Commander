@@ -114,6 +114,7 @@ command_group.add_argument('-g', '--generate', dest='generate', action='store_tr
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
 edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
+edit_parser.add_argument('-t', '--title', dest='title', type=str, action='store', help='record title')
 command_group = edit_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-v2', '--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
@@ -611,38 +612,11 @@ class RecordEditCommand(Command):
             rt_data = params.record_cache[record_uid].get('data_unencrypted')
             rt_name = recordv3.RecordV3.get_record_type_name(rt_data)
             if rt_name in ("login", "general"):
-                errors = ''
-                lgn = kwargs.get('login')
-                if lgn:
-                    dupes = [x for x in options if str(x).startswith("f.login=") or str(x).startswith("fields.login=")]
-                    if dupes:
-                        errors += '\n  option ' + dupes[0] + ' conflicts with --login=' + lgn
-                    else:
-                        options.append('f.login='+ str(lgn))
-                        kwargs['login'] = None
-
-                pwd = kwargs.get('password')
-                if pwd:
-                    dupes = [x for x in options if str(x).startswith("f.password=") or str(x).startswith("fields.password=")]
-                    if dupes:
-                        errors += '\n  option ' + dupes[0] + ' conflicts with --pass=' + pwd
-                    else:
-                        options.append('f.password='+ str(pwd))
-                        kwargs['password'] = None
-
-                url = kwargs.get('url')
-                if url:
-                    dupes = [x for x in options if str(x).startswith("f.url=") or str(x).startswith("fields.url=")]
-                    if dupes:
-                        errors += '\n  option ' + dupes[0] + ' conflicts with --url=' + url
-                    else:
-                        options.append('f.url='+ str(url))
-                        kwargs['url'] = None
-
+                errors = self.convert_legacy_options(kwargs=kwargs)
                 if errors:
                     logging.error(bcolors.FAIL + 'Conflict between record type and legacy options: ' + errors + bcolors.ENDC)
                     return
-                kwargs['option'] = options
+                options = kwargs.get('option') or options
 
         has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
         has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
@@ -816,6 +790,36 @@ class RecordEditCommand(Command):
             if newpass != oldpass:
                 params.queue_audit_event('record_password_change', record_uid=record.record_uid)
 
+    def convert_legacy_options(self, kwargs):
+        options = kwargs.get('option') or []
+        options = [] if options == [None] else options
+        errors = ''
+        lopt = [
+            { 'option': '--title', 'dest': 'title', 'is_field': False },
+            { 'option': '--notes', 'dest': 'notes', 'is_field': False },
+            { 'option': '--login', 'dest': 'login', 'is_field': True },
+            { 'option': '--pass', 'dest': 'password', 'is_field': True },
+            { 'option': '--url', 'dest': 'url', 'is_field': True }
+        ]
+
+        for x in lopt:
+            option = x.get('option')
+            dest = x.get('dest')
+            oval = kwargs.get(dest)
+            if oval:
+                pattern = '(f|fields)\\.{0}='.format(dest) if x.get('is_field') else '{}='.format(dest)
+                dupes = [x for x in options if re.match(pattern, str(x), re.IGNORECASE)]
+                if dupes:
+                    errors += '\n  option {} conflicts with {}={}'.format(dupes[0], option, str(oval))
+                else:
+                    kvp = '{}{}={}'.format('f.' if x.get('is_field') else '', dest, str(oval))
+                    options.append(kvp)
+                    kwargs[dest] = None
+
+        if not errors:
+            kwargs['option'] = options
+
+        return errors
 
 
 class RecordAppendNotesCommand(Command):
