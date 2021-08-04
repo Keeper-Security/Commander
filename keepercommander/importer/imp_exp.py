@@ -22,7 +22,6 @@ import os
 import re
 
 from Cryptodome.Cipher import AES
-import pudb
 import requests
 
 from keepercommander import api
@@ -279,9 +278,14 @@ def _import(params, file_format, filename, **kwargs):
 
     if records:
         # create/update records
-        record_add = prepare_record_add(update_flag, params, records)
+        record_add, record_update = prepare_record_add_or_update(update_flag, params, records)
         if record_add:
             _, rec_rs = execute_import_folder_record(params, None, record_add)
+            api.sync_down(params)
+        if record_update:
+            # FIXME: This should batch things up to a maximum of 100 records at a time, much like execute_import_folder_record,
+            # but it's 1000, not 100.
+            api.execute_batch(params, record_update)
             api.sync_down(params)
 
         # ensure records are linked to folders
@@ -315,7 +319,6 @@ def _import(params, file_format, filename, **kwargs):
 
 def report_statuses(status_type, status_list):
     """Report status codes from list of folder_pb2.*Response."""
-    pudb.set_trace()
     counter_iter = (element.status for element in status_list if hasattr(element, 'status'))
     counter = collections.Counter(counter_iter)
     for status, count in sorted(counter.items()):
@@ -701,17 +704,100 @@ def tokenize_import_record(update_flag, record):   # type: (ImportRecord) -> [st
             yield key + ':' + record.custom_fields[key]
 
 
-def prepare_record_add(update_flag, params, records):
+def construct_import_rec_req(params, preexisting_record_hash, rec_to_import):
+    """Build a rec_req for rec_to_import."""
+    h = hashlib.sha256()
+    for token in tokenize_import_record(update_flag=False, record=rec_to_import):
+        h.update(token.encode())
+    r_hash = h.hexdigest()
+    if r_hash in preexisting_record_hash:
+        rec_to_import.uid = preexisting_record_hash[r_hash]
+    else:
+        rec_to_import.uid = api.generate_record_uid()
+        preexisting_record_hash[r_hash] = rec_to_import.uid
+        record_key = os.urandom(32)
+        rec_req = folder_pb2.RecordRequest()
+        rec_req.recordUid = base64.urlsafe_b64decode(rec_to_import.uid + '==')
+        rec_req.recordType = 0
+        rec_req.encryptedRecordKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, params.data_key) + '==')
+        rec_req.howLongAgo = 0
+        rec_req.folderType = 1
+
+        folder_uid = None
+        if rec_to_import.folders:
+            folder_uid = rec_to_import.folders[0].uid
+        if folder_uid:
+            if folder_uid in params.folder_cache:
+                folder = params.folder_cache[folder_uid]
+                if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                    rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
+                    rec_req.folderType = 2 if folder.type == BaseFolderNode.SharedFolderType else 3
+
+                    sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
+                    sf = params.shared_folder_cache[sh_uid]
+                    rec_req.encryptedRecordFolderKey = base64.urlsafe_b64decode(
+                        api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted']) + '=='
+                    )
+                else:
+                    rec_req.folderType = 1
+                    if folder.type != BaseFolderNode.RootFolderType:
+                        rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
+
+        custom_fields = []
+        totp = None
+        if rec_to_import.custom_fields:
+            for cf in rec_to_import.custom_fields:
+                if cf == TWO_FACTOR_CODE:
+                    totp = rec_to_import.custom_fields[cf]
+                else:
+                    custom_fields.append({
+                        'name': cf,
+                        'value': rec_to_import.custom_fields[cf]
+                    })
+
+        data = {
+            'title': rec_to_import.title or '',
+            'secret1': rec_to_import.login or '',
+            'secret2': rec_to_import.password or '',
+            'link': rec_to_import.login_url or '',
+            'notes': rec_to_import.notes or '',
+            'custom': custom_fields
+        }
+        rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
+        if totp:
+            extra = {
+                'fields': [
+                    {
+                        'id': api.generate_record_uid(),
+                        'field_type': 'totp',
+                        'field_title': 'Two-Factor Code',
+                        'type': 0,
+                        'data': totp
+                    }]
+            }
+            rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
+    return rec_req
+
+
+def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
+    """Build a rec_req for rec_to_import."""
+    # based on https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated
+    # and upload_attachment(params, attachments), which appears elsewhere in this file.
+    raise NotImplementedError
+
+
+def prepare_record_add_or_update(update_flag, params, records):
     """
-    Find what records to import.
+    Find what records to import or update.
 
     If update_flag is False:
-        if a 100% match is found for a candidate record, then just skip requesting anything.
+        If a 100% match is found for a record, then just skip requesting anything; it doesn't need to be changed.
+        Otherwise import the record, risking creating an almost-duplicate.
     If update_flag is True:
        if a unique field match (on title, login, and url) is found, then request a change in password only.
        Do not update the TOTP custom field, even if it exists.
     """
-    candidate_records = records
+    recs_to_import_or_update = records
     del records
     preexisting_record_hash = {}
     for preexisting_r_uid in params.record_cache:
@@ -722,108 +808,36 @@ def prepare_record_add(update_flag, params, records):
         preexisting_record_hash[h.hexdigest()] = preexisting_r_uid
 
     record_adds = []
-    for candidate_rec in candidate_records:
-        perform_import = False
+    record_updates = []
+    for rec_to_import_or_update in recs_to_import_or_update:
+        perform_import_or_update = False
         h = hashlib.sha256()
-        for token in tokenize_import_record(update_flag, candidate_rec):
+        for token in tokenize_import_record(update_flag, rec_to_import_or_update):
             h.update(token.encode())
         r_hash = h.hexdigest()
         if r_hash in preexisting_record_hash:
             # preserve the UID, it's precious
-            candidate_rec.uid = preexisting_record_hash[r_hash]
+            rec_to_import_or_update.uid = preexisting_record_hash[r_hash]
             if update_flag:
                 # This is a record update: do the import (specially).
-                perform_import = True
+                perform_import_or_update = True
             else:
                 # We do not need to do a record update; we already have this record in its entirety.
                 pass
         else:
             # Create a new UID for the new record, and signal that we need to do the import.
-            candidate_rec.uid = api.generate_record_uid()
-            perform_import = True
+            rec_to_import_or_update.uid = api.generate_record_uid()
+            perform_import_or_update = True
 
-        if perform_import:
-            preexisting_record_hash[r_hash] = candidate_rec.uid
-            record_key = os.urandom(32)
-            rec_req = folder_pb2.RecordRequest()
-            rec_req.recordUid = base64.urlsafe_b64decode(candidate_rec.uid + '==')
-            rec_req.recordType = 0
-            rec_req.encryptedRecordKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, params.data_key) + '==')
-            rec_req.howLongAgo = 0
-            rec_req.folderType = 1
-
-            folder_uid = None
-            if candidate_rec.folders:
-                folder_uid = candidate_rec.folders[0].uid
-            if folder_uid:
-                if folder_uid in params.folder_cache:
-                    folder = params.folder_cache[folder_uid]
-                    if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                        rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
-                        rec_req.folderType = 2 if folder.type == BaseFolderNode.SharedFolderType else 3
-
-                        sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
-                        sf = params.shared_folder_cache[sh_uid]
-                        string7 = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
-                        rec_req.encryptedRecordFolderKey = base64.urlsafe_b64decode(string7 + '==')
-                    else:
-                        rec_req.folderType = 1
-                        if folder.type != BaseFolderNode.RootFolderType:
-                            rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
-
-            custom_fields = []
-            totp = None
-            if candidate_rec.custom_fields:
-                for cf in candidate_rec.custom_fields:
-                    if cf == TWO_FACTOR_CODE:
-                        totp = candidate_rec.custom_fields[cf]
-                    else:
-                        custom_fields.append({
-                            'name': cf,
-                            'value': candidate_rec.custom_fields[cf]
-                        })
-
+        if perform_import_or_update:
             if update_flag:
-                # FIXME: This is a bit experimental.  Does it work?  In particular, I'm not sure what's going to happen when
-                # we pass a subset of the fields we send when update_flag is False
-                # It's possible it'll turn out we have to pass all these, in which case we'll have to retrieve, modify and
-                # send.
-                data = {
-                    'title': candidate_rec.title or '',
-                    'secret1': candidate_rec.login or '',
-                    'secret2': candidate_rec.password or '',
-                    'link': candidate_rec.login_url or '',
-                    # FIXME: Putting notes and custom on this is best avoided, per Lincoln.  But I want to see if adding them
-                    # makes the API call succeed; right now, it seems to be ignoring our request without an error.
-                    'notes': candidate_rec.notes or '',
-                    'custom': custom_fields
-                }
-                rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
+                rec_req = construct_update_rec_req(params, preexisting_record_hash, rec_to_import_or_update)
+                record_updates.append(rec_req)
             else:
-                data = {
-                    'title': candidate_rec.title or '',
-                    'secret1': candidate_rec.login or '',
-                    'secret2': candidate_rec.password or '',
-                    'link': candidate_rec.login_url or '',
-                    'notes': candidate_rec.notes or '',
-                    'custom': custom_fields
-                }
-                rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
-                if totp:
-                    extra = {
-                        'fields': [
-                            {
-                                'id': api.generate_record_uid(),
-                                'field_type': 'totp',
-                                'field_title': 'Two-Factor Code',
-                                'type': 0,
-                                'data': totp
-                            }]
-                    }
-                    rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
-            record_adds.append(rec_req)
+                rec_req = construct_import_rec_req(params, preexisting_record_hash, rec_to_import_or_update)
+                record_adds.append(rec_req)
 
-    return record_adds
+    return record_adds, record_updates
 
 
 def prepare_record_link(params, records):
