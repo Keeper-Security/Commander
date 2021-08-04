@@ -135,7 +135,7 @@ def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, p
         content_type = rs.headers.get('Content-Type') or ''
         if rs.status_code == 200:
             if content_type == 'application/json':
-                return rs.json()        # type: dict
+                return rs.json()
 
             rs_body = rs.content
             if rs_body:
@@ -257,4 +257,3 @@ def v2_execute(context, rq):
 
         if type(rs_data) is dict:
             raise KeeperApiError(rs_data['error'], rs_data['message'])
-
