@@ -36,7 +36,8 @@ from Cryptodome.Math.Numbers import Integer
 
 from .recordv3 import get_record
 from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
-    GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest
+    GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
+    RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
@@ -96,15 +97,21 @@ def register_command_info(aliases, command_info):
 available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "secrets-manager app list" + bcolors.ENDC + "\n" \
                          "  Get App               - " + bcolors.OKGREEN + "secrets-manager app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
                          "  Create App            - " + bcolors.OKGREEN + "secrets-manager app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
-                         "  Add Secret to the App - " + bcolors.OKGREEN + "secrets-manager share add --app "+ bcolors.OKBLUE + "[APP NAME or APP UID]" \
-                                                                                                + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FODLER UID]" \
-                                                                                                + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
                          "  Add Client to the App - " + bcolors.OKGREEN + "secrets-manager client add --app " \
                                                                                                 + bcolors.OKBLUE + "[APP NAME or APP UID] " \
                                                                                                 + bcolors.OKGREEN + "--first-access-expires-in-min " + bcolors.OKBLUE + "[MIN] " \
                                                                                                 + bcolors.OKGREEN + "--access-expire-in-min " + bcolors.OKBLUE + "[MIN] " \
                                                                                                 + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[TRUE] " \
                                                                                                 + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[NUM]" + bcolors.ENDC + "\n" \
+                         "  Remove Client         - " + bcolors.OKGREEN + "secrets-manager client remove --app " \
+                                                                                                + bcolors.OKBLUE + "[APP NAME or APP UID] " \
+                                                                                                + bcolors.OKGREEN + "--client " + bcolors.OKBLUE + "[NAME or ID] " + bcolors.ENDC + "\n" + \
+                         "  Add Secret to the App - " + bcolors.OKGREEN + "secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
+                                                                                                + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
+                                                                                                + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
+                         "  Remove Secret         - " + bcolors.OKGREEN + "secrets-manager share remove --app " \
+                                                                                                + bcolors.OKBLUE + "[APP NAME or APP UID] " \
+                                                                                                + bcolors.OKGREEN + "--secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" + bcolors.ENDC + "\n" \
                          "    Note: if UID you are using contains dash (-) in the beginning, the value should be wrapped in quoted and prepended with an equal sign.\n" \
                          "          " + bcolors.BOLD + "secrets-manager share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
 
@@ -172,10 +179,12 @@ help_parser.exit = suppress_exit
 
 ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands', usage="\n" + available_ksm_commands)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*", help='Action: list')
-ksm_parser.add_argument('--secret', '-s', type=str, action='store', required=False,
-                                           help='Record UID')   # TODO: Make it an array
+ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
+                                           help='Record UID')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
                                            help='Application Name or UID')
+ksm_parser.add_argument('--client', '-i', type=str, dest='client_names_or_ids', action='append', required=False,
+                                           help='Client Name or ID')
 ksm_parser.add_argument('--first-access-expires-in-min', '-x', type=int, dest='firstAccessExpiresIn', action='store',
                         help='Time for the first request to expire in minutes from the time when this command is '
                              'executed. Maximum 1440 minutes (24 hrs). Default: 60',
@@ -684,7 +693,7 @@ class KSMCommand(Command):
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs.get('app')
-            secret_uid = kwargs.get('secret')
+            secret_uid = kwargs.get('secret')[0]    # TODO: Allow multiple secrets
             is_editable_str = kwargs.get('editable')
 
             is_editable = bool(strtobool(is_editable_str))
@@ -693,17 +702,19 @@ class KSMCommand(Command):
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action in ['remove', 'rem', 'rm']:
-            print("D")
+            app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
+            secret_uids = kwargs.get('secret')
 
+            KSMCommand.remove_share(params, app_name_or_uid, secret_uids)
             return
 
-        if ksm_obj in ['client'] and ksm_action in ['add', 'create']:
+        if ksm_obj in ['client', 'c'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print("  ksm share add --app [APP NAME or APP UID] --secret [SECRET UID or SHARED FODLER UID] --editable [true or false]")
+                print("  ksm share add --app [APP NAME or APP UID] --secret [SECRET UID or SHARED FOLDER UID] --editable [true or false]")
                 return
 
             count = kwargs.get('count')
@@ -724,9 +735,8 @@ class KSMCommand(Command):
 
             client_names_or_ids = kwargs.get('client_names_or_ids')
 
-            print("client_ids")
-
             KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+
             return
 
 
@@ -839,7 +849,7 @@ class KSMCommand(Command):
             for ai in app_info:
 
                 if len(ai.clients) > 0:
-                    clients_table_fields = ['ID', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
+                    clients_table_fields = ['Name', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
                                             'IP Address']
                     clients_table = []
                     for c in ai.clients:
@@ -1023,13 +1033,56 @@ class KSMCommand(Command):
         params.revision = 0
         rs = communicate_rest(params, ra, 'vault/application_add')
 
-        print("Application was added successfully")
+        print(bcolors.OKGREEN + "Application was successfully added" + bcolors.ENDC)
 
         params.sync_data = True
 
 
     @staticmethod
-    def remove_client(params, app_name_or_uid, client_ids_and_hashes):
+    def remove_share(params, app_name_or_uid, secret_uids):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        app_uid = app.get('record_uid')
+
+        rq = RemoveAppSharesRequest()
+
+        rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
+        rq.shares.extend(list(map(lambda uid_str: CommonHelperMethods.url_safe_str_to_bytes(uid_str), secret_uids)))
+
+        api_request_payload = ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+        rs = execute_rest(params.rest_context, 'vault/app_share_remove', api_request_payload)
+
+        if type(rs) is dict:
+            raise KeeperApiError(rs['error'], rs['message'])
+        else:
+            print(bcolors.OKGREEN + "Secret share was successfully removed from the application" + bcolors.ENDC)
+
+
+    @staticmethod
+    def remove_client(params, app_name_or_uid, client_names_and_hashes):
+
+        def convert_ids_and_hashes_to_hashes(cnahs, app_uid):
+
+            client_id_hashes_bytes = []
+
+            app_info = KSMCommand.get_app_info(params, app_uid)
+
+            for ai in app_info:
+
+                if len(ai.clients) > 0:
+                    for c in ai.clients:
+                        name = c.id
+                        client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+
+                        if name in cnahs or client_id in cnahs:
+                            client_id_hashes_bytes.append(c.clientId)
+
+            return client_id_hashes_bytes
 
         if not app_name_or_uid:
             raise Exception("No app provided")
@@ -1038,19 +1091,20 @@ class KSMCommand(Command):
         if not app:
             raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
 
-        def convert_ids_and_hashes_to_hashes(ciahs, app_uid):
+        app_uid = app.get('record_uid')
 
-            app_info = KSMCommand.get_app_info(params, app_uid)
-            for id_or_hash in ciahs:
+        client_hashes = convert_ids_and_hashes_to_hashes(client_names_and_hashes, app_uid)
 
-                if id_or_hash in app_info:
-                    print("Here")
+        if len(client_hashes) == 0:
+            print(bcolors.OKGREEN + "Application was successfully added" + bcolors.ENDC)
 
-        client_hashes = convert_ids_and_hashes_to_hashes(client_ids_and_hashes, app.uid)
+            print("No Clients found for given client(s).")
+            return
 
         rq = RemoveAppClientsRequest()
-        rq.appRecordUid = app.uid
-        rq.clients.append(client_hashes)
+
+        rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
+        rq.clients.extend(client_hashes)
 
         api_request_payload = ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
@@ -1060,6 +1114,8 @@ class KSMCommand(Command):
 
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
+        else:
+            print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, lock_ip, firstAccessExpireOn, access_expire_in_min):
