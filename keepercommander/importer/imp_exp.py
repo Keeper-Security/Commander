@@ -1,25 +1,29 @@
-#  _  __  
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
-#              |_|            
+#              |_|
 #
-# Keeper Commander 
+# Keeper Commander
 # Copyright 2017 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
-import os
-import json
-import hashlib
-import base64
-import requests
-import io
-import re
-import logging
+"""Import and export functionality."""
 
 from contextlib import contextmanager
+import collections
+import base64
+import hashlib
+import io
+import json
+import logging
+import os
+import re
+
 from Cryptodome.Cipher import AES
+import pudb
+import requests
 
 from keepercommander import api
 from ..params import KeeperParams
@@ -36,6 +40,7 @@ EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 
 
 def get_import_folder(params, folder_uid, record_uid):
+    """Get a folder name from a folder uid (?)."""
     folder = ImportFolder()
 
     uid = folder_uid
@@ -74,6 +79,7 @@ def get_import_folder(params, folder_uid, record_uid):
 
 
 def get_folder_path(params, folder_uid):
+    """Get the path corresponding to a folder uid."""
     uid = folder_uid
     path = ''
     while uid in params.folder_cache:
@@ -92,6 +98,7 @@ def get_folder_path(params, folder_uid):
 
 
 def export(params, file_format, filename, **export_args):
+    """Export data from Vault to a file in an assortment of formats."""
     api.sync_down(params)
 
     exporter = exporter_for_format(file_format)()  # type: BaseExporter
@@ -186,12 +193,14 @@ def export(params, file_format, filename, **export_args):
 
 
 def _import(params, file_format, filename, **kwargs):
+    """Import records from one of a variety of sources."""
     api.sync_down(params)
 
     shared = kwargs.get('shared') or False
     import_into = kwargs.get('import_into') or ''
     if import_into:
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
+    update_flag = kwargs['update_flag']
 
     importer = importer_for_format(file_format)()
     # type: BaseImporter
@@ -268,8 +277,9 @@ def _import(params, file_format, filename, **kwargs):
             api.execute_batch(params, permissions)
             api.sync_down(params)
 
-    if records:        # create records
-        record_add = prepare_record_add(params, records)
+    if records:
+        # create/update records
+        record_add = prepare_record_add(update_flag, params, records)
         if record_add:
             _, rec_rs = execute_import_folder_record(params, None, record_add)
             api.sync_down(params)
@@ -296,13 +306,24 @@ def _import(params, file_format, filename, **kwargs):
         if len(atts) > 0:
             upload_attachment(params, atts)
 
+    # FIXME: This does not appear to understand that it's worthwhile to report a count of records updated, too.
     records_after = len(params.record_cache)
     if records_after > records_before:
         params.queue_audit_event('imported_records', file_format=file_format.upper())
         logging.info("%d records imported successfully", records_after - records_before)
 
 
+def report_statuses(status_type, status_list):
+    """Report status codes from list of folder_pb2.*Response."""
+    pudb.set_trace()
+    counter_iter = (element.status for element in status_list if hasattr(element, 'status'))
+    counter = collections.Counter(counter_iter)
+    for status, count in sorted(counter.items()):
+        logging.info('%-15s %-15s %d', status_type, status, count)
+
+
 def execute_import_folder_record(params, folders, records):
+    """Interact with the API to import folders and records."""
     rs_folder = []
     rs_record = []
     while folders or records:
@@ -328,15 +349,19 @@ def execute_import_folder_record(params, folders, records):
         if len(import_rs.recordResponse) > 0:
             rs_record.extend(import_rs.recordResponse)
 
+    report_statuses('folder', rs_folder)
+    report_statuses('record', rs_record)
+
     return rs_folder, rs_record
 
 
 def upload_attachment(params, attachments):
-    '''
+    """
+    Interact with the API to upload attachments.
+
     :param attachments:
     :type attachments: [(str, ImportAttachment)]
-    '''
-
+    """
     print('Uploading attachments:')
     while len(attachments) > 0:
         chunk = attachments[:90]
@@ -350,7 +375,7 @@ def upload_attachment(params, attachments):
             file_no += 1
             file_size += att.size or 0
 
-        #TODO check storage subscription
+        # TODO check storage subscription
         rq = {
             'command': 'request_upload',
             'file_count': file_no
@@ -464,6 +489,7 @@ def upload_attachment(params, attachments):
 
 
 def prepare_folder_add(params, folders, records):
+    """Find what folders to import (?)."""
     folder_hash = {}
     for f_uid in params.folder_cache:
         fol = params.folder_cache[f_uid]
@@ -471,7 +497,7 @@ def prepare_folder_add(params, folders, records):
         hs = '{0}|{1}'.format((fol.name or '').lower(), fol.parent_uid or '')
         h.update(hs.encode())
         shared_folder_key = None
-        if fol.type in { BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+        if fol.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
             sf_uid = fol.shared_folder_uid if fol.type == BaseFolderNode.SharedFolderFolderType else fol.uid
             if sf_uid in params.shared_folder_cache:
                 shared_folder_key = params.shared_folder_cache[sf_uid]['shared_folder_key_unencrypted']
@@ -509,10 +535,12 @@ def prepare_folder_add(params, folders, records):
                     fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, params.data_key) + '==')
 
                     data = {'name': comp}
-                    fol_req.folderData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key) + '==')
+                    string = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
+                    fol_req.folderData = base64.urlsafe_b64decode(string + '==')
 
                     if folder_type == 'shared_folder':
-                        fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(api.encrypt_aes(comp.encode('utf-8'), folder_key) + '==')
+                        string2 = api.encrypt_aes(comp.encode('utf-8'), folder_key)
+                        fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(string2 + '==')
                         fol_req.sharedFolderFields.manageUsers = fol.manage_users
                         fol_req.sharedFolderFields.manageRecords = fol.manage_records
                         fol_req.sharedFolderFields.canEdit = fol.can_edit
@@ -565,7 +593,11 @@ def prepare_folder_add(params, folders, records):
 
                                 fol_req = folder_pb2.FolderRequest()
                                 fol_req.folderUid = base64.urlsafe_b64decode(folder_uid + '==')
-                                fol_req.folderType = 2 if folder_type == 'shared_folder' else 3 if folder_type == 'shared_folder_folder' else 1
+                                fol_req.folderType = 2 \
+                                    if folder_type == 'shared_folder' \
+                                    else 3 \
+                                    if folder_type == 'shared_folder_folder' \
+                                    else 1
 
                                 if parent_uid:
                                     fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
@@ -574,22 +606,27 @@ def prepare_folder_add(params, folders, records):
 
                                 folder_key = os.urandom(32)
                                 if folder_type == 'shared_folder_folder':
-                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, parent_shared_folder_key or params.data_key) + '==')
+                                    string3 = api.encrypt_aes(folder_key, parent_shared_folder_key or params.data_key)
+                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(string3 + '==')
                                 else:
-                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, params.data_key) + '==')
+                                    string4 = api.encrypt_aes(folder_key, params.data_key)
+                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(string4 + '==')
 
                                 data = {'name': comp}
-                                fol_req.folderData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key) + '==')
+                                string5 = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
+                                fol_req.folderData = base64.urlsafe_b64decode(string5 + '==')
 
                                 if folder_type == 'shared_folder':
-                                    fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(api.encrypt_aes(comp.encode('utf-8'), folder_key) + '==')
+                                    string6 = api.encrypt_aes(comp.encode('utf-8'), folder_key)
+                                    fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(string6 + '==')
 
                                     parent_shared_folder_key = folder_key
                                     parent_shared_folder_uid = folder_uid
 
                                 elif folder_type == 'shared_folder_folder':
                                     if parent_shared_folder_uid:
-                                        fol_req.sharedFolderFolderFields.sharedFolderUid = base64.urlsafe_b64decode(parent_shared_folder_uid + '==')
+                                        fol_req.sharedFolderFolderFields.sharedFolderUid = \
+                                            base64.urlsafe_b64decode(parent_shared_folder_uid + '==')
 
                                 folder_add.append(fol_req)
                                 folder_hash[digest] = folder_uid, folder_type, parent_shared_folder_key
@@ -607,7 +644,18 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def tokenize_record(record):   # type: (Record) -> [str]
+def tokenize_record(update_flag, record):   # type: (Record) -> [str]
+    """
+    Turn a preexisting record into an iterable of str's for hashing.
+
+    If update_flag is True, only check three fields for uniqueness.
+    """
+    if update_flag:
+        yield record.title or ''
+        yield record.login or ''
+        yield record.login_url or ''
+        return
+
     yield record.title or ''
     yield record.login or ''
     yield record.password or ''
@@ -628,7 +676,18 @@ def tokenize_record(record):   # type: (Record) -> [str]
             yield key + ':' + custom[key]
 
 
-def tokenize_import_record(record):   # type: (ImportRecord) -> [str]
+def tokenize_import_record(update_flag, record):   # type: (ImportRecord) -> [str]
+    """
+    Turn a record-to-import into an iterable of str's for hashing.
+
+    If update_flag is True, only check three fields for uniqueness.
+    """
+    if update_flag:
+        yield record.title or ''
+        yield record.login or ''
+        yield record.login_url or ''
+        return
+
     yield record.title or ''
     yield record.login or ''
     yield record.password or ''
@@ -642,37 +701,60 @@ def tokenize_import_record(record):   # type: (ImportRecord) -> [str]
             yield key + ':' + record.custom_fields[key]
 
 
-def prepare_record_add(params, records):
-    record_hash = {}
-    for r_uid in params.record_cache:
-        rec = api.get_record(params, r_uid)
+def prepare_record_add(update_flag, params, records):
+    """
+    Find what records to import.
+
+    If update_flag is False:
+        if a 100% match is found for a candidate record, then just skip requesting anything.
+    If update_flag is True:
+       if a unique field match (on title, login, and url) is found, then request a change in password only.
+       Do not update the TOTP custom field, even if it exists.
+    """
+    candidate_records = records
+    del records
+    preexisting_record_hash = {}
+    for preexisting_r_uid in params.record_cache:
+        preexisting_rec = api.get_record(params, preexisting_r_uid)
         h = hashlib.sha256()
-        for token in tokenize_record(rec):
+        for token in tokenize_record(update_flag, preexisting_rec):
             h.update(token.encode())
-        record_hash[h.hexdigest()] = r_uid
+        preexisting_record_hash[h.hexdigest()] = preexisting_r_uid
 
     record_adds = []
-    for rec in records:
+    for candidate_rec in candidate_records:
+        perform_import = False
         h = hashlib.sha256()
-        for token in tokenize_import_record(rec):
+        for token in tokenize_import_record(update_flag, candidate_rec):
             h.update(token.encode())
         r_hash = h.hexdigest()
-        if r_hash in record_hash:
-            rec.uid = record_hash[r_hash]
+        if r_hash in preexisting_record_hash:
+            # preserve the UID, it's precious
+            candidate_rec.uid = preexisting_record_hash[r_hash]
+            if update_flag:
+                # This is a record update: do the import (specially).
+                perform_import = True
+            else:
+                # We do not need to do a record update; we already have this record in its entirety.
+                pass
         else:
-            rec.uid = api.generate_record_uid()
-            record_hash[r_hash] = rec.uid
+            # Create a new UID for the new record, and signal that we need to do the import.
+            candidate_rec.uid = api.generate_record_uid()
+            perform_import = True
+
+        if perform_import:
+            preexisting_record_hash[r_hash] = candidate_rec.uid
             record_key = os.urandom(32)
             rec_req = folder_pb2.RecordRequest()
-            rec_req.recordUid = base64.urlsafe_b64decode(rec.uid + '==')
+            rec_req.recordUid = base64.urlsafe_b64decode(candidate_rec.uid + '==')
             rec_req.recordType = 0
             rec_req.encryptedRecordKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, params.data_key) + '==')
             rec_req.howLongAgo = 0
             rec_req.folderType = 1
 
             folder_uid = None
-            if rec.folders:
-                folder_uid = rec.folders[0].uid
+            if candidate_rec.folders:
+                folder_uid = candidate_rec.folders[0].uid
             if folder_uid:
                 if folder_uid in params.folder_cache:
                     folder = params.folder_cache[folder_uid]
@@ -682,7 +764,8 @@ def prepare_record_add(params, records):
 
                         sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
                         sf = params.shared_folder_cache[sh_uid]
-                        rec_req.encryptedRecordFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted']) + '==')
+                        string7 = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
+                        rec_req.encryptedRecordFolderKey = base64.urlsafe_b64decode(string7 + '==')
                     else:
                         rec_req.folderType = 1
                         if folder.type != BaseFolderNode.RootFolderType:
@@ -690,43 +773,61 @@ def prepare_record_add(params, records):
 
             custom_fields = []
             totp = None
-            if rec.custom_fields:
-                for cf in rec.custom_fields:
+            if candidate_rec.custom_fields:
+                for cf in candidate_rec.custom_fields:
                     if cf == TWO_FACTOR_CODE:
-                        totp = rec.custom_fields[cf]
+                        totp = candidate_rec.custom_fields[cf]
                     else:
                         custom_fields.append({
                             'name': cf,
-                            'value': rec.custom_fields[cf]
+                            'value': candidate_rec.custom_fields[cf]
                         })
 
-            data = {
-                'title': rec.title or '',
-                'secret1': rec.login or '',
-                'secret2': rec.password or '',
-                'link': rec.login_url or '',
-                'notes': rec.notes or '',
-                'custom': custom_fields
-            }
-            rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
-            if totp:
-                extra = {
-                    'fields': [
-                        {
-                            'id': api.generate_record_uid(),
-                            'field_type': 'totp',
-                            'field_title': 'Two-Factor Code',
-                            'type': 0,
-                            'data': totp
-                        }]
+            if update_flag:
+                # FIXME: This is a bit experimental.  Does it work?  In particular, I'm not sure what's going to happen when
+                # we pass a subset of the fields we send when update_flag is False
+                # It's possible it'll turn out we have to pass all these, in which case we'll have to retrieve, modify and
+                # send.
+                data = {
+                    'title': candidate_rec.title or '',
+                    'secret1': candidate_rec.login or '',
+                    'secret2': candidate_rec.password or '',
+                    'link': candidate_rec.login_url or '',
+                    # FIXME: Putting notes and custom on this is best avoided, per Lincoln.  But I want to see if adding them
+                    # makes the API call succeed; right now, it seems to be ignoring our request without an error.
+                    'notes': candidate_rec.notes or '',
+                    'custom': custom_fields
                 }
-                rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
+                rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
+            else:
+                data = {
+                    'title': candidate_rec.title or '',
+                    'secret1': candidate_rec.login or '',
+                    'secret2': candidate_rec.password or '',
+                    'link': candidate_rec.login_url or '',
+                    'notes': candidate_rec.notes or '',
+                    'custom': custom_fields
+                }
+                rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
+                if totp:
+                    extra = {
+                        'fields': [
+                            {
+                                'id': api.generate_record_uid(),
+                                'field_type': 'totp',
+                                'field_title': 'Two-Factor Code',
+                                'type': 0,
+                                'data': totp
+                            }]
+                    }
+                    rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
             record_adds.append(rec_req)
 
     return record_adds
 
 
 def prepare_record_link(params, records):
+    """Prepare record links to folders."""
     record_folders = {}    # type: [str, [str]]
     record_links = []
     for rec in records:
@@ -748,19 +849,21 @@ def prepare_record_link(params, records):
                         folder_ids.append(folder_uid)
                         src_folder = params.folder_cache[folder_ids[0]]
                         dst_folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
+                        ft = dst_folder.type if dst_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType
                         req = {
                             'command': 'move',
-                            'to_type': dst_folder.type if dst_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType,
+                            'to_type': ft,
                             'link': True,
                             'move': [],
                             'transition_keys': []
                         }
                         if dst_folder.type != BaseFolderNode.RootFolderType:
                             req['to_uid'] = dst_folder.uid
+                        ft = src_folder.type if src_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType
                         mo = {
                             'type': 'record',
                             'uid': rec.uid,
-                            'from_type': src_folder.type if src_folder.type != BaseFolderNode.RootFolderType else BaseFolderNode.UserFolderType,
+                            'from_type': ft,
                             'cascade': True
                         }
                         if src_folder.type != BaseFolderNode.RootFolderType:
@@ -796,6 +899,7 @@ def prepare_record_link(params, records):
 
 
 def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) -> list
+    """Prepare a list of API interactions for changes to folder permissions."""
     shared_folder_lookup = {}
     for shared_folder_uid in params.shared_folder_cache:
         path = get_folder_path(params, shared_folder_uid)
@@ -827,8 +931,12 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
         api.load_available_teams(params)
         team_uids = set()
         for t in teams:
-            team_uid = next((x.get('team_uid') for x in params.available_team_cache
-                         if x.get('team_uid') == t or x.get('team_name').casefold() == t.casefold()), None)
+            team_uid = next(
+                (
+                    x.get('team_uid')
+                    for x in params.available_team_cache
+                    if x.get('team_uid') == t or x.get('team_name').casefold() == t.casefold()
+                ), None)
             if team_uid:
                 team_uids.add(team_uid)
         if len(team_uids) > 0:
@@ -914,6 +1022,7 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
 
 
 def prepare_record_permission(params, records):
+    """Prepare a list of API interactions for changes to record permissions."""
     shared_update = []
     for rec in records:
         if rec.folders and rec.uid:
@@ -925,7 +1034,10 @@ def prepare_record_permission(params, records):
                     if fol.uid and fol.uid in params.folder_cache:
                         folder = params.folder_cache[fol.uid]
                         if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                            sf_uid = folder.shared_folder_uid if folder.type == BaseFolderNode.SharedFolderFolderType else folder.uid
+                            sf_uid = \
+                                folder.shared_folder_uid \
+                                if folder.type == BaseFolderNode.SharedFolderFolderType \
+                                else folder.uid
                             if sf_uid in params.shared_folder_cache:
                                 sf = params.shared_folder_cache[sf_uid]
                                 if 'records' in sf:
@@ -951,13 +1063,19 @@ def prepare_record_permission(params, records):
 
 
 class KeeperAttachment(ImportAttachment):
+    """Allow opening an attachment."""
+
+    # FIXME: Note that this may be a duplicate of keepercommander/importer/commands.py's KeeperAttachment.
+
     def __init__(self, params, record_uid,):
+        """Initialize."""
         ImportAttachment.__init__(self)
         self.params = params
         self.record_uid = record_uid
 
     @contextmanager
     def open(self):
+        """Open an attachment."""
         rq = {
             'command': 'request_download',
             'file_ids': [self.file_id],
@@ -970,4 +1088,3 @@ class KeeperAttachment(ImportAttachment):
             if 'url' in dl:
                 with requests.get(dl['url'], stream=True) as rq_http:
                     yield rq_http.raw
-
