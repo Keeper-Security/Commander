@@ -663,7 +663,7 @@ class KSMCommand(Command):
             print(bcolors.WARNING + "Listing clients is not available" + bcolors.ENDC)
             return
 
-        if ksm_obj in ['app'] and ksm_action == 'get':
+        if ksm_obj in ['app', 'apps'] and ksm_action == 'get':
 
             if len(ksm_command) != 3:
                 print(bcolors.WARNING + "Application name is required.\n  Example: ksm get app MyApp" + bcolors.ENDC)
@@ -693,7 +693,7 @@ class KSMCommand(Command):
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs.get('app')
-            secret_uid = kwargs.get('secret')[0]    # TODO: Allow multiple secrets
+            secret_uid = kwargs.get('secret')   # TODO: Allow multiple secrets
             is_editable_str = kwargs.get('editable')
 
             is_editable = bool(strtobool(is_editable_str))
@@ -739,12 +739,11 @@ class KSMCommand(Command):
 
             return
 
-
         print("Unknown combination of KSM commands. Available commands:")
         print(available_ksm_commands)
 
     @staticmethod
-    def add_app_share(params, secret_uid, app_name_or_uid, is_editable):
+    def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
 
         rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
 
@@ -756,26 +755,6 @@ class KSMCommand(Command):
         r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
         app_record = json.loads(r_unencr_json_data)
 
-        if not api.is_shared_folder(params, secret_uid):
-            logging.warning('Folder uid="%s" is not a Shared Folder. Only individual records or Shared Folders can be '
-                            'added to the application.' % secret_uid)
-            return
-        if api.is_shared_folder(params, secret_uid):
-            cached_sf = params.shared_folder_cache[secret_uid]
-            shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
-            share_type = 'SHARE_TYPE_FOLDER'
-            share_key = shared_folder_key_unencrypted
-
-        else:
-            # TODO: Should we also search shared records as well, not just owned once?
-            if secret_uid not in params.record_cache:
-                logging.warning('Record "%s" not found.' % secret_uid)
-                return
-
-            rec = params.record_cache[secret_uid]
-            share_type = 'SHARE_TYPE_RECORD'
-            share_key = rec['record_key_unencrypted']
-
         master_key_str = app_record.get('fields')[0].get('value')[0] # TODO: Get
         master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
 
@@ -783,9 +762,7 @@ class KSMCommand(Command):
             params=params,
             app_uid=app_record_uid,
             master_key=master_key,
-            secret_uid=secret_uid,
-            share_key_decrypted=share_key,
-            share_type=share_type,
+            secret_uids=secret_uids,
             is_editable=is_editable
         )
 
@@ -908,19 +885,43 @@ class KSMCommand(Command):
                     print('\tThere are no shared secrets to this application')
 
     @staticmethod
-    def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type, is_editable = False):
-        encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
+    def share_secret(params, app_uid, master_key, secret_uids, is_editable=False):
 
-        app_share = AppShareAdd()
-        app_share.secretUid = CommonHelperMethods.url_safe_str_to_bytes(secret_uid)
-        app_share.shareType = ApplicationShareType.Value(share_type)
-        app_share.encryptedSecretKey = encrypted_secret_key
-        app_share.editable = is_editable
+        app_shares = []
+
+        for uid in secret_uids:
+            is_record = uid in params.record_cache
+            is_shared_folder = api.is_shared_folder(params, uid)
+
+            if is_record:
+                rec = params.record_cache[uid]
+                share_key_decrypted = rec['record_key_unencrypted']
+                share_type = 'SHARE_TYPE_RECORD'
+            elif is_shared_folder:
+                cached_sf = params.shared_folder_cache[uid]
+                shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
+                share_key_decrypted = shared_folder_key_unencrypted
+                share_type = 'SHARE_TYPE_FOLDER'
+            else:
+                logging.warning(
+                    'UID="%s" is not a Record nor Shared Folder. Only individual records or Shared Folders can '
+                    'be added to the application.' % uid)
+
+                continue
+
+            encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
+
+            app_share = AppShareAdd()
+            app_share.secretUid = CommonHelperMethods.url_safe_str_to_bytes(uid)
+            app_share.shareType = ApplicationShareType.Value(share_type)
+            app_share.encryptedSecretKey = encrypted_secret_key
+            app_share.editable = is_editable
+
+            app_shares.append(app_share)
 
         app_share_add_rq = AddAppSharesRequest()
         app_share_add_rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
-        app_share_add_rq.shares.append(app_share)
-
+        app_share_add_rq.shares.extend(app_shares)
 
         api_request_payload = ApiRequestPayload()
         api_request_payload.payload = app_share_add_rq.SerializeToString()
@@ -930,16 +931,17 @@ class KSMCommand(Command):
 
         if type(rs) is bytes:
 
-            if share_type == 'SHARE_TYPE_RECORD':
-                share_type_str = 'record'
-            else:
-                share_type_str = 'shared folder'
-
-            print((bcolors.OKGREEN + "Successfully added %s uid=%s to app uid=%s" + bcolors.ENDC) % (share_type_str, secret_uid, app_uid))
+            print((bcolors.OKGREEN + "Successfully added secret UIDs=%s to app uid=%s, editable=" + bcolors.BOLD + "%s" + bcolors.ENDC) % (secret_uids, app_uid, is_editable))
             return True
 
         if type(rs) is dict:
-            raise KeeperApiError(rs['error'], rs['message'])
+            if rs.get('message') == 'Duplicate share, already added':
+                logging.error("One of the secret UIDs is already shared to this application. "
+                              "Please remove already shared UIDs from the command and try again.")
+                # this is a backend limitation. If at least one record is already shared to the app, the backend
+                # returns error.
+            else:
+                raise KeeperApiError(rs['error'], rs['message'])
 
         return False
 
