@@ -35,8 +35,8 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
 from .recordv3 import get_record
-from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppShareRequest, AddAppClientRequest, \
-    GetAppInfoRequest, GetAppInfoResponse, AppClient
+from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
+    GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
@@ -692,6 +692,11 @@ class KSMCommand(Command):
             KSMCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
             return
 
+        if ksm_obj in ['share', 'secret'] and ksm_action in ['remove', 'rem', 'rm']:
+            print("D")
+
+            return
+
         if ksm_obj in ['client'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
@@ -713,9 +718,20 @@ class KSMCommand(Command):
             tokens = KSMCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on, access_expire_in_min)
             return tokens if is_return_tokens else None
 
+        if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
+
+            app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
+
+            client_names_or_ids = kwargs.get('client_names_or_ids')
+
+            print("client_ids")
+
+            KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+            return
+
+
         print("Unknown combination of KSM commands. Available commands:")
         print(available_ksm_commands)
-
 
     @staticmethod
     def add_app_share(params, secret_uid, app_name_or_uid, is_editable):
@@ -730,14 +746,14 @@ class KSMCommand(Command):
         r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
         app_record = json.loads(r_unencr_json_data)
 
-        if api.is_regular_folder(params, secret_uid):
-            logging.warning('Trying to add a regular folder uid="%s". Only individual records or shared folders can be '
+        if not api.is_shared_folder(params, secret_uid):
+            logging.warning('Folder uid="%s" is not a Shared Folder. Only individual records or Shared Folders can be '
                             'added to the application.' % secret_uid)
             return
         if api.is_shared_folder(params, secret_uid):
             cached_sf = params.shared_folder_cache[secret_uid]
             shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
-            share_type = 'SHT_FOLDER'
+            share_type = 'SHARE_TYPE_FOLDER'
             share_key = shared_folder_key_unencrypted
 
         else:
@@ -747,7 +763,7 @@ class KSMCommand(Command):
                 return
 
             rec = params.record_cache[secret_uid]
-            share_type = 'SHT_RECORD'
+            share_type = 'SHARE_TYPE_RECORD'
             share_key = rec['record_key_unencrypted']
 
         master_key_str = app_record.get('fields')[0].get('value')[0] # TODO: Get
@@ -795,23 +811,32 @@ class KSMCommand(Command):
         else:
             dump_report_data(apps_table, apps_table_fields, fmt='table')
 
+
     @staticmethod
-    def get_and_print_app_info(params, uid):
+    def get_app_info(params, app_uid):
 
         rq = GetAppInfoRequest()
-        rq.appRecordUid.append(CommonHelperMethods.url_safe_str_to_bytes(uid))
+        rq.appRecordUid.append(CommonHelperMethods.url_safe_str_to_bytes(app_uid))
 
         rs = communicate_rest(params, rq, 'vault/get_app_info')
 
         get_app_info_rs = GetAppInfoResponse()
         get_app_info_rs.ParseFromString(rs)
 
-        if len(get_app_info_rs.appInfo) == 0:
+        return get_app_info_rs.appInfo
+
+
+    @staticmethod
+    def get_and_print_app_info(params, uid):
+
+        app_info = KSMCommand.get_app_info(params, uid)
+
+        if len(app_info) == 0:
             print(bcolors.WARNING + 'This app does not have shares.' + bcolors.ENDC)
             return
         else:
             print(bcolors.BOLD + "CLIENTS\n" + bcolors.ENDC)
-            for ai in get_app_info_rs.appInfo:
+            for ai in app_info:
 
                 if len(ai.clients) > 0:
                     clients_table_fields = ['ID', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
@@ -851,11 +876,11 @@ class KSMCommand(Command):
                         uid_str = CommonHelperMethods.bytes_to_url_safe_str(s.secretUid)
                         sht = ApplicationShareType.Name(s.shareType)
 
-                        if sht == 'SHT_RECORD':
+                        if sht == 'SHARE_TYPE_RECORD':
                             record = recs.get(uid_str)
                             record_data_dict = KSMCommand.record_data_as_dict(record)
                             row = ['RECORD', uid_str, record_data_dict.get('title')]
-                        elif sht == 'SHT_FOLDER':
+                        elif sht == 'SHARE_TYPE_FOLDER':
                             cached_sf = params.shared_folder_cache[uid_str]
                             shf_name = cached_sf.get('name_unencrypted')
                             # shf_num_of_records = len(cached_sf.get('records'))
@@ -876,12 +901,16 @@ class KSMCommand(Command):
     def share_secret(params, app_uid, master_key, secret_uid, share_key_decrypted, share_type, is_editable = False):
         encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
 
-        app_share_add_rq = AddAppShareRequest()
+        app_share = AppShareAdd()
+        app_share.secretUid = CommonHelperMethods.url_safe_str_to_bytes(secret_uid)
+        app_share.shareType = ApplicationShareType.Value(share_type)
+        app_share.encryptedSecretKey = encrypted_secret_key
+        app_share.editable = is_editable
+
+        app_share_add_rq = AddAppSharesRequest()
         app_share_add_rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
-        app_share_add_rq.shareType = ApplicationShareType.Value(share_type)
-        app_share_add_rq.secretUid = CommonHelperMethods.url_safe_str_to_bytes(secret_uid)
-        app_share_add_rq.encryptedSecretKey = encrypted_secret_key
-        app_share_add_rq.editable = is_editable
+        app_share_add_rq.shares.append(app_share)
+
 
         api_request_payload = ApiRequestPayload()
         api_request_payload.payload = app_share_add_rq.SerializeToString()
@@ -891,12 +920,12 @@ class KSMCommand(Command):
 
         if type(rs) is bytes:
 
-            if share_type == 'SHT_RECORD':
+            if share_type == 'SHARE_TYPE_RECORD':
                 share_type_str = 'record'
             else:
                 share_type_str = 'shared folder'
 
-            print((bcolors.OKGREEN + "Successfully added new %s uid=%s to app uid=%s" + bcolors.ENDC) % (share_type_str, secret_uid, app_uid))
+            print((bcolors.OKGREEN + "Successfully added %s uid=%s to app uid=%s" + bcolors.ENDC) % (share_type_str, secret_uid, app_uid))
             return True
 
         if type(rs) is dict:
@@ -997,6 +1026,40 @@ class KSMCommand(Command):
         print("Application was added successfully")
 
         params.sync_data = True
+
+
+    @staticmethod
+    def remove_client(params, app_name_or_uid, client_ids_and_hashes):
+
+        if not app_name_or_uid:
+            raise Exception("No app provided")
+
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        def convert_ids_and_hashes_to_hashes(ciahs, app_uid):
+
+            app_info = KSMCommand.get_app_info(params, app_uid)
+            for id_or_hash in ciahs:
+
+                if id_or_hash in app_info:
+                    print("Here")
+
+        client_hashes = convert_ids_and_hashes_to_hashes(client_ids_and_hashes, app.uid)
+
+        rq = RemoveAppClientsRequest()
+        rq.appRecordUid = app.uid
+        rq.clients.append(client_hashes)
+
+        api_request_payload = ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+        rs = execute_rest(params.rest_context, 'vault/app_client_remove', api_request_payload)
+
+        if type(rs) is dict:
+            raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, lock_ip, firstAccessExpireOn, access_expire_in_min):
