@@ -690,6 +690,13 @@ class KSMCommand(Command):
             KSMCommand.add_new_v5_app(params, ksm_app_name)
             return
 
+        if ksm_obj in ['share', 'secret'] and ksm_action is None:
+            print("  Add Secret to the App\n\n"
+                    + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
+                    + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
+                    + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n")
+            return
+
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs.get('app')
@@ -889,6 +896,8 @@ class KSMCommand(Command):
 
         app_shares = []
 
+        added_secret_uids_type_pairs = []
+
         for uid in secret_uids:
             is_record = uid in params.record_cache
             is_shared_folder = api.is_shared_folder(params, uid)
@@ -903,11 +912,13 @@ class KSMCommand(Command):
                 share_key_decrypted = shared_folder_key_unencrypted
                 share_type = 'SHARE_TYPE_FOLDER'
             else:
-                logging.warning(
-                    'UID="%s" is not a Record nor Shared Folder. Only individual records or Shared Folders can '
-                    'be added to the application.' % uid)
+                print(bcolors.WARNING +
+                    '\tNot adding UID="%s" is not a Record nor Shared Folder. Only individual records or Shared Folders can '
+                    'be added to the application.' + bcolors.ENDC % uid)
 
                 continue
+
+            added_secret_uids_type_pairs.append((uid, share_type))
 
             encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
 
@@ -931,13 +942,15 @@ class KSMCommand(Command):
 
         if type(rs) is bytes:
 
-            print((bcolors.OKGREEN + "Successfully added secret UIDs=%s to app uid=%s, editable=" + bcolors.BOLD + "%s" + bcolors.ENDC) % (secret_uids, app_uid, is_editable))
+            print((bcolors.OKGREEN + 'Successfully added following secrets to app uid=%s, editable=' + bcolors.BOLD + '%s:\n\t' + bcolors.ENDC) % (app_uid, is_editable))
+            print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + ('Record' if ('RECORD' in str(x[1])) else 'Shared Folder'), added_secret_uids_type_pairs)))
+            print('\n')
             return True
 
         if type(rs) is dict:
             if rs.get('message') == 'Duplicate share, already added':
                 logging.error("One of the secret UIDs is already shared to this application. "
-                              "Please remove already shared UIDs from the command and try again.")
+                              "Please remove already shared UIDs from your command and try again.")
                 # this is a backend limitation. If at least one record is already shared to the app, the backend
                 # returns error.
             else:
