@@ -338,6 +338,8 @@ def execute_update_record(params, records_to_update):
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
+            # FIXME: Probably need authentication properties here
+            # FIXME: Might need locale properaties here
             'pt': 'Commander',
             'client_time': api.current_milli_time(),
             'update_records': chunk,
@@ -820,6 +822,7 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
 
     We're not doing records_update yet, because it requires v3 and we don't do v3 yet.
     """
+    # This assert probably can be sorted out during code review.
     assert len(rec_to_update.folders) == 1, "What should we do with records that aren't in a single folder?"
     data = {
         'folder': rec_to_update.folders[0].get_folder_path(),
