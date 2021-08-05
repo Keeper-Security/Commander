@@ -23,7 +23,7 @@ import re
 
 from Cryptodome.Cipher import AES
 import requests
-import pudb
+# import pudb
 
 from keepercommander import api
 from ..params import KeeperParams
@@ -336,7 +336,6 @@ def chunks(list_, n):
 
 def execute_update_record(params, records_to_update):
     """Interact with the API to update preexisting records: we change the password only."""
-    pudb.set_trace()
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
@@ -348,6 +347,7 @@ def execute_update_record(params, records_to_update):
         result = api.communicate(params, request)
         if isinstance(result, dict):
             if 'result' in result:
+                # Note that this may appear more than once for an import with many password updates
                 print(result['result'])
 
 
@@ -673,18 +673,49 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def tokenize_record(update_flag, record):   # type: (Record) -> [str]
+def tokenize_partial_import_record(record):   # type: (ImportRecord) -> [str]
+    """
+    Turn a record-to-import into an iterable of str's for hashing.  This is really about import --update.
+
+    Examine just the relevant parts of the record.
+    """
+    yield record.title or ''
+    yield record.login or ''
+    yield record.login_url or ''
+
+
+def tokenize_partial_preexisting_record(record):   # type: (Record) -> [str]
     """
     Turn a preexisting record into an iterable of str's for hashing.
 
-    If update_flag is True, only check three fields for uniqueness.
-    """
-    if update_flag:
-        yield record.title or ''
-        yield record.login or ''
-        yield record.login_url or ''
-        return
+    Examine just the relevant parts of the record.
 
+    For now at least, this is the same as tokenize_partial_import_record().
+    """
+    return tokenize_partial_import_record(record)
+
+
+def tokenize_full_import_record(record):   # type: (ImportRecord) -> [str]
+    """
+    Turn a record-to-import into an iterable of str's for hashing.
+
+    Examine the entire record.
+    """
+    yield record.title or ''
+    yield record.login or ''
+    yield record.password or ''
+    yield record.login_url or ''
+    yield record.notes or ''
+
+    if len(record.custom_fields) > 0:
+        keys = list(record.custom_fields.keys())
+        keys.sort()
+        for key in keys:
+            yield key + ':' + record.custom_fields[key]
+
+
+def tokenize_full_preexisting_record(record):   # type: (Record) -> [str]
+    """Turn a preexisting record into an iterable of str's for hashing."""
     yield record.title or ''
     yield record.login or ''
     yield record.password or ''
@@ -705,35 +736,10 @@ def tokenize_record(update_flag, record):   # type: (Record) -> [str]
             yield key + ':' + custom[key]
 
 
-def tokenize_import_record(update_flag, record):   # type: (ImportRecord) -> [str]
-    """
-    Turn a record-to-import into an iterable of str's for hashing.
-
-    If update_flag is True, only check three fields for uniqueness.
-    """
-    if update_flag:
-        yield record.title or ''
-        yield record.login or ''
-        yield record.login_url or ''
-        return
-
-    yield record.title or ''
-    yield record.login or ''
-    yield record.password or ''
-    yield record.login_url or ''
-    yield record.notes or ''
-
-    if len(record.custom_fields) > 0:
-        keys = list(record.custom_fields.keys())
-        keys.sort()
-        for key in keys:
-            yield key + ':' + record.custom_fields[key]
-
-
 def construct_import_rec_req(params, preexisting_record_hash, rec_to_import):
     """Build a rec_req for rec_to_import."""
     h = hashlib.sha256()
-    for token in tokenize_import_record(update_flag=False, record=rec_to_import):
+    for token in tokenize_full_import_record(record=rec_to_import):
         h.update(token.encode())
     r_hash = h.hexdigest()
 
@@ -824,17 +830,10 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
         'folder': rec_to_update.folders[0].get_folder_path(),  # FIXME: Is this truly a path?  Is the first folder alone enough?
         'title': rec_to_update.title,
         'secret1': rec_to_update.login,
-        'secret2': rec_to_update.password,  # FIXME: Is this the correct password?
+        'secret2': rec_to_update.password,
         'link': rec_to_update.login_url,  # FIXME: Is this the correct mapping?
         # We intentionally don't pass notes or custom; we specifically don't want to change them for an 'import --update'.
     }
-
-    # FIXME: A guess based on construct_import_rec_req
-    # record_key = os.urandom(32)
-    # FIXME: A guess based on upload_attachment
-    # extra = json.loads(current_rec['extra_unencrypted'].decode('utf-8')) if 'extra' in current_rec else {}
-    # FIXME: I don't think we need extra, but I'm not entirely sure.
-    # extra = {}
 
     # Because this is an update, not an initial import, rec_to_update.uid should always be in params.record_cache
     current_rec = params.record_cache[rec_to_update.uid]
@@ -860,6 +859,23 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     return one_rec_req
 
 
+def build_record_hash(record, tokenize_gen):
+    """Build a sha256 hash of record using tokenize_gen."""
+    hasher = hashlib.sha256()
+    for token in tokenize_gen(record):
+        hasher.update(token.encode())
+    return hasher.hexdigest()
+
+
+def build_hash_dict(params, tokenize_gen):
+    """Return a dict of hashes to record uid's with a parameterized tokenizing generator."""
+    preexisting_record_hash = {}
+    for preexisting_r_uid in params.record_cache:
+        preexisting_rec = api.get_record(params, preexisting_r_uid)
+        preexisting_record_hash[build_record_hash(preexisting_rec, tokenize_gen)] = preexisting_r_uid
+    return preexisting_record_hash
+
+
 def prepare_record_add_or_update(update_flag, params, records):
     """
     Find what records to import or update.
@@ -873,52 +889,45 @@ def prepare_record_add_or_update(update_flag, params, records):
     """
     recs_to_import_or_update = records
     del records
-    preexisting_record_hash = {}
-    for preexisting_r_uid in params.record_cache:
-        preexisting_rec = api.get_record(params, preexisting_r_uid)
-        h = hashlib.sha256()
-        for token in tokenize_record(update_flag, preexisting_rec):
-            h.update(token.encode())
-        preexisting_record_hash[h.hexdigest()] = preexisting_r_uid
+    preexisting_entire_record_hash = build_hash_dict(params, tokenize_full_preexisting_record)
+    preexisting_partial_record_hash = build_hash_dict(params, tokenize_partial_preexisting_record)
 
     record_adds = []
     record_updates = []
     for rec_to_import_or_update in recs_to_import_or_update:
-        perform_import_or_update = False
-        h = hashlib.sha256()
-        for token in tokenize_import_record(update_flag, rec_to_import_or_update):
-            h.update(token.encode())
-        r_hash = h.hexdigest()
-        if r_hash in preexisting_record_hash:
-            # preserve the UID, it's precious
-            rec_to_import_or_update.uid = preexisting_record_hash[r_hash]
-            if update_flag:
-                # This is a record update: do the import (specially).
-                perform_import_or_update = True
-            else:
-                # We do not need to do a record update; we already have this record in its entirety.
-                pass
+        perform_import_or_update = 'neither'
+
+        full_hash_of_cur_rec = build_record_hash(rec_to_import_or_update, tokenize_full_import_record)
+        partial_hash_of_cur_rec = build_record_hash(rec_to_import_or_update, tokenize_partial_import_record)
+        # Decide what kind of operation is needed.
+        if full_hash_of_cur_rec in preexisting_entire_record_hash:
+            # We do not need to do a record update; we already have this record in its entirety.
+            pass
+        elif partial_hash_of_cur_rec in preexisting_partial_record_hash and update_flag:
+            # This is a record to update instead of importing it.
+            # FIXME: This assignment is experimental.
+            rec_to_import_or_update.uid = preexisting_partial_record_hash[partial_hash_of_cur_rec]
+            perform_import_or_update = 'update'
         else:
             # Create a new UID for the new record, and signal that we need to do the import.
+            # We do this conditionally for --update, and unconditionally for import without --update.
             rec_to_import_or_update.uid = api.generate_record_uid()
-            perform_import_or_update = True
+            perform_import_or_update = 'import'
 
-        if perform_import_or_update:
-            if update_flag:
-                # FIXME: Should we do both imports and updates here?  IE, if the record preexists, this is right, but if the
-                # record doesn't yet exist, shouldn't we just import it?
-                rec_req = construct_update_rec_req(params, preexisting_record_hash, rec_to_import_or_update)
-                # Schedule the record for later batch-addition.
-                record_updates.append(rec_req)
-            else:
-                rec_req = construct_import_rec_req(params, preexisting_record_hash, rec_to_import_or_update)
-                if rec_req is None:
-                    # This means we already have an identical copy of this record.  It also means something's wrong; the logic
-                    # above should have tried to turn this into an update.
-                    raise AssertionError('Record identical but not identical!')
-                else:
-                    # Schedule the record for later batch-addition.
-                    record_adds.append(rec_req)
+        # Act on the selected operation.
+        if perform_import_or_update == 'update':
+            rec_req = construct_update_rec_req(params, preexisting_partial_record_hash, rec_to_import_or_update)
+            # Schedule the record for later batch-update.
+            record_updates.append(rec_req)
+        elif perform_import_or_update == 'import':
+            rec_req = construct_import_rec_req(params, preexisting_entire_record_hash, rec_to_import_or_update)
+            # Schedule the record for later batch-addition.
+            record_adds.append(rec_req)
+        elif perform_import_or_update == 'neither':
+            # Nothing to do.
+            pass
+        else:
+            raise AssertionError('perform_import_or_update has a strange value: {}'.format(perform_import_or_update))
 
     return record_adds, record_updates
 
