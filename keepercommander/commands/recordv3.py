@@ -114,6 +114,7 @@ command_group.add_argument('-g', '--generate', dest='generate', action='store_tr
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
 edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
+edit_parser.add_argument('-t', '--title', dest='title', type=str, action='store', help='record title')
 command_group = edit_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-v2', '--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 command_group.add_argument('-v3d', '--data', dest='data', action='store', help='load record type json data from string')
@@ -603,15 +604,28 @@ class RecordEditCommand(Command):
         if record_uid is None:
             raise CommandError('edit', 'Enter name or uid of existing record')
 
+        rt_name = ''
         options = kwargs.get('option') or []
         options = [] if options == [None] else options
+        rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
+        if rv > 2:
+            # convert any v2 options into corresponding v3 options for v3 type=login|general
+            rt_data = params.record_cache[record_uid].get('data_unencrypted')
+            rt_name = recordv3.RecordV3.get_record_type_name(rt_data)
+            if rt_name in ("login", "general"):
+                errors = self.convert_legacy_options(kwargs=kwargs)
+                if errors:
+                    logging.error(bcolors.FAIL + 'Conflict between record type and legacy options: ' + errors + bcolors.ENDC)
+                    return
+                options = kwargs.get('option') or options
+
         has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
         has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
         if has_v2_options and has_v3_options:
-            logging.error(bcolors.FAIL + 'Use either legacy arguments only (--title, --pass, --login --url, --notes, --custom) or record type options only (type=login title=MyRecord etc.) see. https://github.com/Keeper-Security/Commander/blob/master/record-types.md' + bcolors.ENDC)
+            logging.error(bcolors.FAIL + 'Use either legacy arguments only (--pass, --login --url, --notes, --custom) or record type options only (type=login title=MyRecord etc.) see. https://github.com/Keeper-Security/Commander/blob/master/record-types.md' + bcolors.ENDC)
             return
 
-        # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
+        # v2 record: when --legacy flag is set or a legacy option (--login, --pass, --url, --notes, --custom)
         # v2 record: when no v3 option set - neither -v3d nor -v3f is set
         # v3 record: when no --legacy flag and no legacy options (--title, --login, --pass, --url, --notes, --custom)
         # NB! v3 record needs at least one of: -v3d or -v3f or -o to be set
@@ -620,7 +634,6 @@ class RecordEditCommand(Command):
         # is_v2 = is_v2 or bool(kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
         # is_v2 = is_v2 or not bool(kwargs.get('data') or kwargs.get('data_file') or kwargs.get('option') or kwargs.get('generate'))
         # 2021-06-08 --legacy option is ignored - use record version and v3_enabled flag
-        rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
         v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         if is_v2:
             if rv and rv in (3, 4):
@@ -694,7 +707,7 @@ class RecordEditCommand(Command):
         record_data = record_data.strip() if record_data else ''
         rdata_dict = json.loads(record_data or '{}')
 
-        rt_def = ''
+        rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name) or ''
         if options:
             # invalid options - no '=' NB! edit allows empty value(s) to be able to delete
             # inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
@@ -705,7 +718,7 @@ class RecordEditCommand(Command):
                 return
 
             # check for a single valid v3 record type
-            types = [x for x in options if 'type' == (x or '').split('=', 1)[0].strip().lower()]
+            types = [x for x in options if (x or '').split('=', 1)[0].strip().lower() == 'type']
             uniq = list({x.split('=', 1)[1].strip() for x in types if x.__contains__('=')})
             if uniq and len(uniq) == 1 and uniq[0] == '':
                 logging.error(bcolors.FAIL + 'Cannot delete the type: "-o type=" is not a valid option.' + bcolors.ENDC)
@@ -778,6 +791,50 @@ class RecordEditCommand(Command):
             if newpass != oldpass:
                 params.queue_audit_event('record_password_change', record_uid=record.record_uid)
 
+    def convert_legacy_options(self, kwargs):
+        options = kwargs.get('option') or []
+        options = [] if options == [None] else options
+        errors = ''
+        lopt = [
+            { 'option': '--title', 'dest': 'title', 'is_field': False },
+            { 'option': '--notes', 'dest': 'notes', 'is_field': False },
+            { 'option': '--login', 'dest': 'login', 'is_field': True },
+            { 'option': '--pass', 'dest': 'password', 'is_field': True },
+            { 'option': '--url', 'dest': 'url', 'is_field': True }
+        ]
+
+        for x in lopt:
+            option = x.get('option')
+            dest = x.get('dest')
+            oval = kwargs.get(dest)
+            if oval:
+                pattern = '(f|fields)\\.{0}='.format(dest) if x.get('is_field') else '{}='.format(dest)
+                dupes = [x for x in options if re.match(pattern, str(x), re.IGNORECASE)]
+                if dupes:
+                    errors += '\n  option {} conflicts with {}={}'.format(dupes[0], option, str(oval))
+                else:
+                    kvp = '{}{}={}'.format('f.' if x.get('is_field') else '', dest, str(oval))
+                    options.append(kvp)
+                    kwargs[dest] = None
+
+        copt = kwargs.get('custom')
+        if copt:
+            clst = recordv3.RecordV3.custom_options_to_list(copt)
+
+            # any custom.text field conflicts with any legacy --custom option text fields
+            # ex. c.text.label=abc c.text=abc will overwrite first legacy --custom text field
+            # err = [(x, 'c.text.label='+x.get('name')) for x in clst if any([y for y in options if y.startswith('c.text.label='+x.get('name'))])]
+            ctxt = [y for y in options if re.search(r'(?:c|custom)\.text(?:=|\.label=)', y, re.IGNORECASE)]
+            if ctxt:
+                errors += 'Conflicting legacy/v2 and v3 options: --custom {} and {}'.format(copt, ctxt)
+
+            kwargs['custom_list'] = clst
+            kwargs['custom'] = None
+
+        if not errors:
+            kwargs['option'] = options
+
+        return errors
 
 
 class RecordAppendNotesCommand(Command):

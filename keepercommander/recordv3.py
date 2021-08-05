@@ -684,7 +684,7 @@ class RecordV3:
             results = results and RecordV3.is_valid_ref_uid(fv)
         elif isinstance(fval, int):
           for fv in field_value:
-            results = results and (isinstance(fv, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(fv))))
+            results = results and (isinstance(fv, int) or bool(re.match(r'^\s*[-+]?\s*\d+\s*$', str(fv))))
         elif isinstance(fval, str):
           for fv in field_value:
             results = results and isinstance(fv, str) and bool(fv)
@@ -700,7 +700,7 @@ class RecordV3:
               val2 = fv.get(fvv)
               res = bool(val2)
               if isinstance(val1, int):
-                res = res and (isinstance(val2, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(val2))))
+                res = res and (isinstance(val2, int) or bool(re.match(r'^\s*[-+]?\s*\d+\s*$', str(val2))))
               elif isinstance(val1, str):
                 res = res and isinstance(val2, str) and bool(val2)
               elif isinstance(val1, tuple):
@@ -747,7 +747,7 @@ class RecordV3:
         elif isinstance(fval, int):
           for fv in fvalue:
             # if reqd and not fv: errors.append('Missing required integer value: ' + fv)
-            if not((isinstance(fv, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(fv))))):
+            if not((isinstance(fv, int) or bool(re.match(r'^\s*[-+]?\s*\d+\s*$', str(fv))))):
               errors.append('Invalid integer value: ' + fv)
         elif isinstance(fval, str):
           for fv in fvalue:
@@ -772,7 +772,7 @@ class RecordV3:
                 errors.append('Missing required object field value: ' + fvv)
               if not errors:
                 if isinstance(val1, int):
-                  if not((isinstance(val2, int) or bool(re.match('^\s*[-+]?\s*\d+\s*$', str(val2))))):
+                  if not((isinstance(val2, int) or bool(re.match(r'^\s*[-+]?\s*\d+\s*$', str(val2))))):
                     errors.append('Invalid integer object value: ' + fvv)
                 elif isinstance(val1, str):
                   if not isinstance(val2, str): # and bool(val2)
@@ -1041,17 +1041,17 @@ class RecordV3:
 
     options = kwargs.get('option') or []
     opts = [(x or '').split("=", 1) for x in options]
-    if not options:
+    if not options and not kwargs.get('custom_list'):
       return result
 
     # normalize prefixes: f. -> fields., c. -> custom.
     # so f.name.first is treated as duplicate of fields.name.first
     for x in opts:
       if x and x[0]:
-        x[0] = re.sub('^\s*fields\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
-        x[0] = re.sub('^\s*custom\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
-        x[0] = re.sub('^\s*f\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
-        x[0] = re.sub('^\s*c\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub(r'^\s*fields\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub(r'^\s*custom\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub(r'^\s*f\.', 'fields.', x[0], 1, flags=re.IGNORECASE)
+        x[0] = re.sub(r'^\s*c\.', 'custom.', x[0], 1, flags=re.IGNORECASE)
 
     # check for duplicate keys or keys with more than one value
     dupes = [x for x in opts if x and len(x) != 2] # keys with multiple values
@@ -1179,7 +1179,7 @@ class RecordV3:
               if not fv:
                 fv = { 'type': fname, 'value': [] }
                 r[forc].append(fv)
-              if not 'value' in fv: fv['value'] = []
+              if 'value' not in fv: fv['value'] = []
               if fvname:
                 # NB! required:true/false comes from RT definition and should not be re/set here
                 if fvname.lower() == 'required':
@@ -1214,15 +1214,24 @@ class RecordV3:
 
     # add command could pass multiple custom options - ex. --custom='{"name1":"value1", "name2":"value: 2,3,4"}'
     # since dot format can't handle duplicate keys we pass these as kwargs['custom_list']
-    if not is_edit:
-      custom_list = kwargs.get('custom_list') or []
-      custom = [ {
-        'type': 'text',
-        'label': x.get('name') or '',
-        'value': [x.get('value')] if x.get('value') else []
-      } for x in custom_list if x.get('name') or x.get('value') ]
-      if custom:
-        r['custom'] = (r.get('custom') or []) + custom
+    custom_list = kwargs.get('custom_list') or []
+    custom = [ {
+      'type': 'text',
+      'label': x.get('name') or '',
+      'value': [x.get('value')] if x.get('value') else []
+    } for x in custom_list if x.get('name') or x.get('value') ]
+    if custom:
+      r['custom'] = (r.get('custom') or [])
+      if is_edit:
+        # update value of existing custom field or insert new one
+        for cr in custom:
+          cold = next((x for x in r['custom'] if x.get('type') == 'text' and x.get('label') == cr.get('label') and cr.get('label') is not None), None)
+          if cold:
+            cold['value'] = cr.get('value')
+          else:
+            r['custom'].append(cr)
+      else:
+        r['custom'] = r['custom'] + custom
 
     if r and not result['errors']:
       if not r.get('custom'): r.pop('custom', None)
@@ -1565,6 +1574,7 @@ class RecordV3:
 
     for c in fields + custom:
       ftyp = c.get('type') or ''
+      flab = c.get('label') or ''
       flds = c.get('value') or []
       fval = flds
       if len(flds) == 1 and flds[0]:
@@ -1582,7 +1592,8 @@ class RecordV3:
         if ftyp in ('fileRef', 'cardRef', 'addressRef'):
           RecordV3.display_ref(ftyp, fval, **kwargs)
         else:
-          print('{0:>20s}: {1:<s}'.format(str(ftyp), str(fval)))
+          fkey = '{} ({})'.format(flab, ftyp)
+          print('{0:>20s}: {1:<s}'.format(str(fkey), str(fval)))
 
     totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
     totp = totp[0] if totp else totp
