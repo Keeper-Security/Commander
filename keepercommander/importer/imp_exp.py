@@ -23,6 +23,7 @@ import re
 
 from Cryptodome.Cipher import AES
 import requests
+import pudb
 
 from keepercommander import api
 from ..params import KeeperParams
@@ -283,9 +284,7 @@ def _import(params, file_format, filename, **kwargs):
             _, rec_rs = execute_import_folder_record(params, None, record_add)
             api.sync_down(params)
         if record_update:
-            # FIXME: This should batch things up to a maximum of 100 records at a time, much like execute_import_folder_record,
-            # but it's 1000, not 100.
-            api.execute_batch(params, record_update)
+            execute_update_record(params, record_update)
             api.sync_down(params)
 
         # ensure records are linked to folders
@@ -323,6 +322,33 @@ def report_statuses(status_type, status_list):
     counter = collections.Counter(counter_iter)
     for status, count in sorted(counter.items()):
         logging.info('%-15s %-15s %d', status_type, status, count)
+
+
+def chunks(list_, n):
+    """
+    Yield successive n-sized chunks from list_.
+
+    Based on https://stackoverflow.com/questions/312443/how-do-you-split-a-list-into-evenly-sized-chunks
+    """
+    for offset in range(0, len(list_), n):
+        yield list_[offset:offset + n]
+
+
+def execute_update_record(params, records_to_update):
+    """Interact with the API to update preexisting records: we change the password only."""
+    pudb.set_trace()
+    for chunk in chunks(records_to_update, 100):
+        request = {
+            'command': 'record_update',
+            'pt': 'Commander',
+            'client_time': api.current_milli_time(),
+            'update_records': chunk,
+            'device_id': 'Commander',
+        }
+        result = api.communicate(params, request)
+        if isinstance(result, dict):
+            if 'result' in result:
+                print(result['result'])
 
 
 def execute_import_folder_record(params, folders, records):
@@ -710,8 +736,10 @@ def construct_import_rec_req(params, preexisting_record_hash, rec_to_import):
     for token in tokenize_import_record(update_flag=False, record=rec_to_import):
         h.update(token.encode())
     r_hash = h.hexdigest()
+
     if r_hash in preexisting_record_hash:
-        rec_to_import.uid = preexisting_record_hash[r_hash]
+        # Nothing to do.  We already have this identical record.
+        return None
     else:
         rec_to_import.uid = api.generate_record_uid()
         preexisting_record_hash[r_hash] = rec_to_import.uid
@@ -776,14 +804,60 @@ def construct_import_rec_req(params, preexisting_record_hash, rec_to_import):
                     }]
             }
             rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
-    return rec_req
+        return rec_req
 
 
 def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
-    """Build a rec_req for rec_to_import."""
-    # based on https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated
-    # and upload_attachment(params, attachments), which appears elsewhere in this file.
-    raise NotImplementedError
+    """
+    Build a rec_req for rec_to_import.
+
+    Based on https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated
+    and upload_attachment(params, attachments), which appears elsewhere in this file.
+
+    We're not doing records_update yet, because it requires v3 and we don't do v3 yet.
+    """
+    # >>> print(rec_to_update.folders[0].get_folder_path())
+    # import-test\Business
+
+    data = {
+        # FIXME: This is full of guesses.
+        'folder': rec_to_update.folders[0].get_folder_path(),  # FIXME: Is this truly a path?  Is the first folder alone enough?
+        'title': rec_to_update.title,
+        'secret1': rec_to_update.login,
+        'secret2': rec_to_update.password,  # FIXME: Is this the correct password?
+        'link': rec_to_update.login_url,  # FIXME: Is this the correct mapping?
+        # We intentionally don't pass notes or custom; we specifically don't want to change them for an 'import --update'.
+    }
+
+    # FIXME: A guess based on construct_import_rec_req
+    # record_key = os.urandom(32)
+    # FIXME: A guess based on upload_attachment
+    # extra = json.loads(current_rec['extra_unencrypted'].decode('utf-8')) if 'extra' in current_rec else {}
+    # FIXME: I don't think we need extra, but I'm not entirely sure.
+    # extra = {}
+
+    # Because this is an update, not an initial import, rec_to_update.uid should always be in params.record_cache
+    current_rec = params.record_cache[rec_to_update.uid]
+
+    one_rec_req = {
+        'record_uid': rec_to_update.uid,  # FIXME: A guess.
+        'data': data,
+        'version': 2,
+        # Based on the doc at https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated, we do
+        # not appear to require a record_key or extra for updating a record.
+        # 'record_key': base64.urlsafe_b64encode(record_key).decode().rstrip('='),
+        'client_modified_time': api.current_milli_time(),  # FIXME: A guess based on upload_attachment()
+        # FIXME: This is more than a little iffy.
+        # 'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), rec_to_update['record_key_unencrypted']),
+        # 'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key),
+        # 'udata': nothing,  # I don't think we need this one, because we aren't uploading files (attachments).
+        # 'non_shared_data': nothing,  # I don't think we need this either.
+        # FIXME: A guess based on upload_attachment.  Why aren't we incrementing this or something?
+        'revision': current_rec['revision']
+        # 'shared_folder_uid': nothing,  # I'm hoping we don't need this.
+        # 'team_uid': nothing,  # Again, I'm hoping we don't need this.
+    }
+    return one_rec_req
 
 
 def prepare_record_add_or_update(update_flag, params, records):
@@ -831,11 +905,20 @@ def prepare_record_add_or_update(update_flag, params, records):
 
         if perform_import_or_update:
             if update_flag:
+                # FIXME: Should we do both imports and updates here?  IE, if the record preexists, this is right, but if the
+                # record doesn't yet exist, shouldn't we just import it?
                 rec_req = construct_update_rec_req(params, preexisting_record_hash, rec_to_import_or_update)
+                # Schedule the record for later batch-addition.
                 record_updates.append(rec_req)
             else:
                 rec_req = construct_import_rec_req(params, preexisting_record_hash, rec_to_import_or_update)
-                record_adds.append(rec_req)
+                if rec_req is None:
+                    # This means we already have an identical copy of this record.  It also means something's wrong; the logic
+                    # above should have tried to turn this into an update.
+                    raise AssertionError('Record identical but not identical!')
+                else:
+                    # Schedule the record for later batch-addition.
+                    record_adds.append(rec_req)
 
     return record_adds, record_updates
 
