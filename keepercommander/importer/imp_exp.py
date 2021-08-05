@@ -23,7 +23,7 @@ import re
 
 from Cryptodome.Cipher import AES
 import requests
-# import pudb
+import pudb
 
 from keepercommander import api
 from ..params import KeeperParams
@@ -315,10 +315,9 @@ def _import(params, file_format, filename, **kwargs):
         logging.info("%d records imported successfully", records_after - records_before)
 
 
-def report_statuses(status_type, status_list):
+def report_statuses(status_type, status_iter):
     """Report status codes from list of folder_pb2.*Response."""
-    counter_iter = (element.status for element in status_list if hasattr(element, 'status'))
-    counter = collections.Counter(counter_iter)
+    counter = collections.Counter(status_iter)
     for status, count in sorted(counter.items()):
         logging.info('%-15s %-15s %d', status_type, status, count)
 
@@ -334,7 +333,8 @@ def chunks(list_, n):
 
 
 def execute_update_record(params, records_to_update):
-    """Interact with the API to update preexisting records: we change the password only."""
+    """Interact with the API to update preexisting records: we only change the password(s)."""
+    pudb.set_trace()
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
@@ -347,7 +347,9 @@ def execute_update_record(params, records_to_update):
         if isinstance(result, dict):
             if 'result' in result:
                 # Note that this may appear more than once for an import with many password updates
-                print(result['result'])
+                report_statuses('update', (element['status'] for element in result['update_records']))
+            else:
+                logging.info('overall operation failed')
 
 
 def execute_import_folder_record(params, folders, records):
@@ -377,8 +379,8 @@ def execute_import_folder_record(params, folders, records):
         if len(import_rs.recordResponse) > 0:
             rs_record.extend(import_rs.recordResponse)
 
-    report_statuses('folder', rs_folder)
-    report_statuses('record', rs_record)
+    report_statuses('folder', (element.status for element in rs_folder))
+    report_statuses('record', (element.status for element in rs_record))
 
     return rs_folder, rs_record
 
@@ -737,10 +739,7 @@ def tokenize_full_preexisting_record(record):   # type: (Record) -> [str]
 
 def construct_import_rec_req(params, preexisting_record_hash, rec_to_import):
     """Build a rec_req for rec_to_import."""
-    h = hashlib.sha256()
-    for token in tokenize_full_import_record(record=rec_to_import):
-        h.update(token.encode())
-    r_hash = h.hexdigest()
+    r_hash = build_record_hash(record=rec_to_import, tokenize_gen=tokenize_full_import_record)
 
     if r_hash in preexisting_record_hash:
         # Nothing to do.  We already have this identical record.
@@ -821,19 +820,16 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
 
     We're not doing records_update yet, because it requires v3 and we don't do v3 yet.
     """
-    # >>> print(rec_to_update.folders[0].get_folder_path())
-    # import-test\Business
-
+    assert len(rec_to_update.folders) == 1, "What should we do with records that aren't in a single folder?"
     data = {
-        'folder': rec_to_update.folders[0].get_folder_path(),  # FIXME: Is this truly a path?  Is the first folder alone enough?
+        'folder': rec_to_update.folders[0].get_folder_path(),
         'title': rec_to_update.title,
         'secret1': rec_to_update.login,
         'secret2': rec_to_update.password,
         'link': rec_to_update.login_url,
-        # We intentionally don't pass notes or custom; we specifically don't want to change them for an 'import --update'.
+        # We intentionally don't pass notes or custom; by design we don't want to change them for an 'import --update'.
     }
 
-    # Because this is an update, not an initial import, rec_to_update.uid should always be in params.record_cache
     current_rec = params.record_cache[rec_to_update.uid]
 
     one_rec_req = {
