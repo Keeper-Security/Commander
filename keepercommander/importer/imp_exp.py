@@ -309,7 +309,6 @@ def _import(params, file_format, filename, **kwargs):
         if len(atts) > 0:
             upload_attachment(params, atts)
 
-    # FIXME: This does not appear to understand that it's worthwhile to report a count of records updated, too.
     records_after = len(params.record_cache)
     if records_after > records_before:
         params.queue_audit_event('imported_records', file_format=file_format.upper())
@@ -826,12 +825,11 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     # import-test\Business
 
     data = {
-        # FIXME: This is full of guesses.
         'folder': rec_to_update.folders[0].get_folder_path(),  # FIXME: Is this truly a path?  Is the first folder alone enough?
         'title': rec_to_update.title,
         'secret1': rec_to_update.login,
         'secret2': rec_to_update.password,
-        'link': rec_to_update.login_url,  # FIXME: Is this the correct mapping?
+        'link': rec_to_update.login_url,
         # We intentionally don't pass notes or custom; we specifically don't want to change them for an 'import --update'.
     }
 
@@ -839,22 +837,11 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     current_rec = params.record_cache[rec_to_update.uid]
 
     one_rec_req = {
-        'record_uid': rec_to_update.uid,  # FIXME: A guess.
+        'record_uid': rec_to_update.uid,
         'data': data,
         'version': 2,
-        # Based on the doc at https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated, we do
-        # not appear to require a record_key or extra for updating a record.
-        # 'record_key': base64.urlsafe_b64encode(record_key).decode().rstrip('='),
-        'client_modified_time': api.current_milli_time(),  # FIXME: A guess based on upload_attachment()
-        # FIXME: This is more than a little iffy.
-        # 'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), rec_to_update['record_key_unencrypted']),
-        # 'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key),
-        # 'udata': nothing,  # I don't think we need this one, because we aren't uploading files (attachments).
-        # 'non_shared_data': nothing,  # I don't think we need this either.
-        # FIXME: A guess based on upload_attachment.  Why aren't we incrementing this or something?
+        'client_modified_time': api.current_milli_time(),
         'revision': current_rec['revision']
-        # 'shared_folder_uid': nothing,  # I'm hoping we don't need this.
-        # 'team_uid': nothing,  # Again, I'm hoping we don't need this.
     }
     return one_rec_req
 
@@ -905,7 +892,6 @@ def prepare_record_add_or_update(update_flag, params, records):
             pass
         elif partial_hash_of_cur_rec in preexisting_partial_record_hash and update_flag:
             # This is a record to update instead of importing it.
-            # FIXME: This assignment is experimental.
             rec_to_import_or_update.uid = preexisting_partial_record_hash[partial_hash_of_cur_rec]
             perform_import_or_update = 'update'
         else:
@@ -1169,9 +1155,11 @@ def prepare_record_permission(params, records):
 
 
 class KeeperAttachment(ImportAttachment):
-    """Allow opening an attachment."""
+    """
+    Allow opening an attachment.
 
-    # FIXME: Note that this may be a duplicate of keepercommander/importer/commands.py's KeeperAttachment.
+    Note that this may be a duplicate of keepercommander/importer/commands.py's KeeperAttachment.
+    """
 
     def __init__(self, params, record_uid,):
         """Initialize."""
