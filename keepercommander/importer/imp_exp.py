@@ -26,6 +26,7 @@ import requests
 import pudb
 
 from keepercommander import api
+from keepercommander.rest_api import CLIENT_VERSION
 from ..params import KeeperParams
 
 from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
@@ -279,12 +280,12 @@ def _import(params, file_format, filename, **kwargs):
 
     if records:
         # create/update records
-        record_add, record_update = prepare_record_add_or_update(update_flag, params, records)
-        if record_add:
-            _, rec_rs = execute_import_folder_record(params, None, record_add)
+        records_to_add, records_to_update = prepare_record_add_or_update(update_flag, params, records)
+        if records_to_add:
+            _, rec_rs = execute_import_folder_record(params, None, records_to_add)
             api.sync_down(params)
-        if record_update:
-            execute_update_record(params, record_update)
+        if records_to_update:
+            execute_update_record(params, records_to_update)
             api.sync_down(params)
 
         # ensure records are linked to folders
@@ -338,8 +339,10 @@ def execute_update_record(params, records_to_update):
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
-            # FIXME: Probably need authentication properties here
-            # FIXME: Might need locale properaties here
+            'username': params.user,
+            'session_token': params.session_token,
+            'client_version': CLIENT_VERSION,
+            # FIXME: Might need locale properties here
             'pt': 'Commander',
             'client_time': api.current_milli_time(),
             'update_records': chunk,
