@@ -47,6 +47,8 @@ unpad_char = lambda s: s[0:-ord(s[-1])]
 
 decode_uid_to_str = lambda uid: base64.urlsafe_b64encode(uid).decode().rstrip('=')
 
+LOCALE='en_US'
+
 def run_command(params, request):
     # type: (KeeperParams, dict) -> dict
     if 'client_version' not in request:
@@ -1346,7 +1348,7 @@ def communicate(params, request):
 
     def authorize_request(rq):
         rq['client_time'] = current_milli_time()
-        rq['locale'] = 'en_US'
+        rq['locale'] = LOCALE
         rq['device_id'] = 'Commander'
         rq['session_token'] = params.session_token
         rq['username'] = params.user.lower()
