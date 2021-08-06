@@ -22,7 +22,6 @@ import os
 import re
 
 from Cryptodome.Cipher import AES
-import pudb
 import requests
 
 from keepercommander import api
@@ -336,7 +335,6 @@ def chunks(list_, n):
 
 def execute_update_record(params, records_to_update):
     """Interact with the API to update preexisting records: we only change the password(s)."""
-    pudb.set_trace()
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
