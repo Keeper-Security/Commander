@@ -819,8 +819,7 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     """
     Build a rec_req for rec_to_import.
 
-    Based on https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated
-    and upload_attachment(params, attachments), which appears elsewhere in this file.
+    Based on upload_attachment(params, attachments), which appears elsewhere in this file.
 
     We're not doing records_update yet, because it requires v3 and we don't do v3 yet.
     """
