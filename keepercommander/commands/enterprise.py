@@ -28,7 +28,7 @@ import hmac
 import copy
 import os
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
@@ -48,6 +48,7 @@ from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, Approv
                              ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
+
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
     commands['enterprise-info'] = EnterpriseInfoCommand()
@@ -58,6 +59,7 @@ def register_commands(commands):
     commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
+    commands['scim'] = EnterpriseScimCommand()
 
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
@@ -78,7 +80,7 @@ def register_command_info(aliases, command_info):
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser,
               enterprise_push_parser,
-              team_approve_parser, device_approve_parser,
+              team_approve_parser, device_approve_parser, scim_parser,
               audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
@@ -206,6 +208,18 @@ device_approve_parser.add_argument('--output', dest='output', action='store',
 device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
 device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit
+
+scim_parser = argparse.ArgumentParser(prog='scim', description='Manage SCIM endpoints.')
+scim_parser.add_argument('command', type=str, nargs='?', help='Automator Command. list, view, create, edit, delete')
+scim_parser.add_argument('target', type=str, nargs='?', help='Automator ID or Name. Command: view, edit, delete')
+scim_parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='Reload list of scim endpoints')
+scim_parser.add_argument('--force', '-f', dest='force', action='store_true', help='Delete with no confirmation')
+scim_parser.add_argument('--node', dest='node', help='Node Name or ID. Command: create')
+scim_parser.add_argument('--prefix', dest='prefix', action='store',
+                         help='Role Prefix. Command: create, edit. '
+                              'SCIM groups staring with prefix will be imported to Keeper as Roles')
+scim_parser.add_argument('--unique-groups', dest='unique_groups', action='store_true',
+                         help='Unique Groups. Command: create, edit')
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')
@@ -390,6 +404,33 @@ class EnterpriseCommand(Command):
             path = '{0}{1}{2}'.format(node[0], '\\' if path else '', path)
             node = nodes.get(node[1])
         return path
+
+    @staticmethod
+    def resolve_nodes(params, name):   # type (KeeperParams, str) -> collections.Iterable[dict]
+        node_id = 0
+        node_name = ''
+        if name:
+            node_name = str(name).lower()
+            try:
+                node_id = int(name)
+            except ValueError:
+                pass
+
+        for node in params.enterprise['nodes']:
+            if node_id > 0:
+                if node['node_id'] == node_id:
+                    yield node
+                    continue
+            if node_name:
+                if 'parent_id' in node:
+                    display_name = node['data'].get('displayname') or ''
+                else:
+                    display_name = params.enterprise['enterprise_name'] or ''
+                if display_name and display_name.lower() == node_name:
+                    yield node
+            else:
+                if 'parent_id' not in node:
+                    yield node
 
 
 class EnterpriseInfoCommand(EnterpriseCommand):
@@ -2465,7 +2506,7 @@ class AuditLogSumologicExport(AuditLogBaseExport):
 class AuditLogJsonExport(AuditLogBaseExport):
     def __init__(self):
         AuditLogBaseExport.__init__(self)
-        
+
     def default_record_title(self):
         return 'Audit Log: JSON'
 
@@ -3901,7 +3942,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                                 ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
                             except Exception as e:
                                 logging.debug(e)
-                                
+
                     if ecc_private_key:
                         data_key_rq = UserDataKeyRequest()
                         data_key_rq.enterpriseUserId.extend(user_ids)
@@ -4045,3 +4086,181 @@ class DeviceApproveCommand(EnterpriseCommand):
             rows.sort(key=lambda x: x[0])
             dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
             print('')
+
+
+scim_description = '''
+SCIM Command Syntax Description:
+scim command [target] [--options]
+ Command            Description
+=================================================================
+ list               Displays the list of SCIM endpoints
+ create             Creates SCIM endpoint
+ view               Prints SCIM endpoint details
+ edit               Changes SCIM endpoint configuration
+ delete             Deletes SCIM endpoint
+ 
+  list, create
+ 'target' parameter is ignored 
+ 
+view, edit, delete
+ these commands require 'target' parameter: SCIM endpoint ID
+ 
+ Option             Commands
+=================================================================
+ --reload           all : Reloads SCIM configuration
+ --node             create : Node ID or Name 
+ --prefix           create, edit : Role prefix
+ --unique-groups    create, edit : Unique groups 
+ --force            delete : Do not ask for delete confirmation
+'''
+
+
+class EnterpriseScimCommand(EnterpriseCommand):
+    def get_parser(self):  # type: () -> argparse.ArgumentParser or None
+        return scim_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+        if kwargs.get('reload'):
+            api.query_enterprise(params)
+
+        command = kwargs.get('command') or ''
+        if command == 'list' or command == '':
+            if command == '':
+                logging.info(scim_description)
+
+            self.dump_scims(params)
+            return
+
+        if command == 'create':
+            node_name = kwargs.get('node')
+            if not node_name:
+                logging.warning('\"--node\" option is required for \"create\" command')
+                return
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) > 1:
+                logging.warning('Node name \'%s\' is not unique. Use Node ID.', node_name)
+                return
+            elif len(nodes) == 0:
+                logging.warning('Node name \'%s\' is not found', node_name)
+                return
+
+            matched_node = nodes[0]
+            if not matched_node.get('parent_id'):
+                logging.warning('Root node cannot be used for SCIM endpoint')
+                return
+            token = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('=')
+            rq = {
+                'command': 'scim_add',
+                'scim_id': self.get_enterprise_id(params),
+                'node_id': matched_node['node_id'],
+                'token': token,
+            }
+            prefix = kwargs.get('prefix')
+            if prefix:
+                rq['prefix'] = prefix
+            if kwargs.get('unique_groups'):
+                rq['unique_groups'] = True
+
+            api.communicate(params, rq)
+            api.query_enterprise(params)
+            logging.info('')
+            logging.info('SCIM ID: %d', rq['scim_id'])
+            logging.info('SCIM URL: %s', self.get_scim_url(params, matched_node['node_id']))
+            logging.info('Provisioning Token: %s', token)
+            logging.info('')
+            return token
+
+        target = kwargs.get('target')
+        if not target:
+            logging.warning('\"target\" parameter is required for \"%s\" command', command)
+            return
+        scims = []
+        if params.enterprise and 'scims' in params.enterprise:
+            try:
+                target_id = int(target)
+            except ValueError:
+                logging.warning('SCIM ID should be integer: %s', target)
+                return
+            for info in params.enterprise['scims']:
+                if target_id == info['scim_id'] or target_id == info['node_id']:
+                    scims.append(info)
+                    break
+        if len(scims) == 0:
+            logging.warning('SCIM endpoint with ID \"%d\" not found', target)
+            return
+        scim = scims[0]
+
+        if command == 'edit':
+            token = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('=')
+            rq = {
+                'command': 'scim_update',
+                'scim_id': scim['scim_id'],
+                'token': token,
+            }
+            prefix = kwargs.get('prefix')
+            if prefix:
+                rq['prefix'] = prefix
+            if kwargs.get('unique_groups'):
+                rq['unique_groups'] = True
+
+            api.communicate(params, rq)
+            api.query_enterprise(params)
+            logging.info('')
+            logging.info('SCIM ID: %d', scim['scim_id'])
+            logging.info('SCIM URL: %s', self.get_scim_url(params, scim['node_id']))
+            logging.info('Provisioning Token: %s', token)
+            logging.info('')
+            return token
+
+        if command == 'view':
+            logging.info('{0:>20s}: {1}'.format('SCIM ID', scim['scim_id']))
+            node_id = scim['node_id']
+            logging.info('{0:>20s}: {1}'.format('SCIM URL', self.get_scim_url(params, node_id)))
+            logging.info('{0:>20s}: {1}'.format('Node ID', node_id))
+            logging.info('{0:>20s}: {1}'.format('Node Name', EnterpriseCommand.get_node_path(params, node_id)))
+            logging.info('{0:>20s}: {1}'.format('Prefix', scim.get('role_prefix') or ''))
+            logging.info('{0:>20s}: {1}'.format('Status', scim['status']))
+            last_synced = scim.get('last_synced')
+            if last_synced:
+                logging.info('{0:>20s}: {1}'.format('Last Synced', time.localtime(last_synced)))
+
+        elif command == 'delete':
+            answer = 'y' if kwargs.get('force') else \
+                user_choice(bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                            'You are about to delete SCIM endpoint {0}'.format(scim['scim_id']) +
+                            '\n\nDo you want to proceed with deletion?', 'yn', 'n')
+            if answer.lower() != 'y':
+                return
+
+            rq = {
+                'command': 'scim_delete',
+                'scim_id': scim['scim_id'],
+            }
+            api.communicate(params, rq)
+            api.query_enterprise(params)
+            logging.warning('SCIM endpoint \"%d\" at node \"%d\" deleted', scim['scim_id'], scim['node_id'])
+        else:
+            logging.warning('Unsupported command \"%s\"', command)
+
+
+    @staticmethod
+    def get_scim_url(params, node_id):  # type:  (KeeperParams, int) -> any
+        p = urlparse(params.rest_context.server_base)
+        return urlunparse((p.scheme, p.netloc, '/api/rest/scim/v2/' + str(node_id), None, None, None))
+
+    @staticmethod
+    def dump_scims(params):    # type: (KeeperParams) -> None
+        table = []
+        headers = ['SCIM ID', 'Node Name', 'Node ID', 'Prefix', 'Status', 'Last Synced']
+        if params.enterprise and 'scims' in params.enterprise:
+            for info in params.enterprise['scims']:
+                node_id = info['node_id']
+                last_synced = info.get('last_synced')
+                if last_synced:
+                    last_synced = str(time.localtime(last_synced))
+                else:
+                    last_synced = ''
+                row = [info['scim_id'], EnterpriseCommand.get_node_path(params, node_id), node_id,
+                       info.get('role_prefix') or '', info['status'], last_synced]
+                table.append(row)
+        dump_report_data(table, headers=headers)

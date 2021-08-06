@@ -1786,7 +1786,7 @@ def query_enterprise(params):
         'command': 'get_enterprise_data',
         'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
                     'role_users', 'managed_nodes', 'role_keys', 'role_keys2', 'licenses', 'queued_teams', 'queued_team_users',
-                    'licenses', 'keys']
+                    'licenses', 'keys', 'scims']
     }
     try:
         response = communicate(params, request)
