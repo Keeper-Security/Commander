@@ -23,10 +23,9 @@ import re
 
 from Cryptodome.Cipher import AES
 import requests
-import pudb
 
 from keepercommander import api
-from keepercommander.rest_api import CLIENT_VERSION
+from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..params import KeeperParams
 
 from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
@@ -203,8 +202,7 @@ def _import(params, file_format, filename, **kwargs):
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
     update_flag = kwargs['update_flag']
 
-    importer = importer_for_format(file_format)()
-    # type: BaseImporter
+    importer = importer_for_format(file_format)()  # type: BaseImporter
 
     records_before = len(params.record_cache)
 
@@ -270,6 +268,7 @@ def _import(params, file_format, filename, **kwargs):
     folder_add = prepare_folder_add(params, folders, records)
     if folder_add:
         fol_rs, _ = execute_import_folder_record(params, folder_add, None)
+        _ = fol_rs
         api.sync_down(params)
 
     if folders:
@@ -283,6 +282,7 @@ def _import(params, file_format, filename, **kwargs):
         records_to_add, records_to_update = prepare_record_add_or_update(update_flag, params, records)
         if records_to_add:
             _, rec_rs = execute_import_folder_record(params, None, records_to_add)
+            _ = rec_rs
             api.sync_down(params)
         if records_to_update:
             execute_update_record(params, records_to_update)
@@ -335,7 +335,6 @@ def chunks(list_, n):
 
 def execute_update_record(params, records_to_update):
     """Interact with the API to update preexisting records: we only change the password(s)."""
-    pudb.set_trace()
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
@@ -826,7 +825,7 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     We're not doing records_update yet, because it requires v3 and we don't do v3 yet.
     """
     # This assert probably can be sorted out during code review.
-    assert len(rec_to_update.folders) == 1, "What should we do with records that aren't in a single folder?"
+    assert len(rec_to_update.folders) == 1, "What should we do with records that aren't in exactly one folder?"
     data = {
         'folder': rec_to_update.folders[0].get_folder_path(),
         'title': rec_to_update.title,
@@ -837,10 +836,18 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     }
 
     current_rec = params.record_cache[rec_to_update.uid]
+    # This should always exist, because this is an import --update.
+    preexisting_record = params.record_cache[rec_to_update.uid]
 
+    unencrypted_key = preexisting_record['record_key_unencrypted']
+
+    encrypted_data = api.encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
+    record_key = api.encrypt_aes(unencrypted_key, params.data_key)
     one_rec_req = {
         'record_uid': rec_to_update.uid,
-        'data': data,
+        'record_key': record_key,
+        'record_key_unencrypted': base64.urlsafe_b64encode(unencrypted_key).decode('utf-8'),
+        'data': encrypted_data,
         'version': 2,
         'client_modified_time': api.current_milli_time(),
         'revision': current_rec['revision']
