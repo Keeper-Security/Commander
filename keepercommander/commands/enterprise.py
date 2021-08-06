@@ -1407,11 +1407,17 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 if node_id:
                     for user in matched_users:
                         if node_id != user['node_id']:
+                            encrypted_data = user['encrypted_data']
+                            if 'key_type' in user and user['key_type'] == 'no_key':
+                                dt = {
+                                    'displayname': user['data'].get('displayname') or ''
+                                }
+                                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
                             rq = {
                                 'command': 'enterprise_user_update',
                                 'enterprise_user_id': user['enterprise_user_id'],
                                 'node_id': node_id,
-                                'encrypted_data': user['encrypted_data'],
+                                'encrypted_data': encrypted_data,
                                 'enterprise_user_username': user['username']
                             }
                             request_batch.append(rq)
