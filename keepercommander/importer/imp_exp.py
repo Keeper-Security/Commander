@@ -19,7 +19,6 @@ import io
 import json
 import logging
 import os
-import pprint
 import re
 
 from Cryptodome.Cipher import AES
@@ -840,10 +839,8 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
     # This should always exist, because this is an import --update.
     preexisting_record = params.record_cache[rec_to_update.uid]
 
-    pprint.pprint(preexisting_record)
     preexisting_record_fields_str = preexisting_record['data_unencrypted'].decode('utf-8')
     preexisting_record_fields_dict = json.loads(preexisting_record_fields_str)
-    pprint.pprint(preexisting_record_fields_dict)
     for field_name in ('notes', 'custom'):
         if field_name in preexisting_record_fields_dict:
             data[field_name] = preexisting_record_fields_dict[field_name]
