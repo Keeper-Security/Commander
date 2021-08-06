@@ -58,6 +58,25 @@ api.login(my_params)
 # Load the Enterprise configuration state
 api.query_enterprise(my_params)
 
+# Create team/user mapping
+if 'users' in my_params.enterprise and 'team_users' in my_params.enterprise:
+    # params.enterprise['users'] is a list of all users in enterprise
+    # params.enterprise['team_users'] is a list of team <-> user pairs
+
+    # map user ID to active user email.
+    user_lookup = {u['enterprise_user_id']: u['username'] for u in my_params.enterprise['users'] if u['status'] == 'active'}
+
+    # team_users. key is team_uid, value is set of emails
+    team_users = {}
+    for tu in my_params.enterprise['team_users']:
+        team_uid = tu['team_uid']
+        if team_uid not in team_users:
+            team_users[team_uid] = set()
+        user_id = tu['enterprise_user_id']
+        if user_id in user_lookup:
+            email = user_lookup[user_id]
+            team_users[team_uid].add(email)
+
 # Create Enterprise Team Command
 command = EnterpriseTeamCommand()
 
