@@ -37,6 +37,7 @@ def register_command_info(aliases, command_info):
 rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate the password for a Keeper record from this Commander.')
 rotate_parser.add_argument('--print', dest='print', action='store_true', help='display the record content after rotation')
 rotate_parser.add_argument('--match', dest='match', action='store', help='regular expression to select records for password rotation')
+rotate_parser.add_argument('--password', dest='password', action='store', help='new password (optional)')
 rotate_parser.add_argument('name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command')
 rotate_parser.error = raise_parse_exception
 rotate_parser.exit = suppress_exit
@@ -52,7 +53,8 @@ def adjust_password(password):   # type: (str) -> str
             return password[i] + password[1:i] + password[0] + password[i+1:]
     return 'a' + password
 
-def rotate_password(params, record_uid, name=None):
+
+def rotate_password(params, record_uid, name=None, new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
     record = api.get_record(params, record_uid)
@@ -74,22 +76,23 @@ def rotate_password(params, record_uid, name=None):
     if not plugin:
         return False
 
-    # generate a new password with any specified rules
-    rules = record.get("cmdr:rules")
-    if rules:
-        logging.debug("Rules found for record")
-        new_password = generator.generateFromRules(rules)
-    else:
-        logging.debug("No rules, just generate")
-        new_password = generator.generate()
+    if not new_password:
+        # generate a new password with any specified rules
+        rules = record.get("cmdr:rules")
+        if rules:
+            logging.debug("Rules found for record")
+            new_password = generator.generateFromRules(rules)
+        else:
+            logging.debug("No rules, just generate")
+            new_password = generator.generate()
 
-    # ensure password starts with alpha numeric character
-    new_password = adjust_password(new_password)
+        # ensure password starts with alpha numeric character
+        new_password = adjust_password(new_password)
 
-    # Some plugins might need to change the password in the process of rotation
-    # f.e. windows plugin gets rid of certain characters.
-    if hasattr(plugin, "adjust"):
-        new_password = plugin.adjust(new_password)
+        # Some plugins might need to change the password in the process of rotation
+        # f.e. windows plugin gets rid of certain characters.
+        if hasattr(plugin, "adjust"):
+            new_password = plugin.adjust(new_password)
 
     # log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
     # if record.notes:
@@ -157,7 +160,7 @@ class RecordRotateCommand(Command):
                         logging.error('There are more than one rotation records with name %s. Please use record UID.', name)
                         return
             if record_uid:
-                rotate_password(params, record_uid, name=rotate_name)
+                rotate_password(params, record_uid, name=rotate_name, new_password=kwargs.get('password'))
                 if print_result:
                     record = api.get_record(params, record_uid)
                     record.display()
