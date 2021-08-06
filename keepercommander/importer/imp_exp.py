@@ -22,6 +22,7 @@ import os
 import re
 
 from Cryptodome.Cipher import AES
+import pudb
 import requests
 
 from keepercommander import api
@@ -318,7 +319,7 @@ def _import(params, file_format, filename, **kwargs):
 
 def report_statuses(status_type, status_iter):
     """Report status codes from list of folder_pb2.*Response."""
-    counter = collections.Counter(status_iter)
+    counter = collections.Counter(element.lower() for element in status_iter)
     for status, count in sorted(counter.items()):
         logging.info('%-15s %-15s %d', status_type, status, count)
 
@@ -335,13 +336,14 @@ def chunks(list_, n):
 
 def execute_update_record(params, records_to_update):
     """Interact with the API to update preexisting records: we only change the password(s)."""
+    pudb.set_trace()
     for chunk in chunks(records_to_update, 100):
         request = {
             'command': 'record_update',
             'username': params.user,
             'session_token': params.session_token,
             'client_version': CLIENT_VERSION,
-            # FIXME: Might need locale properties here
+            'locale': api.LOCALE,
             'pt': 'Commander',
             'client_time': api.current_milli_time(),
             'update_records': chunk,
@@ -832,7 +834,7 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
         'secret1': rec_to_update.login,
         'secret2': rec_to_update.password,
         'link': rec_to_update.login_url,
-        # We intentionally don't pass notes or custom; by design we don't want to change them for an 'import --update'.
+        # We add notes and custom a little later.
     }
 
     current_rec = params.record_cache[rec_to_update.uid]
@@ -841,7 +843,11 @@ def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
 
     preexisting_record_fields_str = preexisting_record['data_unencrypted'].decode('utf-8')
     preexisting_record_fields_dict = json.loads(preexisting_record_fields_str)
-    for field_name in ('notes', 'custom'):
+
+    # These fields need to be preserved - per our design.
+    field_tuple = ('notes', 'custom')
+    for field_name in field_tuple:
+        # these need to be preserved
         if field_name in preexisting_record_fields_dict:
             data[field_name] = preexisting_record_fields_dict[field_name]
 
