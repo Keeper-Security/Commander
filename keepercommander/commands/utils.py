@@ -94,26 +94,49 @@ def register_command_info(aliases, command_info):
     command_info['sync-down|d'] = 'Download & decrypt data'
 
 
-available_ksm_commands = "  View Apps             - " + bcolors.OKGREEN + "secrets-manager app list" + bcolors.ENDC + "\n" \
-                         "  Get App               - " + bcolors.OKGREEN + "secrets-manager app get " + bcolors.OKBLUE + "[UID or NAME]" + bcolors.ENDC + "\n" \
-                         "  Create App            - " + bcolors.OKGREEN + "secrets-manager app create " + bcolors.OKBLUE + "[NAME]" + bcolors.ENDC + "\n" \
-                         "  Add Client to the App - " + bcolors.OKGREEN + "secrets-manager client add --app " \
-                                                                                                + bcolors.OKBLUE + "[APP NAME or APP UID] " \
-                                                                                                + bcolors.OKGREEN + "--first-access-expires-in-min " + bcolors.OKBLUE + "[MIN] " \
-                                                                                                + bcolors.OKGREEN + "--access-expire-in-min " + bcolors.OKBLUE + "[MIN] " \
-                                                                                                + bcolors.OKGREEN + "--lock-ip " + bcolors.OKBLUE + "[TRUE] " \
-                                                                                                + bcolors.OKGREEN + "--count " + bcolors.OKBLUE + "[NUM]" + bcolors.ENDC + "\n" \
-                         "  Remove Client         - " + bcolors.OKGREEN + "secrets-manager client remove --app " \
-                                                                                                + bcolors.OKBLUE + "[APP NAME or APP UID] " \
-                                                                                                + bcolors.OKGREEN + "--client " + bcolors.OKBLUE + "[NAME or ID] " + bcolors.ENDC + "\n" + \
-                         "  Add Secret to the App - " + bcolors.OKGREEN + "secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
-                                                                                                + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
-                                                                                                + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n" \
-                         "  Remove Secret         - " + bcolors.OKGREEN + "secrets-manager share remove --app " \
-                                                                                                + bcolors.OKBLUE + "[APP NAME or APP UID] " \
-                                                                                                + bcolors.OKGREEN + "--secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" + bcolors.ENDC + "\n" \
-                         "    Note: if UID you are using contains dash (-) in the beginning, the value should be wrapped in quoted and prepended with an equal sign.\n" \
-                         "          " + bcolors.BOLD + "secrets-manager share add -a=\"-fwZjKGbKnZCo1Fh8gsf5w\" -s=\"-FcesCt6YXcJzpHWWRgoDA\"" + bcolors.ENDC
+available_ksm_commands = f"""
+Keeper Secrets Manager
+Commands to configure and manage the Keeper Secrets Manager platform.
+
+  Usage:
+
+  View Applications:
+  {bcolors.OKGREEN}secrets-manager app list{bcolors.ENDC}
+
+  Get Application:
+  {bcolors.OKGREEN}secrets-manager app get {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+
+  Create Application:
+  {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}
+
+  Add Client Device:
+  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+    Options: 
+      --first-access-expires-in-min [MIN]
+      --access-expire-in-min [MIN]
+      --lock-ip [TRUE]
+      --count [NUM]
+
+  Remove Client Device:
+  {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
+
+  Add Secret to Application:
+  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
+    Options: 
+      --editable [true]
+
+  Remove Secret from Application:
+  {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
+
+  -----
+  Note: If the UID you are using contains a dash (-) in the beginning, the value should be wrapped 
+  in quoted and prepended with an equal sign. For example:
+  {bcolors.OKGREEN}secrets-manager share add --app={bcolors.OKBLUE}"-fwZjKGbKnZCo1Fh8gsf5w"{bcolors.OKGREEN} --secret={bcolors.OKBLUE}"-FcesCt6YXcJzpHWWRgoDA"{bcolors.ENDC}
+
+  To learn about Keeper Secrets Manager visit:
+  {bcolors.WARNING}https://docs.keeper.io/secrets-manager/{bcolors.ENDC}
+
+"""
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -805,7 +828,6 @@ class KSMCommand(Command):
         else:
             dump_report_data(apps_table, apps_table_fields, fmt='table')
 
-
     @staticmethod
     def get_app_info(params, app_uid):
 
@@ -818,7 +840,6 @@ class KSMCommand(Command):
         get_app_info_rs.ParseFromString(rs)
 
         return get_app_info_rs.appInfo
-
 
     @staticmethod
     def get_and_print_app_info(params, uid):
@@ -942,7 +963,7 @@ class KSMCommand(Command):
 
         if type(rs) is bytes:
 
-            print((bcolors.OKGREEN + 'Successfully added following secrets to app uid=%s, editable=' + bcolors.BOLD + '%s:\n\t' + bcolors.ENDC) % (app_uid, is_editable))
+            print((bcolors.OKGREEN + 'Successfully added following secrets to app uid=%s, editable=' + bcolors.BOLD + '%s:' + bcolors.ENDC) % (app_uid, is_editable))
             print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + ('Record' if ('RECORD' in str(x[1])) else 'Shared Folder'), added_secret_uids_type_pairs)))
             print('\n')
             return True
@@ -1170,7 +1191,11 @@ class KSMCommand(Command):
         for i in range(count):
             one_time_token = os.urandom(32)
 
-            client_id = hmac.digest(one_time_token, b'KEEPER_SECRETS_MANAGER_CLIENT_ID', 'sha512')
+            try:
+                client_id = hmac.digest(one_time_token, b'KEEPER_SECRETS_MANAGER_CLIENT_ID', 'sha512')
+            except Exception as e:
+                logging.error(e.args[0])
+                return
 
             encrypted_master_key = rest_api.encrypt_aes(master_key, one_time_token)
 
