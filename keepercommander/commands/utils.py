@@ -95,21 +95,21 @@ def register_command_info(aliases, command_info):
 
 
 available_ksm_commands = f"""
-Keeper Secrets Manager
+{bcolors.BOLD}Keeper Secrets Manager{bcolors.ENDC}
 Commands to configure and manage the Keeper Secrets Manager platform.
 
   Usage:
 
-  View Applications:
+  {bcolors.BOLD}View Applications:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager app list{bcolors.ENDC}
 
-  Get Application:
+  {bcolors.BOLD}Get Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager app get {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
 
-  Create Application:
+  {bcolors.BOLD}Create Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}
 
-  Add Client Device:
+  {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
     Options: 
       --first-access-expires-in-min [MIN]
@@ -117,15 +117,15 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --lock-ip [TRUE]
       --count [NUM]
 
-  Remove Client Device:
+  {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
 
-  Add Secret to Application:
+  {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
     Options: 
       --editable [true]
 
-  Remove Secret from Application:
+  {bcolors.BOLD}Remove Secret from Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
 
   -----
@@ -200,7 +200,7 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands', usage="\n" + available_ksm_commands)
+ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands')
 ksm_parser.add_argument('command', type=str, action='store', nargs="*", help='Action: list')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
                                            help='Record UID')
@@ -676,6 +676,10 @@ class KSMCommand(Command):
         ksm_obj = ksm_command[0]
         ksm_action = ksm_command[1] if len(ksm_command) > 1 else None
 
+        if ksm_obj in ['help', 'h']:
+            print(available_ksm_commands)
+            return
+
         if ksm_obj == 'apps' or \
                 (ksm_obj in ['app', 'apps'] and ksm_action == 'list'):
             KSMCommand.print_all_apps_records(params)
@@ -743,7 +747,7 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print("  ksm share add --app [APP NAME or APP UID] --secret [SECRET UID or SHARED FOLDER UID] --editable [true or false]")
+                print(f"  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable {bcolors.OKBLUE}[true or false]{bcolors.ENDC}")
                 return
 
             count = kwargs.get('count')
@@ -768,8 +772,7 @@ class KSMCommand(Command):
 
             return
 
-        print("Unknown combination of KSM commands. Available commands:")
-        print(available_ksm_commands)
+        print(f"{bcolors.WARNING}Unknown combination of KSM commands. Type 'secrets-manager' for more details'{bcolors.ENDC}")
 
     @staticmethod
     def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
