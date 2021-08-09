@@ -670,7 +670,6 @@ class KSMCommand(Command):
         ksm_command = kwargs.get('command')
 
         if len(ksm_command) == 0:
-            print("Keeper Secrets Management. Available commands:")
             print(available_ksm_commands)
             return
 
