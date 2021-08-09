@@ -2318,7 +2318,7 @@ def query_enterprise(params):
         'command': 'get_enterprise_data',
         'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
                     'role_users', 'managed_nodes', 'role_keys', 'role_keys2', 'licenses', 'queued_teams', 'queued_team_users',
-                    'licenses', 'keys']
+                    'licenses', 'keys', 'scims']
     }
     try:
         response = communicate(params, request)
@@ -2358,7 +2358,8 @@ def query_enterprise(params):
                                     data = fix_data(data)
                                     user['data'] = json.loads(data.decode('utf-8'))
                                 except Exception as e:
-                                    pass
+                                    if 'key_type' in user and user['key_type'] == 'no_key':
+                                        user['data']['displayname'] = user.get('encrypted_data') or ''
                     if 'roles' in response:
                         for role in response['roles']:
                             role['data'] = {}
