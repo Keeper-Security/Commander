@@ -110,12 +110,12 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}
 
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
-  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
-      --first-access-expires-in-min [MIN]
-      --access-expire-in-min [MIN]
-      --lock-ip [TRUE]
-      --count [NUM]
+      --first-access-expires-in-min [MIN] : First time access expiration (Default: 60. Maximum 1440 minutes (24 hrs).)
+      --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
+      --unlock-ip : Locks the IP address to first requesting device
+      --count [NUM] : Number of tokens to generate (Default: 1)
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
@@ -123,14 +123,14 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
     Options: 
-      --editable [true]
+      --editable : Allow secrets to be editable by the client
 
   {bcolors.BOLD}Remove Secret from Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
 
   -----
   Note: If the UID you are using contains a dash (-) in the beginning, the value should be wrapped 
-  in quoted and prepended with an equal sign. For example:
+  in quotes and prepended with an equal sign. For example:
   {bcolors.OKGREEN}secrets-manager share add --app={bcolors.OKBLUE}"-fwZjKGbKnZCo1Fh8gsf5w"{bcolors.OKGREEN} --secret={bcolors.OKBLUE}"-FcesCt6YXcJzpHWWRgoDA"{bcolors.ENDC}
 
   To learn about Keeper Secrets Manager visit:
@@ -200,8 +200,10 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands')
-ksm_parser.add_argument('command', type=str, action='store', nargs="*", help='Action: list')
+ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands',
+                                     add_help=False)
+ksm_parser.add_argument('command', type=str, action='store', nargs="*",
+                        help='One of: "app list", "app get", "app create", "client add", "client remove", "share add" or "share remove"')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
                                            help='Record UID')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
@@ -219,10 +221,11 @@ ksm_parser.add_argument('--access-expire-in-min', '-p', type=int, dest='accessEx
 
 ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
                         help='Number of tokens to return. Default: 1', default=1)
-ksm_parser.add_argument('--editable', '-e', type=str, action='store', required=False,
-                        help='Is this share going to be editable or not. Default: false', default='false')
-ksm_parser.add_argument('--lock-ip', '-l', type=str, dest='lockIp', action='store',
-                        help='Lock IP Address. Default: true', default='true')
+ksm_parser.add_argument('--help', '-h', dest='helpflag', action="store_true", help='Display help')
+ksm_parser.add_argument('--editable', '-e', action='store_true', required=False,
+                        help='Is this share going to be editable or not.')
+ksm_parser.add_argument('--unlock-ip', '-l', type=str, dest='unlockIp', action='store',
+                        help='Unlock IP Address.', default='true')
 ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
                         help='Return Tokens', default='false')
 
@@ -312,6 +315,7 @@ class ThisDeviceCommand(Command):
 
         elif action == 'register':
             register_device()
+
 
         elif action == 'persistent_login' or action == 'persistent-login' or action == 'pl':
             value = ops[1]
@@ -668,8 +672,9 @@ class KSMCommand(Command):
     def execute(self, params, **kwargs):
 
         ksm_command = kwargs.get('command')
+        ksm_helpflag = kwargs.get('helpflag')
 
-        if len(ksm_command) == 0:
+        if len(ksm_command) == 0 or ksm_helpflag:
             print(available_ksm_commands)
             return
 
@@ -720,16 +725,14 @@ class KSMCommand(Command):
             print("  Add Secret to the App\n\n"
                     + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
                     + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
-                    + bcolors.OKGREEN + " --editable " + bcolors.OKBLUE + "[true]" + bcolors.ENDC + "\n")
+                    + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
 
             app_name_or_uid = kwargs.get('app')
             secret_uid = kwargs.get('secret')   # TODO: Allow multiple secrets
-            is_editable_str = kwargs.get('editable')
-
-            is_editable = bool(strtobool(is_editable_str))
+            is_editable = kwargs.get('editable')
 
             KSMCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
             return
@@ -747,19 +750,19 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print(f"  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable {bcolors.OKBLUE}[true or false]{bcolors.ENDC}")
+                print(f"  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable{bcolors.ENDC}")
                 return
 
             count = kwargs.get('count')
-            lock_ip_str = kwargs.get('lockIp')
-            lock_ip = bool(strtobool(lock_ip_str))
+            unlock_ip_str = kwargs.get('unlockIp')
+            unlock_ip = bool(strtobool(unlock_ip_str))
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
 
             is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
 
-            tokens = KSMCommand.add_client(params, app_name_or_uid, count, lock_ip, first_access_expire_on, access_expire_in_min)
+            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min)
             return tokens if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
@@ -1156,11 +1159,11 @@ class KSMCommand(Command):
             print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
 
     @staticmethod
-    def add_client(params, app_name_or_uid, count, lock_ip, firstAccessExpireOn, access_expire_in_min):
+    def add_client(params, app_name_or_uid, count, unlock_ip, firstAccessExpireOn, access_expire_in_min):
 
-        if lock_ip is str:
-            is_ip_locked = bool(strtobool(lock_ip))
-        is_ip_locked = lock_ip
+        if unlock_ip is str:
+            is_ip_unlocked = bool(strtobool(unlock_ip))
+        is_ip_unlocked = unlock_ip
 
         curr_ms = int(time() * 1000)
 
@@ -1181,7 +1184,7 @@ class KSMCommand(Command):
         app_record = json.loads(r_unencr_json_data)
 
         # master_key = app_record.
-        logging.debug("App uid=%s, lock_ip=%s" % (app_record.get('record_uid'), lock_ip))
+        logging.debug("App uid=%s, unlock_ip=%s" % (app_record.get('record_uid'), unlock_ip))
 
         master_key_str = app_record.get('fields')[0].get('value')[0]  # TODO: Search for field = password and get 1st value
         master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
@@ -1204,7 +1207,7 @@ class KSMCommand(Command):
             rq = AddAppClientRequest()
             rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(rec_cache_val.get('record_uid'))
             rq.encryptedAppKey = encrypted_master_key
-            rq.lockIp = is_ip_locked
+            rq.lockIp = not is_ip_unlocked
             rq.firstAccessExpireOn = first_access_expire_on_ms
 
             if access_expire_in_min:
@@ -1222,7 +1225,7 @@ class KSMCommand(Command):
                 if keys_str:
                     keys_str += '\n'
 
-                if is_ip_locked:
+                if not is_ip_unlocked:
                     lock_ip_stat = bcolors.OKBLUE + "ON" + bcolors.ENDC
                 else:
                     lock_ip_stat = bcolors.WARNING + "OFF" + bcolors.ENDC
