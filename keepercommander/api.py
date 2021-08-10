@@ -160,6 +160,7 @@ def login(params):
         if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
             success = True
             logging.debug('Auth Success')
+            params.login_time = time.time()
             store_config = not params.config or params.config.get('user') != params.user
 
             params.session_token = response_json['session_token']

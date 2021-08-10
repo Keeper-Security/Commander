@@ -107,6 +107,11 @@ def get_params_from_config(config_filename):
                     if 'private_key' in params.config:
                         params.device_private_key = params.config['private_key']
 
+                    if 'relogin' in params.config:
+                        params.relogin = bool(params.config['relogin'])
+                    else:
+                        params.relogin = False
+
             except Exception as e:
                 logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
                 answer = input('Do you want to delete it (y/N): ')

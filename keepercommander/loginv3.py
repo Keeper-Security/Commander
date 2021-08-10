@@ -5,13 +5,12 @@ import json
 import logging
 import os
 import re
-import sys
 from urllib.parse import urlparse, urlunparse
 from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
+import time
 
-import requests
 from Cryptodome.Math.Numbers import Integer
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -24,7 +23,7 @@ from google.protobuf.json_format import MessageToDict, MessageToJson
 from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
-from . import api, __version__, cli
+from . import api, cli
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .display import bcolors
 from .error import KeeperApiError, CommandError
@@ -57,7 +56,7 @@ class LoginV3Flow:
 
         while True:
 
-            is_cloud = resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY
+            resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY
 
             if resp.loginState == proto.DEVICE_APPROVAL_REQUIRED:  # client goes to “standard device approval”.
                 print("\nDevice Approval Required")
@@ -101,8 +100,18 @@ class LoginV3Flow:
 
             elif resp.loginState == proto.REDIRECT_ONSITE_SSO \
                     or resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
-                logging.info(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
+                logging.info(
+                    bcolors.BOLD +
+                    bcolors.OKGREEN +
+                    "\nSSO login not supported, will attempt to authenticate with your master password." +
+                    bcolors.ENDC +
+                    bcolors.ENDC,
+                )
+                logging.info(
+                    bcolors.OKBLUE +
+                    "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" +
+                    bcolors.ENDC,
+                )
 
                 is_alternate_login = True
 
@@ -110,7 +119,9 @@ class LoginV3Flow:
 
             elif resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY:
                 # TODO: Restart login
-                raise Exception('Device encrypted data key is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION)
+                raise Exception(
+                    'Device encrypted data key is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION,
+                )
 
             elif resp.loginState == proto.REQUIRES_ACCOUNT_CREATION:
                 # if isSSOAccount:
@@ -124,23 +135,22 @@ class LoginV3Flow:
                 warn_msg = \
                     "\n'%s' has indicated that this account was originally created in a different region." \
                     "\nPlease update config to use server: %s"\
-                    "\nYou may also need to register this device in the other region, unsetting the the device_token and clone_code will do this automatically upon login."\
+                    "\nYou may also need to register this device in the other region, unsetting the the device_token and " \
+                    "clone_code will do this automatically upon login."\
                     % (p.netloc.upper(), new_server)
 
                 logging.warning(warn_msg)
 
                 raise Exception("Changes to configuration are required.")
 
-                # TODO: change configuration structure so that device_token is paired with server, so that a given device_token is more certain to work for a given server, and will not be forced to be unset to "find out"
+                # TODO: change configuration structure so that device_token is paired with server, so that a given device_token
+                # is more certain to work for a given server, and will not be forced to be unset to "find out"
                 # params.rest_context.server_base = new_server
                 # params.server = params.rest_context.server_base
                 #
                 # LoginV3API.register_device_in_region(params)
                 #
                 # resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
-
-
-
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
 
                 CommonHelperMethods.fill_password_with_prompt_if_missing(params)
@@ -233,7 +243,13 @@ class LoginV3Flow:
 
                 LoginV3Flow.populateAccountSummary(params)
 
-                logging.info(bcolors.OKGREEN + "Successfully authenticated with Login V3 (" + login_type_message + ")" + bcolors.ENDC)
+                logging.info(
+                    bcolors.OKGREEN +
+                    "Successfully authenticated with Login V3 (" +
+                    login_type_message + ")" +
+                    bcolors.ENDC,
+                )
+                params.login_time = time.time()
 
                 return
             else:
@@ -269,8 +285,15 @@ class LoginV3Flow:
         if 'enforcements' in acct_summary_dict_snake_case:
             params.enforcements = acct_summary_dict_snake_case['enforcements']
             if params.enforcements:
-                if 'logout_timer_desktop' in params.enforcements:
-                    logout_timer = params.enforcements['logout_timer_desktop']
+                # Build a simpler way of accessing the key+value pairs of params.enforcements
+                enforcements_simple_dict = {}
+                for element in params.enforcements['longs']:
+                    key = element['key']
+                    value = element['value']
+                    enforcements_simple_dict[key] = value
+                # Use it to look up logout_timer_desktop and save the timer value in params.
+                if 'logout_timer_desktop' in enforcements_simple_dict:
+                    logout_timer = int(enforcements_simple_dict['logout_timer_desktop'])
                     if logout_timer > 0:
                         if params.logout_timer == 0 or logout_timer < params.logout_timer:
                             params.logout_timer = logout_timer
@@ -329,7 +352,13 @@ class LoginV3Flow:
             rs = LoginV3API.requestDeviceVerificationMessage(params, encryptedDeviceToken, 'email')
 
             if type(rs) == bytes:
-                print(bcolors.WARNING + "\nAn email with instructions has been sent to " + params.user + bcolors.WARNING + '\nPress <Enter> when approved.')
+                print(
+                    bcolors.WARNING +
+                    "\nAn email with instructions has been sent to " +
+                    params.user +
+                    bcolors.WARNING +
+                    '\nPress <Enter> when approved.',
+                )
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
@@ -463,7 +492,13 @@ class LoginV3Flow:
                 if u2f_response:
                     signature = json.dumps(u2f_response)
 
-                    rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, signature, proto.TWO_FA_EXP_IMMEDIATELY, proto.TWO_FA_RESP_U2F)
+                    rs = LoginV3API.twoFactorValidateMessage(
+                        params,
+                        encryptedLoginToken,
+                        signature,
+                        proto.TWO_FA_EXP_IMMEDIATELY,
+                        proto.TWO_FA_RESP_U2F,
+                    )
 
                     if type(rs) == bytes:
 
@@ -499,8 +534,8 @@ class LoginV3Flow:
             config_expiration = params.config.get('mfa_duration') or 'login'
             mfa_expiration = \
                 proto.TWO_FA_EXP_IMMEDIATELY if config_expiration == 'login' else \
-                    proto.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
-                        proto.TWO_FA_EXP_30_DAYS
+                proto.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
+                proto.TWO_FA_EXP_30_DAYS
 
             otp_code = ''
             show_duration = True
@@ -554,9 +589,13 @@ class LoginV3Flow:
 
                 return two_fa_validation_rs.encryptedLoginToken
             else:
-                warning_msg = bcolors.WARNING + "Unable to verify 2FA code '" + otp_code + "'. Regenerate the code and try again." + bcolors.ENDC
+                warning_msg = \
+                    bcolors.WARNING + \
+                    "Unable to verify 2FA code '" + \
+                    otp_code + \
+                    "'. Regenerate the code and try again." + \
+                    bcolors.ENDC
                 logging.warning(warning_msg)
-
 
 
 class LoginV3API:
@@ -649,7 +688,7 @@ class LoginV3API:
         return rest_api.execute_rest(params.rest_context, 'authentication/validate_device_verification_code', api_request_payload)
 
     @staticmethod
-    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):
+    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode=None, loginType='NORMAL'):
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.encryptedLoginToken = encryptedLoginToken
@@ -688,7 +727,7 @@ class LoginV3API:
                     raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
-    def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
+    def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode=None, loginType: str = 'NORMAL'):
 
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
@@ -765,7 +804,13 @@ class LoginV3API:
             raise KeeperApiError(rs['error'], "Account validation error.\n" + rs['message'])
 
     @staticmethod
-    def twoFactorValidateMessage(params: KeeperParams, encryptedLoginToken: bytes, otp_code: str, tfa_expire_in, twoFactorValueType=None):
+    def twoFactorValidateMessage(
+            params: KeeperParams,
+            encryptedLoginToken: bytes,
+            otp_code: str,
+            tfa_expire_in,
+            twoFactorValueType=None,
+    ):
 
         rq = proto.TwoFactorValidateRequest()
         rq.encryptedLoginToken = encryptedLoginToken
@@ -826,6 +871,8 @@ class LoginV3API:
 
         try:
             rs = api.communicate_rest(params, rq, 'authentication/register_encrypted_data_key_for_device')
+            # FIXME: We should check rs for errors
+            _ = rs
         except Exception as e:
             if e.result_code == 'device_data_key_exists':
                 return False
@@ -844,10 +891,13 @@ class LoginV3API:
         # TODO: refactor into util for handling Standard Rest Authentication Errors
         # try:
         rs = api.communicate_rest(params, rq, 'authentication/register_device_in_region')
+        # FIXME: We should check rs for errors
+        _ = rs
         # except Exception as e:
         #     # device_disabled - this device has been disabled for all users / all commands
         #     # user_device_disabled - this user has disabled access from this device
-        #     # redirect - depending on the command, if the user is a pending enterprise user, or and existing user and they are in a different region, they will be redirected to the proper keeperapp server to submit the request
+        #     # redirect - depending on the command, if the user is a pending enterprise user, or and existing user and they
+        #     # are in a different region, they will be redirected to the proper keeperapp server to submit the request
         #     # client_version - Invalid client version
         #     logging.error(f"Unable to register device in {params.region}: {e}")
         #     return False
@@ -868,6 +918,8 @@ class LoginV3API:
 
         try:
             rs = api.communicate_rest(params, rq, 'setting/set_user_setting')
+            # FIXME: We should check rs for errors
+            _ = rs
         except Exception as e:
             raise e
 
@@ -934,7 +986,10 @@ class LoginV3API:
 
         ecc_private_key_bytes = int.to_bytes(private_value, length=32, byteorder='big', signed=False)
         ecc_private_key_encrypted_bytes = rest_api.encrypt_aes(ecc_private_key_bytes, params.data_key)
-        ecc_public_key_bytes = ephemeral_key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        ecc_public_key_bytes = ephemeral_key.public_key().public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
 
         encrypted_client_key = api.encrypt_aes(os.urandom(32), params.data_key)
 
@@ -958,7 +1013,8 @@ class LoginV3API:
         create_user_rq.encryptionParams = CommonHelperMethods.url_safe_str_to_bytes(encryption_params)
         create_user_rq.rsaPublicKey = rsa_public_key_bytes
         create_user_rq.rsaEncryptedPrivateKey = CommonHelperMethods.url_safe_str_to_bytes(rsa_encrypted_private_key)
-        create_user_rq.eccPublicKey = ecc_public_key_bytes                                                              # 65 bytes, on curve
+        # 65 bytes, on curve
+        create_user_rq.eccPublicKey = ecc_public_key_bytes
         create_user_rq.eccEncryptedPrivateKey = ecc_private_key_encrypted_bytes                                         # 60 bytes
         create_user_rq.encryptedDeviceToken = CommonHelperMethods.url_safe_str_to_bytes(encrypted_device_token_str)     # 65 bytes
         create_user_rq.encryptedClientKey = CommonHelperMethods.url_safe_str_to_bytes(encrypted_client_key)             # 64 bytes
@@ -1042,6 +1098,8 @@ class LoginV3API:
 
             try:
                 rs = api.communicate(params, rq)
+                # FIXME: We should check rs for errors
+                _ = rs
 
                 return True
             except Exception as e:
@@ -1128,8 +1186,6 @@ class CommonHelperMethods:
     def startup_check(params: KeeperParams):
         if not params.config_filename:
             return
-
-
 
         if os.path.isfile(params.config_filename) and os.access(params.config_filename, os.R_OK):
             # checks if file exists

@@ -177,7 +177,6 @@ class ThisDeviceCommand(Command):
         return this_device_parser
 
     def execute(self, params, **kwargs):
-
         ops = kwargs.get('ops')
 
         if len(ops) == 0:
@@ -241,10 +240,10 @@ class ThisDeviceCommand(Command):
             print("Successfully " + msg + " 'ip_auto_approve'")
 
         elif action == 'timeout' or action == 'to':
-
             value = ops[1]
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
             loginv3.LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
+            params.logout_timer = int(value_extracted)
             print("Successfully modified 'logout_timer' setting")
 
         else:
@@ -307,7 +306,11 @@ class ThisDeviceCommand(Command):
         print("{:>20}: {}".format('Client Version', this_device['clientVersion']))
 
         if 'encryptedDataKeyPresent' in this_device:
-            print("{:>20}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if this_device['encryptedDataKeyPresent'] else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
+            print("{:>20}: {}".format(
+                'Data Key Present',
+                (bcolors.OKGREEN + 'YES' + bcolors.ENDC)
+                if this_device['encryptedDataKeyPresent']
+                else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
         else:
             print("{:>20}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
 
@@ -334,11 +337,9 @@ class ThisDeviceCommand(Command):
         else:
             print("{:>20}: {}".format('Persistent Login', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
 
-        if 'logoutTimer' in acct_summary_dict['settings']:
-            logoutTimer = acct_summary_dict['settings']['logoutTimer']
-            logoutTimerMin = int(logoutTimer) / 1000 / 60
-            print("{:>20}: {} minutes".format('Logout Timeout', int(logoutTimerMin)))
-
+        if hasattr(params, 'logout_timer'):
+            logoutTimerMinutes = params.logout_timer
+            print("{:>20}: {} minutes".format('Logout Timeout', logoutTimerMinutes))
         else:
             print("{:>20}: Default".format('Logout Timeout'))
 
@@ -499,7 +500,7 @@ class LoginCommand(Command):
                 password = getpass.getpass(prompt='... {0:>16}: '.format('Password'), stream=None).strip()
                 if not password:
                     return
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt:
             logging.info('Canceled')
             return
 
@@ -653,6 +654,9 @@ class ConnectSshAgent:
             rq_len = len(rq)
             to_send = rq_len.to_bytes(4, byteorder='big') + rq
 
+            # FIXME: These lengths probably should be checked.  At least on POSIX systems, send and write are not
+            # guaranteed to send the entire buffer; that's why they return a length: so you know where to resume
+            # transmission.
             if os.name == 'posix':
                 self._fd.send(to_send)
                 lb = self._fd.recv(4)
@@ -660,6 +664,7 @@ class ConnectSshAgent:
                 return self._fd.recv(rs_len)
             elif os.name == 'nt':
                 b = self._fd.write(to_send)
+                _ = b
                 self._fd.flush()
                 lb = self._fd.read(4)
                 rs_len = int.from_bytes(lb, byteorder='big')

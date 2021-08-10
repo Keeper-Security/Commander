@@ -105,6 +105,7 @@ class KeeperParams:
         self.record_history = {}        # type: dict[str, (list[dict], int)]
         self.event_queue = []
         self.logout_timer = 0
+        self.login_time = None
         self.login_v3 = True
         self.clone_code = None
         self.device_token = None

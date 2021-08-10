@@ -156,8 +156,20 @@ def command_and_args_from_cmd(command_line):
     return cmd, args
 
 
+def possible_relogin(params):
+    """If we're due for another login, get creds, login, and update login time."""
+    current_time = time.time()
+    if params.login_time is not None and params.login_time + params.logout_timer * 60.0 < current_time:
+        prompt_for_credentials(params)
+        api.login(params)
+        api.sync_down(params)
+        params.login_time = current_time
+
+
 def do_command(params, command_line):
     global current_mc_id
+
+    possible_relogin(params)
 
     def is_msp(params_local):
         if params_local.enterprise:
@@ -309,7 +321,7 @@ def do_command(params, command_line):
                             prompt_for_credentials(params)
                             api.login(params)
                             api.sync_down(params)
-                        except KeyboardInterrupt as e:
+                        except KeyboardInterrupt:
                             logging.info('Canceled')
                             return
 
@@ -461,7 +473,7 @@ def loop(params):  # type: (KeeperParams) -> int
             if not command:
                 tmer = None
                 try:
-                    if params.session_token and params.logout_timer > 0:
+                    if params.session_token and params.logout_timer > 0 and not params.config.get('relogin'):
                         tmer = threading.Timer(params.logout_timer * 60, force_quit)
                         tmer.start()
                     if prompt_session is not None:
