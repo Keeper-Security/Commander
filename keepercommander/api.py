@@ -20,18 +20,20 @@ import hashlib
 import logging
 import urllib.parse
 
-from . import rest_api, APIRequest_pb2 as proto, loginv3
-from .subfolder import UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
+from keepercommander import cli, recordv3
+
+from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
+from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
 from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
+from keepercommander.recordv3 import RecordV3
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
-
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
@@ -328,6 +330,23 @@ def accept_account_transfer_consent(params, share_account_to):
     return False
 
 
+def pad_aes_gcm(json):
+    # AES-GCM encryption leaks length of plaintext, so we pad the object prior to encryption.
+    result = json
+    json_bytes = json.encode('UTF-8') if isinstance(json, str) else json
+    if isinstance(json_bytes, bytes):
+        bytes_len = len(json_bytes)
+        padded_len = max(384, bytes_len)
+        # padded_len = math.ceil(padded_len / 16) * 16
+        if padded_len % 16: padded_len = padded_len + 16 - (padded_len % 16)
+
+        if padded_len != bytes_len:
+            pad_len = abs(padded_len - bytes_len)
+            pad = ' ' * pad_len # fill with spaces (byte value 0x20)
+            result = result + pad if isinstance(result, str) else b''.join([result, pad.encode('UTF-8')])
+
+    return result
+
 def decrypt_aes_plain(data: bytes, key: bytes):
     cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=data[:12])
     return cipher.decrypt_and_verify(data[12:-16], data[-16:])
@@ -426,7 +445,7 @@ def sync_down(params):
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': ['sfheaders', 'sfrecords', 'sfusers', 'teams', 'folders']
+        'include': ['sfheaders', 'sfrecords', 'sfusers', 'teams', 'folders', 'typed_record', 'app_record']
     }
     response_json = communicate(params, rq)
 
@@ -595,6 +614,13 @@ def sync_down(params):
                     # temporary flag for decryption routine below
                     meta_data['old_record_flag'] = True
                     meta_data['is_converted_record_type'] = True
+
+                elif meta_data['record_key_type'] == 3:
+                    logging.debug('Converting AES256GCM-encrypted key')
+                    decoded_key = base64.urlsafe_b64decode(meta_data['record_key'] + '==')
+                    unencrypted_key = decrypt_aes_plain(decoded_key, params.data_key)
+                    if len(unencrypted_key) == 32:
+                        meta_data['record_key_unencrypted'] = unencrypted_key
 
                 elif meta_data['record_key_type'] == 2:
                     logging.debug('Converting RSA-encrypted key')
@@ -779,8 +805,12 @@ def sync_down(params):
 
             if record_key:
                 try:
-                    record['data_unencrypted'] = decrypt_data(record['data'], record_key) if 'data' in record else b'{}'
-                    record['extra_unencrypted'] = decrypt_data(record['extra'], record_key) if 'extra' in record else b'{}'
+                    if 'version' in record and record['version'] in (3, 4, 5):
+                        decoded_data = base64.urlsafe_b64decode(record['data'] + '==')
+                        record['data_unencrypted'] = decrypt_aes_plain(decoded_data, record_key)
+                    else:
+                        record['data_unencrypted'] = decrypt_data(record['data'], record_key) if 'data' in record else b'{}'
+                        record['extra_unencrypted'] = decrypt_data(record['extra'], record_key) if 'extra' in record else b'{}'
                 except Exception as e:
                     logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
             else:
@@ -868,8 +898,124 @@ def sync_down(params):
     except:
         pass
 
+    try:
+        # parse v3 commands
+        init_v3_commands()
+        for cmd in v3_commands:
+            if not v3_commands[cmd].get('command') and cmd in cli.commands:
+                prog = cli.commands[cmd].get_parser().prog
+                parts = prog.split('|')
+                alias = parts[-1] if len(parts) == 2 else None
+                v3_commands[cmd]['command'] = { cmd: cli.commands[cmd] }
+                if prog in cli.command_info:
+                    v3_commands[cmd]['command_info'] = { prog: cli.command_info[prog] }
+                if alias in cli.aliases:
+                    v3_commands[cmd]['alias'] = { alias: cli.aliases[alias] }
+
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if v3_enabled:
+            rq = records.RecordTypesRequest()
+            rq.standard = True
+            rq.user = True
+            rq.enterprise = True
+            rs = communicate_rest(params, rq, 'vault/get_record_types')
+            record_types_rs = records.RecordTypesResponse()
+            record_types_rs.ParseFromString(rs)
+
+            if len(record_types_rs.recordTypes) > 0:
+                params.record_type_cache = {}
+                for rt in record_types_rs.recordTypes:
+                    params.record_type_cache[rt.recordTypeId] = rt.content
+
+            # add/replace v3 commands
+            modified = []
+            for cmd in v3_commands:
+                cdic = v3_commands[cmd].get('command') or {}
+                cname = next(iter(cdic), None)
+                cmdc = cli.commands.get(cmd) or 2
+                cmdv = ((v3_commands.get(cmd) or {}).get('command') or {}).get(cmd) or 3
+                if cname and (cname not in cli.commands or cmdc != cmdv):
+                    modified.append(cname)
+                    cli.commands[cname] = cdic[cname]
+                    ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+                    if ciname:
+                        cli.command_info[ciname] = v3_commands[cmd]['command_info'][ciname]
+                    aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+                    if aname:
+                        cli.aliases[aname] = v3_commands[cmd]['alias'][aname]
+
+            # RT activation during live session - only a full sync will pull any pre-existing v3 records
+            full_sync = response_json.get('full_sync') or False
+            if modified and not full_sync:
+                logging.warning(bcolors.WARNING + 'Record types - enabled. Please logout and login again if you have existing v3 records.' + bcolors.ENDC)
+        else:
+            # remove/replace v3 commands
+            for cmd in v3_commands:
+                cdic = v3_commands[cmd].get('command') or {}
+                cname = next(iter(cdic), None)
+                if cname and cname in cli.commands:
+                    subs = v3_commands[cmd].get('substitute')
+                    subs = subs if isinstance(subs, dict) else {}
+                    sub_class =  subs.get('command')
+                    if sub_class:
+                        cli.commands[cname] = sub_class
+                    else:
+                        cli.commands.pop(cname)
+
+                    ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+                    sub_ciname = next(iter(subs.get('command_info') or {}), None)
+                    if ciname:
+                        if ciname == sub_ciname:
+                            cli.command_info[ciname] = subs['command_info'][sub_ciname]
+                        else:
+                            cli.command_info.pop(ciname)
+                            if sub_ciname and subs['command_info'][sub_ciname]:
+                                cli.command_info[sub_ciname] = subs['command_info'][sub_ciname]
+
+                    aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+                    sub_aname = next(iter(subs.get('alias') or {}), None)
+                    if aname:
+                        if aname == sub_aname:
+                            cli.aliases[aname] = subs['alias'][sub_aname]
+                        else:
+                            cli.aliases.pop(aname)
+                            if sub_aname and subs['alias'][sub_aname]:
+                                cli.aliases[aname] = subs['alias'][sub_aname]
+
+    except Exception as e:
+        logging.debug(e)
+
     if 'full_sync' in response_json:
         logging.info('Decrypted [%s] record(s)', len(params.record_cache))
+
+
+v3_commands = {}
+
+def init_v3_commands():
+    from .commands.record import RecordAddCommand, RecordEditCommand, add_parser, edit_parser
+    global v3_commands
+    if v3_commands:
+        return
+    v3_commands = {
+        'record-type': {},
+        'record-type-info': {},
+        'add': {
+            'substitute': {
+                'command': RecordAddCommand(),
+                'parser': add_parser,
+                'command_info': { add_parser.prog: add_parser.description },
+                'alias': { 'a': 'add' }
+            }
+        },
+        'edit': {
+            'substitute': {
+                'command': RecordEditCommand(),
+                'parser': edit_parser,
+                'command_info': { edit_parser.prog: edit_parser.description },
+                'alias': {}
+            }
+        }
+    }
 
 
 def convert_to_folders(params):
@@ -1019,14 +1165,30 @@ def get_record(params,record_uid):
     rec = Record()
 
     try:
-        data = json.loads(cached_rec['data_unencrypted'].decode('utf-8'))
+        data = json.loads(cached_rec['data_unencrypted'])
         rec = Record(record_uid)
         extra = None
         if 'extra_unencrypted' in cached_rec:
-            extra = json.loads(cached_rec['extra_unencrypted'].decode('utf-8'))
+            extra = json.loads(cached_rec['extra_unencrypted'])
         rec.load(data, revision=cached_rec['revision'], extra=extra)
         if not resolve_record_view_path(params, record_uid):
             rec.mask_password()
+        if cached_rec.get('version') == 3:
+            rec.record_type = recordv3.RecordV3.get_record_type_name(data)
+            rec.login = recordv3.RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'login')
+            rec.login_url = recordv3.RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'url')
+        # if 'version' in cached_rec and cached_rec['version'] in (3, 4):
+        #     if 'data_unencrypted' in cached_rec:
+        #         version = cached_rec.get('version') or 0
+        #         data_unencrypted = json.loads(cached_rec['data_unencrypted'])
+        #         if version == 3:
+        #             rec_type = data_unencrypted.get('type') or ''
+        #             if (rec_type and rec_type.strip()):
+        #                 rec.login = 'type: ' + rec_type.strip()
+        #         elif version == 4:
+        #             fname = data_unencrypted.get('name') or ''
+        #             if (fname and fname.strip()):
+        #                 rec.login = 'file: ' + fname.strip()
     except:
         logging.error('**** Error decrypting record %s', record_uid)
 
@@ -1189,9 +1351,21 @@ def search_records(params, searchstring):
     p = re.compile(searchstring.lower())
     search_results = []
 
+    v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
     for record_uid in params.record_cache:
+        target = ''
         rec = get_record(params, record_uid)
-        target = rec.to_lowerstring()
+        cached_rec = params.record_cache[record_uid] or {}
+
+        if cached_rec.get('version') == 3:
+            if not v3_enabled:
+                continue
+            data = cached_rec.get('data_unencrypted')
+            rec.record_type = recordv3.RecordV3.get_record_type_name(data)
+            target = recordv3.RecordV3.values_to_lowerstring(data)
+        else:
+            target = rec.to_lowerstring()
+
         if p.search(target):
             search_results.append(rec)
             
@@ -1249,7 +1423,6 @@ def prepare_record(params, record):
         is in a shared folder, must send shared folder UID for edit permission.
     """
 
-    # build a record dict for upload
     record_object = {
         'version': 2,
         'client_modified_time': current_milli_time()
@@ -1306,6 +1479,79 @@ def prepare_record(params, record):
     record_object['data'] = encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
     record_object['extra'] = encrypt_aes(json.dumps(extra).encode('utf-8'), unencrypted_key)
     record_object['udata'] = udata
+
+    try:
+        if params.license and 'account_type' in params.license:
+            if record.password and params.license['account_type'] == 2:
+                for record_uid in params.record_cache:
+                    if record_uid != record.record_uid:
+                        rec = get_record(params, record_uid)
+                        if rec.password == record.password:
+                            params.queue_audit_event('reused_password', record_uid=record.record_uid)
+                            break
+    except:
+        pass
+
+    return record_object
+
+
+def prepare_record_v3(params, record):
+    """ Prepares the Record() object to be sent to the Keeper Cloud API
+        by serializing and encrypting it in the proper JSON format used for
+        transmission.  If the record has no UID, one is generated and the
+        encrypted record key is sent to the server.  If the record is in a
+        shared folder, must send shared folder UID for edit permission.
+    """
+    from keepercommander.commands.recordv3 import RecordTypeInfo
+
+    if not record.record_uid:
+        logging.debug('Generated Record UID: %s', record.record_uid)
+        record.record_uid = generate_record_uid()
+
+    record_object = {
+        'record_uid': record.record_uid,
+        'client_modified_time': current_milli_time()
+    }
+
+    data = ''
+    unencrypted_key = None
+    if record.record_uid in params.record_cache:
+        path = resolve_record_write_path(params, record.record_uid)
+        if path:
+            record_object.update(path)
+        else:
+            logging.error('You do not have edit permissions on this record')
+            return None
+
+        rec = params.record_cache[record.record_uid]
+
+        data = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else rec['data_unencrypted']
+        try:
+            d = json.loads(data)
+            rt_name = d.get('type') or ''
+            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
+            res = RecordV3.is_valid_record_type(data, rt_def)
+            if not res.get('is_valid'):
+                logging.error('Error validating record type - ' + res.get('error'))
+                return None
+        except Exception as e:
+            logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
+            return None
+
+        data = pad_aes_gcm(data)
+
+        unencrypted_key = rec['record_key_unencrypted']
+        record_object['revision'] = rec['revision']
+    else:
+        logging.debug('Generated record key')
+        unencrypted_key = generate_record_uid()
+        key = encrypt_aes_plain(unencrypted_key, params.data_key)
+        key = base64.urlsafe_b64encode(key)
+        record_object['record_key'] = key
+        record_object['revision'] = 0
+
+    rdata = encrypt_aes_plain(bytes(data, 'utf-8'), unencrypted_key)
+    record_object['data'] = base64.urlsafe_b64encode(rdata).decode('utf-8')
 
     try:
         if params.license and 'account_type' in params.license:
@@ -1420,6 +1666,12 @@ def update_record(params, record, **kwargs):
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
+
+    if (record and record.record_uid in params.record_cache
+            and 'version' in params.record_cache[record.record_uid]
+            and params.record_cache[record.record_uid]['version'] == 3):
+        return update_record_v3(params, record, **kwargs)
+
     record_rq = prepare_record(params, record)
     if record_rq is None:
         return
@@ -1454,6 +1706,82 @@ def update_record(params, record, **kwargs):
     # sync down the data which updates the caches
     sync_down(params)
 
+    return True
+
+
+def update_record_v3(params, rec, **kwargs):
+    """ Push a record update to the cloud.
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+
+    record_rq = prepare_record_v3(params, rec)
+    if record_rq is None:
+        return
+
+    links = kwargs.get('record_links') or {}
+    links_add = links.get('record_links_add') or []
+    links_remove = links.get('record_links_remove') or []
+
+    record_links_add = []
+    for link in links_add:
+        rl = records.RecordLink()
+        rl.record_uid = link.get('record_uid')
+        rl.record_key = link.get('record_key')
+        if rl.record_uid and rl.record_key:
+            record_links_add.append(rl)
+
+    record_links_remove = [x['record_uid'] or b'' for x in links_remove]
+
+    ru = records.RecordUpdate()
+    uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
+    data = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['data'])
+    ru.record_uid = uid
+    ru.client_modified_time = record_rq['client_modified_time']
+    ru.revision = record_rq['revision']
+    ru.data = data
+    #ru.non_shared_data = b''
+    if record_links_add:
+        ru.record_links_add.extend(record_links_add)
+    if record_links_remove:
+        ru.record_links_remove.extend(record_links_remove)
+    # audit = RecordAudit()
+
+    rq = records.RecordsUpdateRequest()
+    rq.records.append(ru)
+    #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
+    rs = communicate_rest(params, rq, 'vault/records_update')
+    records_modify_rs = records.RecordsModifyResponse()
+    records_modify_rs.ParseFromString(rs)
+
+    for r in records_modify_rs.records:
+        ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+        success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
+
+        if not success:
+            logging.error(bcolors.FAIL + 'Error: Record update failed with status - %s' + bcolors.ENDC, status)
+            return False
+
+        new_revision = 0
+        if success and ruid == rec.record_uid:
+            new_revision = records_modify_rs.revision
+
+        if new_revision == 0:
+            logging.error('Error: Revision not updated')
+            return False
+
+        if new_revision == record_rq['revision']:
+            logging.error('Error: Revision did not change')
+            return False
+
+        if not kwargs.get('silent'):
+            logging.info('Update record successful for record_uid=%s, revision=%d, new_revision=%s',
+                        record_rq['record_uid'], record_rq['revision'], new_revision)
+
+        record_rq['revision'] = new_revision
+
+    sync_down(params)
     return True
 
 
@@ -1495,6 +1823,210 @@ def add_record(params, record):
         sync_down(params)
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
         return True
+
+
+def ecies_encrypt(message, pub_key, id = b''):
+    try:
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives import serialization
+    except:
+        logging.info('To use this feature, install cryptography package\n' + bcolors.OKGREEN + '\'pip install cryptography\'' + bcolors.ENDC)
+
+    result = message
+    try:
+        curve = ec.SECP256R1()
+        ephemeral_key = ec.generate_private_key(curve,  default_backend())
+        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, pub_key[:65])
+        shared_key = ephemeral_key.exchange(ec.ECDH(), ephemeral_public_key)
+        shared_key = shared_key + id if id else shared_key
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(shared_key)
+        enc_key = digest.finalize()
+
+        messagebytes = message.encode('utf-8') if isinstance(message, str) else message
+        data_enc = rest_api.encrypt_aes(messagebytes, enc_key)
+        eph_public_key = ephemeral_key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+
+        result = eph_public_key + data_enc
+    except Exception as e:
+        logging.debug(e)
+    return result
+
+
+def ecies_decrypt(ciphertext, priv_key_data, id = b''):
+    try:
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import hashes
+    except:
+        logging.info('To use this feature, install cryptography package\n' + bcolors.OKGREEN + '\'pip install cryptography\'' + bcolors.ENDC)
+
+    result = b''
+    try:
+        server_public_key = ciphertext[:65]
+        encrypted_data = ciphertext[65:]
+
+        curve = ec.SECP256R1()
+        private_value = int.from_bytes(priv_key_data, byteorder='big', signed=False)
+        ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
+        # ecc_private_key = CommonHelperMethods.get_private_key_ecc(params)
+
+        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, server_public_key)
+        shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
+        shared_key = shared_key + id if id else shared_key
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(shared_key)
+        enc_key = digest.finalize()
+
+        result = rest_api.decrypt_aes(encrypted_data, enc_key)
+    except Exception as e:
+        logging.debug(e)
+    return result
+
+
+def add_record_v3(params, record, **kwargs):
+    """ Push a record update to the cloud.
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    from keepercommander.commands.recordv3 import RecordTypeInfo
+
+    record_rq = record
+    if record_rq is None:
+        return
+
+    record_links = []
+    links = kwargs.get('record_links') or {}
+    links = links.get('record_links') or []
+
+    for link in links:
+        rl = records.RecordLink()
+        rl.record_uid = link.get('record_uid')
+        rl.record_key = link.get('record_key')
+        if rl.record_uid and rl.record_key:
+            record_links.append(rl)
+
+    uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
+
+    unencrypted_key = record_rq['record_key_unencrypted']
+    key = encrypt_aes_plain(unencrypted_key, params.data_key)
+    #key = base64.urlsafe_b64encode(key)
+
+    data = record_rq['data_unencrypted'].decode('utf-8') if isinstance(record_rq['data_unencrypted'], bytes) else record_rq['data_unencrypted']
+    try:
+        d = json.loads(data)
+        rt_name = d.get('type') or ''
+        rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
+        res = RecordV3.is_valid_record_type(data, rt_def)
+        if not res.get('is_valid'):
+            logging.error('Error validating record type - ' + res.get('error'))
+            return None
+    except Exception as e:
+        logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
+        return None
+
+    data = pad_aes_gcm(data)
+
+    rdata = bytes(data, 'utf-8')
+    rdata = encrypt_aes_plain(rdata, unencrypted_key)
+    rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
+    rdata = loginv3.CommonHelperMethods.url_safe_str_to_bytes(rdata)
+
+    rq = kwargs.get('rq') or {}
+    folder_type = rq.get('folder_type')
+    folder_uid = rq.get('folder_uid')
+    folder_key = rq.get('folder_key')
+    if folder_type:
+        folder_type_enum = {
+            BaseFolderNode.RootFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
+            BaseFolderNode.UserFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
+            BaseFolderNode.SharedFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder'].number,
+            BaseFolderNode.SharedFolderFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder_folder'].number
+        }
+        folder_type = folder_type_enum.get(folder_type)
+
+    # Audit - if the title or url has changed and the user is an enterprise user
+    audit = None
+    try:
+        keys = (params.enterprise.get('keys') or {}) if params.enterprise else {}
+        ekey = keys.get('ecc_public_key')
+        ekey = base64.urlsafe_b64decode(ekey + '==') if ekey else ''
+
+        if ekey:
+            ddict = json.loads(data or '{}')
+            title = ddict.get('title') or ''
+            fields = (ddict.get('fields') or []) + (ddict.get('custom') or [])
+            url = next((u.get('value')[0] for u in fields if u.get('type') == 'url' and u.get('value')), '')
+            url = RecordV3.get_audit_url(url)
+
+            adata = { 'title' : title }
+            if url: adata['url'] = url # url will only be supplied if there is one on the record
+            edata = json.dumps(adata)
+            edata = ecies_encrypt(edata, ekey)
+            # pkey = keys.get('ecc_encrypted_private_key')
+            # ecc_private_key_data = base64.urlsafe_b64decode(pkey + '==')
+            # ecc_private_key_data = rest_api.decrypt_aes(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
+            # ddata = ecies_decrypt(edata, ecc_private_key_data).decode('utf-8')
+
+            audit = records.RecordAudit()
+            audit.version = 0
+            audit.data = edata
+    except Exception as e:
+        audit = None
+        logging.error(bcolors.FAIL +'Error processing RecordAudit data: ' + e + bcolors.ENDC)
+
+    ra = records.RecordAdd()
+    ra.record_uid = uid
+    ra.record_key = key
+    ra.client_modified_time = record_rq['client_modified_time']
+    ra.data = rdata
+    #ra.non_shared_data = b''
+    if folder_uid and isinstance(folder_type, int):
+        ra.folder_type = folder_type
+        ra.folder_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(folder_uid)
+        if folder_key:
+            ra.folder_key = folder_key
+    if record_links:
+        ra.record_links.extend(record_links)
+    if audit:
+        #ra.audit = audit # Assignment not allowed to field "audit" in protocol message object.
+        ra.audit.version = audit.version
+        ra.audit.data = audit.data
+
+    rq = records.RecordsAddRequest()
+    rq.records.append(ra)
+    #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
+    rs = communicate_rest(params, rq, 'vault/records_add')
+    records_modify_rs = records.RecordsModifyResponse()
+    records_modify_rs.ParseFromString(rs)
+
+    for r in records_modify_rs.records:
+        ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+        success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
+
+        if not success:
+            logging.error(bcolors.FAIL + 'Error: Record add failed with status - %s' + bcolors.ENDC, status)
+            return False
+
+        new_revision = 0
+        if success and ruid == record['record_uid']:
+            new_revision = records_modify_rs.revision
+
+        if new_revision == 0:
+            logging.error('Error: Revision not updated')
+            return False
+
+        if not kwargs.get('silent'):
+            logging.debug('Add record successful for record_uid=%s, revision=%d', record_rq['record_uid'], new_revision)
+
+        record_rq['revision'] = new_revision
+
+    sync_down(params)
+    params.environment_variables[LAST_RECORD_UID] = record['record_uid']
+    return True
 
 
 def delete_record(params, record_uid):
