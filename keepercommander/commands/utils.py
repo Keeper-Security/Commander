@@ -112,7 +112,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
-      --first-access-expires-in-min [MIN] : First time access expiration (Default: 60. Maximum 1440 minutes (24 hrs).)
+      --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --unlock-ip : Locks the IP address to first requesting device
       --count [NUM] : Number of tokens to generate (Default: 1)
@@ -955,6 +955,9 @@ class KSMCommand(Command):
 
             app_shares.append(app_share)
 
+        if len(added_secret_uids_type_pairs) == 0:
+            return
+
         app_share_add_rq = AddAppSharesRequest()
         app_share_add_rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
         app_share_add_rq.shares.extend(app_shares)
@@ -1250,23 +1253,6 @@ class KSMCommand(Command):
 
         return tokens
 
-
-
-# class AppInfoCommand(Command):
-#
-#     def get_parser(self):  # type: () -> argparse.ArgumentParser or None
-#         return app_info_parser
-#
-#     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
-#
-#         app_uids = kwargs.get('uids') or None
-#
-#         if app_uids:
-#             for uid in app_uids:
-#                 AppShareRegistrationCommand.get_and_print_app_info(params, uid)
-#         else:
-#             AppShareRegistrationCommand.print_all_apps_records(params)
-#
 
 class LogoutCommand(Command):
     def get_parser(self):
