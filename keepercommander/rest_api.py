@@ -27,7 +27,7 @@ from . import __version__
 
 
 LEGACY_CLIENT_VERSION = 'c14.0.0'
-CLIENT_VERSION = 'c15.' + __version__
+CLIENT_VERSION = 'c' + __version__
 
 SERVER_PUBLIC_KEYS = {
     1: RSA.importKey(base64.urlsafe_b64decode(
