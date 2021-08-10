@@ -224,8 +224,8 @@ ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
 ksm_parser.add_argument('--help', '-h', dest='helpflag', action="store_true", help='Display help')
 ksm_parser.add_argument('--editable', '-e', action='store_true', required=False,
                         help='Is this share going to be editable or not.')
-ksm_parser.add_argument('--unlock-ip', '-l', type=str, dest='unlockIp', action='store',
-                        help='Unlock IP Address.', default='true')
+ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true',
+                        help='Unlock IP Address.')
 ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
                         help='Return Tokens', default='false')
 
@@ -754,8 +754,7 @@ class KSMCommand(Command):
                 return
 
             count = kwargs.get('count')
-            unlock_ip_str = kwargs.get('unlockIp')
-            unlock_ip = bool(strtobool(unlock_ip_str))
+            unlock_ip = kwargs.get('unlockIp')
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
@@ -829,7 +828,7 @@ class KSMCommand(Command):
         apps_table.sort(key=lambda x: x[0].lower())
 
         if len(apps_table) == 0:
-            print(bcolors.WARNING + 'No Applications to list.' + bcolors.ENDC + "\nTo create new application, use command 'secrets-manager app create [NAME]'\n")
+            print(f'{bcolors.WARNING}No Applications to list.{bcolors.ENDC}\n\nTo create new application, use command {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}')
         else:
             dump_report_data(apps_table, apps_table_fields, fmt='table')
 
@@ -938,9 +937,9 @@ class KSMCommand(Command):
                 share_key_decrypted = shared_folder_key_unencrypted
                 share_type = 'SHARE_TYPE_FOLDER'
             else:
-                print(bcolors.WARNING +
-                    '\tNot adding UID="%s" is not a Record nor Shared Folder. Only individual records or Shared Folders can '
-                    'be added to the application.' + bcolors.ENDC % uid)
+                print(f"""{bcolors.WARNING}\tUID="{uid}" is not a Record nor Shared Folder. Only individual records or 
+                Shared Folders can be added to the application.{bcolors.ENDC} Make sure your local cache is up to date by
+                running 'sync-down' command and trying again.""")
 
                 continue
 
@@ -1194,15 +1193,17 @@ class KSMCommand(Command):
         tokens = []
 
         for i in range(count):
-            one_time_token = os.urandom(32)
+            secret_bytes = os.urandom(32)
+            counter_bytes = b'KEEPER_SECRETS_MANAGER_CLIENT_ID'
+            digest = 'sha512'
 
             try:
-                client_id = hmac.digest(one_time_token, b'KEEPER_SECRETS_MANAGER_CLIENT_ID', 'sha512')
+                mac = hmac.new(secret_bytes, counter_bytes, digest).digest()
             except Exception as e:
                 logging.error(e.args[0])
                 return
 
-            encrypted_master_key = rest_api.encrypt_aes(master_key, one_time_token)
+            encrypted_master_key = rest_api.encrypt_aes(master_key, secret_bytes)
 
             rq = AddAppClientRequest()
             rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(rec_cache_val.get('record_uid'))
@@ -1213,7 +1214,7 @@ class KSMCommand(Command):
             if access_expire_in_min:
                 rq.accessExpireOn = access_expire_on_ms
 
-            rq.clientId = client_id
+            rq.clientId = mac
 
             api_request_payload = ApiRequestPayload()
             api_request_payload.payload = rq.SerializeToString()
@@ -1236,9 +1237,9 @@ class KSMCommand(Command):
                     app_expire_on_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
                         access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
                 else:
-                    app_expire_on_str = bcolors.WARNING + "Never Expire" + bcolors.ENDC
+                    app_expire_on_str = bcolors.WARNING + "Never" + bcolors.ENDC
 
-                token = CommonHelperMethods.bytes_to_url_safe_str(one_time_token)
+                token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
                 tokens.append(token)
                 keys_str += ("One-Time Access Token: " + bcolors.OKGREEN + "%s" + bcolors.ENDC + " (IP Lock: %s, Token Expire on: %s, App Access Expire on: %s)") % (
                             token, lock_ip_stat, exp_date_str, app_expire_on_str)
