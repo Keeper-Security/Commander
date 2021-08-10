@@ -41,9 +41,9 @@ def rotate(record, newpassword):
             password=record.password,
             auto_bind=True)
 
-        # print('Connection: ' + str(conn))
-        # print('Server Info: ' + str(server.info))
-        # print('Whoami: ' + str(conn.extend.standard.who_am_i()))
+        print('Connection: ' + str(conn))
+        print('Server Info: ' + str(server.info))
+        print('Whoami: ' + str(conn.extend.standard.who_am_i()))
 
         changePwdResult = conn.extend.microsoft.modify_password(
             user=user_dn, new_password=newpassword, old_password=old_password)

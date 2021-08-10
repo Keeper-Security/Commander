@@ -16,53 +16,89 @@
 # Usage:
 #    python3 create_team.py
 
-import os
-import json
-import base64
-import getpass
+import logging
+from logging import LogRecord
 
 from keepercommander.params import KeeperParams
 from keepercommander import api
 from keepercommander.commands.enterprise import EnterpriseTeamCommand
 
-def read_config_file(params):
-    params.config_filename = os.path.join(os.path.dirname(__file__), 'config.json')
-    if os.path.isfile(params.config_filename):
-        with open(params.config_filename, 'r') as f:
-            params.config = json.load(f)
-            if 'user' in params.config:
-                params.user = params.config['user']
 
-            if 'password' in params.config:
-                params.password = params.config['password']
+# Keeper Commander uses logging module to communicate with the user.
+class ScriptLogHandler(logging.Handler):
+    def __init__(self):
+        super(ScriptLogHandler, self).__init__()
+        self.errors = []
 
-            if 'server' in params.config:
-                params.server = params.config['server']
+    def emit(self, record: LogRecord) -> None:
+        message = record.msg % record.args
+        self.errors.append(message)
 
-            if 'device_id' in params.config:
-                device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
-                params.rest_context.device_id = device_id
+    def clear_errors(self):
+        self.errors.clear()
 
+    def has_error(self):
+        return len(self.errors) > 0
+
+# Configure logging
+slh = ScriptLogHandler()
+slh.setLevel(logging.WARNING)
+logging.root.addHandler(slh)
+
+# Create parameters
 my_params = KeeperParams()
-read_config_file(my_params)
+my_params.user = ''  # Keeper account name. 'config.json' file, 'user' property
+my_params.password = ''   # Keeper account password.
+my_params.device_token = ''  # Device Token. 'config.json' file, 'device_token' property
+my_params.device_private_key = ''   # Device Key. 'config.json' file, 'private_key' property
 
-while not my_params.user:
-    my_params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+# Login to Keeper
+api.login(my_params)
 
-while not my_params.password:
-    my_params.password = getpass.getpass(prompt='Master Password: ', stream=None)
-
+# Load the Enterprise configuration state
 api.query_enterprise(my_params)
+
+# Create team/user mapping
+if 'users' in my_params.enterprise and 'team_users' in my_params.enterprise:
+    # params.enterprise['users'] is a list of all users in enterprise
+    # params.enterprise['team_users'] is a list of team <-> user pairs
+
+    # map user ID to active user email.
+    user_lookup = {u['enterprise_user_id']: u['username'] for u in my_params.enterprise['users'] if u['status'] == 'active'}
+
+    # team_users. key is team_uid, value is set of emails
+    team_users = {}
+    for tu in my_params.enterprise['team_users']:
+        team_uid = tu['team_uid']
+        if team_uid not in team_users:
+            team_users[team_uid] = set()
+        user_id = tu['enterprise_user_id']
+        if user_id in user_lookup:
+            email = user_lookup[user_id]
+            team_users[team_uid].add(email)
 
 # Create Enterprise Team Command
 command = EnterpriseTeamCommand()
 
 # Create Team in Node 'Test'
+slh.clear_errors()
 command.execute(my_params, add=True, node='Test', team=['Test Team 1'])
+if slh.has_error():
+    print('\n'.join(slh.errors))
+    exit(1)
+else:
+    print("Team is created")
+
 
 # Refresh the Enterprise configuration state 
 api.query_enterprise(my_params)
 
-# Add existing user to Team
+# Add existing users to Team
+slh.clear_errors()
 command.execute(my_params, add_user=['test1@company.com', 'test2@company.com'], team=['Test Team 1'])
+if slh.has_error():
+    print('\n'.join(slh.errors))
+    exit(1)
+else:
+    print("Users are added to the team")
 

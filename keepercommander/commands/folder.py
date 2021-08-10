@@ -149,10 +149,16 @@ class FolderListCommand(Command):
                 if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))) if regex is not None else True:
                     folders.append(f)
 
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         if show_records:
             folder_uid = folder.uid or ''
             if folder_uid in params.subfolder_record_cache:
                 for uid in params.subfolder_record_cache[folder_uid]:
+                    rv = params.record_cache[uid].get('version') if params.record_cache and uid in params.record_cache else None
+                    if rv == 4 or rv == 5:
+                        continue    # skip fileRef and application records - they use file-report command
+                    if not v3_enabled and rv in (3, 4):
+                        continue # skip record types when not enabled
                     r = api.get_record(params, uid)
                     if any(filter(lambda x: regex(x) is not None, FolderListCommand.record_match_strings(r))) if regex is not None else True:
                         records.append(r)

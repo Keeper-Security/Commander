@@ -320,16 +320,16 @@ class LoginV3Flow:
         print("\t\"" + bcolors.OKGREEN + "keeper_push" + bcolors.ENDC + "\" to send Keeper Push notification")
         print("\t\"" + bcolors.OKGREEN + "2fa_send" + bcolors.ENDC + "\" to send 2FA code")
         print("\t\"" + bcolors.OKGREEN + "2fa_code=<code>" + bcolors.ENDC + "\" to validate a code provided by 2FA application")
-        print("\t\"" + bcolors.OKGREEN + "approval_check" + bcolors.ENDC + "\" check for device approval")
+        print("\t\"" + bcolors.OKGREEN + "<Enter>" + bcolors.ENDC + "\" to resume")
 
-        selection: str = input('Type your selection: ')
+        selection = input('Type your selection or <Enter> to resume: ')
 
         if selection == "email_send" or selection == "es":
 
             rs = LoginV3API.requestDeviceVerificationMessage(params, encryptedDeviceToken, 'email')
 
             if type(rs) == bytes:
-                print(bcolors.WARNING + "\nAn email with instructions has been sent to " + params.user + bcolors.WARNING)
+                print(bcolors.WARNING + "\nAn email with instructions has been sent to " + params.user + bcolors.WARNING + '\nPress <Enter> when approved.')
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
@@ -377,11 +377,11 @@ class LoginV3Flow:
                 proto.TWO_FA_PUSH_KEEPER)
 
             if type(rs) == bytes:
-                logging.info("Successfully made a push notification to the approved device.")
+                logging.info('Successfully made a push notification to the approved device.\nPress <Enter> when approved.')
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
-        elif selection == "approval_check" or selection == "ac":
+        elif selection == "":
             return True
 
     @staticmethod
@@ -502,15 +502,6 @@ class LoginV3Flow:
                     proto.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
                         proto.TWO_FA_EXP_30_DAYS
 
-            prompt_str = "Enter 2FA Code"
-
-            if channel_type == 'TWO_FA_CT_DUO':
-                prompt_str = prompt_str + " (use code from DUO app)"
-            elif channel_type == 'TWO_FA_CT_TOTP':
-                prompt_str = prompt_str + " (use code from Google Authenticator app)"
-            elif channel_type == 'TWO_FA_CT_SMS':
-                prompt_str = prompt_str + " (use code sent to)"
-
             otp_code = ''
             show_duration = True
             mfa_pattern = re.compile(r'2fa_duration\s*=\s*(.+)', re.IGNORECASE)
@@ -523,19 +514,27 @@ class LoginV3Flow:
                                 'Ask Every 30 days')
                     print(prompt_exp)
 
-                answer = input('\n' + prompt_str + ': ')
+                try:
+                    answer = input('\nEnter 2FA Code or Duration: ')
+                except KeyboardInterrupt:
+                    return
+
                 m_duration = re.match(mfa_pattern, answer)
                 if m_duration:
-                    show_duration = True
                     answer = m_duration.group(1).strip().lower()
-                    if answer == 'login':
-                        mfa_expiration = proto.TWO_FA_EXP_IMMEDIATELY
-                    elif answer == '30_days':
-                        mfa_expiration = proto.TWO_FA_EXP_30_DAYS
-                    elif answer == 'forever':
-                        mfa_expiration = proto.TWO_FA_EXP_NEVER
-                    else:
+                    if answer not in ['login', '30_days', 'forever']:
                         print('Invalid 2FA Duration: {0}'.format(answer))
+                        answer = ''
+
+                if answer == 'login':
+                    show_duration = True
+                    mfa_expiration = proto.TWO_FA_EXP_IMMEDIATELY
+                elif answer == '30_days':
+                    show_duration = True
+                    mfa_expiration = proto.TWO_FA_EXP_30_DAYS
+                elif answer == 'forever':
+                    show_duration = True
+                    mfa_expiration = proto.TWO_FA_EXP_NEVER
                 else:
                     otp_code = answer
 
@@ -559,6 +558,7 @@ class LoginV3Flow:
                 logging.warning(warning_msg)
 
 
+
 class LoginV3API:
 
     @staticmethod
@@ -575,7 +575,9 @@ class LoginV3API:
 
         encrypted_device_token_str = None
 
-        if 'device_token' in params.config:
+        if params.device_token:
+            encrypted_device_token_str = params.device_token
+        elif 'device_token' in params.config:
             if params.config['device_token']:
                 encrypted_device_token_str = params.config['device_token']
 
@@ -1124,6 +1126,11 @@ class CommonHelperMethods:
 
     @staticmethod
     def startup_check(params: KeeperParams):
+        if not params.config_filename:
+            return
+
+
+
         if os.path.isfile(params.config_filename) and os.access(params.config_filename, os.R_OK):
             # checks if file exists
             logging.debug("Configuration file '" + params.config_filename + "' exists and is readable")
@@ -1136,7 +1143,9 @@ class CommonHelperMethods:
     @staticmethod
     def get_private_key_ecc(params: KeeperParams):
 
-        if 'private_key' not in params.config:
+        if params.device_private_key:
+            private_key_str = params.device_private_key
+        elif 'private_key' not in params.config:
             encryption_key_bytes = CommonHelperMethods.generate_encryption_key_bytes()
             private_key_str = CommonHelperMethods.bytes_to_url_safe_str(encryption_key_bytes)
 
@@ -1189,6 +1198,10 @@ class CommonHelperMethods:
 
     @staticmethod
     def config_file_set_property(params: KeeperParams, key: str, val: str):
+
+        if not params.config_filename:
+            return
+
         with open(params.config_filename, 'r') as json_file:
             config_data = json.load(json_file)
             json_file.close()

@@ -11,6 +11,7 @@
 
 import argparse
 import getpass
+from keepercommander.recordv3 import RecordV3
 import re
 import os
 import base64
@@ -46,7 +47,7 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['create-user'] = RegisterCommand()
-    commands['file-report'] = FileReportCommand()
+    # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -55,7 +56,8 @@ def register_command_info(aliases, command_info):
     aliases['cu'] = 'create-user'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
-              file_report_parser, register_parser]:
+            #   file_report_parser,
+              register_parser]:
         command_info[p.prog] = p.description
 
 
@@ -766,6 +768,7 @@ class ShareRecordCommand(Command):
         if record_uid is None:
             raise CommandError('share-record', 'Enter name or uid of existing record')
 
+        RecordV3.validate_access(params, record_uid)
         public_keys = {}
         rq = {
             'command': 'public_keys',
