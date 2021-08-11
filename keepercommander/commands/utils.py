@@ -114,7 +114,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
     Options: 
       --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
-      --unlock-ip : Locks the IP address to first requesting device
+      --unlock-ip : Does not lock IP address to first requesting device
       --count [NUM] : Number of tokens to generate (Default: 1)
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
