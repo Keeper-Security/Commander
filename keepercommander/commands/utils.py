@@ -875,7 +875,7 @@ class KSMCommand(Command):
         app_info = KSMCommand.get_app_info(params, uid)
 
         if len(app_info) == 0:
-            print(bcolors.WARNING + 'No Secrets Manager Applications returneds.' + bcolors.ENDC)
+            print(bcolors.WARNING + 'No Secrets Manager Applications returned.' + bcolors.ENDC)
             return
         else:
             for ai in app_info:
@@ -1270,7 +1270,7 @@ class KSMCommand(Command):
                 if not is_ip_unlocked:
                     lock_ip_stat = bcolors.OKGREEN + "Enabled" + bcolors.ENDC
                 else:
-                    lock_ip_stat = bcolors.HIGHINTENCITYRED + "Disabled" + bcolors.ENDC
+                    lock_ip_stat = bcolors.HIGHINTENSITYRED + "Disabled" + bcolors.ENDC
                 exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
                     first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
 
@@ -1288,8 +1288,6 @@ class KSMCommand(Command):
                             f'Token Expires On: {exp_date_str}\n' \
                             f'App Access Expires on: {app_expire_on_str}\n'
 
-                # keys_str += ("One-Time Access Token: " + bcolors.OKGREEN + "%s" + bcolors.ENDC + " (IP Lock: %s, Token Expire on: %s, App Access Expire on: %s)") % (
-                #             token, lock_ip_stat, exp_date_str, app_expire_on_str)
             if type(rs) is dict:
                 raise KeeperApiError(rs['error'], rs['message'])
         print(f'\nSuccessfully generated Client Device\n'
