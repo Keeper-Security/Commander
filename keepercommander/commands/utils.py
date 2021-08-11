@@ -697,7 +697,7 @@ class KSMCommand(Command):
         if ksm_obj in ['app', 'apps'] and ksm_action == 'get':
 
             if len(ksm_command) != 3:
-                print(bcolors.WARNING + "Application name is required.\n  Example: ksm get app MyApp" + bcolors.ENDC)
+                print(f"{bcolors.WARNING}Application name is required.\n  Example: {bcolors.OKGREEN}secrets-manager get app {bcolors.OKBLUE}MyApp{bcolors.ENDC}")
                 return
 
             ksm_app_uid_or_name = ksm_command[2]
@@ -716,9 +716,19 @@ class KSMCommand(Command):
             print(bcolors.WARNING + "Viewing clients is not available" + bcolors.ENDC)
             return
 
-        if ksm_obj in ['app'] and ksm_action in ['add', 'create']:
+        if ksm_obj in ['app', 'apps'] and ksm_action in ['add', 'create']:
+            if len(ksm_command) < 3:
+                print(
+                    f'''{bcolors.WARNING}Application name is missing.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}MyApp{bcolors.ENDC}'''
+                    )
+                return
+
             ksm_app_name = ksm_command[2]
-            KSMCommand.add_new_v5_app(params, ksm_app_name)
+
+            force_to_add = False # TODO: externalize this
+
+            KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add)
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action is None:
@@ -1033,7 +1043,7 @@ class KSMCommand(Command):
 
         found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
-            logging.warning('Application with the same name already exists. Use -f flag to ignore this warning.' % app_name)
+            logging.warning('Application with the same name "%s" already exists.' % app_name)
             return
 
         master_key_bytes = os.urandom(32)
