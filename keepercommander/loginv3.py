@@ -265,6 +265,8 @@ class LoginV3Flow:
             #     params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
 
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
+            encrypted_ecc_key = base64.urlsafe_b64decode(keys['encrypted_ecc_private_key'])
+            params.ecc_key = api.decrypt_aes_plain(encrypted_ecc_key, params.data_key)
 
         if not params.session_token:
             if 'session_token' in acct_summary_dict_snake_case:
