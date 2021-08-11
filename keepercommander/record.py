@@ -71,6 +71,7 @@ class Record:
     def __init__(self, record_uid='', folder='', title='', login='', password='', login_url='', notes='',
                  custom_fields=None, revision=''):
         self.record_uid = record_uid
+        self.record_type = ''
         self.folder = Record.xstr(folder)
         self.title = Record.xstr(title)
         self.login = Record.xstr(login)
@@ -151,8 +152,8 @@ class Record:
         if len(self.custom_fields) > 0:
             for c in self.custom_fields:
                 if not 'value' in c: c['value'] = ''
-                if not 'name' in c: c['name'] = ''
-                print('{0:>20s}: {1:<s}'.format(c['name'], c['value']))
+                if not 'name' in c: c['name'] = c['type'] if 'type' in c else ''
+                print('{0:>20s}: {1:<s}'.format(str(c['name']), str(c['value'])))
 
         if self.notes:
             lines = self.notes.split('\n')

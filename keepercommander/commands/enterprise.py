@@ -220,6 +220,8 @@ scim_parser.add_argument('--prefix', dest='prefix', action='store',
                               'SCIM groups staring with prefix will be imported to Keeper as Roles')
 scim_parser.add_argument('--unique-groups', dest='unique_groups', action='store_true',
                          help='Unique Groups. Command: create, edit')
+scim_parser.error = raise_parse_exception
+scim_parser.exit = suppress_exit
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')

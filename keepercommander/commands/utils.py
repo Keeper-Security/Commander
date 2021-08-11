@@ -1,4 +1,4 @@
-#  _  __
+#_  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
@@ -8,7 +8,8 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
+import hashlib
+import hmac
 import re
 import os
 import base64
@@ -18,6 +19,8 @@ import datetime
 import getpass
 import sys
 import platform
+from time import time
+from distutils.util import strtobool
 
 import requests
 import tempfile
@@ -31,14 +34,23 @@ from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
+from .recordv3 import get_record
+from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
+    GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
+    RemoveAppSharesRequest
+from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
 from ..display import bcolors
+from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
 from .. import api, rest_api, loginv3
-from .base import raise_parse_exception, suppress_exit, user_choice, Command
+from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
+from ..record_pb2 import RecordsAddRequest, RecordAdd, RecordsModifyResponse, RecordModifyResult, ApplicationAddRequest
+from ..rest_api import execute_rest
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from . import aliases, commands, enterprise_commands
-from ..error import CommandError
+from ..error import CommandError, KeeperApiError
+
 from .. import __version__
 from ..versioning import is_binary_app, is_up_to_date_version
 
@@ -64,6 +76,7 @@ def register_commands(commands):
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
+    commands['secrets-manager'] = KSMCommand()
     commands['version'] = VersionCommand()
 
 
@@ -71,10 +84,59 @@ def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
     aliases['v'] = 'version'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser, version_parser]:
+    aliases['sm'] = 'secrets-manager'
+    aliases['secrets'] = 'secrets-manager'
+    aliases['ksm'] = 'secrets-manager'
+    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
+              version_parser, ksm_parser
+              ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
 
+
+available_ksm_commands = f"""
+{bcolors.BOLD}Keeper Secrets Manager{bcolors.ENDC}
+Commands to configure and manage the Keeper Secrets Manager platform.
+
+  Usage:
+
+  {bcolors.BOLD}View Applications:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app list{bcolors.ENDC}
+
+  {bcolors.BOLD}Get Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app get {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+
+  {bcolors.BOLD}Create Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}
+
+  {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
+    Options: 
+      --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
+      --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
+      --unlock-ip : Does not lock IP address to first requesting device
+      --count [NUM] : Number of tokens to generate (Default: 1)
+
+  {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
+
+  {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
+    Options: 
+      --editable : Allow secrets to be editable by the client
+
+  {bcolors.BOLD}Remove Secret from Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager share remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
+
+  -----
+  Note: If the UID you are using contains a dash (-) in the beginning, the value should be wrapped 
+  in quotes and prepended with an equal sign. For example:
+  {bcolors.OKGREEN}secrets-manager share add --app={bcolors.OKBLUE}"-fwZjKGbKnZCo1Fh8gsf5w"{bcolors.OKGREEN} --secret={bcolors.OKBLUE}"-FcesCt6YXcJzpHWWRgoDA"{bcolors.ENDC}
+
+  To learn about Keeper Secrets Manager visit:
+  {bcolors.WARNING}https://docs.keeper.io/secrets-manager/{bcolors.ENDC}
+
+"""
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -138,10 +200,52 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
+ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands',
+                                     add_help=False)
+ksm_parser.add_argument('command', type=str, action='store', nargs="*",
+                        help='One of: "app list", "app get", "app create", "client add", "client remove", "share add" or "share remove"')
+ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
+                                           help='Record UID')
+ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
+                                           help='Application Name or UID')
+ksm_parser.add_argument('--client', '-i', type=str, dest='client_names_or_ids', action='append', required=False,
+                                           help='Client Name or ID')
+ksm_parser.add_argument('--first-access-expires-in-min', '-x', type=int, dest='firstAccessExpiresIn', action='store',
+                        help='Time for the first request to expire in minutes from the time when this command is '
+                             'executed. Maximum 1440 minutes (24 hrs). Default: 60',
+                        default=60)
+ksm_parser.add_argument('--access-expire-in-min', '-p', type=int, dest='accessExpireInMin', action='store',
+                        help='Time interval that this client can access the KSM application. After this time, access '
+                             'is denied. Time is entered in minutes starting from the time when command is executed. '
+                             'Default: Not expiration')
+
+ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
+                        help='Number of tokens to return. Default: 1', default=1)
+ksm_parser.add_argument('--help', '-h', dest='helpflag', action="store_true", help='Display help')
+ksm_parser.add_argument('--editable', '-e', action='store_true', required=False,
+                        help='Is this share going to be editable or not.')
+ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true',
+                        help='Unlock IP Address.')
+ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
+                        help='Return Tokens', default='false')
+
+
+# ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
+ksm_parser.error = raise_parse_exception
+ksm_parser.exit = suppress_exit
+
+
+version_parser = argparse.ArgumentParser(prog='version|v', description='Displays version of the installed Commander.')
 version_parser.error = raise_parse_exception
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.exit = suppress_exit
+
+
+def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
+    dt = datetime.datetime.fromtimestamp(ms // 1000)
+    df_frmt_str = dt.strftime(frmt)
+
+    return df_frmt_str
 
 
 class SyncDownCommand(Command):
@@ -210,6 +314,7 @@ class ThisDeviceCommand(Command):
 
         elif action == 'register':
             register_device()
+
 
         elif action == 'persistent_login' or action == 'persistent-login' or action == 'pl':
             value = ops[1]
@@ -560,6 +665,606 @@ class CheckEnforcementsCommand(Command):
                     del params.settings['share_account_to']
 
 
+class KSMCommand(Command):
+
+    def get_parser(self):
+        return ksm_parser
+
+    def execute(self, params, **kwargs):
+
+        ksm_command = kwargs.get('command')
+        ksm_helpflag = kwargs.get('helpflag')
+
+        if len(ksm_command) == 0 or ksm_helpflag:
+            print(available_ksm_commands)
+            return
+
+        ksm_obj = ksm_command[0]
+        ksm_action = ksm_command[1] if len(ksm_command) > 1 else None
+
+        if ksm_obj in ['help', 'h']:
+            print(available_ksm_commands)
+            return
+
+        if ksm_obj == 'apps' or \
+                (ksm_obj in ['app', 'apps'] and ksm_action == 'list'):
+            KSMCommand.print_all_apps_records(params)
+            return
+
+        if ksm_obj == 'clients' or (ksm_obj in ['client', 'clients'] and ksm_action == 'list'):
+            print(bcolors.WARNING + "Listing clients is not available" + bcolors.ENDC)
+            return
+
+        if ksm_obj in ['app', 'apps'] and ksm_action == 'get':
+
+            if len(ksm_command) != 3:
+                print(f"{bcolors.WARNING}Application name is required.\n  Example: {bcolors.OKGREEN}secrets-manager get app {bcolors.OKBLUE}MyApp{bcolors.ENDC}")
+                return
+
+            ksm_app_uid_or_name = ksm_command[2]
+
+            ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_or_name)
+
+            if not ksm_app:
+                print((bcolors.WARNING + "Application '%s' not found." + bcolors.ENDC) % ksm_app_uid_or_name)
+                return
+
+            KSMCommand.get_and_print_app_info(params, ksm_app.get('record_uid'))
+            return
+
+        if ksm_obj in ['client'] and ksm_action == 'get':
+            ksm_obj_uid = ksm_command[2]
+            print(bcolors.WARNING + "Viewing clients is not available" + bcolors.ENDC)
+            return
+
+        if ksm_obj in ['app', 'apps'] and ksm_action in ['add', 'create']:
+            if len(ksm_command) < 3:
+                print(
+                    f'''{bcolors.WARNING}Application name is missing.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}MyApp{bcolors.ENDC}'''
+                    )
+                return
+
+            ksm_app_name = ksm_command[2]
+
+            force_to_add = False # TODO: externalize this
+
+            KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add)
+            return
+
+        if ksm_obj in ['share', 'secret'] and ksm_action is None:
+            print("  Add Secret to the App\n\n"
+                    + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
+                    + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
+                    + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
+            return
+
+        if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
+
+            app_name_or_uid = kwargs.get('app')
+            secret_uid = kwargs.get('secret')   # TODO: Allow multiple secrets
+            is_editable = kwargs.get('editable')
+
+            KSMCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
+            return
+
+        if ksm_obj in ['share', 'secret'] and ksm_action in ['remove', 'rem', 'rm']:
+            app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
+            secret_uids = kwargs.get('secret')
+
+            KSMCommand.remove_share(params, app_name_or_uid, secret_uids)
+            return
+
+        if ksm_obj in ['client', 'c'] and ksm_action in ['add', 'create']:
+
+            app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
+
+            if not app_name_or_uid:
+                print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
+                print(f"  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable{bcolors.ENDC}")
+                return
+
+            count = kwargs.get('count')
+            unlock_ip = kwargs.get('unlockIp')
+
+            first_access_expire_on = kwargs.get('firstAccessExpiresIn')
+            access_expire_in_min = kwargs.get('accessExpireInMin')
+
+            is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
+
+            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min)
+            return tokens if is_return_tokens else None
+
+        if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
+
+            app_name_or_uid = kwargs['app'] if 'app' in kwargs else None
+
+            client_names_or_ids = kwargs.get('client_names_or_ids')
+
+            KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+
+            return
+
+        print(f"{bcolors.WARNING}Unknown combination of KSM commands. Type 'secrets-manager' for more details'{bcolors.ENDC}")
+
+    @staticmethod
+    def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
+
+        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
+
+        if rec_cache_val is None:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+
+        app_record_uid = rec_cache_val.get('record_uid')
+        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
+        app_record = json.loads(r_unencr_json_data)
+
+        master_key_str = app_record.get('fields')[0].get('value')[0] # TODO: Get
+        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+
+        KSMCommand.share_secret(
+            params=params,
+            app_uid=app_record_uid,
+            master_key=master_key,
+            secret_uids=secret_uids,
+            is_editable=is_editable
+        )
+
+    @staticmethod
+    def record_data_as_dict(record_dict):
+        data_json_str = record_dict.get('data_unencrypted').decode("utf-8")
+        data_dict = json.loads(data_json_str)
+        return data_dict
+
+    @staticmethod
+    def print_all_apps_records(params):
+
+        print("\nList of all Applications\n")
+        recs = params.record_cache
+
+        apps_table_fields = ['Title', 'Uid']
+        apps_table = []
+        for uid in recs:
+
+            r = recs[uid]
+
+            if r.get('version') == 5:
+                data_json_str = r.get('data_unencrypted').decode("utf-8")
+                data_dict = json.loads(data_json_str)
+
+                # if data_dict.get('type') == 'app':
+                apps_table.append([data_dict.get('title'), uid])
+
+        apps_table.sort(key=lambda x: x[0].lower())
+
+        if len(apps_table) == 0:
+            print(f'{bcolors.WARNING}No Applications to list.{bcolors.ENDC}\n\nTo create new application, use command {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}')
+        else:
+            dump_report_data(apps_table, apps_table_fields, fmt='table')
+
+    @staticmethod
+    def get_app_info(params, app_uid):
+
+        rq = GetAppInfoRequest()
+        rq.appRecordUid.append(CommonHelperMethods.url_safe_str_to_bytes(app_uid))
+
+        rs = communicate_rest(params, rq, 'vault/get_app_info')
+
+        get_app_info_rs = GetAppInfoResponse()
+        get_app_info_rs.ParseFromString(rs)
+
+        return get_app_info_rs.appInfo
+
+    @staticmethod
+    def get_and_print_app_info(params, uid):
+
+        app_info = KSMCommand.get_app_info(params, uid)
+
+        if len(app_info) == 0:
+            print(bcolors.WARNING + 'This app does not have shares.' + bcolors.ENDC)
+            return
+        else:
+            print(bcolors.BOLD + "CLIENTS\n" + bcolors.ENDC)
+            for ai in app_info:
+
+                if len(ai.clients) > 0:
+                    clients_table_fields = ['Name', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
+                                            'IP Address']
+                    clients_table = []
+                    for c in ai.clients:
+                        id = c.id
+                        client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+                        created_on = ms_to_str(c.createdOn)
+                        first_access = '-' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
+                        last_access = '-' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
+                        lock_ip = 'Enabled' if c.lockIp else 'Disabled'
+                        ip_address = c.ipAddress
+                        # public_key = c.publicKey
+
+                        row = [id, client_id, created_on, first_access, last_access, lock_ip, ip_address]
+
+                        clients_table.append(row)
+
+                    clients_table.sort(key=lambda x: x[2].lower())
+
+                    dump_report_data(clients_table, clients_table_fields, fmt='table')
+                else:
+                    print('\tNo clients registered for this app')
+
+                print(bcolors.BOLD + "\nSHARES\n" + bcolors.ENDC)
+
+                if ai.shares:
+
+                    recs = params.record_cache
+
+                    shares_table_fields = ['Share Type', 'UID', 'Title']
+                    shares_table = []
+
+                    for s in ai.shares:
+
+                        uid_str = CommonHelperMethods.bytes_to_url_safe_str(s.secretUid)
+                        sht = ApplicationShareType.Name(s.shareType)
+
+                        if sht == 'SHARE_TYPE_RECORD':
+                            record = recs.get(uid_str)
+                            record_data_dict = KSMCommand.record_data_as_dict(record)
+                            row = ['RECORD', uid_str, record_data_dict.get('title')]
+                        elif sht == 'SHARE_TYPE_FOLDER':
+                            cached_sf = params.shared_folder_cache[uid_str]
+                            shf_name = cached_sf.get('name_unencrypted')
+                            # shf_num_of_records = len(cached_sf.get('records'))
+
+                            row = ['FOLDER', uid_str, shf_name]
+                        else:
+                            logging.warning("Unknown Share Type %s" % sht)
+                            continue
+
+                        shares_table.append(row)
+
+                    shares_table.sort(key=lambda x: x[2].lower())
+                    dump_report_data(shares_table, shares_table_fields, fmt='table')
+                else:
+                    print('\tThere are no shared secrets to this application')
+
+    @staticmethod
+    def share_secret(params, app_uid, master_key, secret_uids, is_editable=False):
+
+        app_shares = []
+
+        added_secret_uids_type_pairs = []
+
+        for uid in secret_uids:
+            is_record = uid in params.record_cache
+            is_shared_folder = api.is_shared_folder(params, uid)
+
+            if is_record:
+                rec = params.record_cache[uid]
+                share_key_decrypted = rec['record_key_unencrypted']
+                share_type = 'SHARE_TYPE_RECORD'
+            elif is_shared_folder:
+                cached_sf = params.shared_folder_cache[uid]
+                shared_folder_key_unencrypted = cached_sf.get('shared_folder_key_unencrypted')
+                share_key_decrypted = shared_folder_key_unencrypted
+                share_type = 'SHARE_TYPE_FOLDER'
+            else:
+                print(f"""{bcolors.WARNING}\tUID="{uid}" is not a Record nor Shared Folder. Only individual records or 
+                Shared Folders can be added to the application.{bcolors.ENDC} Make sure your local cache is up to date by
+                running 'sync-down' command and trying again.""")
+
+                continue
+
+            added_secret_uids_type_pairs.append((uid, share_type))
+
+            encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
+
+            app_share = AppShareAdd()
+            app_share.secretUid = CommonHelperMethods.url_safe_str_to_bytes(uid)
+            app_share.shareType = ApplicationShareType.Value(share_type)
+            app_share.encryptedSecretKey = encrypted_secret_key
+            app_share.editable = is_editable
+
+            app_shares.append(app_share)
+
+        if len(added_secret_uids_type_pairs) == 0:
+            return
+
+        app_share_add_rq = AddAppSharesRequest()
+        app_share_add_rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
+        app_share_add_rq.shares.extend(app_shares)
+
+        api_request_payload = ApiRequestPayload()
+        api_request_payload.payload = app_share_add_rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+        rs = execute_rest(params.rest_context, 'vault/app_share_add', api_request_payload)
+
+        if type(rs) is bytes:
+
+            print((bcolors.OKGREEN + 'Successfully added following secrets to app uid=%s, editable=' + bcolors.BOLD + '%s:' + bcolors.ENDC) % (app_uid, is_editable))
+            print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + ('Record' if ('RECORD' in str(x[1])) else 'Shared Folder'), added_secret_uids_type_pairs)))
+            print('\n')
+            return True
+
+        if type(rs) is dict:
+            if rs.get('message') == 'Duplicate share, already added':
+                logging.error("One of the secret UIDs is already shared to this application. "
+                              "Please remove already shared UIDs from your command and try again.")
+                # this is a backend limitation. If at least one record is already shared to the app, the backend
+                # returns error.
+            else:
+                raise KeeperApiError(rs['error'], rs['message'])
+
+        return False
+
+    @staticmethod
+    def get_app_record(params, app_name_or_uid):
+
+        for rec_cache_val in params.record_cache.values():
+
+            if rec_cache_val.get('version') == 5:
+                r_uid = rec_cache_val.get('record_uid')
+                r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
+                r_unencr_dict = json.loads(r_unencr_json_data)
+
+                if r_unencr_dict.get('title') == app_name_or_uid or r_uid == app_name_or_uid:
+                    return rec_cache_val
+
+        return None
+
+    @staticmethod
+    def search_app_records(params, search_str):
+
+        search_results_rec_data = []
+
+        for record_uid in params.record_cache:
+
+            rec = get_record(params, record_uid)
+
+            if rec.get('version') == 5:
+                data = json.loads(rec.get('data_unencrypted'))
+                rec_uid = rec.get('record_uid')
+                rec_title = data.get('title')
+                rec_type = data.get('type')
+
+                if rec_type == 'app':
+                    if rec_uid == search_str.strip() or rec_title.lower() == search_str.strip().lower():
+                        search_results_rec_data.append(
+                            {
+                                'uid': rec_uid,
+                                'data': data
+                            })
+
+        return search_results_rec_data
+
+    @staticmethod
+    def add_new_v5_app(params, app_name, force_to_add=False):
+
+        logging.debug("Creating new KSM Application named '%s'" % app_name)
+
+        found_app = KSMCommand.get_app_record(params, app_name)
+        if (found_app is not None) and (found_app is not force_to_add):
+            logging.warning('Application with the same name "%s" already exists.' % app_name)
+            return
+
+        master_key_bytes = os.urandom(32)
+        master_key_str = loginv3.CommonHelperMethods.bytes_to_url_safe_str(master_key_bytes)
+
+        app_record_data = {
+            'title': app_name,
+            'type': 'app',
+            'fields': [
+                {
+                    'type': 'password',
+                    'value': [master_key_str]
+                }
+            ]
+        }
+
+        data_json = json.dumps(app_record_data)
+        record_key_unencrypted = os.urandom(32)
+        record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
+
+        app_record_uid_str = api.generate_record_uid()
+        app_record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(app_record_uid_str)
+
+        data = data_json.decode('utf-8') if isinstance(data_json, bytes) else data_json
+        data = pad_aes_gcm(data)
+
+        rdata = bytes(data, 'utf-8')
+        rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
+        rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
+        rdata = loginv3.CommonHelperMethods.url_safe_str_to_bytes(rdata)
+
+        client_modif_time = api.current_milli_time()
+
+        ra = ApplicationAddRequest()
+        ra.app_uid = app_record_uid
+        ra.record_key = record_key_encrypted
+        ra.client_modified_time = client_modif_time
+        ra.data = rdata
+
+        params.revision = 0
+        rs = communicate_rest(params, ra, 'vault/application_add')
+
+        print(bcolors.OKGREEN + "Application was successfully added" + bcolors.ENDC)
+
+        params.sync_data = True
+
+
+    @staticmethod
+    def remove_share(params, app_name_or_uid, secret_uids):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        app_uid = app.get('record_uid')
+
+        rq = RemoveAppSharesRequest()
+
+        rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
+        rq.shares.extend(list(map(lambda uid_str: CommonHelperMethods.url_safe_str_to_bytes(uid_str), secret_uids)))
+
+        api_request_payload = ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+        rs = execute_rest(params.rest_context, 'vault/app_share_remove', api_request_payload)
+
+        if type(rs) is dict:
+            raise KeeperApiError(rs['error'], rs['message'])
+        else:
+            print(bcolors.OKGREEN + "Secret share was successfully removed from the application" + bcolors.ENDC)
+
+
+    @staticmethod
+    def remove_client(params, app_name_or_uid, client_names_and_hashes):
+
+        def convert_ids_and_hashes_to_hashes(cnahs, app_uid):
+
+            client_id_hashes_bytes = []
+
+            app_info = KSMCommand.get_app_info(params, app_uid)
+
+            for ai in app_info:
+
+                if len(ai.clients) > 0:
+                    for c in ai.clients:
+                        name = c.id
+                        client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+
+                        if name in cnahs or client_id in cnahs:
+                            client_id_hashes_bytes.append(c.clientId)
+
+            return client_id_hashes_bytes
+
+        if not app_name_or_uid:
+            raise Exception("No app provided")
+
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        app_uid = app.get('record_uid')
+
+        client_hashes = convert_ids_and_hashes_to_hashes(client_names_and_hashes, app_uid)
+
+        if len(client_hashes) == 0:
+            print(bcolors.OKGREEN + "Application was successfully added" + bcolors.ENDC)
+
+            print("No Clients found for given client(s).")
+            return
+
+        rq = RemoveAppClientsRequest()
+
+        rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
+        rq.clients.extend(client_hashes)
+
+        api_request_payload = ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+        rs = execute_rest(params.rest_context, 'vault/app_client_remove', api_request_payload)
+
+        if type(rs) is dict:
+            raise KeeperApiError(rs['error'], rs['message'])
+        else:
+            print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
+
+    @staticmethod
+    def add_client(params, app_name_or_uid, count, unlock_ip, firstAccessExpireOn, access_expire_in_min):
+
+        if unlock_ip is str:
+            is_ip_unlocked = bool(strtobool(unlock_ip))
+        is_ip_unlocked = unlock_ip
+
+        curr_ms = int(time() * 1000)
+
+        first_access_expire_on_ms = curr_ms + (int(firstAccessExpireOn) * 60 * 1000)
+
+        if access_expire_in_min:
+            access_expire_on_ms = curr_ms + (int(access_expire_in_min) * 60 * 1000)
+
+        if not app_name_or_uid:
+            raise Exception("No app provided")
+
+        rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
+
+        if not rec_cache_val:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
+        app_record = json.loads(r_unencr_json_data)
+
+        # master_key = app_record.
+        logging.debug("App uid=%s, unlock_ip=%s" % (app_record.get('record_uid'), unlock_ip))
+
+        master_key_str = app_record.get('fields')[0].get('value')[0]  # TODO: Search for field = password and get 1st value
+        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+
+        keys_str = ""
+
+        tokens = []
+
+        for i in range(count):
+            secret_bytes = os.urandom(32)
+            counter_bytes = b'KEEPER_SECRETS_MANAGER_CLIENT_ID'
+            digest = 'sha512'
+
+            try:
+                mac = hmac.new(secret_bytes, counter_bytes, digest).digest()
+            except Exception as e:
+                logging.error(e.args[0])
+                return
+
+            encrypted_master_key = rest_api.encrypt_aes(master_key, secret_bytes)
+
+            rq = AddAppClientRequest()
+            rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(rec_cache_val.get('record_uid'))
+            rq.encryptedAppKey = encrypted_master_key
+            rq.lockIp = not is_ip_unlocked
+            rq.firstAccessExpireOn = first_access_expire_on_ms
+
+            if access_expire_in_min:
+                rq.accessExpireOn = access_expire_on_ms
+
+            rq.clientId = mac
+
+            api_request_payload = ApiRequestPayload()
+            api_request_payload.payload = rq.SerializeToString()
+            api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+
+            rs = execute_rest(params.rest_context, 'vault/app_client_add', api_request_payload)
+
+            if type(rs) is bytes:
+                if keys_str:
+                    keys_str += '\n'
+
+                if not is_ip_unlocked:
+                    lock_ip_stat = bcolors.OKBLUE + "ON" + bcolors.ENDC
+                else:
+                    lock_ip_stat = bcolors.WARNING + "OFF" + bcolors.ENDC
+                exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                    first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
+
+                if access_expire_in_min:
+                    app_expire_on_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                        access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
+                else:
+                    app_expire_on_str = bcolors.WARNING + "Never" + bcolors.ENDC
+
+                token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
+                tokens.append(token)
+                keys_str += ("One-Time Access Token: " + bcolors.OKGREEN + "%s" + bcolors.ENDC + " (IP Lock: %s, Token Expire on: %s, App Access Expire on: %s)") % (
+                            token, lock_ip_stat, exp_date_str, app_expire_on_str)
+            if type(rs) is dict:
+                raise KeeperApiError(rs['error'], rs['message'])
+
+        print(keys_str)
+
+        return tokens
+
+
 class LogoutCommand(Command):
     def get_parser(self):
         return logout_parser
@@ -568,6 +1273,10 @@ class LogoutCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
+        try:
+            api.communicate_rest(params, None, 'vault/logout_v3')
+        except:
+            pass
         params.clear_session()
 
 
