@@ -75,6 +75,7 @@ class KeeperParams:
         self.iterations = 0
         self.data_key = None
         self.rsa_key = None
+        self.ecc_key = None
         self.revision = 0
         self.record_cache = {}
         self.meta_data_cache = {}
@@ -125,6 +126,7 @@ class KeeperParams:
         self.iterations = 0
         self.data_key = None
         self.rsa_key = None
+        self.ecc_key = None
         self.revision = 0
         self.record_cache.clear()
         self.meta_data_cache.clear()

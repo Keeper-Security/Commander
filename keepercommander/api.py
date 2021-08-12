@@ -618,24 +618,31 @@ def sync_down(params):
                     meta_data['is_converted_record_type'] = True
 
                 elif meta_data['record_key_type'] == 3:
-                    logging.debug('Converting AES256GCM-encrypted key')
+                    # AES256GCM-encrypted key
                     decoded_key = base64.urlsafe_b64decode(meta_data['record_key'] + '==')
-                    unencrypted_key = decrypt_aes_plain(decoded_key, params.data_key)
-                    if len(unencrypted_key) == 32:
-                        meta_data['record_key_unencrypted'] = unencrypted_key
+                    key_unencrypted = decrypt_aes_plain(decoded_key, params.data_key)
+                    if len(key_unencrypted) == 32:
+                        meta_data['record_key_unencrypted'] = key_unencrypted
 
                 elif meta_data['record_key_type'] == 2:
                     logging.debug('Converting RSA-encrypted key')
                     # decrypt the type2 key using their RSA key
-                    unencrypted_key = decrypt_rsa(meta_data['record_key'], params.rsa_key)
-                    if len(unencrypted_key) == 32:
-                        meta_data['record_key_unencrypted'] = unencrypted_key
+                    key_unencrypted = decrypt_rsa(meta_data['record_key'], params.rsa_key)
+                    if len(key_unencrypted) == 32:
+                        meta_data['record_key_unencrypted'] = key_unencrypted
                         meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
                         meta_data['record_key_type'] = 1
                         meta_data['is_converted_record_type'] = True
 
                 elif meta_data['record_key_type'] == 1:
                     meta_data['record_key_unencrypted'] = decrypt_data(meta_data['record_key'], params.data_key)
+
+                elif meta_data['record_key_type'] == 4:
+                    # ECIES-encrypted key
+                    decoded_key = base64.urlsafe_b64decode(meta_data['record_key'] + '==')
+                    key_unencrypted = ecies_decrypt(decoded_key, params.ecc_key)
+                    if len(key_unencrypted) == 32:
+                        meta_data['record_key_unencrypted'] = key_unencrypted
             except Exception as e:
                 logging.debug('Decryption error: %s', e)
 

@@ -112,9 +112,9 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
-      --first-access-expires-in-min [MIN] : First time access expiration (Default: 60. Maximum 1440 minutes (24 hrs).)
+      --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
-      --unlock-ip : Locks the IP address to first requesting device
+      --unlock-ip : Does not lock IP address to first requesting device
       --count [NUM] : Number of tokens to generate (Default: 1)
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
@@ -697,7 +697,7 @@ class KSMCommand(Command):
         if ksm_obj in ['app', 'apps'] and ksm_action == 'get':
 
             if len(ksm_command) != 3:
-                print(bcolors.WARNING + "Application name is required.\n  Example: ksm get app MyApp" + bcolors.ENDC)
+                print(f"{bcolors.WARNING}Application name is required.\n  Example: {bcolors.OKGREEN}secrets-manager get app {bcolors.OKBLUE}MyApp{bcolors.ENDC}")
                 return
 
             ksm_app_uid_or_name = ksm_command[2]
@@ -716,9 +716,19 @@ class KSMCommand(Command):
             print(bcolors.WARNING + "Viewing clients is not available" + bcolors.ENDC)
             return
 
-        if ksm_obj in ['app'] and ksm_action in ['add', 'create']:
+        if ksm_obj in ['app', 'apps'] and ksm_action in ['add', 'create']:
+            if len(ksm_command) < 3:
+                print(
+                    f'''{bcolors.WARNING}Application name is missing.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}MyApp{bcolors.ENDC}'''
+                    )
+                return
+
             ksm_app_name = ksm_command[2]
-            KSMCommand.add_new_v5_app(params, ksm_app_name)
+
+            force_to_add = False # TODO: externalize this
+
+            KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add)
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action is None:
@@ -750,7 +760,7 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print(f"  {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable{bcolors.ENDC}")
+                print(f"  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable{bcolors.ENDC}")
                 return
 
             count = kwargs.get('count')
@@ -809,10 +819,10 @@ class KSMCommand(Command):
     @staticmethod
     def print_all_apps_records(params):
 
-        print("\nList of all Applications\n")
+        print(f"\n{bcolors.BOLD}List all Secrets Manager Applications{bcolors.ENDC}\n")
         recs = params.record_cache
 
-        apps_table_fields = ['Title', 'Uid']
+        apps_table_fields = [f'{bcolors.OKGREEN}Title{bcolors.ENDC}', f'{bcolors.OKBLUE}UID{bcolors.ENDC}']
         apps_table = []
         for uid in recs:
 
@@ -823,7 +833,7 @@ class KSMCommand(Command):
                 data_dict = json.loads(data_json_str)
 
                 # if data_dict.get('type') == 'app':
-                apps_table.append([data_dict.get('title'), uid])
+                apps_table.append([f'{bcolors.OKGREEN}{data_dict.get("title")}{bcolors.ENDC}', f'{bcolors.OKBLUE}{uid}{bcolors.ENDC}'])
 
         apps_table.sort(key=lambda x: x[0].lower())
 
@@ -831,6 +841,8 @@ class KSMCommand(Command):
             print(f'{bcolors.WARNING}No Applications to list.{bcolors.ENDC}\n\nTo create new application, use command {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}')
         else:
             dump_report_data(apps_table, apps_table_fields, fmt='table')
+
+        print("")
 
     @staticmethod
     def get_app_info(params, app_uid):
@@ -846,42 +858,66 @@ class KSMCommand(Command):
         return get_app_info_rs.appInfo
 
     @staticmethod
+    def get_sm_app_record_by_uid(params, uid):
+        rec = params.record_cache.get(uid)
+
+        if rec.get('version') != 5:
+            raise Exception(f'Record {uid} is not a Secrets Manager application')
+
+        data_json_str = rec.get('data_unencrypted').decode("utf-8")
+        data_dict = json.loads(data_json_str)
+
+        return data_dict
+
+    @staticmethod
     def get_and_print_app_info(params, uid):
 
         app_info = KSMCommand.get_app_info(params, uid)
 
         if len(app_info) == 0:
-            print(bcolors.WARNING + 'This app does not have shares.' + bcolors.ENDC)
+            print(bcolors.WARNING + 'No Secrets Manager Applications returned.' + bcolors.ENDC)
             return
         else:
-            print(bcolors.BOLD + "CLIENTS\n" + bcolors.ENDC)
             for ai in app_info:
 
+                app_uid_str = CommonHelperMethods.bytes_to_url_safe_str(ai.appRecordUid)
+
+                app = KSMCommand.get_sm_app_record_by_uid(params, app_uid_str)
+                print(f'\nSecrets Manager Application\n'
+                      f'App Name: {app.get("title")}\n'
+                      f'App UID: {app_uid_str}')
+
                 if len(ai.clients) > 0:
-                    clients_table_fields = ['Name', 'Client ID', 'Created On', 'First Access', 'Last Access', 'IP Lock',
-                                            'IP Address']
-                    clients_table = []
+
+                    client_count = 1
                     for c in ai.clients:
                         id = c.id
                         client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
                         created_on = ms_to_str(c.createdOn)
-                        first_access = '-' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
-                        last_access = '-' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
-                        lock_ip = 'Enabled' if c.lockIp else 'Disabled'
+                        first_access = '--' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
+                        last_access = '--' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
+                        lock_ip = f'Enabled' if c.lockIp else f'Disabled'
+
                         ip_address = c.ipAddress
                         # public_key = c.publicKey
 
-                        row = [id, client_id, created_on, first_access, last_access, lock_ip, ip_address]
+                        client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n"\
+                                             f"=============================\n"\
+                                             f'  Name: {id}\n' \
+                                             f'  ID: {client_id}\n' \
+                                             f'  Created On: {created_on}\n' \
+                                             f'  First Access: {first_access}\n' \
+                                             f'  Last Access: {last_access}\n' \
+                                             f'  IP Lock: {lock_ip}\n' \
+                                             f'  IP Address: {ip_address if c.ipAddress else "--"}'
 
-                        clients_table.append(row)
+                        print(client_devices_str)
+                        client_count += 1
 
-                    clients_table.sort(key=lambda x: x[2].lower())
-
-                    dump_report_data(clients_table, clients_table_fields, fmt='table')
                 else:
                     print('\tNo clients registered for this app')
 
-                print(bcolors.BOLD + "\nSHARES\n" + bcolors.ENDC)
+                print(bcolors.BOLD + "\nApplication Access\n" + bcolors.ENDC)
 
                 if ai.shares:
 
@@ -913,6 +949,7 @@ class KSMCommand(Command):
 
                     shares_table.sort(key=lambda x: x[2].lower())
                     dump_report_data(shares_table, shares_table_fields, fmt='table')
+                    print()
                 else:
                     print('\tThere are no shared secrets to this application')
 
@@ -954,6 +991,9 @@ class KSMCommand(Command):
             app_share.editable = is_editable
 
             app_shares.append(app_share)
+
+        if len(added_secret_uids_type_pairs) == 0:
+            return
 
         app_share_add_rq = AddAppSharesRequest()
         app_share_add_rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(app_uid)
@@ -1030,7 +1070,7 @@ class KSMCommand(Command):
 
         found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
-            logging.warning('Application with the same name already exists. Use -f flag to ignore this warning.' % app_name)
+            logging.warning('Application with the same name "%s" already exists.' % app_name)
             return
 
         master_key_bytes = os.urandom(32)
@@ -1189,6 +1229,7 @@ class KSMCommand(Command):
         master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
 
         keys_str = ""
+        otat_str = ""
 
         tokens = []
 
@@ -1227,9 +1268,9 @@ class KSMCommand(Command):
                     keys_str += '\n'
 
                 if not is_ip_unlocked:
-                    lock_ip_stat = bcolors.OKBLUE + "ON" + bcolors.ENDC
+                    lock_ip_stat = bcolors.OKGREEN + "Enabled" + bcolors.ENDC
                 else:
-                    lock_ip_stat = bcolors.WARNING + "OFF" + bcolors.ENDC
+                    lock_ip_stat = bcolors.HIGHINTENSITYRED + "Disabled" + bcolors.ENDC
                 exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
                     first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
 
@@ -1241,32 +1282,20 @@ class KSMCommand(Command):
 
                 token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
                 tokens.append(token)
-                keys_str += ("One-Time Access Token: " + bcolors.OKGREEN + "%s" + bcolors.ENDC + " (IP Lock: %s, Token Expire on: %s, App Access Expire on: %s)") % (
-                            token, lock_ip_stat, exp_date_str, app_expire_on_str)
+
+                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n' \
+                            f'IP Lock: {lock_ip_stat}\n' \
+                            f'Token Expires On: {exp_date_str}\n' \
+                            f'App Access Expires on: {app_expire_on_str}\n'
+
             if type(rs) is dict:
                 raise KeeperApiError(rs['error'], rs['message'])
-
-        print(keys_str)
+        print(f'\nSuccessfully generated Client Device\n'
+              f'====================================\n'
+              f'{otat_str}')
 
         return tokens
 
-
-
-# class AppInfoCommand(Command):
-#
-#     def get_parser(self):  # type: () -> argparse.ArgumentParser or None
-#         return app_info_parser
-#
-#     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
-#
-#         app_uids = kwargs.get('uids') or None
-#
-#         if app_uids:
-#             for uid in app_uids:
-#                 AppShareRegistrationCommand.get_and_print_app_info(params, uid)
-#         else:
-#             AppShareRegistrationCommand.print_all_apps_records(params)
-#
 
 class LogoutCommand(Command):
     def get_parser(self):
@@ -1276,6 +1305,10 @@ class LogoutCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
+        try:
+            api.communicate_rest(params, None, 'vault/logout_v3')
+        except:
+            pass
         params.clear_session()
 
 

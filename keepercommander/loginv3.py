@@ -41,7 +41,7 @@ permissions_error_msg = "Grant Commander SDK permissions to access Keeper by nav
 class LoginV3Flow:
 
     @staticmethod
-    def login(params: KeeperParams):
+    def login(params):   # type: (KeeperParams) -> None
 
         logging.debug("Login v3 Start as '%s'" % params.user)
 
@@ -50,6 +50,10 @@ class LoginV3Flow:
         encryptedDeviceToken = LoginV3API.get_device_id(params)
 
         clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
+        config_user = params.config.get('user')    # type: str
+        if params.user and config_user:
+            if params.user.lower() != config_user.lower():
+                clone_code_bytes = None
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
@@ -101,8 +105,8 @@ class LoginV3Flow:
 
             elif resp.loginState == proto.REDIRECT_ONSITE_SSO \
                     or resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nSSO login not supported, will attempt to authenticate with your master password." + bcolors.ENDC + bcolors.ENDC)
-                logging.info(bcolors.OKBLUE + "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" + bcolors.ENDC)
+                logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nSSO user detected. Attempting to authenticate with a master password." + bcolors.ENDC + bcolors.ENDC)
+                logging.info(bcolors.OKBLUE + "(Note: SSO users can create a Master Password in Web Vault > Settings)\n" + bcolors.ENDC)
 
                 is_alternate_login = True
 
@@ -203,6 +207,7 @@ class LoginV3Flow:
                 raise Exception('Application or device is out of date and requires an update.')
             elif resp.loginState == proto.LOGGED_IN:
 
+                params.user = resp.primaryUsername
                 session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
                 params.session_token = session_token
 
@@ -222,7 +227,7 @@ class LoginV3Flow:
                 elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
                     params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
 
-                    login_type_message = bcolors.UNDERLINE + "Alternate Master Password"
+                    login_type_message = bcolors.UNDERLINE + "Master Password"
 
                 elif resp.encryptedDataKeyType == proto.NO_KEY \
                         or resp.encryptedDataKeyType == proto.BY_BIO:
@@ -233,7 +238,7 @@ class LoginV3Flow:
 
                 LoginV3Flow.populateAccountSummary(params)
 
-                logging.info(bcolors.OKGREEN + "Successfully authenticated with Login V3 (" + login_type_message + ")" + bcolors.ENDC)
+                logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
 
                 return
             else:
@@ -260,6 +265,8 @@ class LoginV3Flow:
             #     params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
 
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
+            encrypted_ecc_key = base64.urlsafe_b64decode(keys['encrypted_ecc_private_key'])
+            params.ecc_key = api.decrypt_aes_plain(encrypted_ecc_key, params.data_key)
 
         if not params.session_token:
             if 'session_token' in acct_summary_dict_snake_case:
