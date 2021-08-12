@@ -18,7 +18,6 @@ import functools
 import os
 import json
 
-
 from .. import api, display
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..record import Record
@@ -143,14 +142,14 @@ class FolderListCommand(Command):
         folders = []
         records = []
 
-        if show_folders:
+        if show_folders and folder is not None:
             for uid in folder.subfolders:
                 f = params.folder_cache[uid]
                 if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))) if regex is not None else True:
                     folders.append(f)
 
         v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-        if show_records:
+        if show_records and folder is not None:
             folder_uid = folder.uid or ''
             if folder_uid in params.subfolder_record_cache:
                 for uid in params.subfolder_record_cache[folder_uid]:
