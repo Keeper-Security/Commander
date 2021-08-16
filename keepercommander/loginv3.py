@@ -26,6 +26,7 @@ from .plugins import humps as humps
 
 from . import api, __version__, cli
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
+from .commands.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
@@ -898,7 +899,7 @@ class LoginV3API:
 
         endpoint = 'authentication/login_to_mc'
 
-        rq = proto.LoginToMcRequest()
+        rq = LoginToMcRequest()
         rq.mcEnterpriseId = mc_id
 
         api_request_payload = proto.ApiRequestPayload()
@@ -914,7 +915,7 @@ class LoginV3API:
 
         if type(rs) == bytes:
 
-            login_to_mc_rs = proto.LoginToMcResponse()
+            login_to_mc_rs = LoginToMcResponse()
             login_to_mc_rs.ParseFromString(rs)
 
             return login_to_mc_rs
