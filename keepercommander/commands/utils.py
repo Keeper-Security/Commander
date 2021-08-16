@@ -1184,9 +1184,7 @@ class KSMCommand(Command):
         client_hashes = convert_ids_and_hashes_to_hashes(client_names_and_hashes, app_uid)
 
         if len(client_hashes) == 0:
-            print(bcolors.OKGREEN + "Application was successfully added" + bcolors.ENDC)
-
-            print("No Clients found for given client(s).")
+            print("No Client Devices found with given name or ID")
             return
 
         rq = RemoveAppClientsRequest()
