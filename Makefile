@@ -1,12 +1,8 @@
 PYTHON_FILES := ${shell find . -name '*.py' -print}
 
-go2: tags
-	python3 keeper.py --login-v3 false  # v2 login
-	# python3 keeper.py  # v3 login
-
 go2: tags targeted-report
-	python3 -m pudb keeper.py
-	# python3 keeper.py
+	# python3 keeper.py --login-v3 false  # v2 login
+	python3 keeper.py  # v3 login
 
 tags: ${PYTHON_FILES}
 	# Create the tags file, for the benefit of vi/vim/neovim.

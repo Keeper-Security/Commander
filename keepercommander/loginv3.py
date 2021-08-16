@@ -107,14 +107,14 @@ class LoginV3Flow:
                 logging.info(
                     bcolors.BOLD +
                     bcolors.OKGREEN +
-                    "\nSSO login not supported, will attempt to authenticate with your master password." +
+                    "\nSSO user detected. Attempting to authenticate with a master password." +
                     bcolors.ENDC +
-                    bcolors.ENDC,
+                    bcolors.ENDC
                 )
                 logging.info(
                     bcolors.OKBLUE +
-                    "(Note: If you have not set a master password, set one in your Vault via Settings -> Master Password)\n" +
-                    bcolors.ENDC,
+                    "(Note: SSO users can create a Master Password in Web Vault > Settings)\n" +
+                    bcolors.ENDC
                 )
 
                 is_alternate_login = True
@@ -237,7 +237,7 @@ class LoginV3Flow:
                 elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
                     params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
 
-                    login_type_message = bcolors.UNDERLINE + "Alternate Master Password"
+                    login_type_message = bcolors.UNDERLINE + "Master Password"
 
                 elif resp.encryptedDataKeyType == proto.NO_KEY \
                         or resp.encryptedDataKeyType == proto.BY_BIO:
@@ -248,12 +248,7 @@ class LoginV3Flow:
 
                 LoginV3Flow.populateAccountSummary(params)
 
-                logging.info(
-                    bcolors.OKGREEN +
-                    "Successfully authenticated with Login V3 (" +
-                    login_type_message + ")" +
-                    bcolors.ENDC,
-                )
+                logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
                 params.login_time = time.time()
 
                 return

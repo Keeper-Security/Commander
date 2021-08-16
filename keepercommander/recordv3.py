@@ -1665,6 +1665,8 @@ class RecordV3:
 
   @staticmethod
   def display_ref(ftype, fvalue, **kwargs):
+    # fileRef can hold multiple references - convert single value to list for compatibility
+    fvalue = fvalue if isinstance(fvalue, list) else [fvalue]
     params = kwargs.get('params')
     if ftype == 'fileRef':
       for fuid in fvalue:
@@ -1678,7 +1680,8 @@ class RecordV3:
         size = HumanBytes.format(size or 0) if isinstance(size, int) else size
         print('{0:>20s}: {1:>22s}   {2:<12s}   {3:<s}'.format(str(ftype), str(fuid), str(size), str(name)))
     elif ftype == 'cardRef':
-        frec = params.record_cache.get(fvalue) or {}
+      for fuid in fvalue:
+        frec = params.record_cache.get(fuid) or {}
         fdat = frec.get('data_unencrypted') or '{}'
         fdic = RecordV3.record_type_to_dict(fdat)
         title = RecordV3.get_record_type_title(fdat) or ''
@@ -1688,7 +1691,8 @@ class RecordV3:
         card_line = 'Name: ' + name + ' | ' + ' Pin: ' + pin + ' | Card: ' + ' | '.join(str(x) for x in card.values())
         print('{0:>20s}: {1:<s}'.format('address.' + str(title), str(card_line)))
     elif ftype == 'addressRef':
-        frec = params.record_cache.get(fvalue) or {}
+      for fuid in fvalue:
+        frec = params.record_cache.get(fuid) or {}
         fdat = frec.get('data_unencrypted') or '{}'
         fdic = RecordV3.record_type_to_dict(fdat)
         title = RecordV3.get_record_type_title(fdat) or ''
