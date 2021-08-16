@@ -744,6 +744,14 @@ class KSMCommand(Command):
             secret_uid = kwargs.get('secret')   # TODO: Allow multiple secrets
             is_editable = kwargs.get('editable')
 
+            if not secret_uid:
+                print(bcolors.WARNING + "\nRecord or Shared Folder UID is required." + bcolors.ENDC)
+                print(f"Example to add secret:"
+                      + bcolors.OKGREEN + " secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
+                      + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
+                      + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
+                return
+
             KSMCommand.add_app_share(params, secret_uid, app_name_or_uid, is_editable)
             return
 
@@ -915,7 +923,7 @@ class KSMCommand(Command):
                         client_count += 1
 
                 else:
-                    print('\tNo clients registered for this app')
+                    print(f'\n\t{bcolors.WARNING}No client devices registered for this Application{bcolors.ENDC}')
 
                 print(bcolors.BOLD + "\nApplication Access\n" + bcolors.ENDC)
 
@@ -1007,7 +1015,7 @@ class KSMCommand(Command):
 
         if type(rs) is bytes:
 
-            print((bcolors.OKGREEN + 'Successfully added following secrets to app uid=%s, editable=' + bcolors.BOLD + '%s:' + bcolors.ENDC) % (app_uid, is_editable))
+            print((bcolors.OKGREEN + '\nSuccessfully added secrets to app uid=%s, editable=' + bcolors.BOLD + '%s:' + bcolors.ENDC) % (app_uid, is_editable))
             print('\n'.join(map(lambda x: ('\t' + str(x[0])) + ' ' + ('Record' if ('RECORD' in str(x[1])) else 'Shared Folder'), added_secret_uids_type_pairs)))
             print('\n')
             return True
