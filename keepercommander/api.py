@@ -1589,7 +1589,7 @@ class TimeToKeepalive:
         current_time = time.time()
         if self.server_logout_timer_window is None:
             self.server_logout_timer_window = get_server_logout_timer_window(params)
-        if (self.server_logout_timer_window / 3) + self.time_of_last_activity < current_time:
+        if (self.server_logout_timer_window / 2) + self.time_of_last_activity < current_time:
             send_keepalive(params)
             self.time_of_last_activity = current_time
 
