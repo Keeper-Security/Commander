@@ -1577,6 +1577,13 @@ def prepare_record_v3(params, record):
     return record_object
 
 
+def keeper_alive(params):
+    try:
+        communicate_rest(params, None, 'keep_alive')
+    except:
+        pass
+
+
 def communicate_rest(params, request, endpoint):
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
@@ -1587,6 +1594,8 @@ def communicate_rest(params, request, endpoint):
     rs = None
     try:
         rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
+        if params.session_token:
+            params.ttk.server_access()
     except Exception as e:
         raise KeeperApiError('Rest API', str(e))
     if type(rs) == bytes:
@@ -1621,7 +1630,10 @@ def communicate(params, request):
             return response_json
         authorize_request(request)
         response_json = run_command(params, request)
-    if response_json['result'] != 'success':
+    if response_json['result'] == 'success':
+        if params.session_token:
+            params.ttk.server_access()
+    else:
         if response_json['result_code']:
             if response_json['result_code'] == 'auth_failed':
                 params.clear_session()

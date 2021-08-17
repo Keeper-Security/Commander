@@ -78,6 +78,7 @@ def register_commands(commands):
     commands['help'] = HelpCommand()
     commands['secrets-manager'] = KSMCommand()
     commands['version'] = VersionCommand()
+    commands['keep-alive'] = KeeperAliveCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -1888,3 +1889,8 @@ class DeleteCorruptedCommand(Command):
                     logging.warning("%s records failed to delete", len(failures))
         else:
             logging.info('No corrupted records are found.')
+
+
+class KeeperAliveCommand(Command):
+    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+        api.keeper_alive(params)

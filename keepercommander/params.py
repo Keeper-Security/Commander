@@ -8,6 +8,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import time
 from urllib.parse import urlparse, urlunparse
 
 
@@ -106,6 +107,7 @@ class KeeperParams:
         self.record_history = {}        # type: dict[str, (list[dict], int)]
         self.event_queue = []
         self.logout_timer = 0
+        self.ttk = TimeToKeepalive()
         self.login_v3 = True
         self.clone_code = None
         self.device_token = None
@@ -156,6 +158,7 @@ class KeeperParams:
         self.record_history.clear()
         self.event_queue.clear()
         self.logout_timer = self.config.get('logout_timer') or 0
+        self.ttk.reset()
         # self.login_v3 = self.config.get('login_v3') or True
         self.clone_code = None
         self.device_token = None
@@ -185,3 +188,19 @@ class KeeperParams:
 
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
+
+
+class TimeToKeepalive:
+    def __init__(self):
+        self.time_of_last_activity = 0
+        self.server_logout_timer_window = 0
+
+    def reset(self):
+        self.time_of_last_activity = 0
+        self.server_logout_timer_window = 0
+
+    def set_server_timeout(self, timeout):   # type: (int) -> None
+        self.server_logout_timer_window = timeout
+
+    def server_access(self):
+        self.time_of_last_activity = time.time()

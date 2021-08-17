@@ -285,7 +285,15 @@ class LoginV3Flow:
 
         # settings
         params.settings = acct_summary_dict_snake_case['settings']
-
+        server_timeout = 0
+        if 'logout_timer' in params.settings:
+            try:
+                server_timeout = int(params.settings['logout_timer'])
+            except ValueError:
+                pass
+        if server_timeout < 0:
+            server_timeout = 30 * 60 * 1000    # 30 min in millis
+        params.ttk.set_server_timeout(server_timeout)
         # keys
         # if acct_summary.clientKey:
         #     clientKey = acct_summary.clientKey
