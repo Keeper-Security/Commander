@@ -21,6 +21,7 @@ import logging
 import urllib.parse
 
 from keepercommander import cli, recordv3
+from google.protobuf.json_format import MessageToDict
 
 from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -231,7 +232,7 @@ def login(params):
                 while not params.mfa_token:
                     try:
                         params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
-                    except KeyboardInterrupt as e:
+                    except KeyboardInterrupt:
                         print('')
                         params.clear_session()
                         return
@@ -1113,7 +1114,7 @@ def decrypt_encryption_params(encryption_params, password):
     if len(decoded_encryption_params) != 100:
         raise CryptoError('Invalid encryption params: bad params length')
 
-    version = int.from_bytes(decoded_encryption_params[0:1], byteorder='big', signed=False)
+    # version = int.from_bytes(decoded_encryption_params[0:1], byteorder='big', signed=False)
     iterations = int.from_bytes(decoded_encryption_params[1:4], byteorder='big', signed=False)
     if iterations < 1000:
         raise CryptoError('Invalid encryption parameters: iterations too low')
@@ -1571,13 +1572,65 @@ def prepare_record_v3(params, record):
                         if rec.password == record.password:
                             params.queue_audit_event('reused_password', record_uid=record.record_uid)
                             break
-    except:
+    except Exception:
         pass
 
     return record_object
 
 
-def communicate_rest(params, request, endpoint):
+class TimeToKeepalive:
+    """Keep track of how soon the login timer is to expire, and send a keepalive if we're "too close"."""
+    def __init__(self):
+        self.time_of_last_activity = time.time()
+        self.server_logout_timer_window = None
+
+    def update(self, params):
+        """Update the timer, and possibly issue a keepalive."""
+        current_time = time.time()
+        if (
+            self.server_logout_timer_window is None or
+            (self.server_logout_timer_window / 3) + self.time_of_last_activity < current_time
+        ):
+            send_keepalive(params)
+            self.server_logout_timer_window = get_server_logout_timer_window(params)
+            self.time_of_last_activity = current_time
+
+
+TTK = TimeToKeepalive()
+
+
+def get_acct_summary_dict(params):
+    """Get account summary data via protobufs."""
+    acct_summary = loginv3.LoginV3API.accountSummary(params, skip_ttk=True)
+    acct_summary_dict = MessageToDict(acct_summary)
+
+    return acct_summary_dict
+
+
+def get_server_logout_timer_window(params):
+    """Get the server's idea of our login timer.  This is not the same as the client's idea of the login timer."""
+    acct_summary_dict = get_acct_summary_dict(params)
+
+    if 'settings' not in acct_summary_dict:
+        return None
+
+    if 'logoutTimer' not in acct_summary_dict['settings']:
+        return None
+
+    logoutTimer = acct_summary_dict['settings']['logoutTimer']
+    logoutTimerSeconds = int(logoutTimer) / 1000
+
+    return logoutTimerSeconds
+
+
+def send_keepalive(params):
+    """Send a keepalive to the server, using protobufs."""
+    communicate_rest(params, None, 'keep_alive', skip_ttk=True)
+
+
+def communicate_rest(params, request, endpoint, skip_ttk=False):
+    if not skip_ttk:
+        TTK.update(params)
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
@@ -1596,8 +1649,11 @@ def communicate_rest(params, request, endpoint):
     raise KeeperApiError('Error', endpoint)
 
 
-def communicate(params, request):
+def communicate(params, request, skip_ttk=False):
     # type: (KeeperParams, dict) -> dict
+
+    if not skip_ttk:
+        TTK.update(params)
 
     def authorize_request(rq):
         rq['client_time'] = current_milli_time()
@@ -2308,7 +2364,7 @@ def query_msp(params):
                                     data = decrypt_data(mc['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     mc['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     pass
                         if params.enterprise:
                             params.enterprise['managed_companies'] = response['managed_companies']
@@ -2356,7 +2412,7 @@ def query_enterprise(params):
                                     data = decrypt_data(node['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     node['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     pass
                     if 'users' in response:
                         for user in response['users']:
@@ -2366,7 +2422,7 @@ def query_enterprise(params):
                                     data = decrypt_data(user['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     user['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     if 'key_type' in user and user['key_type'] == 'no_key':
                                         user['data']['displayname'] = user.get('encrypted_data') or ''
                     if 'roles' in response:
@@ -2377,7 +2433,7 @@ def query_enterprise(params):
                                     data = decrypt_data(role['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     role['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     pass
 
                     params.enterprise = response

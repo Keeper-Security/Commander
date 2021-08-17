@@ -882,12 +882,12 @@ class LoginV3API:
         return True
 
     @staticmethod
-    def accountSummary(params: KeeperParams):
+    def accountSummary(params: KeeperParams, skip_ttk=False):
 
         rq = proto_as.AccountSummaryRequest()
         rq.summaryVersion = 1
 
-        rs = api.communicate_rest(params, rq, 'login/account_summary')
+        rs = api.communicate_rest(params, rq, 'login/account_summary', skip_ttk)
 
         acct_summary_rs = proto_as.AccountSummaryElements()
         acct_summary_rs.ParseFromString(rs)
