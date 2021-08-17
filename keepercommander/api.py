@@ -2407,6 +2407,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
 
+    sync_down(mc_params)
     query_enterprise(mc_params)
 
     return mc_params
