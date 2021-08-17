@@ -1649,11 +1649,9 @@ def communicate_rest(params, request, endpoint, skip_ttk=False):
     raise KeeperApiError('Error', endpoint)
 
 
-def communicate(params, request, skip_ttk=False):
+def communicate(params, request):
     # type: (KeeperParams, dict) -> dict
-
-    if not skip_ttk:
-        TTK.update(params)
+    TTK.update(params)
 
     def authorize_request(rq):
         rq['client_time'] = current_milli_time()
