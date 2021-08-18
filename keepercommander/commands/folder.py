@@ -441,6 +441,19 @@ class FolderRemoveCommand(Command):
 class FolderMoveCommand(Command):
 
     @staticmethod
+    def get_transition_key(record, encryption_key):
+        # transition key is the key of the object being moved
+        # encrypted with the shared folder key if going to a shared folder,
+        # or encrypted with the user's data key
+        if record.get('version', -1) >= 3:
+            tkey = api.encrypt_aes_plain(record['record_key_unencrypted'], encryption_key)
+            transition_key = api.base64.urlsafe_b64encode(tkey).decode().rstrip('=')
+        else:
+            transition_key = api.encrypt_aes(record['record_key_unencrypted'], encryption_key)
+        return transition_key
+
+
+    @staticmethod
     def prepare_transition_keys(params, folder, keys, encryption_key):
         for f_uid in folder.subfolders:
             f = params.folder_cache[f_uid]
@@ -455,7 +468,7 @@ class FolderMoveCommand(Command):
         if folder.uid in params.subfolder_record_cache:
             for r_uid in params.subfolder_record_cache[folder.uid]:
                 rec = params.record_cache[r_uid]
-                transition_key = api.encrypt_aes(rec['record_key_unencrypted'], encryption_key)
+                transition_key = FolderMoveCommand.get_transition_key(rec, encryption_key)
                 keys.append({
                     'uid': r_uid,
                     'key': transition_key
@@ -538,7 +551,7 @@ class FolderMoveCommand(Command):
                 raise CommandError('mv', 'Root folder cannot be a source folder')
             dp = set()
             f = dst_folder
-            while f is not None:
+            while f is not None and f.uid is not None:
                 if len(f.uid) > 0:
                     dp.add(f.uid)
                 f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
@@ -602,15 +615,15 @@ class FolderMoveCommand(Command):
                     dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
                     if ssf_uid != dsf_uid:
                         shf = params.shared_folder_cache[dsf_uid]
-                        transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key_unencrypted'])
+                        transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
                 else:
-                    transition_key = api.encrypt_aes(rec['record_key_unencrypted'], params.data_key)
+                    transition_key = FolderMoveCommand.get_transition_key(rec, params.data_key)
             else:
                 if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                     dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
                         dst_folder.shared_folder_uid
                     shf = params.shared_folder_cache[dsf_uid]
-                    transition_key = api.encrypt_aes(rec['record_key_unencrypted'], shf['shared_folder_key_unencrypted'])
+                    transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
 
             transition_keys = []
             if transition_key is not None:
