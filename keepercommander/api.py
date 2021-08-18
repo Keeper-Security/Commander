@@ -2440,3 +2440,10 @@ def get_correct_salt(salts):
     else:
         salt = salts[0]
     return salt
+
+
+def send_keepalive(params):
+    """Send a keepalive to the server, using protobufs."""
+    communicate_rest(params, None, 'keep_alive')
+
+
