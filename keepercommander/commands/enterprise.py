@@ -434,6 +434,14 @@ class EnterpriseCommand(Command):
                 if 'parent_id' not in node:
                     yield node
 
+    @staticmethod
+    def get_root_nodes(params):  # type: (KeeperParams) -> [dict]
+        node_set = {x['node_id'] for x in params.enterprise['nodes']}
+        for node in params.enterprise['nodes']:
+            parent_id = node.get('parent_id') or ''
+            if parent_id not in node_set:
+                yield node
+
 
 class EnterpriseInfoCommand(EnterpriseCommand):
     def get_parser(self):
@@ -443,21 +451,27 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
         print('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
-        root_node = None
-        node_scope = set()
-        node_tree = {}
+        root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+        node_scope = {x['node_id'] for x in params.enterprise['nodes']}
         if kwargs.get('node'):
-            subnode = kwargs.get('node')
+            subnode = kwargs.get('node').lower()
+            root_nodes = [x['node_id'] for x in self.resolve_nodes(params, subnode)]
+            if len(root_nodes) == 0:
+                logging.warning('Node \"%s\" not found', subnode)
+                return
+            if len(root_nodes) > 1:
+                logging.warning('More than one node \"%s\" found. Use Node ID.', subnode)
+                return
+            logging.info('Output is limited to \'{0}\' node'.format(root_nodes[0]['data'].get('displayname') or str(root_nodes[0]['node_id'])))
+
+            node_tree = {}
             for node in params.enterprise['nodes']:
-                node_tree[node['node_id']] = []
-                if subnode.lower() in {str(node['node_id']), (node['data'].get('displayname') or '').lower()}:
-                    root_node = node['node_id']
-                    print('Output is limited to \'{0}\' node'.format(node['data'].get('displayname') or str(node['node_id'])))
-        if root_node:
-            for node in params.enterprise['nodes']:
-                if 'parent_id' in node:
-                    node_tree[node['parent_id']].append(node['node_id'])
-            nl = [root_node]
+                parent_id = node.get('parent_id')
+                if parent_id not in node_tree:
+                    node_tree[parent_id] = []
+                node_tree[parent_id].append(node['node_id'])
+
+            nl = [x for x in root_nodes]
             pos = 0
             while pos < len(nl):
                 nl.extend(node_tree[nl[pos]])
@@ -465,11 +479,6 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if pos > 100:
                     break
             node_scope.update(nl)
-        else:
-            for node in params.enterprise['nodes']:
-                if not node.get('parent_id'):
-                    root_node = node['node_id']
-                node_scope.add(node['node_id'])
 
         nodes = {}
         for node in params.enterprise['nodes']:
@@ -690,15 +699,19 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 return n
 
-            r = nodes[root_node]
-            root_name = r['name']
-            if not r['parent_id'] and root_name == '':
-                root_name = params.enterprise['enterprise_name']
+            tree = OD()
+            for node_id in root_nodes:
+                r = nodes[node_id]
+                root_name = r['name']
+                if not r['parent_id'] and root_name == '':
+                    root_name = params.enterprise['enterprise_name']
                 if kwargs.get('verbose'):
                     root_name += ' ({0})'.format(r['node_id'])
-            tree = {
-                '[{0}]'.format(root_name): tree_node(r)
-            }
+                tree[root_name] = tree_node(r)
+            if len(tree) > 0:
+                root_name = params.enterprise['enterprise_name']
+                tree = OD([(root_name, tree)])
+
             tr = LeftAligned()
             print('')
             print(tr(tree))
@@ -1169,14 +1182,16 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     unmatched_emails.add(email)
 
         node_id = None
-        if kwargs.get('node'):
-            for node in params.enterprise['nodes']:
-                if kwargs['node'] in {str(node['node_id']), node['data'].get('displayname')}:
-                    node_id = node['node_id']
-                    break
-                elif not node.get('parent_id') and kwargs['node'] == params.enterprise['enterprise_name']:
-                    node_id = node['node_id']
-                    break
+        node_name = kwargs.get('node')
+        if node_name:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                logging.warning('Node \"%s\" is not found', node_name)
+                return
+            if len(nodes) > 1:
+                logging.warning('More than one nodes \"%s\" are found', node_name)
+                return
+            node_id = nodes[0]['node_id']
 
         user_name = kwargs.get('displayname')
 
@@ -1184,6 +1199,12 @@ class EnterpriseUserCommand(EnterpriseCommand):
         disable_2fa_users = []
 
         if kwargs.get('add'):
+            if node_id is None:
+                root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+                if len(root_nodes) == 0:
+                    raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
+                node_id = root_nodes[0]
+
             for user in matched_users:
                 logging.warning('User %s already exists: Skipping', user['username'])
 
@@ -1194,11 +1215,6 @@ class EnterpriseUserCommand(EnterpriseCommand):
             if user_name:
                 dt['displayname'] = user_name
             encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
-            if node_id is None:
-                for node in params.enterprise['nodes']:
-                    if not node.get('parent_id'):
-                        node_id = node['node_id']
-                        break
 
             for email in unmatched_emails:
                 rq = {
@@ -1582,14 +1598,17 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         role_lookup[name] = r
 
         node_id = None
-        if kwargs.get('node'):
-            for node in params.enterprise['nodes']:
-                if kwargs['node'] in {str(node['node_id']), node['data'].get('displayname')}:
-                    node_id = node['node_id']
-                    break
-                elif not node.get('parent_id') and kwargs['node'] == params.enterprise['enterprise_name']:
-                    node_id = node['node_id']
-                    break
+
+        node_name = kwargs.get('node')
+        if node_name:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                logging.warning('Node \"%s\" is not found', node_name)
+                return
+            if len(nodes) > 1:
+                logging.warning('More than one node \"%s\" are found', node_name)
+                return
+            node_id = nodes[0]['node_id']
 
         matched = {}
         role_names = set()
@@ -1623,10 +1642,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 return
 
             if node_id is None:
-                for node in params.enterprise['nodes']:
-                    if not node.get('parent_id'):
-                        node_id = node['node_id']
-                        break
+                root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+                if len(root_nodes) == 0:
+                    raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
+                node_id = root_nodes[0]
 
             for role_name in role_names:
                 dt = { "displayname": role_name }
@@ -1917,21 +1936,16 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 team_lookup[team['name'].lower()] = team
 
         node_id = None
-        if kwargs.get('node'):
-            parent_node = kwargs.get('node')
-
-            if parent_node:
-                for node in params.enterprise['nodes']:
-                    if parent_node in {str(node['node_id']), node['data'].get('displayname')}:
-                        node_id = node['node_id']
-                        break
-                    elif not node.get('parent_id') and parent_node == params.enterprise['enterprise_name']:
-                        node_id = node['node_id']
-                        break
-
-                if not node_id:
-                    logging.warning("Node %s does not exist", parent_node)
-                    return
+        node_name = kwargs.get('node')
+        if node_name:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                logging.warning('Node \"%s\" is not found', node_name)
+                return
+            if len(nodes) > 1:
+                logging.warning('More than one node \"%s\" are found', node_name)
+                return
+            node_id = nodes[0]['node_id']
 
         matched = {}
         team_names = set()
@@ -1975,10 +1989,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 return
 
             if node_id is None:
-                for node in params.enterprise['nodes']:
-                    if not node.get('parent_id'):
-                        node_id = node['node_id']
-                        break
+                root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+                if len(root_nodes) == 0:
+                    raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
+                node_id = root_nodes[0]
 
             for item in queue:
                 is_new_team = type(item) == str
