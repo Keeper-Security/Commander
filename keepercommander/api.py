@@ -102,6 +102,7 @@ def login(params):
             logging.debug('No auth verifier, sending pre-auth request')
             try:
                 pre_login_rs = rest_api.pre_login(params.rest_context, params.user)
+                # pylint: disable=no-member
                 auth_params = get_correct_salt(pre_login_rs.salt)
                 params.iterations = auth_params.iterations
                 params.salt = auth_params.salt
@@ -231,7 +232,7 @@ def login(params):
                 while not params.mfa_token:
                     try:
                         params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
-                    except KeyboardInterrupt as e:
+                    except KeyboardInterrupt:
                         print('')
                         params.clear_session()
                         return
@@ -283,6 +284,7 @@ def change_master_password(params):
 
             if password == password2:
                 failed_rules = []
+                # pylint: disable=no-member
                 for desc, regex in zip(user_params.passwordMatchDescription, user_params.passwordMatchRegex):
                     pattern = re.compile(regex)
                     if not re.match(pattern, password):
@@ -332,15 +334,16 @@ def accept_account_transfer_consent(params, share_account_to):
     return False
 
 
-def pad_aes_gcm(json):
+def pad_aes_gcm(json_obj):
     # AES-GCM encryption leaks length of plaintext, so we pad the object prior to encryption.
-    result = json
-    json_bytes = json.encode('UTF-8') if isinstance(json, str) else json
+    result = json_obj
+    json_bytes = json_obj.encode('UTF-8') if isinstance(json_obj, str) else json_obj
     if isinstance(json_bytes, bytes):
         bytes_len = len(json_bytes)
         padded_len = max(384, bytes_len)
         # padded_len = math.ceil(padded_len / 16) * 16
-        if padded_len % 16: padded_len = padded_len + 16 - (padded_len % 16)
+        if padded_len % 16:
+            padded_len = padded_len + 16 - (padded_len % 16)
 
         if padded_len != bytes_len:
             pad_len = abs(padded_len - bytes_len)
@@ -1113,7 +1116,6 @@ def decrypt_encryption_params(encryption_params, password):
     if len(decoded_encryption_params) != 100:
         raise CryptoError('Invalid encryption params: bad params length')
 
-    version = int.from_bytes(decoded_encryption_params[0:1], byteorder='big', signed=False)
     iterations = int.from_bytes(decoded_encryption_params[1:4], byteorder='big', signed=False)
     if iterations < 1000:
         raise CryptoError('Invalid encryption parameters: iterations too low')
@@ -1765,7 +1767,9 @@ def update_record_v3(params, rec, **kwargs):
 
     for r in records_modify_rs.records:
         ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+        # pylint: disable=protobuf-undefined-attribute
         success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        # pylint: disable=protobuf-undefined-attribute
         status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
 
         if not success:
@@ -1949,7 +1953,9 @@ def add_record_v3(params, record, **kwargs):
     folder_key = rq.get('folder_key')
     if folder_type:
         folder_type_enum = {
+            # pylint: disable=protobuf-undefined-attribute
             BaseFolderNode.RootFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
+            # pylint: disable=protobuf-undefined-attribute
             BaseFolderNode.UserFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
             BaseFolderNode.SharedFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder'].number,
             BaseFolderNode.SharedFolderFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder_folder'].number
@@ -2000,9 +2006,9 @@ def add_record_v3(params, record, **kwargs):
     if record_links:
         ra.record_links.extend(record_links)
     if audit:
-        #ra.audit = audit # Assignment not allowed to field "audit" in protocol message object.
+        # ra.audit = audit # Assignment not allowed to field "audit" in protocol message object.
         ra.audit.version = audit.version
-        ra.audit.data = audit.data
+        ra.audit.data = audit.data.encode('UTF-8')
 
     rq = records.RecordsAddRequest()
     rq.records.append(ra)
@@ -2013,7 +2019,9 @@ def add_record_v3(params, record, **kwargs):
 
     for r in records_modify_rs.records:
         ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+        # pylint: disable=protobuf-undefined-attribute
         success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        # pylint: disable=protobuf-undefined-attribute
         status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
 
         if not success:
@@ -2249,18 +2257,18 @@ def get_record_shares(params, record_uids):
     uids = [x for x in record_uids if need_share_info(x)]
 
     while len(uids) > 0:
-        records = []
+        grs_records = []
         rq = {
             'command': 'get_records',
             'include': ['shares'],
-            'records': records,
+            'records': grs_records,
             'client_time': current_milli_time()
         }
-        while len(records) < 100 and len(uids) > 0:
+        while len(grs_records) < 100 and len(uids) > 0:
             uid = uids.pop()
             params.record_cache[uid]['shares'] = {}
             ro = resolve_record_access_path(params, uid)
-            records.append(ro)
+            grs_records.append(ro)
         try:
             rs = communicate(params, rq)
             if 'records' in rs:
@@ -2308,7 +2316,7 @@ def query_msp(params):
                                     data = decrypt_data(mc['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     mc['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     pass
                         if params.enterprise:
                             params.enterprise['managed_companies'] = response['managed_companies']
@@ -2356,7 +2364,7 @@ def query_enterprise(params):
                                     data = decrypt_data(node['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     node['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     pass
                     if 'users' in response:
                         for user in response['users']:
@@ -2366,7 +2374,7 @@ def query_enterprise(params):
                                     data = decrypt_data(user['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     user['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     if 'key_type' in user and user['key_type'] == 'no_key':
                                         user['data']['displayname'] = user.get('encrypted_data') or ''
                     if 'roles' in response:
@@ -2377,7 +2385,7 @@ def query_enterprise(params):
                                     data = decrypt_data(role['encrypted_data'], tree_key)
                                     data = fix_data(data)
                                     role['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
+                                except Exception:
                                     pass
 
                     params.enterprise = response
