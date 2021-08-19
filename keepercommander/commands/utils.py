@@ -611,7 +611,10 @@ class LoginCommand(Command):
         params.user = user.lower()
         params.password = password
 
-        api.login(params)
+        try:
+            api.login(params)
+        except Exception as exc:
+            logging.warning(str(exc))
 
 
 class CheckEnforcementsCommand(Command):
