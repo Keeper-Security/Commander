@@ -34,7 +34,7 @@ from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
-from keepercommander import ttk
+from . import ttk
 
 stack = []
 command_info = OrderedDict()
