@@ -505,7 +505,8 @@ def loop(params):  # type: (KeeperParams) -> int
             if e.result_code == 'restricted_client_type':
                 logging.error("Error code: %s\n%s" % (e.result_code, loginv3.permissions_error_msg))
             elif e.result_code == 'session_token':
-                msg = 'Session token error: if authorized, please log in to the Web Vault and fix all errors there'
+                # This is executed when the master password has expired.
+                msg = 'Session token error: please log in to the Web Vault and fix all errors there'
                 logging.error("Error code: %s\n%s" % (e.result_code, msg))
             else:
                 logging.error("Error code: %s\nCommunication Error: %s" % (e.result_code, e.message))

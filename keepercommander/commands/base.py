@@ -221,7 +221,13 @@ class Command:
                 return self.execute(params, **d)
             except KeeperApiError as exc:
                 if exc.result_code == 'session_token':
-                    logging.error('Session token error: if authorized, please log in to the Web Vault and fix all errors there')
+                    # This error is reported for an expired license.
+                    list_ = [
+                        'Session token error:',
+                        'Your Keeper license has expired. Please contact your Keeper administrator.',
+                        'If you need assistance please email business.support@keepersecurity.com.',
+                    ]
+                    logging.error('\n'.join(list_))
                     return
                 raise
         except ParseError as e:

@@ -771,11 +771,8 @@ class LoginV3API:
             return login_resp
         else:
             # rs['message'] is almost relevant here.
-            list_ = [
-                "Account validation error: probable bad username or password.",
-                "If authorized, please run login within the keeper shell to try again."
-            ]
-            raise KeeperApiError(rs['error'], '\n'.join(list_))
+            # This is executed when the user enters an extent email address, but an incorrect password.
+            raise KeeperApiError(rs['error'], 'Invalid email or password combination, please re-enter.')
 
     @staticmethod
     def twoFactorValidateMessage(params: KeeperParams, encryptedLoginToken: bytes, otp_code: str, tfa_expire_in, twoFactorValueType=None):
