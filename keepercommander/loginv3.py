@@ -144,22 +144,32 @@ class LoginV3Flow:
                 #
                 # resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
-
-
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
-
-                CommonHelperMethods.fill_password_with_prompt_if_missing(params)
 
                 salt = api.get_correct_salt(resp.salt)
 
                 salt_bytes = salt.salt
                 salt_iterations = salt.iterations
 
-                params.salt = salt_bytes
-                params.iterations = salt_iterations
-                params.auth_verifier = LoginV3API.auth_verifier_loginv3(params)
+                while True:
+                    CommonHelperMethods.fill_password_with_prompt_if_missing(params)
+                    if not params.password:
+                        return
 
-                resp = LoginV3API.validateAuthHashMessage(params, resp.encryptedLoginToken)
+                    params.salt = salt_bytes
+                    params.iterations = salt_iterations
+                    params.auth_verifier = LoginV3API.auth_verifier_loginv3(params)
+
+                    try:
+                        resp = LoginV3API.validateAuthHashMessage(params, resp.encryptedLoginToken)
+                        break
+                    except KeeperApiError as kae:
+                        if kae.result_code == 'auth_failed':
+                            params.password = None
+                            logging.info(kae)
+                        else:
+                            raise kae
+
                 # login_state = proto.LoginState.Name(resp.loginState)
 
                 params.user = resp.primaryUsername
@@ -781,7 +791,8 @@ class LoginV3API:
             login_resp.ParseFromString(rs)
             return login_resp
         else:
-            raise KeeperApiError(rs['error'], "Account validation error.\n" + rs['message'])
+            error_code = rs['error']
+            raise KeeperApiError(error_code, 'Invalid email or password combination, please re-enter.' if error_code == 'auth_failed' else rs['message'] )
 
     @staticmethod
     def twoFactorValidateMessage(params: KeeperParams, encryptedLoginToken: bytes, otp_code: str, tfa_expire_in, twoFactorValueType=None):
@@ -1308,7 +1319,7 @@ class CommonHelperMethods:
             params.user = getpass.getpass(prompt='User(Email): ', stream=None)
 
         if not params.password:
-            logging.info('Enter password for {0}'.format(params.user))
+            logging.info('\nEnter password for {0}'.format(params.user))
             try:
                 params.password = getpass.getpass(prompt='Password: ', stream=None)
             except KeyboardInterrupt:
