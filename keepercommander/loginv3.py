@@ -170,6 +170,17 @@ class LoginV3Flow:
                 # params.device_token_bytes = encryptedDeviceToken
                 # auth_context.message_session_uid = login_resp.messageSessionUid
 
+                if resp.sessionTokenType != proto.NO_RESTRICTION:
+                    # This is not a happy-path login.  Let the user know what's wrong.
+                    if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
+                        msg = (
+                            'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
+                            'Vault at https://keepersecurity.com/vault'
+                        )
+                        raise Exception(msg)
+                    else:
+                        raise Exception('Please log into the web Vault to update your account settings.')
+
                 if not params.device_private_key:
                     params.device_private_key = CommonHelperMethods.get_private_key_ecc(params)
 
@@ -770,12 +781,7 @@ class LoginV3API:
             login_resp.ParseFromString(rs)
             return login_resp
         else:
-            # rs['message'] is almost relevant here.
-            list_ = [
-                "Account validation error: probable bad username or password.",
-                "If authorized, please run login within the keeper shell to try again."
-            ]
-            raise KeeperApiError(rs['error'], '\n'.join(list_))
+            raise KeeperApiError(rs['error'], "Account validation error.\n" + rs['message'])
 
     @staticmethod
     def twoFactorValidateMessage(params: KeeperParams, encryptedLoginToken: bytes, otp_code: str, tfa_expire_in, twoFactorValueType=None):

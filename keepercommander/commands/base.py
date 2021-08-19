@@ -21,7 +21,6 @@ import sys
 from tabulate import tabulate
 
 from ..params import KeeperParams
-from ..error import KeeperApiError
 
 
 aliases = {}        # type: {str, str}
@@ -185,9 +184,6 @@ parameter_pattern = re.compile(r'\${(\w+)}')
 
 class Command:
     def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
-        # FIXME: This probably should be:
-        # raise NotImplementedError
-        # What's here raises something, but probably not what was intended.
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):
@@ -217,13 +213,7 @@ class Command:
 
                 opts = parser.parse_args(shlex.split(args))
                 d.update(opts.__dict__)
-            try:
-                return self.execute(params, **d)
-            except KeeperApiError as exc:
-                if exc.result_code == 'session_token':
-                    logging.error('Session token error: if authorized, please log in to the Web Vault and fix all errors there')
-                    return
-                raise
+            return self.execute(params, **d)
         except ParseError as e:
             logging.error(e)
 
