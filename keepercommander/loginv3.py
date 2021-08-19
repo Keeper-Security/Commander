@@ -770,7 +770,12 @@ class LoginV3API:
             login_resp.ParseFromString(rs)
             return login_resp
         else:
-            raise KeeperApiError(rs['error'], "Account validation error.\n" + rs['message'])
+            # rs['message'] is almost relevant here.
+            list_ = [
+                "Account validation error: probable bad username or password.",
+                "If authorized, please run login within the keeper shell to try again."
+            ]
+            raise KeeperApiError(rs['error'], '\n'.join(list_))
 
     @staticmethod
     def twoFactorValidateMessage(params: KeeperParams, encryptedLoginToken: bytes, otp_code: str, tfa_expire_in, twoFactorValueType=None):
