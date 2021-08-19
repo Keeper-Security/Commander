@@ -34,6 +34,7 @@ from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
+from . import ttk
 
 stack = []
 command_info = OrderedDict()
@@ -452,6 +453,8 @@ def loop(params):  # type: (KeeperParams) -> int
             logging.error(e)
 
     while True:
+        ttk.TTK.update(params)
+
         command = ''
         if len(params.commands) > 0:
             command = params.commands[0].strip()

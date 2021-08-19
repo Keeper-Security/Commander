@@ -31,6 +31,7 @@ from .error import AuthenticationError, CommunicationError, CryptoError, KeeperA
 from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
 from keepercommander.recordv3 import RecordV3
+from .ttk import TTK
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -1578,6 +1579,7 @@ def prepare_record_v3(params, record):
 
 
 def communicate_rest(params, request, endpoint):
+    TTK.update_time_of_last_activity()
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
@@ -1598,6 +1600,7 @@ def communicate_rest(params, request, endpoint):
 
 def communicate(params, request):
     # type: (KeeperParams, dict) -> dict
+    TTK.update_time_of_last_activity()
 
     def authorize_request(rq):
         rq['client_time'] = current_milli_time()
@@ -2440,3 +2443,10 @@ def get_correct_salt(salts):
     else:
         salt = salts[0]
     return salt
+
+
+def send_keepalive(params):
+    """Send a keepalive to the server, using protobufs."""
+    communicate_rest(params, None, 'keep_alive')
+
+
