@@ -221,7 +221,7 @@ class Command:
                 return self.execute(params, **d)
             except KeeperApiError as exc:
                 if exc.result_code == 'session_token':
-                    logging.error('Session token error: account is inactive')
+                    logging.error('Session token error: if authorized, please log in to the Web Vault and fix all errors there')
                     return
                 raise
         except ParseError as e:
