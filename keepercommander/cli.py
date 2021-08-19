@@ -34,6 +34,7 @@ from .error import AuthenticationError, CommunicationError, CommandError
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
+from keepercommander import ttk
 
 stack = []
 command_info = OrderedDict()
@@ -409,37 +410,6 @@ def force_quit():
 prompt_session = None
 
 
-class TimeToKeepalive:
-    """Keep track of how soon the login timer is to expire, and send a keepalive if we're "too close"."""
-    def __init__(self, params):
-        """Initialize."""
-        self.time_of_last_activity = time.time()
-        self.server_logout_timer_window = None
-        self.lookup_server_logout_window(params)
-
-    def lookup_server_logout_window(self, params):
-        """Get the logout_timer value.  IF it doesn't exist yet, use None."""
-        if self.server_logout_timer_window is not None:
-            # We already have it.
-            return
-        if params.settings is not None and 'logout_timer' in params.settings:
-            # We should be able to get it.
-            self.server_logout_timer_window = float(params.settings['logout_timer']) / 1000.0
-
-    def update(self, params):
-        """Update the timer, and possibly issue a keepalive."""
-        current_time = time.time()
-
-        self.lookup_server_logout_window(params)
-
-        if (
-                self.server_logout_timer_window is not None and
-                (self.server_logout_timer_window / 2) + self.time_of_last_activity < current_time
-        ):
-            api.send_keepalive(params)
-            self.time_of_last_activity = current_time
-
-
 def loop(params):  # type: (KeeperParams) -> int
     logging.debug('Params: %s', params)
 
@@ -482,10 +452,8 @@ def loop(params):  # type: (KeeperParams) -> int
         except Exception as e:
             logging.error(e)
 
-    TTK = TimeToKeepalive(params)
-
     while True:
-        TTK.update(params)
+        ttk.TTK.update(params)
 
         command = ''
         if len(params.commands) > 0:
