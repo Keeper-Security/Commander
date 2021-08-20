@@ -11,7 +11,10 @@ tags: ${PYTHON_FILES}
 .PHONY: targeted-report
 targeted-report:
 	# This is only checking things that have passed pylint previously - or are currently being made pylint-conformant.
-	python3 -m pylint ./keepercommander/importer/imp_exp.py ./keepercommander/ttk.py
+	python3 -m pylint \
+		./keepercommander/cli.py
+		./keepercommander/importer/imp_exp.py \
+		./keepercommander/ttk.py \
 
 report:
 	# pylint all the .py's.
