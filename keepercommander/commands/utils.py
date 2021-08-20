@@ -78,6 +78,7 @@ def register_commands(commands):
     commands['help'] = HelpCommand()
     commands['secrets-manager'] = KSMCommand()
     commands['version'] = VersionCommand()
+    commands['keep-alive'] = KeepAliveCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -88,7 +89,7 @@ def register_command_info(aliases, command_info):
     aliases['secrets'] = 'secrets-manager'
     aliases['ksm'] = 'secrets-manager'
     for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
-              version_parser, ksm_parser
+              version_parser, ksm_parser, keepalive_parser
               ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
@@ -239,6 +240,11 @@ version_parser = argparse.ArgumentParser(prog='version|v', description='Displays
 version_parser.error = raise_parse_exception
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.exit = suppress_exit
+
+
+keepalive_parser = argparse.ArgumentParser(prog='keep-alive', description='Tell the server we are here, forestalling a timeout.')
+keepalive_parser.error = raise_parse_exception
+keepalive_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
@@ -581,6 +587,17 @@ class VersionCommand(Command):
             print("Installation path: {0} ".format(sys._MEIPASS))
 
 
+class KeepAliveCommand(Command):
+    """Just issue a keepalive to keep the interactive session from timing out."""
+    def get_parser(self):
+        """Return the argparse parser.  This one has no options, but we want a help message anyway."""
+        return keepalive_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+        """Just send the keepalive."""
+        api.send_keepalive(params)
+
+
 class LoginCommand(Command):
     def get_parser(self):
         return login_parser
@@ -611,7 +628,10 @@ class LoginCommand(Command):
         params.user = user.lower()
         params.password = password
 
-        api.login(params)
+        try:
+            api.login(params)
+        except Exception as exc:
+            logging.warning(str(exc))
 
 
 class CheckEnforcementsCommand(Command):
