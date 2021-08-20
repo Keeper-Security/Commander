@@ -35,12 +35,12 @@ from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
 from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, \
-    command_info, enterprise_commands, msp_commands
+    command_info as command_info_imp, enterprise_commands, msp_commands
 from . import ttk
 
 stack = []
-command_info = OrderedDict()
-register_commands(commands, aliases, command_info)
+# command_info_od = OrderedDict()
+register_commands(commands, aliases, command_info_imp)
 enterprise_command_info = OrderedDict()
 msp_command_info = OrderedDict()
 register_enterprise_commands(enterprise_commands, aliases, enterprise_command_info)
@@ -52,14 +52,14 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
 
 
 def display_command_help(show_enterprise = False, show_shell = False):
-    max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info.keys(), 0)
+    max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info_imp.keys(), 0)
 
     if show_enterprise:
         max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, enterprise_command_info.keys(), max_length)
 
     print('\nCommands:')
-    for cmd in command_info:
-        print('  ' + cmd.ljust(max_length + 2) + '... ' + command_info[cmd])
+    for cmd in command_info_imp:
+        print('  ' + cmd.ljust(max_length + 2) + '... ' + command_info_imp[cmd])
 
     if show_enterprise:
         for cmd in enterprise_command_info:
@@ -312,7 +312,7 @@ def do_command(params, command_line):
                             prompt_for_credentials(params)
                             api.login(params)
                             api.sync_down(params)
-                        except KeyboardInterrupt as e:
+                        except KeyboardInterrupt:
                             logging.info('Canceled')
                             return
 
@@ -510,13 +510,7 @@ def loop(params):  # type: (KeeperParams) -> int
             else:
                 logging.warning('%s', e.message)
         except CommunicationError as e:
-
-            if e.result_code == 'restricted_client_type':
-
-                logging.error("Error code: %s\n%s" % e.result_code, loginv3.permissions_error_msg)
-            else:
-                logging.error("Error code: %s\nCommunication Error: %s" % (e.result_code, e.message))
-
+            logging.error("Communication Error: %s" % e.message)
         except AuthenticationError as e:
             logging.error("AuthenticationError Error: %s", e.message)
         except Exception as e:
