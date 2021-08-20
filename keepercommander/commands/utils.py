@@ -1711,21 +1711,21 @@ class ConnectCommand(Command):
             return body
 
     @staticmethod
-    def get_command_string(params, record, template, temp_files, non_shared):
-        # type: (KeeperParams, Record, str, list, dict) -> str or None
+    def get_command_string(params, record, template, temp_files, non_shared, **kwargs):
+        # type: (KeeperParams, Record, str, list, dict, dict) -> str or None
         command = template
         while True:
             m = endpoint_parameter_pattern.search(command)
             if not m:
                 break
             p = m.group(1)
-            pv = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared)
+            pv = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared, **kwargs)
             command = command[:m.start()] + (pv or '') + command[m.end():]
         logging.debug(command)
         return command
 
     @staticmethod
-    def get_parameter_value(params, record, parameter, temp_files, non_shared):
+    def get_parameter_value(params, record, parameter, temp_files, non_shared, **kwargs):
         # type: (KeeperParams, Record, str, list, dict) -> str or None
         if parameter.startswith('file:') or parameter.startswith('body:'):
             file_name = parameter[5:]
@@ -1746,8 +1746,9 @@ class ConnectCommand(Command):
                 logging.error('Attachment file \"%s\" not found', file_name)
                 return None
             body = ConnectCommand.attachment_cache[file_name] # type: bytes
+            prefix = (kwargs.get('endpoint') or file_name) + '.'
             if parameter.startswith('file:'):
-                tf = tempfile.NamedTemporaryFile(delete=False)
+                tf = tempfile.NamedTemporaryFile(delete=False, prefix=prefix)
                 tf.write(body)
                 tf.flush()
                 temp_files.append(tf.name)
@@ -1794,13 +1795,13 @@ class ConnectCommand(Command):
         try:
             command = record.get('connect:' + endpoint + ':pre')
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared, endpoint=endpoint)
                 if command:
                     os.system(command)
 
             command = record.get('connect:' + endpoint)
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared, endpoint=endpoint)
                 if command:
                     added_keys = ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files, non_shared)
                     added_envs = ConnectCommand.add_environment_variables(params, endpoint, record, temp_files, non_shared)
@@ -1814,7 +1815,7 @@ class ConnectCommand(Command):
 
             command = record.get('connect:' + endpoint + ':post')
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared, endpoint=endpoint)
                 if command:
                     os.system(command)
 
