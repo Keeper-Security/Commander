@@ -12,8 +12,7 @@
 import copy
 import datetime
 import json
-from keepercommander.error import Error
-from keepercommander.params import KeeperParams
+from .params import KeeperParams
 import logging
 import re
 import requests.exceptions
@@ -21,8 +20,9 @@ import urllib.parse
 
 from requests.models import PreparedRequest
 
-from keepercommander import api
-from keepercommander.display import bcolors
+from .commands import commands, command_info, aliases
+from . import api
+from .display import bcolors
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
 from .record import get_totp_code
 
@@ -1805,3 +1805,109 @@ class HumanBytes:
                 num /= unit_step
         return cls.PRECISION_FORMATS[precision].format('-' if is_negative else '', num, unit)
 
+
+def init_recordv3_commands(params):
+  v3_commands = {}
+
+  def init_v3_commands():
+    from .commands.record import RecordAddCommand, RecordEditCommand, add_parser, edit_parser
+    global v3_commands
+    if v3_commands:
+      return
+    v3_commands = {
+      'record-type': {},
+      'record-type-info': {},
+      'add': {
+        'substitute': {
+          'command': RecordAddCommand(),
+          'parser': add_parser,
+          'command_info': {add_parser.prog: add_parser.description},
+          'alias': {'a': 'add'}
+        }
+      },
+      'edit': {
+        'substitute': {
+          'command': RecordEditCommand(),
+          'parser': edit_parser,
+          'command_info': {edit_parser.prog: edit_parser.description},
+          'alias': {}
+        }
+      }
+    }
+
+  try:
+    # parse v3 commands
+    init_v3_commands()
+
+    for cmd in v3_commands:
+      if not v3_commands[cmd].get('command') and cmd in commands:
+        prog = commands[cmd].get_parser().prog
+        parts = prog.split('|')
+        alias = parts[-1] if len(parts) == 2 else None
+        v3_commands[cmd]['command'] = {cmd: commands[cmd]}
+        if prog in command_info:
+          v3_commands[cmd]['command_info'] = {prog: command_info[prog]}
+        if alias in aliases:
+          v3_commands[cmd]['alias'] = {alias: aliases[alias]}
+
+    v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(
+      params.settings.get('record_types_enabled'), bool) else False
+    if v3_enabled:
+
+      # add/replace v3 commands
+      modified = []
+      for cmd in v3_commands:
+        cdic = v3_commands[cmd].get('command') or {}
+        cname = next(iter(cdic), None)
+        cmdc = commands.get(cmd) or 2
+        cmdv = ((v3_commands.get(cmd) or {}).get('command') or {}).get(cmd) or 3
+        if cname and (cname not in commands or cmdc != cmdv):
+          modified.append(cname)
+          commands[cname] = cdic[cname]
+          ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+          if ciname:
+            command_info[ciname] = v3_commands[cmd]['command_info'][ciname]
+          aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+          if aname:
+            aliases[aname] = v3_commands[cmd]['alias'][aname]
+
+      # RT activation during live session - only a full sync will pull any pre-existing v3 records
+      # full_sync = response_json.get('full_sync') or False
+      # if modified and not full_sync:
+      #     logging.warning(bcolors.WARNING + 'Record types - enabled. Please logout and login again if you have existing v3 records.' + bcolors.ENDC)
+    else:
+      # remove/replace v3 commands
+      for cmd in v3_commands:
+        cdic = v3_commands[cmd].get('command') or {}
+        cname = next(iter(cdic), None)
+        if cname and cname in commands:
+          subs = v3_commands[cmd].get('substitute')
+          subs = subs if isinstance(subs, dict) else {}
+          sub_class = subs.get('command')
+          if sub_class:
+            commands[cname] = sub_class
+          else:
+            commands.pop(cname)
+
+          ciname = next(iter(v3_commands[cmd].get('command_info') or {}), None)
+          sub_ciname = next(iter(subs.get('command_info') or {}), None)
+          if ciname:
+            if ciname == sub_ciname:
+              command_info[ciname] = subs['command_info'][sub_ciname]
+            else:
+              command_info.pop(ciname)
+              if sub_ciname and subs['command_info'][sub_ciname]:
+                command_info[sub_ciname] = subs['command_info'][sub_ciname]
+
+          aname = next(iter(v3_commands[cmd].get('alias') or {}), None)
+          sub_aname = next(iter(subs.get('alias') or {}), None)
+          if aname:
+            if aname == sub_aname:
+              aliases[aname] = subs['alias'][sub_aname]
+            else:
+              aliases.pop(aname)
+              if sub_aname and subs['alias'][sub_aname]:
+                aliases[aname] = subs['alias'][sub_aname]
+
+  except Exception as e:
+    logging.debug(e)
