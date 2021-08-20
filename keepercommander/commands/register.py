@@ -11,7 +11,7 @@
 
 import argparse
 import getpass
-from keepercommander.recordv3 import RecordV3
+from ..recordv3 import RecordV3
 import re
 import os
 import base64
