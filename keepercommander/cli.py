@@ -31,9 +31,11 @@ from .params import KeeperParams
 from . import display, loginv3, api
 # from .api import sync_down, login, communicate, query_enterprise, query_msp, login_and_get_mc_params, login_and_get_mc_params_login_v3
 from .error import AuthenticationError, CommunicationError, CommandError
+from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
-from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, enterprise_commands, msp_commands
+from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, \
+    command_info, enterprise_commands, msp_commands
 from . import ttk
 
 stack = []
@@ -451,6 +453,10 @@ def loop(params):  # type: (KeeperParams) -> int
                 do_command(params, 'sync-down')
         except Exception as e:
             logging.error(e)
+
+        # add ability to manipulate w/ legacy or v3 records
+        # determined by the response from the server
+        init_recordv3_commands(params)
 
     while True:
         ttk.TTK.update(params)

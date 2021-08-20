@@ -39,6 +39,7 @@ from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClie
     GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
+from ..cli import init_recordv3_commands
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -630,6 +631,7 @@ class LoginCommand(Command):
 
         try:
             api.login(params)
+            init_recordv3_commands(params)
         except Exception as exc:
             logging.warning(str(exc))
 

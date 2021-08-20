@@ -19,6 +19,7 @@ import csv
 import sys
 
 from tabulate import tabulate
+from collections import OrderedDict
 
 from ..params import KeeperParams
 
@@ -27,7 +28,7 @@ aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
 enterprise_commands = {}     # type: {str, Command}
 msp_commands = {}   # type: {str, Command}
-
+command_info = OrderedDict()
 
 class ParseError(Exception):
     pass
