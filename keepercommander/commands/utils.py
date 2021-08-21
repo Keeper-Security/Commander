@@ -1726,7 +1726,7 @@ class ConnectCommand(Command):
 
     @staticmethod
     def get_parameter_value(params, record, parameter, temp_files, non_shared, **kwargs):
-        # type: (KeeperParams, Record, str, list, dict) -> str or None
+        # type: (KeeperParams, Record, str, list, dict, dict) -> str or None
         if parameter.startswith('file:') or parameter.startswith('body:'):
             file_name = parameter[5:]
             if file_name not in ConnectCommand.attachment_cache:
