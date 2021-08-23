@@ -39,6 +39,7 @@ from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClie
     GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
+from ..cli import init_recordv3_commands
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -630,6 +631,7 @@ class LoginCommand(Command):
 
         try:
             api.login(params)
+            init_recordv3_commands(params)
         except Exception as exc:
             logging.warning(str(exc))
 
@@ -1709,22 +1711,22 @@ class ConnectCommand(Command):
             return body
 
     @staticmethod
-    def get_command_string(params, record, template, temp_files, non_shared):
-        # type: (KeeperParams, Record, str, list, dict) -> str or None
+    def get_command_string(params, record, template, temp_files, non_shared, **kwargs):
+        # type: (KeeperParams, Record, str, list, dict, dict) -> str or None
         command = template
         while True:
             m = endpoint_parameter_pattern.search(command)
             if not m:
                 break
             p = m.group(1)
-            pv = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared)
+            pv = ConnectCommand.get_parameter_value(params, record, p, temp_files, non_shared, **kwargs)
             command = command[:m.start()] + (pv or '') + command[m.end():]
         logging.debug(command)
         return command
 
     @staticmethod
-    def get_parameter_value(params, record, parameter, temp_files, non_shared):
-        # type: (KeeperParams, Record, str, list, dict) -> str or None
+    def get_parameter_value(params, record, parameter, temp_files, non_shared, **kwargs):
+        # type: (KeeperParams, Record, str, list, dict, dict) -> str or None
         if parameter.startswith('file:') or parameter.startswith('body:'):
             file_name = parameter[5:]
             if file_name not in ConnectCommand.attachment_cache:
@@ -1744,8 +1746,9 @@ class ConnectCommand(Command):
                 logging.error('Attachment file \"%s\" not found', file_name)
                 return None
             body = ConnectCommand.attachment_cache[file_name] # type: bytes
+            prefix = (kwargs.get('endpoint') or file_name) + '.'
             if parameter.startswith('file:'):
-                tf = tempfile.NamedTemporaryFile(delete=False)
+                tf = tempfile.NamedTemporaryFile(delete=False, prefix=prefix)
                 tf.write(body)
                 tf.flush()
                 temp_files.append(tf.name)
@@ -1792,13 +1795,13 @@ class ConnectCommand(Command):
         try:
             command = record.get('connect:' + endpoint + ':pre')
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared, endpoint=endpoint)
                 if command:
                     os.system(command)
 
             command = record.get('connect:' + endpoint)
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared, endpoint=endpoint)
                 if command:
                     added_keys = ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files, non_shared)
                     added_envs = ConnectCommand.add_environment_variables(params, endpoint, record, temp_files, non_shared)
@@ -1812,7 +1815,7 @@ class ConnectCommand(Command):
 
             command = record.get('connect:' + endpoint + ':post')
             if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared)
+                command = ConnectCommand.get_command_string(params, record, command, temp_files, non_shared, endpoint=endpoint)
                 if command:
                     os.system(command)
 

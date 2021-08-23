@@ -24,7 +24,7 @@ from google.protobuf.json_format import MessageToDict, MessageToJson
 from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
-from . import api, __version__, cli
+from . import api
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .commands.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
@@ -96,7 +96,12 @@ class LoginV3Flow:
 
             elif resp.loginState == proto.REQUIRES_USERNAME:
 
-                cli.prompt_for_username_if_needed(params)
+                if not params.user:
+                    params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+
+                    while not params.user:
+                        params.user = getpass.getpass(prompt='User(Email): ', stream=None)
+
                 encryptedLoginToken = resp.encryptedLoginToken
                 if encryptedLoginToken:
                     # Successfully completed 2FA. Re-login
