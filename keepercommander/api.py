@@ -1492,7 +1492,10 @@ def communicate_rest(params, request, endpoint):
     if type(rs) == bytes:
         return rs
     elif type(rs) == dict:
-        raise KeeperApiError(rs['error'], rs['message'])
+        kae = KeeperApiError(rs['error'], rs['message'])
+        if kae.result_code == 'session_token_expired':
+            params.session_token = None
+        raise kae
     raise KeeperApiError('Error', endpoint)
 
 
@@ -1513,23 +1516,15 @@ def communicate(params, request):
     authorize_request(request)
     logging.debug('payload: %s', request)
 
-    response_json = run_command(params, request)
-
-    if response_json['result_code'] == 'auth_failed':
-        logging.debug('Re-authorizing.')
-        login(params)
-        if not params.session_token:
-            return response_json
-        authorize_request(request)
+    try:
         response_json = run_command(params, request)
-    if response_json['result'] != 'success':
-        if response_json['result_code']:
-            if response_json['result_code'] == 'auth_failed':
-                params.clear_session()
-            else:
-                raise KeeperApiError(response_json['result_code'], response_json['message'])
-
-    return response_json
+        if response_json['result'] != 'success':
+            raise KeeperApiError(response_json['result_code'], response_json['message'])
+        return response_json
+    except KeeperApiError as kae:
+        if kae.result_code == 'session_token_expired':
+            params.session_token = None
+        raise kae
 
 
 def execute_batch(params, requests):
@@ -2283,7 +2278,7 @@ def query_enterprise(params):
 
                     params.enterprise = response
     except Exception as e:
-        logging.debug(e)
+        logging.warning(e)
         params.enterprise = None
 
 
