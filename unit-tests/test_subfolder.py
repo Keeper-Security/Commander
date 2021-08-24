@@ -15,6 +15,8 @@ def BFN(*, type, uid, parent_uid, name, subfolders):
     result.uid = uid
     result.parent_uid = parent_uid
     result.name = name
+    # A list of UID's, not folders.
+    assert all(isinstance(subfolder, str) for subfolder in subfolders)
     result.subfolders = subfolders
     return result
 
@@ -24,7 +26,7 @@ def folder_cache():
     cd_tests_uid = 'b' * 22
     cd_tests_bfn = BFN(type='user_folder', uid=cd_tests_uid, parent_uid=None, name='cd-tests', subfolders=[])
     root_uid = 'a' * 22
-    root_bfn = BFN(type='/', uid=None, parent_uid=None, name='root', subfolders=[cd_tests_bfn])
+    root_bfn = BFN(type='/', uid=None, parent_uid=None, name='root', subfolders=[cd_tests_uid])
     dict_ = {
         root_uid: root_bfn,
         cd_tests_uid: cd_tests_bfn,
