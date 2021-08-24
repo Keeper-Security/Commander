@@ -2,20 +2,15 @@
 
 """Test keepercommander.subfolder."""
 
-# import sys
 from unittest import TestCase
 from unittest.mock import Mock
 
-# sys.path.insert(0, '.')
-
 import keepercommander.subfolder as subfolder
-
-# from data_vault import get_synced_params
 
 
 def BFN(*, type, uid, parent_uid, name, subfolders):
     """Build a mock BaseFolderNode."""
-    result = Mock()
+    result = Mock(name=name)
     result.type = type
     result.uid = uid
     result.parent_uid = parent_uid
@@ -29,7 +24,7 @@ def folder_cache():
     cd_tests_uid = 'b' * 22
     cd_tests_bfn = BFN(type='user_folder', uid=cd_tests_uid, parent_uid=None, name='cd-tests', subfolders=[])
     root_uid = 'a' * 22
-    root_bfn = BFN(type='/', uid=None, parent_uid=None, name='My Vault', subfolders=[cd_tests_uid])
+    root_bfn = BFN(type='/', uid=None, parent_uid=None, name='root', subfolders=[cd_tests_uid])
     dict_ = {
         root_uid: root_bfn,
         cd_tests_uid: cd_tests_bfn,
@@ -88,7 +83,7 @@ class TestSubfolderTryResolvePath(TestCase):
         """Try an a//b try_resolve_path, where neither a/b nor a preexist."""
         folder, final = subfolder.try_resolve_path(self.params, 'a//b')
         assert folder is self.root_bfn
-        assert final == 'a//b'
+        assert final == 'a/b'
 
     def test_slash_slash_a(self):
         """Try a //a try_resolve_path, where /a does not preexist.  Note that we want to create '/a', not 'a' in /."""
@@ -191,10 +186,44 @@ class TestSubfolderHandleInitialSlash(TestCase):
         assert list_ == ['/a']
 
 
+class TestSubfolderHandleSubsequentSlashSlash(TestCase):
+    """Tests for subfolders.handle_initial_slash."""
+
+    def test_a_slash_slash_b_slash_c(self):
+        """Test a//b/c ."""
+        list_ = ['a', '', 'b', 'c']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a/b', 'c']
+
+    def test_a_slash_slash_slash_b_slash_c(self):
+        """Test a///b/c ."""
+        list_ = ['a', '', '', 'b', 'c']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a/', 'b', 'c']
+
+    def test_a_slash_slash_b_slash_c_d(self):
+        """Test a//b/c/d ."""
+        list_ = ['a', '', 'b', 'c', 'd']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a/b', 'c', 'd']
+
+    def test_a_slash_slash_b_slash_c_d_e(self):
+        """Test a//b/c/d/e ."""
+        list_ = ['a', '', 'b', 'c', 'd', 'e']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a/b', 'c', 'd', 'e']
+
+    def test_a_b_c_d_e(self):
+        """Test a/b/c/d/e ."""
+        list_ = ['a', 'b', 'c', 'd', 'e']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a', 'b', 'c', 'd', 'e']
+
+
 if __name__ == '__main__':
-    instance = TestSubfolderHandleInitialSlash()
+    instance = TestSubfolderTryResolvePath()
     if hasattr(instance, 'setUp'):
         instance.setUp()
-    instance.test_slash_a()
+    instance.test_a_slash_slash_b()
     if hasattr(instance, 'tearDown'):
         instance.tearDown()
