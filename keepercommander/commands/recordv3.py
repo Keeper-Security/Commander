@@ -286,8 +286,7 @@ class RecordAddCommand(Command):
         v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         # if is_v2 or (has_v2_options and not v3_enabled):
         if is_v2 or (not v3_enabled and not has_v3_options):
-            recordv2.RecordAddCommand().execute(params, **kwargs)
-            return
+            return recordv2.RecordAddCommand().execute(params, **kwargs)
 
         if not v3_enabled:
             logging.error(bcolors.FAIL + 'Record Types are NOT enabled for this account. Please contact your enterprise administrator.' + bcolors.ENDC)
