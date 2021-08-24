@@ -1,6 +1,7 @@
 import json
 import os
-import base64
+
+import pytest
 
 from keepercommander.params import KeeperParams
 from keepercommander.error import KeeperApiError
@@ -10,6 +11,8 @@ from keepercommander.commands.enterprise import EnterpriseTeamCommand, Enterpris
 from unittest import TestCase
 
 
+@pytest.mark.integration
+@pytest.mark.cross_enterprise
 class TestCrossEnterpriseCommands(TestCase):
     params1 = None
     params2 = None

@@ -3,8 +3,9 @@ import json
 import os
 import shutil
 import warnings
-
 from unittest import TestCase, mock
+
+import pytest
 
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
@@ -12,6 +13,7 @@ from keepercommander import cli, api
 from keepercommander.subfolder import BaseFolderNode
 
 
+@pytest.mark.integration
 class TestConnectedCommands(TestCase):
     params = None
 

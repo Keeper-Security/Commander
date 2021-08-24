@@ -1,12 +1,14 @@
 import logging
-
 from unittest import TestCase, mock
+
+import pytest
 
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
 from keepercommander import cli, api
 
 
+@pytest.mark.integration
 class TestEnterpriseCommands(TestCase):
     params = None
 
