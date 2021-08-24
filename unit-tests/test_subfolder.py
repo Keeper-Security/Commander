@@ -135,6 +135,18 @@ class TestSubfolder(TestCase):
         assert folder is self.cd_tests_bfn
         assert final == ''
 
+    def test_slash_space_cd_tests_space_try_resolve_path(self):
+        """Try a '/ cd-tests ' try_resolve_path."""
+        folder, final = subfolder.try_resolve_path(self.params, '/ cd-tests ')
+        assert folder is self.cd_tests_bfn
+        assert final == ''
+
+    def test_slash_space_slash_a_try_resolve_path(self):
+        """Try a '/ /a' try_resolve_path."""
+        folder, final = subfolder.try_resolve_path(self.params, '/ /a')
+        assert folder is self.root_bfn
+        assert final == '/a'
+
 
 if __name__ == '__main__':
     ts = TestSubfolder()
