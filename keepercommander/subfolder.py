@@ -32,6 +32,69 @@ def find_folders(params, record_uid):
                 yield fuid
 
 
+def handle_initial_slash(params, folder, components):
+    """
+    Deal with both initial / and initial //.
+
+    Has a side-effect on components.
+    Returns the current folder.
+    """
+    if components and components[0] == '':
+        if components[1:] and components[1] == '':
+            # This is an initial //, so treat it as a literal /
+            if components[2:]:
+                # We have an element to add the / to - add it
+                components[2] = '/' + components[2]
+                del components[:2]
+            else:
+                # We do not have an element to add the / to - create a single-element components list for it
+                components[:] = ['/']
+        else:
+            # This is a single /, so treat it as an absolute path
+            folder = params.root_folder
+            del components[0]
+
+    return folder
+
+
+def handle_subsequent_slash_slash(components):
+    """
+    Deal with double-slashes other than one at the very beginning.
+
+    Consider a//b/c, whch will be passed as ['a', '', '', 'b', 'c'].
+    That should be ['a/b', 'c']
+    """
+    parts = components[:]
+    index = 0
+    while index < len(parts):
+        if (
+            parts[index + 2:] and
+            parts[index] != '' and
+            parts[index + 1] == '' and
+            parts[index + 2] != ''
+        ):
+            parts[index] = '{}/{}'.format(parts[index], parts[index + 2])
+            del parts[index + 1:index + 3]
+            index += 1
+            continue
+        if (
+            parts[index + 2:] and
+            parts[index] != '' and
+            parts[index + 1] == '' and
+            parts[index + 2] == ''
+        ):
+            parts[index] = '{}/'.format(parts[index])
+            del parts[index + 1:index + 2]
+            index += 1
+            continue
+        if parts[index] == '':
+            del parts[index]
+            continue
+        index += 1
+
+    return parts
+
+
 def try_resolve_path(params, path):
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
@@ -40,74 +103,29 @@ def try_resolve_path(params, path):
     If an existent folder, the final component is ''.
     If a non-existent folder, the final component is the folders, joined with /, that do not (yet) exist..
     """
+    # pudb.set_trace()
+
     if type(path) is not str:
         path = ''
 
-    folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
-    if len(path) > 0:
-        if path[0] == '/':
-            # this is an absolute path; folder becomes the root
-            folder = params.root_folder
-            path = path[1:]
+    folder = (
+        params.folder_cache[params.current_folder]
+        if params.current_folder in params.folder_cache
+        else params.root_folder
+    )
 
-        # Divide a path into components on /'s
-        start = 0
-        while True:
-            # Find the next /
-            # FIXME: We're ignoring the fact that a path could start with // to be a literal /, like //abc giving /abc
-            idx = path.find('/', start)
-            path_component = ''
-            if idx < 0:
-                # There are no more slashes
-                if len(path) > 0:
-                    # We're at the final path component
-                    path_component = path.strip()
-            elif idx > 0 and path[idx - 1] == '\\':
-                # The character before the / was a \ - treat it like a literal / and continue dividing.
-                # This looks like we should be able to use abc\/def to get abc/def
-                start = idx + 1
-                continue
-            else:
-                # We have the next path component
-                path_component = path[:idx].strip()
+    components = [part.strip() for part in path.split('/')]
 
-            if len(path_component) == 0:
-                break
+    folder = handle_initial_slash(params, folder, components)
 
-            # Look up the current component's uid
-            folder_uid = ''
-            if path_component == '.':
-                # Get the current folder's uid
-                folder_uid = folder.uid
-            elif path_component == '..':
-                # Get our parent folder's uid. This is a little weird, because / (a path) and a uid are two different things.
-                # But see below.
-                folder_uid = folder.parent_uid or '/'
-            else:
-                # Search this folder's subfolders for the uid of the current folder.  We ignore case, and we do
-                # fancy stuff like treating German Eszett the same as "ss".  O(n).
-                for uid in folder.subfolders:
-                    sf = params.folder_cache[uid]
-                    if sf.name.strip().casefold() == path_component.casefold():
-                        folder_uid = uid
-                        break
-            if folder_uid:
-                # Get the folder of this folder_uid. If the folder_uid is not in the params.folder_cache, then use the root
-                # folder.  The folder.parent_uid or '/' above probably works because we treat it as a sentinel here.
-                folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
-            else:
-                break
-            if idx < 0:
-                path = ''
-                break
+    components = handle_subsequent_slash_slash(components)
 
-            # Advance to the next path component - still /-separated
-            path = path[idx+1:]
-            start = 0
+    path = '/'.join(components)
 
     # Return a 2-tuple of keepercommander.subfolder.UserFolderNode, str
     # The first is the folder containing the second, or the folder of the last component if the second is ''.
-    # The second is the final component of the path we're passed as an argument to this function.
+    # The second is the final component of the path we're passed as an argument to this function. It could be a record, or
+    # a not-yet-existent directory.
     return folder, path
 
 
@@ -172,4 +190,3 @@ class RootFolderNode(BaseFolderNode):
     def __init__(self):
         BaseFolderNode.__init__(self, BaseFolderNode.RootFolderType)
         self.name = 'My Vault'
-
