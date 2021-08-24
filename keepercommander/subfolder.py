@@ -63,6 +63,8 @@ def handle_subsequent_slash_slash(components):
 
     Consider a//b/c, whch will be passed as ['a', '', '', 'b', 'c'].
     That should be ['a/b', 'c']
+
+    This is mostly simple, but it's also O(c*n**2) because of the slicing.  But it's a small c and it's a small n.
     """
     parts = components[:]
     index = 0
@@ -95,6 +97,26 @@ def handle_subsequent_slash_slash(components):
     return parts
 
 
+def contained_folder(folder, component):
+    """Return the folder of component within parent folder 'folder' - or None if not present."""
+    for subfolder in folder.subfolders:
+        if subfolder.name == component:
+            return subfolder
+    return None
+
+
+def lookup_path(folder, components):
+    """Get all the folders from the left end of component, and the index of the first that isn't present."""
+    remainder = 0
+    for index, component in enumerate(components):
+        temp_folder = contained_folder(folder, component)
+        if temp_folder is None:
+            break
+        folder = temp_folder
+        remainder = index + 1
+    return remainder, folder
+
+
 def try_resolve_path(params, path):
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
@@ -120,7 +142,9 @@ def try_resolve_path(params, path):
 
     components = handle_subsequent_slash_slash(components)
 
-    path = '/'.join(components)
+    remainder, folder = lookup_path(folder, components)
+
+    path = '/'.join(components[remainder:])
 
     # Return a 2-tuple of keepercommander.subfolder.UserFolderNode, str
     # The first is the folder containing the second, or the folder of the last component if the second is ''.
