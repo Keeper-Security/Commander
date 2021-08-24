@@ -556,7 +556,7 @@ class SearchCommand(Command):
         results = api.search_records(params, pattern)
         if results:
             print('')
-            display.formatted_records(results, verbose=kwargs['verbose'])
+            display.formatted_records(results, verbose=kwargs.get('verbose', False))
 
         # Search shared folders
         results = api.search_shared_folders(params, pattern)
@@ -585,7 +585,7 @@ class RecordListCommand(Command):
         if results:
             if len(results) < 5:
                 api.get_record_shares(params, [x.record_uid for x in results])
-            display.formatted_records(results, verbose=kwargs['verbose'])
+            display.formatted_records(results, verbose=kwargs.get('verbose', False))
 
 
 class RecordListSfCommand(Command):
