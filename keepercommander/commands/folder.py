@@ -173,7 +173,7 @@ class FolderListCommand(Command):
                 if len(records) > 0:
                     if len(records) < 5:
                         api.get_record_shares(params, [x.record_uid for x in records])
-                    display.formatted_records(records, folder=folder.uid, verbose=kwargs['verbose'])
+                    display.formatted_records(records, folder=folder.uid, verbose=kwargs.get('verbose', False))
             else:
                 names = []
                 for f in folders:

@@ -29,9 +29,11 @@ class RestApiContext:
     def __get_server_base(self):
         return self.__server_base
 
-    def __set_server_base(self, value):
+    def __set_server_base(self, value):    # type: (str) -> None
+        if not value.startswith('http'):
+            value = 'https://' + value
         p = urlparse(value)
-        self.__server_base = urlunparse((p.scheme, p.netloc, '/api/rest/', None, None, None))
+        self.__server_base = urlunparse((p.scheme or 'https', p.netloc, '/api/rest/', None, None, None))
 
     def __get_server_key_id(self):
         return self.__server_key_id

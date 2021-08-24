@@ -292,8 +292,9 @@ class LoginV3Flow:
             #     params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
 
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
-            encrypted_ecc_key = base64.urlsafe_b64decode(keys['encrypted_ecc_private_key'])
-            params.ecc_key = api.decrypt_aes_plain(encrypted_ecc_key, params.data_key)
+            if 'encrypted_ecc_private_key' in keys:
+                encrypted_ecc_key = base64.urlsafe_b64decode(keys['encrypted_ecc_private_key'])
+                params.ecc_key = api.decrypt_aes_plain(encrypted_ecc_key, params.data_key)
 
         if not params.session_token:
             if 'session_token' in acct_summary_dict_snake_case:
@@ -331,10 +332,15 @@ class LoginV3Flow:
         params.sync_data = True
         params.prepare_commands = True
 
-        store_config = not params.config or params.config.get('user') != params.user
+        server = urlparse(params.rest_context.server_base).hostname
+        store_config = not params.config or \
+                       params.config.get('user') != params.user or \
+                       params.config.get('server') not in [server, params.rest_context.server_base]
 
         if store_config:
             params.config['user'] = params.user
+            if params.config.get('server') not in [server, params.rest_context.server_base]:
+                params.config['server'] = server
 
             if params.config_filename:
                 try:

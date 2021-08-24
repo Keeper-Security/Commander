@@ -1,6 +1,7 @@
 import json
 import os
-import base64
+
+import pytest
 
 from keepercommander.params import KeeperParams
 from keepercommander.error import KeeperApiError
@@ -10,6 +11,8 @@ from keepercommander.commands.enterprise import EnterpriseTeamCommand, Enterpris
 from unittest import TestCase
 
 
+@pytest.mark.integration
+@pytest.mark.cross_enterprise
 class TestCrossEnterpriseCommands(TestCase):
     params1 = None
     params2 = None
@@ -21,16 +24,19 @@ class TestCrossEnterpriseCommands(TestCase):
         with open(config_filename, 'r') as f:
             config = json.load(f)
             cls.params1.server = config['server']
-            device_id = base64.urlsafe_b64decode(config['device_id'] + '==')
-            cls.params1.rest_context.device_id = device_id
             cls.params1.user = config['user']
             cls.params1.password = config['password']
+            cls.params1.device_private_key = config['private_key']
+            cls.params1.device_token = config['device_token']
+            cls.params1.clone_code = config['clone_code']
             cls.params1.config = config
         api.login(cls.params1)
 
         cls.params2 = KeeperParams()
         cls.params2.server = cls.params1.server
-        cls.params2.rest_context.device_id = cls.params1.rest_context.device_id
+        cls.params2.device_private_key = cls.params1.device_private_key
+        cls.params2.device_token = cls.params1.device_token
+        cls.params2.clone_code = cls.params1.clone_code
         cls.params2.user = config['enterprise2']['user']
         cls.params2.password = config['enterprise2']['password']
         api.login(cls.params2)
