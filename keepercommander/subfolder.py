@@ -79,6 +79,7 @@ def handle_subsequent_slash_slash(components):
             del parts[index + 1:index + 3]
             index += 1
             continue
+
         if (
             parts[index + 2:] and
             parts[index] != '' and
@@ -89,6 +90,7 @@ def handle_subsequent_slash_slash(components):
             del parts[index + 1:index + 2]
             index += 1
             continue
+
         if parts[index] == '':
             del parts[index]
             continue
@@ -97,19 +99,20 @@ def handle_subsequent_slash_slash(components):
     return parts
 
 
-def contained_folder(folder, component):
+def contained_folder(params, folder, component):
     """Return the folder of component within parent folder 'folder' - or None if not present."""
-    for subfolder in folder.subfolders:
+    for subfolder_uid in folder.subfolders:
+        subfolder = params.folder_cache[subfolder_uid]
         if subfolder.name == component:
             return subfolder
     return None
 
 
-def lookup_path(folder, components):
+def lookup_path(params, folder, components):
     """Get all the folders from the left end of component, and the index of the first that isn't present."""
     remainder = 0
     for index, component in enumerate(components):
-        temp_folder = contained_folder(folder, component)
+        temp_folder = contained_folder(params, folder, component)
         if temp_folder is None:
             break
         folder = temp_folder
@@ -142,7 +145,7 @@ def try_resolve_path(params, path):
 
     components = handle_subsequent_slash_slash(components)
 
-    remainder, folder = lookup_path(folder, components)
+    remainder, folder = lookup_path(params, folder, components)
 
     path = '/'.join(components[remainder:])
 
@@ -150,7 +153,7 @@ def try_resolve_path(params, path):
     # The first is the folder containing the second, or the folder of the last component if the second is ''.
     # The second is the final component of the path we're passed as an argument to this function. It could be a record, or
     # a not-yet-existent directory.
-    return folder, path
+    return (folder, path)
 
 
 class BaseFolderNode:
