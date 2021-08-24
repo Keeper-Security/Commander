@@ -175,3 +175,14 @@ class TestConnectedCommands(TestCase):
 
             self.assertEqual(len(params.record_cache), len(exported['records']))
             self.assertEqual(len(params.shared_folder_cache), len(exported['shared_folders']))
+
+    def test_quoting(self):
+        """Check if quoting is self-consistent among mkdir and cd."""
+        params = TestConnectedCommands.params
+        with mock.patch('builtins.input', side_effect = KeyboardInterrupt()), mock.patch('builtins.print'):
+            cli.do_command(params, 'mkdir --user-folder "/quoting"')
+            cli.do_command(params, 'cd /quoting')
+            for subdir in ('a//b', r'c\ d', r'e\"f', r"g\'h", r'\\'):
+                cli.do_command(params, 'mkdir --user-folder {}'.format(subdir))
+                cli.do_command(params, 'cd {}'.format(subdir))
+                cli.do_command(params, 'cd /quoting')

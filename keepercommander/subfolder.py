@@ -32,55 +32,83 @@ def find_folders(params, record_uid):
                 yield fuid
 
 
+def contained_folder(params, folder, component):
+    """Return the folder of component within parent folder 'folder' - or None if not present."""
+    if component == '.':
+        return folder
+    if component == '..':
+        if folder.parent_uid is None:
+            return params.root_folder
+        return params.folder_cache[folder.parent_uid]
+    for subfolder_uid in folder.subfolders:
+        subfolder = params.folder_cache[subfolder_uid]
+        if subfolder.name == component:
+            return subfolder
+    return None
+
+
+def lookup_path(params, folder, components):
+    """
+    Lookup a path of components within the folder cache.
+
+    Get all the folders starting from the left end of component, plus the index of the first component that isn't present in the
+    folder cache.
+    """
+    remainder = 0
+    for index, component in enumerate(components):
+        temp_folder = contained_folder(params, folder, component)
+        if temp_folder is None:
+            break
+        folder = temp_folder
+        remainder = index + 1
+    return remainder, folder
+
+
+def is_abs_path(path_string):
+    """Return True iff path_string is an absolute path."""
+    return path_string.startswith('/') and not path_string.startswith('//')
+
+
+def path_split(params, folder, path_string):
+    """Split a path into directories with two replaces and a split."""
+    if is_abs_path(path_string):
+        folder = params.root_folder
+        path_string = path_string[1:]
+
+    components = [s.replace('\0', '/') for s in path_string.replace('//', '\0').split('/')]
+    return folder, [c.strip() for c in components]
+
+
 def try_resolve_path(params, path):
+    """
+    Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
+
+    If a record, the final component is the record.
+    If an existent folder, the final component is ''.
+    If a non-existent folder, the final component is the folders, joined with /, that do not (yet) exist..
+    """
     if type(path) is not str:
         path = ''
 
-    folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
-    if len(path) > 0:
-        if path[0] == '/':
-            folder = params.root_folder
-            path = path[1:]
+    folder = (
+        params.folder_cache[params.current_folder]
+        if params.current_folder in params.folder_cache
+        else params.root_folder
+    )
 
-        start = 0
-        while True:
-            idx = path.find('/', start)
-            path_component = ''
-            if idx < 0:
-                if len(path) > 0:
-                    path_component = path.strip()
-            elif idx > 0 and path[idx - 1] == '\\':
-                start = idx + 1
-                continue
-            else:
-                path_component = path[:idx].strip()
+    folder, components = path_split(params, folder, path)
 
-            if len(path_component) == 0:
-                break
+    remainder, folder = lookup_path(params, folder, components)
 
-            folder_uid = ''
-            if path_component == '.':
-                folder_uid = folder.uid
-            elif path_component == '..':
-                folder_uid = folder.parent_uid or '/'
-            else:
-                for uid in folder.subfolders:
-                    sf = params.folder_cache[uid]
-                    if sf.name.strip().casefold() == path_component.casefold():
-                        folder_uid = uid
-                        break
-            if folder_uid:
-                folder = params.folder_cache[folder_uid] if folder_uid in params.folder_cache else params.root_folder
-            else:
-                break
-            if idx < 0:
-                path = ''
-                break
+    tail = components[remainder:]
 
-            path = path[idx+1:]
-            start = 0
+    path = '/'.join(component.replace('/', '//') for component in tail)
 
-    return folder, path
+    # Return a 2-tuple of keepercommander.subfolder.UserFolderNode, str
+    # The first is the folder containing the second, or the folder of the last component if the second is ''.
+    # The second is the final component of the path we're passed as an argument to this function. It could be a record, or
+    # a not-yet-existent directory.
+    return (folder, path)
 
 
 class BaseFolderNode:
@@ -107,6 +135,15 @@ class BaseFolderNode:
         elif self.type == BaseFolderNode.SharedFolderFolderType:
             return 'Subfolder in Shared Folder'
         return ''
+
+    def __repr__(self):
+        return 'BaseFolderNode(type={}, uid={}, parent_uid={}, name={}, subfolders={})'.format(
+            self.type,
+            self.uid,
+            self.parent_uid,
+            self.name,
+            self.subfolders,
+        )
 
     def display(self, **kwargs):
         print('')
@@ -135,4 +172,3 @@ class RootFolderNode(BaseFolderNode):
     def __init__(self):
         BaseFolderNode.__init__(self, BaseFolderNode.RootFolderType)
         self.name = 'My Vault'
-
