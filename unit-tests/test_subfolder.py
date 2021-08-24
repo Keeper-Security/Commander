@@ -164,6 +164,26 @@ class TestSubfolder(TestCase):
         assert folder is root_bfn
         assert final == '.'
 
+    def test_slash_cd_tests_space_try_resolve_path(self):
+        """Try a '/cd-tests ' try_resolve_path."""
+        params = Mock()
+        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
+        params.current_folder = ''
+        params.root_folder = root_bfn
+        folder, final = subfolder.try_resolve_path(params, '/cd-tests ')
+        assert folder is cd_tests_bfn
+        assert final == ''
+
+    def test_slash_space_cd_tests_try_resolve_path(self):
+        """Try a '/ cd-tests' try_resolve_path."""
+        params = Mock()
+        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
+        params.current_folder = ''
+        params.root_folder = root_bfn
+        folder, final = subfolder.try_resolve_path(params, '/ cd-tests')
+        assert folder is cd_tests_bfn
+        assert final == ''
+
 
 if __name__ == '__main__':
     ts = TestSubfolder()
