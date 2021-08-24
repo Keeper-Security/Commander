@@ -122,10 +122,28 @@ class TestSubfolderTryResolvePath(TestCase):
         assert final == ''
 
     def test_slash_dot(self):
-        """Try a /.. try_resolve_path."""
+        """Try a /. try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/.')
         assert folder is self.root_bfn
         assert final == ''
+
+    def test_slash_dot_cd_tests(self):
+        """Try a /./cd-tests try_resolve_path."""
+        folder, final = subfolder.try_resolve_path(self.params, '/./cd-tests')
+        assert folder is self.cd_tests_bfn
+        assert final == ''
+
+    def test_slash_dot_cd_tests_nonexistent(self):
+        """Try a /./cd-tests/nonexistent try_resolve_path."""
+        folder, final = subfolder.try_resolve_path(self.params, '/./cd-tests/nonexistent')
+        assert folder is self.cd_tests_bfn
+        assert final == 'nonexistent'
+
+    def test_slash_dot_cd_tests_dot_nonexistent(self):
+        """Try a /./cd-tests/./nonexistent try_resolve_path."""
+        folder, final = subfolder.try_resolve_path(self.params, '/./cd-tests/./nonexistent')
+        assert folder is self.cd_tests_bfn
+        assert final == 'nonexistent'
 
     def test_slash_cd_tests_space(self):
         """Try a '/cd-tests ' try_resolve_path."""
