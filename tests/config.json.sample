@@ -1,0 +1,8 @@
+{
+    "server": "https://dev.keepersecurity.com/api/v2/",
+    "user": "",
+    "password": "",
+    "private_key": "",
+    "device_token": "",
+    "clone_code": ""
+}
