@@ -24,7 +24,7 @@ def folder_cache():
     cd_tests_uid = 'b' * 22
     cd_tests_bfn = BFN(type='user_folder', uid=cd_tests_uid, parent_uid=None, name='cd-tests', subfolders=[])
     root_uid = 'a' * 22
-    root_bfn = BFN(type='/', uid=None, parent_uid=None, name='root', subfolders=[cd_tests_uid])
+    root_bfn = BFN(type='/', uid=None, parent_uid=None, name='root', subfolders=[cd_tests_bfn])
     dict_ = {
         root_uid: root_bfn,
         cd_tests_uid: cd_tests_bfn,
