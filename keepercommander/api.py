@@ -1477,19 +1477,18 @@ def prepare_record_v3(params, record):
 
 
 def communicate_rest(params, request, endpoint):
-    TTK.update_time_of_last_activity()
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
     if request:
         api_request_payload.payload = request.SerializeToString()
 
-    rs = None
     try:
         rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
     except Exception as e:
         raise KeeperApiError('Rest API', str(e))
     if type(rs) == bytes:
+        TTK.update_time_of_last_activity()
         return rs
     elif type(rs) == dict:
         kae = KeeperApiError(rs['error'], rs['message'])
@@ -1501,7 +1500,6 @@ def communicate_rest(params, request, endpoint):
 
 def communicate(params, request):
     # type: (KeeperParams, dict) -> dict
-    TTK.update_time_of_last_activity()
 
     def authorize_request(rq):
         rq['client_time'] = current_milli_time()
@@ -1514,12 +1512,11 @@ def communicate(params, request):
         login(params)
 
     authorize_request(request)
-    logging.debug('payload: %s', request)
-
     try:
         response_json = run_command(params, request)
         if response_json['result'] != 'success':
             raise KeeperApiError(response_json['result_code'], response_json['message'])
+        TTK.update_time_of_last_activity()
         return response_json
     except KeeperApiError as kae:
         if kae.result_code == 'session_token_expired':
