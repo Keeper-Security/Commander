@@ -40,74 +40,53 @@ def folder_cache():
 class TestSubfolder(TestCase):
     """Tests for subfolders."""
 
+    def setUp(self):
+        """Set up self.params, self.root_bfn and self.cd_tests_bfn."""
+        self.params = Mock()
+        (self.params.folder_cache, self.root_bfn, self.cd_tests_bfn) = folder_cache()
+        self.params.current_folder = ''
+        self.params.root_folder = self.root_bfn
+
     def test_a_try_resolve_path(self):
         """Try an a try_resolve_path, where a does not preexist."""
-        params = Mock()
-        (params.folder_cache, root_bfn, _) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, 'a')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, 'a')
+        assert folder is self.root_bfn
         assert final == 'a'
 
     def test_slash_a_try_resolve_path(self):
         """Try a /a try_resolve_path, where /a does not preexist."""
-        params = Mock()
-        (params.folder_cache, root_bfn, _) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/a')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/a')
+        assert folder is self.root_bfn
         assert final == 'a'
 
     def test_slash_a_b_try_resolve_path(self):
         """Try a /a/b try_resolve_path, where neither /a/b nor /a preexist."""
-        params = Mock()
-        (params.folder_cache, root_bfn, _) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/a/b')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/a/b')
+        assert folder is self.root_bfn
         assert final == 'a/b'
 
     def test_slash_cd_tests_a_try_resolve_path(self):
         """Try a /cd-tests/a try_resolve_path, where /cd-tests preexists, but /cd-tests/b does not."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/cd-tests/a')
-        assert folder is cd_tests_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/a')
+        assert folder is self.cd_tests_bfn
         assert final == 'a'
 
     def test_slash_cd_tests_try_resolve_path(self):
         """Try a /cd-tests try_resolve_path, where /cd-tests preexists."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/cd-tests')
-        assert folder is cd_tests_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests')
+        assert folder is self.cd_tests_bfn
         assert final == ''
 
     def test_a_slash_slash_b_try_resolve_path(self):
         """Try an a//b try_resolve_path, where neither a/b nor a preexist."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, 'a//b')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, 'a//b')
+        assert folder is self.root_bfn
         assert final == 'a//b'
 
     def test_slash_slash_a_try_resolve_path(self):
         """Try a //a try_resolve_path, where /a does not preexist.  Note that we want to create '/a', not 'a' in /."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '//a')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '//a')
+        assert folder is self.root_bfn
         assert final == '/a'
 
     def test_slash_slash_a_slash_slash_b_try_resolve_path(self):
@@ -116,72 +95,44 @@ class TestSubfolder(TestCase):
 
         Note that we want to create '/a/b', not 'a' in / and b in that.
         """
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '//a//b')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '//a//b')
+        assert folder is self.root_bfn
         assert final == '/a/b'
 
     def test_cd_tests_dot_dot_try_resolve_path(self):
         """Try a /cd-tests/.. try_resolve_path, where /cd-tests preexists."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/cd-tests/..')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/..')
+        assert folder is self.root_bfn
         assert final == ''
 
     def test_cd_tests_dot_try_resolve_path(self):
         """Try a /cd-test/. try_resolve_path, where /cd-tests preexists."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/cd-tests/.')
-        assert folder is cd_tests_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/.')
+        assert folder is self.cd_tests_bfn
         assert final == ''
 
     def test_slash_dot_dot_try_resolve_path(self):
         """Try a /.. try_resolve_path."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/..')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/..')
+        assert folder is self.root_bfn
         assert final == ''
 
     def test_slash_dot_try_resolve_path(self):
         """Try a /.. try_resolve_path."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/.')
-        assert folder is root_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/.')
+        assert folder is self.root_bfn
         assert final == '.'
 
     def test_slash_cd_tests_space_try_resolve_path(self):
         """Try a '/cd-tests ' try_resolve_path."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/cd-tests ')
-        assert folder is cd_tests_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests ')
+        assert folder is self.cd_tests_bfn
         assert final == ''
 
     def test_slash_space_cd_tests_try_resolve_path(self):
         """Try a '/ cd-tests' try_resolve_path."""
-        params = Mock()
-        (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
-        params.current_folder = ''
-        params.root_folder = root_bfn
-        folder, final = subfolder.try_resolve_path(params, '/ cd-tests')
-        assert folder is cd_tests_bfn
+        folder, final = subfolder.try_resolve_path(self.params, '/ cd-tests')
+        assert folder is self.cd_tests_bfn
         assert final == ''
 
 
