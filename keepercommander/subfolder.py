@@ -101,6 +101,12 @@ def handle_subsequent_slash_slash(components):
 
 def contained_folder(params, folder, component):
     """Return the folder of component within parent folder 'folder' - or None if not present."""
+    if component == '.':
+        return folder
+    if component == '..':
+        if folder.parent_uid is None:
+            return params.root_folder
+        return params.folder_cache[folder.parent_uid]
     for subfolder_uid in folder.subfolders:
         subfolder = params.folder_cache[subfolder_uid]
         if subfolder.name == component:
@@ -109,7 +115,12 @@ def contained_folder(params, folder, component):
 
 
 def lookup_path(params, folder, components):
-    """Get all the folders from the left end of component, and the index of the first that isn't present."""
+    """
+    Lookup a path of components within the folder cache.
+
+    Get all the folders starting from the left end of component, plus the index of the first component that isn't present in the
+    folder cache.
+    """
     remainder = 0
     for index, component in enumerate(components):
         temp_folder = contained_folder(params, folder, component)
