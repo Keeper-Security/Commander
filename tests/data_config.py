@@ -11,7 +11,8 @@ def read_config_file(params):
         params.config = json.load(f)
         params.server = params.config['server']
         params.user = params.config['user']
-        params.password = params.config['password']
-        device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
-        params.rest_context.device_id = device_id
+        params.device_private_key = params.config['private_key']
+        params.device_token = params.config['device_token']
+        params.clone_code = params.config['clone_code']
+        params.password = params.config.get('password', None)
 
