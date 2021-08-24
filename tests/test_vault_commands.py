@@ -128,6 +128,7 @@ class TestConnectedCommands(TestCase):
                     f.flush()
                     cli.do_command(params, 'cd "User Folder 1"')
                     cli.do_command(params, 'upload-attachment --file="{0}" "Record 1"'.format(f.name))
+                    f.close()
                 finally:
                     os.remove(f.name)
             cli.do_command(params, 'sync-down')
