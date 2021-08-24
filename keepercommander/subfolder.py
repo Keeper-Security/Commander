@@ -37,7 +37,8 @@ def try_resolve_path(params, path):
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
 
     If a record, the final component is the record.
-    If a folder, the final component is ''.
+    If an existent folder, the final component is ''.
+    If a non-existent folder, the final component is the folders, joined with /, that do not (yet) exist..
     """
     if type(path) is not str:
         path = ''
