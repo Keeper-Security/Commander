@@ -20,7 +20,7 @@ class TestConnectedCommands(TestCase):
     @classmethod
     def setUpClass(cls):
         cls.params = KeeperParams()
-        read_config_file(cls.params)
+        read_config_file(cls.params, 'vault.json')
         api.login(cls.params)
         TestConnectedCommands.wipe_out_data()
 
@@ -78,9 +78,9 @@ class TestConnectedCommands(TestCase):
     def setUp(self):
         warnings.simplefilter('ignore', category=ImportWarning)
         # Windows doesn't play nice with temp files, so create tmpdir that may fail to delete
-        self.tmpdir = os.path.join(os.path.dirname(__file__), 'tmp')
-        os.makedirs(self.tmpdir, exist_ok=True)
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
+        # self.tmpdir = os.path.join(os.path.dirname(__file__), 'tmp')
+        # os.makedirs(self.tmpdir, exist_ok=True)
+        # self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 
     def test_commands(self):
         params = TestConnectedCommands.params # type: KeeperParams
@@ -122,11 +122,14 @@ class TestConnectedCommands(TestCase):
             cli.do_command(params, 'search record')
             cli.do_command(params, 'search folder')
 
-            with tempfile.NamedTemporaryFile(dir=self.tmpdir, delete=False) as f:
-                f.write(b'data')
-                f.flush()
-                cli.do_command(params, 'cd "User Folder 1"')
-                cli.do_command(params, 'upload-attachment --file="{0}" "Record 1"'.format(f.name))
+            with tempfile.NamedTemporaryFile(delete=False) as f:
+                try:
+                    f.write(b'data')
+                    f.flush()
+                    cli.do_command(params, 'cd "User Folder 1"')
+                    cli.do_command(params, 'upload-attachment --file="{0}" "Record 1"'.format(f.name))
+                finally:
+                    os.remove(f.name)
             cli.do_command(params, 'sync-down')
 
             rec = api.get_record(params, record_uid)

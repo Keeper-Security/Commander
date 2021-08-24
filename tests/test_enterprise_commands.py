@@ -15,7 +15,7 @@ class TestEnterpriseCommands(TestCase):
     @classmethod
     def setUpClass(cls):
         cls.params = KeeperParams()
-        read_config_file(cls.params)
+        read_config_file(cls.params, 'enterprise.json')
         api.login(cls.params)
         TestEnterpriseCommands.wipe_out_data()
 
