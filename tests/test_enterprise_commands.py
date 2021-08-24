@@ -49,15 +49,7 @@ class TestEnterpriseCommands(TestCase):
                 api.communicate(params, request)
 
         for user in params.enterprise['users']:
-            if user['username'] in ['integration.enterprise@keepersecurity.com', 'integration.tests@keepersecurity.com']:
-                if user['lock'] != 0:
-                    request = {
-                        'command': 'enterprise_user_lock',
-                        'enterprise_user_id': user['enterprise_user_id'],
-                        'lock': 'unlocked'
-                    }
-                    api.communicate(params, request)
-            else:
+            if user['status'] == 'invited':
                 request = {
                     'command': 'enterprise_user_delete',
                     'enterprise_user_id': user['enterprise_user_id']
