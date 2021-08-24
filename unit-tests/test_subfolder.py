@@ -37,59 +37,66 @@ def folder_cache():
     return dict_, root_bfn, cd_tests_bfn
 
 
-class TestSubfolder(TestCase):
-    """Tests for subfolders."""
+def create_fake_params():
+    """Create a fake params instance for testing."""
+    params = Mock()
+    (params.folder_cache, root_bfn, cd_tests_bfn) = folder_cache()
+    params.current_folder = ''
+    params.root_folder = root_bfn
+
+    return params, root_bfn, cd_tests_bfn
+
+
+class TestSubfolderTryResolvePath(TestCase):
+    """Tests for subfolders.try_resolve_path."""
 
     def setUp(self):
         """Set up self.params, self.root_bfn and self.cd_tests_bfn."""
-        self.params = Mock()
-        (self.params.folder_cache, self.root_bfn, self.cd_tests_bfn) = folder_cache()
-        self.params.current_folder = ''
-        self.params.root_folder = self.root_bfn
+        (self.params, self.root_bfn, self.cd_tests_bfn) = create_fake_params()
 
-    def test_a_try_resolve_path(self):
+    def test_a(self):
         """Try an a try_resolve_path, where a does not preexist."""
         folder, final = subfolder.try_resolve_path(self.params, 'a')
         assert folder is self.root_bfn
         assert final == 'a'
 
-    def test_slash_a_try_resolve_path(self):
+    def test_slash_a(self):
         """Try a /a try_resolve_path, where /a does not preexist."""
         folder, final = subfolder.try_resolve_path(self.params, '/a')
         assert folder is self.root_bfn
         assert final == 'a'
 
-    def test_slash_a_b_try_resolve_path(self):
+    def test_slash_a_b(self):
         """Try a /a/b try_resolve_path, where neither /a/b nor /a preexist."""
         folder, final = subfolder.try_resolve_path(self.params, '/a/b')
         assert folder is self.root_bfn
         assert final == 'a/b'
 
-    def test_slash_cd_tests_a_try_resolve_path(self):
+    def test_slash_cd_tests_a(self):
         """Try a /cd-tests/a try_resolve_path, where /cd-tests preexists, but /cd-tests/b does not."""
         folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/a')
         assert folder is self.cd_tests_bfn
         assert final == 'a'
 
-    def test_slash_cd_tests_try_resolve_path(self):
+    def test_slash_cd_tests(self):
         """Try a /cd-tests try_resolve_path, where /cd-tests preexists."""
         folder, final = subfolder.try_resolve_path(self.params, '/cd-tests')
         assert folder is self.cd_tests_bfn
         assert final == ''
 
-    def test_a_slash_slash_b_try_resolve_path(self):
+    def test_a_slash_slash_b(self):
         """Try an a//b try_resolve_path, where neither a/b nor a preexist."""
         folder, final = subfolder.try_resolve_path(self.params, 'a//b')
         assert folder is self.root_bfn
         assert final == 'a//b'
 
-    def test_slash_slash_a_try_resolve_path(self):
+    def test_slash_slash_a(self):
         """Try a //a try_resolve_path, where /a does not preexist.  Note that we want to create '/a', not 'a' in /."""
         folder, final = subfolder.try_resolve_path(self.params, '//a')
         assert folder is self.root_bfn
         assert final == '/a'
 
-    def test_slash_slash_a_slash_slash_b_try_resolve_path(self):
+    def test_slash_slash_a_slash_slash_b(self):
         """
         Try a //a//b try_resolve_path, where neither /a/b nor /a preexist.
 
@@ -99,59 +106,95 @@ class TestSubfolder(TestCase):
         assert folder is self.root_bfn
         assert final == '/a/b'
 
-    def test_cd_tests_dot_dot_try_resolve_path(self):
+    def test_cd_tests_dot_dot(self):
         """Try a /cd-tests/.. try_resolve_path, where /cd-tests preexists."""
         folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/..')
         assert folder is self.root_bfn
         assert final == ''
 
-    def test_cd_tests_dot_try_resolve_path(self):
+    def test_cd_tests_dot(self):
         """Try a /cd-test/. try_resolve_path, where /cd-tests preexists."""
         folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/.')
         assert folder is self.cd_tests_bfn
         assert final == ''
 
-    def test_slash_dot_dot_try_resolve_path(self):
+    def test_slash_dot_dot(self):
         """Try a /.. try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/..')
         assert folder is self.root_bfn
         assert final == ''
 
-    def test_slash_dot_try_resolve_path(self):
+    def test_slash_dot(self):
         """Try a /.. try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/.')
         assert folder is self.root_bfn
         assert final == '.'
 
-    def test_slash_cd_tests_space_try_resolve_path(self):
+    def test_slash_cd_tests_space(self):
         """Try a '/cd-tests ' try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/cd-tests ')
         assert folder is self.cd_tests_bfn
         assert final == ''
 
-    def test_slash_space_cd_tests_try_resolve_path(self):
+    def test_slash_space_cd_tests(self):
         """Try a '/ cd-tests' try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/ cd-tests')
         assert folder is self.cd_tests_bfn
         assert final == ''
 
-    def test_slash_space_cd_tests_space_try_resolve_path(self):
+    def test_slash_space_cd_tests_space(self):
         """Try a '/ cd-tests ' try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/ cd-tests ')
         assert folder is self.cd_tests_bfn
         assert final == ''
 
-    def test_slash_space_slash_a_try_resolve_path(self):
+    def test_slash_space_slash_a(self):
         """Try a '/ /a' try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/ /a')
         assert folder is self.root_bfn
         assert final == '/a'
 
 
+class TestSubfolderHandleInitialSlash(TestCase):
+    """Tests for subfolders.handle_initial_slash."""
+
+    def setUp(self):
+        """Set up self.params, self.root_bfn and self.cd_tests_bfn."""
+        (self.params, self.root_bfn, self.cd_tests_bfn) = create_fake_params()
+
+    def test_slash(self):
+        """Feed [''] to handle_initial_slash."""
+        list_ = ['']
+        folder = subfolder.handle_initial_slash(self.params, self.cd_tests_bfn, list_)
+        assert folder is self.root_bfn
+        assert list_ == []
+
+    def test_slash_a(self):
+        """Feed ['', 'a'] to handle_initial_slash."""
+        list_ = ['', 'a']
+        folder = subfolder.handle_initial_slash(self.params, self.cd_tests_bfn, list_)
+        assert folder is self.root_bfn
+        assert list_ == ['a']
+
+    def test_slash_slash(self):
+        """Feed ['', ''] to handle_initial_slash and see what it does."""
+        list_ = ['', '']
+        folder = subfolder.handle_initial_slash(self.params, self.cd_tests_bfn, list_)
+        assert folder is self.cd_tests_bfn
+        assert list_ == ['/']
+
+    def test_slash_slash_a(self):
+        """Feed ['', '', 'a'] to handle_initial_slash and see what it does."""
+        list_ = ['', '', 'a']
+        folder = subfolder.handle_initial_slash(self.params, self.cd_tests_bfn, list_)
+        assert folder is self.cd_tests_bfn
+        assert list_ == ['/a']
+
+
 if __name__ == '__main__':
-    ts = TestSubfolder()
-    if hasattr(ts, 'setUp'):
-        ts.setUp()
-    ts.test_cd_test_a_try_resolve_path()
-    if hasattr(ts, 'tearDown'):
-        ts.tearDown()
+    instance = TestSubfolderHandleInitialSlash()
+    if hasattr(instance, 'setUp'):
+        instance.setUp()
+    instance.test_slash_a()
+    if hasattr(instance, 'tearDown'):
+        instance.tearDown()
