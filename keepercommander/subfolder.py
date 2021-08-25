@@ -69,7 +69,7 @@ def handle_subsequent_slash_slash(components):
     parts = components[:]
     index = 0
     while index < len(parts):
-        if (
+        while (
             parts[index + 2:] and
             parts[index] != '' and
             parts[index + 1] == '' and
@@ -77,8 +77,6 @@ def handle_subsequent_slash_slash(components):
         ):
             parts[index] = '{}/{}'.format(parts[index], parts[index + 2])
             del parts[index + 1:index + 3]
-            index += 1
-            continue
 
         if (
             parts[index + 2:] and
@@ -88,8 +86,6 @@ def handle_subsequent_slash_slash(components):
         ):
             parts[index] = '{}/'.format(parts[index])
             del parts[index + 1:index + 2]
-            index += 1
-            continue
 
         if parts[index] == '':
             del parts[index]
@@ -139,8 +135,6 @@ def try_resolve_path(params, path):
     If an existent folder, the final component is ''.
     If a non-existent folder, the final component is the folders, joined with /, that do not (yet) exist..
     """
-    # pudb.set_trace()
-
     if type(path) is not str:
         path = ''
 
