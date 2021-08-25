@@ -209,6 +209,8 @@ class RecordAddCommand(Command):
         if not force:
             if not title:
                 title = input('...' + 'Title: '.rjust(16))
+                if len(title) == 0:
+                    raise CommandError('add', 'Invalid title input. Expected non-empty string.')
             if not login:
                 login = input('...' + 'Login: '.rjust(16))
             if not password:
