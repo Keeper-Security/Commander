@@ -150,7 +150,10 @@ def try_resolve_path(params, path):
         else params.root_folder
     )
 
-    components = [part.strip() for part in path.split('/')]
+    if path == '/':
+        components = ['']
+    else:
+        components = [part.strip() for part in path.split('/')]
 
     folder = handle_initial_slash(params, folder, components)
 
