@@ -261,11 +261,23 @@ class TestSubfolderHandleSubsequentSlashSlash(TestCase):
         result = subfolder.handle_subsequent_slash_slash(list_)
         assert result == ['a', 'b', 'c', 'd', 'e']
 
+    def test_a_slash_slash_b_slash_slash_c_slash_slash_d(self):
+        """Test a//b//c//d ."""
+        list_ = ['a', '', 'b', '', 'c', '', 'd']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a/b/c/d']
+
+    def test_a_slash_slash_b_slash_slash_c_slash_slash_d_slash_e(self):
+        """Test a//b//c//d ."""
+        list_ = ['a', '', 'b', '', 'c', '', 'd', 'e']
+        result = subfolder.handle_subsequent_slash_slash(list_)
+        assert result == ['a/b/c/d', 'e']
+
 
 if __name__ == '__main__':
-    instance = TestSubfolderTryResolvePath()
+    instance = TestSubfolderHandleSubsequentSlashSlash()
     if hasattr(instance, 'setUp'):
         instance.setUp()
-    instance.test_cd_tests_slash_a_slash_slash_b_slash_slash_c()
+    instance.test_a_slash_slash_b_slash_slash_c_slash_slash_d()
     if hasattr(instance, 'tearDown'):
         instance.tearDown()
