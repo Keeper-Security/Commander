@@ -1,8 +1,9 @@
 PYTHON_FILES := ${shell find . -name '*.py' -print}
 
 go2: tags targeted-report
-	python3 -m pytest -s unit-tests/test_subfolder.py
-	# python3 -m pudb unit-tests/test_subfolder.py
+	python3 -m pytest -s tests/test_vault_commands.py
+	# python3 -m pytest -s unit-tests/test_subfolder.py
+	# PYTHONPATH=. python3 -m pudb unit-tests/test_subfolder.py
 	# python3 -m pytest unit-tests/test_command_folder.py
 	# python3 -m pudb keeper.py
 	python3 keeper.py
