@@ -152,6 +152,8 @@ def try_resolve_path(params, path):
 
     if path == '/':
         components = ['']
+    elif path == '//':
+        components = ['', '']
     else:
         components = [part.strip() for part in path.split('/')]
 
