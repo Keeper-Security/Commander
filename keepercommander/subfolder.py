@@ -127,7 +127,7 @@ def lookup_path(params, folder, components):
     return remainder, folder
 
 
-def try_resolve_path(params, path):
+def try_resolve_path(params, path, *, return_list=False):
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
 
@@ -157,7 +157,14 @@ def try_resolve_path(params, path):
 
     remainder, folder = lookup_path(params, folder, components)
 
-    path = '/'.join(components[remainder:])
+    tail = components[remainder:]
+
+    if return_list:
+        # Return a 2 tuple UserFolderNode, list[str].  The first is the folder containing the 2nd, or the folder of of the
+        # last component if the second is ''.
+        return (folder, tail)
+
+    path = '/'.join(component.replace('/', '//') for component in tail)
 
     # Return a 2-tuple of keepercommander.subfolder.UserFolderNode, str
     # The first is the folder containing the second, or the folder of the last component if the second is ''.
