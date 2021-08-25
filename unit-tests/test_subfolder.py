@@ -169,6 +169,12 @@ class TestSubfolderTryResolvePath(TestCase):
         assert folder is self.root_bfn
         assert final == '/a'
 
+    def test_slash(self):
+        """Try a '/' try_resolve_path."""
+        folder, final = subfolder.try_resolve_path(self.params, '/')
+        assert folder is self.root_bfn
+        assert final == ''
+
 
 class TestSubfolderHandleInitialSlash(TestCase):
     """Tests for subfolders.handle_initial_slash."""
@@ -244,6 +250,6 @@ if __name__ == '__main__':
     instance = TestSubfolderTryResolvePath()
     if hasattr(instance, 'setUp'):
         instance.setUp()
-    instance.test_slash_dot()
+    instance.test_slash()
     if hasattr(instance, 'tearDown'):
         instance.tearDown()
