@@ -95,13 +95,23 @@ class TestSubfolderTryResolvePath(TestCase):
 
     def test_slash_slash_a_slash_slash_b(self):
         """
-        Try a //a//b try_resolve_path, where neither /a/b nor /a preexist.
+        Try a //a//b try_resolve_path, where neither.
 
         Note that we want to create '/a/b', not 'a' in / and b in that.
         """
         folder, final = subfolder.try_resolve_path(self.params, '//a//b')
         assert folder is self.root_bfn
         assert final == '/a/b'
+
+    def test_cd_tests_slash_a_slash_slash_b_slash_slash_c(self):
+        """
+        Try a /cd-tests/a//b//c try_resolve_path.
+
+        Note that we want to create 'cd-tests/a/b/c', not 'a' in cd-tests and b in that and c in that.
+        """
+        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/a//b//c')
+        assert folder is self.cd_tests_bfn
+        assert final == 'a/b/c'
 
     def test_cd_tests_dot_dot(self):
         """Try a /cd-tests/.. try_resolve_path, where /cd-tests preexists."""
@@ -256,6 +266,6 @@ if __name__ == '__main__':
     instance = TestSubfolderTryResolvePath()
     if hasattr(instance, 'setUp'):
         instance.setUp()
-    instance.test_slash()
+    instance.test_cd_tests_slash_a_slash_slash_b_slash_slash_c()
     if hasattr(instance, 'tearDown'):
         instance.tearDown()
