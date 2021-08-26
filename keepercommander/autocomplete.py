@@ -103,6 +103,20 @@ def try_resolve_path(params, path):
     return None
 
 
+def escape_string(string):
+    """Replace special characters in string, for interactive shell quoting, as part of tab-completion."""
+    tuple_ = (
+        ('\\', '\\\\'),
+        (' ', r'\ '),
+        ('"', r'\"'),
+        ("'", r"\'"),
+        ('/', '//'),
+    )
+    for from_str, to_str in tuple_:
+        string = string.replace(from_str, to_str)
+    return string
+
+
 class CommandCompleter(Completer):
     def __init__(self, params, aliases):
         # type: (CommandCompleter, KeeperParams, dict) -> None
@@ -168,21 +182,21 @@ class CommandCompleter(Completer):
                                'rm', 'clipboard-copy', 'find-password'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            extra['escape_space'] = args == raw_input
+                            extra['escapes'] = args == raw_input
                             opts, _ = record_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
                     elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            extra['escape_space'] = args == raw_input
+                            extra['escapes'] = args == raw_input
                             opts, _ = folder_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.folder or ''
                             context = 'folder'
                     elif cmd in {'mv', 'ln'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            extra['escape_space'] = args == raw_input
+                            extra['escapes'] = args == raw_input
                             opts, _ = mv_parser.parse_known_args(shlex.split(args))
                             if opts.dst is None:
                                 word = document.get_word_under_cursor()
@@ -217,8 +231,8 @@ class CommandCompleter(Completer):
                                     n = f.name
                                     if is_path and not extra['prefix'].endswith('/'):
                                         n = '/' + n
-                                    if extra.get('escape_space'):
-                                        n = n.replace(' ', '\\ ')
+                                    if extra.get('escapes'):
+                                        n = escape_string(n)
                                     yield Completion(n, display=n + '/', start_position=-len(name))
 
                             if context == 'path':
@@ -233,8 +247,8 @@ class CommandCompleter(Completer):
                                         n = r.get('display_name') or ''
                                         if len(n) > 0:
                                             if n.lower().startswith(name) and len(name) < len(n):
-                                                if extra.get('escape_space'):
-                                                    n = n.replace(' ', '\\ ')
+                                                if extra.get('escapes'):
+                                                    n = escape_string(n)
                                                 d = n
                                                 if len(d) > 39:
                                                     d = d[:29] + '...' + d[-7:]
