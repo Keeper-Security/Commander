@@ -61,7 +61,6 @@ def formatted_records(records, **kwargs):
         else:
             return text if len(text) < chars_num else text[:chars_num] + '...'
 
-
     if len(records) > 0:
         shared_folder = None
         if 'folder' in kwargs and params is not None:
