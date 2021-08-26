@@ -2,8 +2,10 @@
 
 """Provide a class for keeping track of the last server-interaction, and send keep-alives hidden to the user as needed."""
 
+import logging
 import time
 from keepercommander import api
+import keepercommander.error
 
 
 class TimeToKeepalive:
@@ -42,7 +44,10 @@ class TimeToKeepalive:
                 self.server_logout_timer_window is not None and
                 (self.server_logout_timer_window / 2) + self.time_of_last_activity < current_time
         ):
-            api.send_keepalive(params)
+            try:
+                api.send_keepalive(params)
+            except keepercommander.error.KeeperApiError:
+                logging.warning('Error sending keepalive to server. You should exit and log back in.')
             self.time_of_last_activity = current_time
 
 
