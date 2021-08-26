@@ -85,13 +85,13 @@ class TestSubfolderTryResolvePath(TestCase):
         """Try an a//b try_resolve_path, where neither a/b nor a preexist."""
         folder, final = subfolder.try_resolve_path(self.params, 'a//b')
         assert folder is self.root_bfn
-        assert final == 'a/b'
+        assert final == 'a//b'
 
     def test_slash_slash_a(self):
         """Try a //a try_resolve_path, where /a does not preexist.  Note that we want to create '/a', not 'a' in /."""
         folder, final = subfolder.try_resolve_path(self.params, '//a')
         assert folder is self.root_bfn
-        assert final == '/a'
+        assert final == '//a'
 
     def test_slash_slash_a_slash_slash_b(self):
         """
@@ -101,7 +101,7 @@ class TestSubfolderTryResolvePath(TestCase):
         """
         folder, final = subfolder.try_resolve_path(self.params, '//a//b')
         assert folder is self.root_bfn
-        assert final == '/a/b'
+        assert final == '//a//b'
 
     def test_cd_tests_slash_a_slash_slash_b_slash_slash_c(self):
         """
@@ -111,7 +111,7 @@ class TestSubfolderTryResolvePath(TestCase):
         """
         folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/a//b//c')
         assert folder is self.cd_tests_bfn
-        assert final == 'a/b/c'
+        assert final == 'a//b//c'
 
     def test_cd_tests_dot_dot(self):
         """Try a /cd-tests/.. try_resolve_path, where /cd-tests preexists."""
@@ -177,7 +177,7 @@ class TestSubfolderTryResolvePath(TestCase):
         """Try a '/ /a' try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '/ /a')
         assert folder is self.root_bfn
-        assert final == '/a'
+        assert final == '//a'
 
     def test_slash(self):
         """Try a '/' try_resolve_path."""
@@ -189,7 +189,7 @@ class TestSubfolderTryResolvePath(TestCase):
         """Try a '//' try_resolve_path."""
         folder, final = subfolder.try_resolve_path(self.params, '//')
         assert folder is self.root_bfn
-        assert final == '/'
+        assert final == '//'
 
 
 class TestSubfolderHandleInitialSlash(TestCase):
