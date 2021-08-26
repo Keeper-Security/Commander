@@ -88,7 +88,6 @@ def register_command_info(aliases, command_info):
     aliases['v'] = 'version'
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
-    aliases['ksm'] = 'secrets-manager'
     for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser
               ]:
@@ -1081,15 +1080,13 @@ class KSMCommand(Command):
                 data = json.loads(rec.get('data_unencrypted'))
                 rec_uid = rec.get('record_uid')
                 rec_title = data.get('title')
-                rec_type = data.get('type')
 
-                if rec_type == 'app':
-                    if rec_uid == search_str.strip() or rec_title.lower() == search_str.strip().lower():
-                        search_results_rec_data.append(
-                            {
-                                'uid': rec_uid,
-                                'data': data
-                            })
+                if rec_uid == search_str.strip() or rec_title.lower() == search_str.strip().lower():
+                    search_results_rec_data.append(
+                        {
+                            'uid': rec_uid,
+                            'data': data
+                        })
 
         return search_results_rec_data
 
@@ -1108,13 +1105,7 @@ class KSMCommand(Command):
 
         app_record_data = {
             'title': app_name,
-            'type': 'app',
-            'fields': [
-                {
-                    'type': 'password',
-                    'value': [master_key_str]
-                }
-            ]
+            'app_key': master_key_str
         }
 
         data_json = json.dumps(app_record_data)
@@ -1251,9 +1242,21 @@ class KSMCommand(Command):
         app_record = json.loads(r_unencr_json_data)
 
         # master_key = app_record.
-        logging.debug("App uid=%s, unlock_ip=%s" % (app_record.get('record_uid'), unlock_ip))
+        logging.debug("App uid=%s, unlock_ip=%s" % (rec_cache_val.get('record_uid'), unlock_ip))
 
-        master_key_str = app_record.get('fields')[0].get('value')[0]  # TODO: Search for field = password and get 1st value
+        if 'fields' in app_record:
+            # TODO:
+            #  This check can be removed even now. Adding it here just to make sure test apps that were created
+            #  by the team are still working. There are no records with this format were created by any of the customers
+            master_key_str = app_record.get('fields')[0].get('value')[0]
+            logging.warning("\n-----------------------------------------------------------------------------------\n"
+                            "  This App uid=%s uses old format which will not work properly in \n"
+                            "  the Web interface and it is recommended to delete it and create a new one.\n"
+                            "-----------------------------------------------------------------------------------"
+                            % rec_cache_val.get('record_uid'))
+        else:
+            master_key_str = app_record.get('app_key')  # TODO: Search for field = password and get 1st value
+
         master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
 
         keys_str = ""
