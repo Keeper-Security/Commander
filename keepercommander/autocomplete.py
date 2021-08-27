@@ -165,14 +165,14 @@ class CommandCompleter(Completer):
                     context = ''
                     extra = dict()
                     if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
-                               'rm', 'clipboard-copy', 'find-password'}:
+                               'rm', 'ls', 'clipboard-copy', 'find-password'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
                             opts, _ = record_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
-                    elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
+                    elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             extra['escape_space'] = args == raw_input
