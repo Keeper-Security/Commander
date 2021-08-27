@@ -216,8 +216,7 @@ class RecordAddCommand(Command):
             if not url:
                 url = input('...' + 'Login URL: '.rjust(16))
         if not title:
-            if len(title) == 0:
-                raise CommandError('add', 'Invalid title. Expected non-empty string.')
+            raise CommandError('add', 'Invalid title. Expected non-empty string.')
 
         custom = []
         if custom_list:
