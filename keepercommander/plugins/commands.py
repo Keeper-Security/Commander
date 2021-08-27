@@ -171,7 +171,7 @@ class RecordRotateCommand(Command):
         elif match:
             results = api.search_records(params, match)
             for r in results:
-                if force or confirm(f'Rotate record {r.title}?'):
+                if force or confirm(f'Rotate password for record {r.title}?'):
                     rotate_password(params, r.record_uid)
                     if print_result:
                         record = api.get_record(params, r.record_uid)
