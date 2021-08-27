@@ -10,7 +10,6 @@
 #
 
 import argparse
-import datetime
 import logging
 import re
 
@@ -22,6 +21,7 @@ from ..commands.base import raise_parse_exception, suppress_exit, Command
 from . import plugin_manager
 from .. import generator
 from ..subfolder import find_folders, get_folder_path
+from ..utils import confirm
 
 
 def register_commands(commands):
@@ -38,6 +38,7 @@ rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate the
 rotate_parser.add_argument('--print', dest='print', action='store_true', help='display the record content after rotation')
 rotate_parser.add_argument('--match', dest='match', action='store', help='regular expression to select records for password rotation')
 rotate_parser.add_argument('--password', dest='password', action='store', help='new password (optional)')
+rotate_parser.add_argument('--force', dest='force', action='store_true', help='force all matches to rotate without prompt')
 rotate_parser.add_argument('name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command')
 rotate_parser.error = raise_parse_exception
 rotate_parser.exit = suppress_exit
@@ -144,6 +145,7 @@ class RecordRotateCommand(Command):
         print_result = kwargs['print'] if 'print' in kwargs else None
         name = kwargs['name'] if 'name' in kwargs else None
         match = kwargs['match'] if 'match' in kwargs else None
+        force = kwargs['force'] if 'force' in kwargs else None
         if name:
             record_uid = None
             rotate_name = None
@@ -169,10 +171,11 @@ class RecordRotateCommand(Command):
         elif match:
             results = api.search_records(params, match)
             for r in results:
-                rotate_password(params, r.record_uid)
-                if print_result:
-                    record = api.get_record(params, r.record_uid)
-                    record.display()
+                if force or confirm(f'Rotate record {r.title}?'):
+                    rotate_password(params, r.record_uid)
+                    if print_result:
+                        record = api.get_record(params, r.record_uid)
+                        record.display()
         else:
             RecordRotateCommand.find_endpoints(params)
             if RecordRotateCommand.Endpoints:
