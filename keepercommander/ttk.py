@@ -46,9 +46,8 @@ class TimeToKeepalive:
         ):
             try:
                 api.send_keepalive(params)
-            except keepercommander.error.KeeperApiError:
-                logging.warning('Error sending keepalive to server. You should exit and log back in.')
-            self.time_of_last_activity = current_time
+            except keepercommander.error.KeeperApiError as kae:
+                logging.warning(kae.message)
 
 
 TTK = TimeToKeepalive()
