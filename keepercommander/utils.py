@@ -76,3 +76,16 @@ def create_auth_verifier(password, salt, iterations):   # type: (str, bytes, int
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
     return base64_url_encode(auth_ver)
+
+
+def confirm(msg):
+    """Simple confirmation through user input
+
+    msg(str): Message expecting a yes or no answer
+    Returns True if answer is "yes" and False otherwise.
+    """
+    question = f'{msg} (y/n) '
+    answer = ''
+    while answer not in ('y', 'n'):
+        answer = input(question).lower()
+    return answer == 'y'
