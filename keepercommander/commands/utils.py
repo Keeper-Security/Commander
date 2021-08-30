@@ -40,6 +40,7 @@ from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClie
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
 from ..cli import init_recordv3_commands
+from ..constants import TIMEOUT_DEFAULT, TIMEOUT_MIN, TIMEOUT_MAX
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -355,6 +356,18 @@ class ThisDeviceCommand(Command):
 
             value = ops[1]
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
+            if int(value_extracted) <= TIMEOUT_MIN:
+                value_extracted = str(TIMEOUT_DEFAULT)
+                logging.warning(
+                    f'The minimum device timeout value is {TIMEOUT_MIN}. '
+                    f'The device timeout has been set to the default value of {TIMEOUT_DEFAULT}.'
+                )
+            elif int(value_extracted) > TIMEOUT_MAX:
+                value_extracted = str(TIMEOUT_MAX)
+                logging.warning(
+                    f'The maximum device timeout value is {TIMEOUT_MAX} ({TIMEOUT_MAX//60//24} days). '
+                    'The device timeout has been set to the maximum.'
+                )
             loginv3.LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
             print("Successfully modified 'logout_timer' setting")
 
