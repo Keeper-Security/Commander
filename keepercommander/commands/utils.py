@@ -816,20 +816,38 @@ class KSMCommand(Command):
         print(f"{bcolors.WARNING}Unknown combination of KSM commands. Type 'secrets-manager' for more details'{bcolors.ENDC}")
 
     @staticmethod
+    def get_master_key_from_record(rec_cache_val):
+
+        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
+        app_record = json.loads(r_unencr_json_data)
+
+        if 'fields' in app_record:
+            # TODO:
+            #  This check can be removed even now. Adding it here just to make sure test apps that were created
+            #  by the team are still working. There are no records with this format were created by any of the customers
+            master_key_str = app_record.get('fields')[0].get('value')[0]
+            logging.warning("\n-----------------------------------------------------------------------------------\n"
+                            "  This App uid=%s uses old format which will not work properly in \n"
+                            "  the Web interface and it is recommended to delete it and create a new one.\n"
+                            "-----------------------------------------------------------------------------------"
+                            % rec_cache_val.get('record_uid'))
+        else:
+            master_key_str = app_record.get('app_key')  # TODO: Search for field = password and get 1st value
+
+        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+
+        return master_key
+
+    @staticmethod
     def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
 
         rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
-
         if rec_cache_val is None:
             logging.warning('Application "%s" not found.' % app_name_or_uid)
             return
 
         app_record_uid = rec_cache_val.get('record_uid')
-        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
-        app_record = json.loads(r_unencr_json_data)
-
-        master_key_str = app_record.get('fields')[0].get('value')[0] # TODO: Get
-        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+        master_key = KSMCommand.get_master_key_from_record(rec_cache_val)
 
         KSMCommand.share_secret(
             params=params,
@@ -1219,9 +1237,10 @@ class KSMCommand(Command):
     @staticmethod
     def add_client(params, app_name_or_uid, count, unlock_ip, firstAccessExpireOn, access_expire_in_min):
 
-        if unlock_ip is str:
+        if isinstance(unlock_ip, bool):
+            is_ip_unlocked = unlock_ip
+        else:
             is_ip_unlocked = bool(strtobool(unlock_ip))
-        is_ip_unlocked = unlock_ip
 
         curr_ms = int(time() * 1000)
 
@@ -1244,20 +1263,7 @@ class KSMCommand(Command):
         # master_key = app_record.
         logging.debug("App uid=%s, unlock_ip=%s" % (rec_cache_val.get('record_uid'), unlock_ip))
 
-        if 'fields' in app_record:
-            # TODO:
-            #  This check can be removed even now. Adding it here just to make sure test apps that were created
-            #  by the team are still working. There are no records with this format were created by any of the customers
-            master_key_str = app_record.get('fields')[0].get('value')[0]
-            logging.warning("\n-----------------------------------------------------------------------------------\n"
-                            "  This App uid=%s uses old format which will not work properly in \n"
-                            "  the Web interface and it is recommended to delete it and create a new one.\n"
-                            "-----------------------------------------------------------------------------------"
-                            % rec_cache_val.get('record_uid'))
-        else:
-            master_key_str = app_record.get('app_key')  # TODO: Search for field = password and get 1st value
-
-        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+        master_key = KSMCommand.get_master_key_from_record(rec_cache_val)
 
         keys_str = ""
         otat_str = ""
