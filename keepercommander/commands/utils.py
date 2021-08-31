@@ -8,7 +8,6 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-import hashlib
 import hmac
 import re
 import os
@@ -19,8 +18,9 @@ import datetime
 import getpass
 import sys
 import platform
-from time import time
+from datetime import timedelta
 from distutils.util import strtobool
+from time import time
 
 import requests
 import tempfile
@@ -36,9 +36,9 @@ from Cryptodome.Math.Numbers import Integer
 
 from .recordv3 import get_record
 from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
-    GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
+    GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
-from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
+from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..cli import init_recordv3_commands
 from ..constants import TIMEOUT_DEFAULT, TIMEOUT_MIN, TIMEOUT_MAX
 from ..display import bcolors
@@ -47,9 +47,10 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..record import Record
 from .. import api, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
-from ..record_pb2 import RecordsAddRequest, RecordAdd, RecordsModifyResponse, RecordModifyResult, ApplicationAddRequest
+from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
+from .helpers.timeout import format_timeout, get_timeout_setting_from_delta, parse_timeout
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
@@ -355,21 +356,22 @@ class ThisDeviceCommand(Command):
         elif action == 'timeout' or action == 'to':
 
             value = ops[1]
-            value_extracted = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
-            if int(value_extracted) <= TIMEOUT_MIN:
-                value_extracted = str(TIMEOUT_DEFAULT)
+            timeout_delta = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
+            if timeout_delta <= TIMEOUT_MIN:
+                timeout_delta = TIMEOUT_DEFAULT
                 logging.warning(
-                    f'The minimum device timeout value is {TIMEOUT_MIN}. '
-                    f'The device timeout has been set to the default value of {TIMEOUT_DEFAULT}.'
+                    f'The minimum device timeout value is {format_timeout(TIMEOUT_MIN)}. '
+                    'The device timeout has been set to the default Keeper timeout value.'
                 )
-            elif int(value_extracted) > TIMEOUT_MAX:
-                value_extracted = str(TIMEOUT_MAX)
+            elif timeout_delta > TIMEOUT_MAX:
+                timeout_delta = TIMEOUT_MAX
                 logging.warning(
-                    f'The maximum device timeout value is {TIMEOUT_MAX} ({TIMEOUT_MAX//60//24} days). '
+                    f'The maximum device timeout value is {format_timeout(TIMEOUT_MAX)}. '
                     'The device timeout has been set to the maximum.'
                 )
-            loginv3.LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
-            print("Successfully modified 'logout_timer' setting")
+            loginv3.LoginV3API.set_user_setting(params, 'logout_timer', get_timeout_setting_from_delta(timeout_delta))
+            dispay_value = 'default value' if timeout_delta == timedelta(0) else format_timeout(timeout_delta)
+            print(f'Successfully set "logout_timer" to {dispay_value}.')
 
         else:
             raise Exception("Unknown sub-command " + action + ". Available sub-commands: ", ", ".join(this_device_available_command_verbs))
@@ -388,9 +390,7 @@ class ThisDeviceCommand(Command):
             else:
                 raise Exception("Unknown value. Available values 'yes'/'no', 'y'/'n', 'on'/'off', '1'/'0', 'true'/'false'")
         elif name == 'logout_timer':
-            if not loginv3.CommonHelperMethods.check_int(value):
-                raise Exception("Entered value is not an integer. Please enter integer")
-            final_val = value
+            final_val = parse_timeout(value)
         else:
             raise Exception("Unhandled settings name '" + name + "'")
 
@@ -459,9 +459,8 @@ class ThisDeviceCommand(Command):
             print("{:>20}: {}".format('Persistent Login', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
 
         if 'logoutTimer' in acct_summary_dict['settings']:
-            logoutTimer = acct_summary_dict['settings']['logoutTimer']
-            logoutTimerMin = int(logoutTimer) / 1000 / 60
-            print("{:>20}: {} minutes".format('Logout Timeout', int(logoutTimerMin)))
+            timeout_delta = timedelta(milliseconds=int(acct_summary_dict['settings']['logoutTimer']))
+            print("{:>20}: {}".format('Logout Timeout', format_timeout(timeout_delta)))
 
         else:
             print("{:>20}: Default".format('Logout Timeout'))
