@@ -24,7 +24,10 @@ def parse_timeout(timeout_input):
         for v, input_unit in findall(r'(\d+)\s*([a-zA-Z]+)\s*', timeout_input):
             key_match = [t for t in all_units if t.startswith(input_unit)]
             if len(key_match) == 0:
-                raise ValueError(f'{input_unit} is not allowed as a unit for the timeout value.')
+                raise ValueError(
+                    f'{input_unit} is not allowed as a unit for the timeout value. '
+                    f'Valid units for the timeout value are {TIMEOUT_ALLOWED_UNITS}.'
+                )
             tdelta_kwargs[key_match[0]] = int(v)
     return timedelta(**tdelta_kwargs)
 
