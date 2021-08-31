@@ -40,7 +40,6 @@ from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClie
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..cli import init_recordv3_commands
-from ..constants import TIMEOUT_DEFAULT, TIMEOUT_MIN, TIMEOUT_MAX
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -50,7 +49,9 @@ from .base import raise_parse_exception, suppress_exit, user_choice, Command, du
 from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
-from .helpers.timeout import format_timeout, get_timeout_setting_from_delta, parse_timeout
+from .helpers.timeout import (
+    enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
+)
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
@@ -356,19 +357,7 @@ class ThisDeviceCommand(Command):
         elif action == 'timeout' or action == 'to':
 
             value = ops[1]
-            timeout_delta = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
-            if timeout_delta <= TIMEOUT_MIN:
-                timeout_delta = TIMEOUT_DEFAULT
-                logging.warning(
-                    f'The minimum device timeout value is {format_timeout(TIMEOUT_MIN)}. '
-                    'The device timeout has been set to the default Keeper timeout value.'
-                )
-            elif timeout_delta > TIMEOUT_MAX:
-                timeout_delta = TIMEOUT_MAX
-                logging.warning(
-                    f'The maximum device timeout value is {format_timeout(TIMEOUT_MAX)}. '
-                    'The device timeout has been set to the maximum.'
-                )
+            timeout_delta = enforce_timeout_range(ThisDeviceCommand.get_setting_str_to_value('logout_timer', value))
             loginv3.LoginV3API.set_user_setting(params, 'logout_timer', get_timeout_setting_from_delta(timeout_delta))
             dispay_value = 'default value' if timeout_delta == timedelta(0) else format_timeout(timeout_delta)
             print(f'Successfully set "logout_timer" to {dispay_value}.')
@@ -459,7 +448,7 @@ class ThisDeviceCommand(Command):
             print("{:>20}: {}".format('Persistent Login', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
 
         if 'logoutTimer' in acct_summary_dict['settings']:
-            timeout_delta = timedelta(milliseconds=int(acct_summary_dict['settings']['logoutTimer']))
+            timeout_delta = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
             print("{:>20}: {}".format('Logout Timeout', format_timeout(timeout_delta)))
 
         else:

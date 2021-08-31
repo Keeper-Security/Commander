@@ -1,7 +1,10 @@
+import logging
 from datetime import timedelta
 from re import findall
 
-from keepercommander.constants import TIMEOUT_DEFAULT_UNIT, TIMEOUT_ALLOWED_UNITS
+from keepercommander.constants import (
+    TIMEOUT_DEFAULT, TIMEOUT_MIN, TIMEOUT_MAX, TIMEOUT_DEFAULT_UNIT, TIMEOUT_ALLOWED_UNITS
+)
 
 
 def parse_timeout(timeout_input):
@@ -31,6 +34,26 @@ def format_timeout(timeout_delta):
         return ', '.join(nonzero_units)
 
 
+def enforce_timeout_range(timeout_delta):
+    if timeout_delta <= TIMEOUT_MIN:
+        timeout_delta = TIMEOUT_DEFAULT
+        logging.warning(
+            f'The minimum device timeout value is {format_timeout(TIMEOUT_MIN)}. '
+            'The device timeout has been set to the default Keeper timeout value.'
+        )
+    elif timeout_delta > TIMEOUT_MAX:
+        timeout_delta = TIMEOUT_MAX
+        logging.warning(
+            f'The maximum device timeout value is {format_timeout(TIMEOUT_MAX)}. '
+            'The device timeout has been set to the maximum.'
+        )
+    return timeout_delta
+
+
 def get_timeout_setting_from_delta(timeout_delta):
     timeout_seconds = int(timeout_delta.total_seconds() // 60)
     return str(timeout_seconds)
+
+
+def get_delta_from_timeout_setting(timeout_setting):
+    return timedelta(milliseconds=int(timeout_setting))
