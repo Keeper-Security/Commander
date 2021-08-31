@@ -59,7 +59,7 @@ def enforce_timeout_range(timeout_delta):
     Returns instance of timedelta. If the timeout value is greater than TIMEOUT_MAX, then TIMEOUT_MAX is returned.
         If the timeout value is less than TIMEOUT_MIN, then TIMEOUT_DEFAULT is returned.
     """
-    if timeout_delta <= TIMEOUT_MIN:
+    if timeout_delta < TIMEOUT_MIN:
         logging.warning(
             f'The minimum device timeout value is {format_timeout(TIMEOUT_MIN)}. '
             'The device timeout has been set to the default Keeper timeout value.'
@@ -71,6 +71,8 @@ def enforce_timeout_range(timeout_delta):
             'The device timeout has been set to the maximum.'
         )
         return TIMEOUT_MAX
+    else:
+        return timeout_delta
 
 
 def get_timeout_setting_from_delta(timeout_delta):
