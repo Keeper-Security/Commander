@@ -656,7 +656,7 @@ class RecordEditCommand(Command):
             return
 
         # if record is v2
-        if rv not in (3, 4):
+        if rv <= 2:
             recordv2.RecordEditCommand().execute(params, **kwargs)
             return
 
