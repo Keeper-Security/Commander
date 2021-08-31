@@ -1,7 +1,8 @@
 from datetime import timedelta
 
 
-TIMEOUT_DEFAULT = timedelta()  # Default is timedelta of zero
+# Set to default value by using timedelta of 0
+TIMEOUT_DEFAULT = timedelta(0)
 TIMEOUT_MIN = timedelta(minutes=1)
 TIMEOUT_MAX = timedelta(days=30)
 TIMEOUT_DEFAULT_UNIT = 'minutes'
