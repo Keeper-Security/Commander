@@ -19,19 +19,18 @@ def parse_timeout(timeout_input):
 
 
 def format_timeout(timeout_delta):
-    tdelta_str = str(timeout_delta)
-    day_delimiter = ' days, '
-    tunit = {}
-    if day_delimiter in tdelta_str:
-        tunit['days'], hours_minutes = tdelta_str.split(' days, ')
-    else:
-        tunit['days'] = 0
-        hours_minutes = tdelta_str
-    tunit['hours'], tunit['minutes'], _ = hours_minutes.split(':')
-    for k, v in tunit.items():
-        tunit[k] = int(v)
-    nonzero_tunits = [f'{v} {k[:-1] if v == 1 else k}' for k, v in tunit.items() if v != 0]
-    if len(nonzero_tunits) == 0:
+    if timeout_delta == timedelta(0):
         return '0'
     else:
-        return ', '.join(nonzero_tunits)
+        time_units = {'days': timeout_delta.days}
+        hours_minutes = str(timeout_delta).split(', ')[-1]
+        time_units['hours'], time_units['minutes'], _ = hours_minutes.split(':')
+        for k, v in time_units.items():
+            time_units[k] = int(v)
+        nonzero_units = [f'{v} {k[:-1] if v == 1 else k}' for k, v in time_units.items() if v != 0]
+        return ', '.join(nonzero_units)
+
+
+def get_timeout_setting_from_delta(timeout_delta):
+    timeout_seconds = int(timeout_delta.total_seconds() // 60)
+    return str(timeout_seconds)
