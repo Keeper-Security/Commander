@@ -175,7 +175,12 @@ def do_command(params, command_line):
         display.formatted_history(stack)
         return
 
-    if '-h' in command_line.lower():
+    if command_line.startswith('ksm'):
+        ksm_args = command_line[3:].strip()
+        if not ksm_args.startswith('-- '):
+            ksm_args = f'-- {ksm_args}'
+        command_line = f'ksm {ksm_args}'
+    elif '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):
             print("usage: history|h [-h]")
             print("\nShow command history.")
