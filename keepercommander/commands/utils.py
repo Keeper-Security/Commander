@@ -116,6 +116,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
+      --name [CLIENT NAME] : Name of the client (Default: Random 10 characters string)
       --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --unlock-ip : Does not lock IP address to first requesting device
@@ -232,6 +233,7 @@ ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true
                         help='Unlock IP Address.')
 ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
                         help='Return Tokens', default='false')
+ksm_parser.add_argument('--name', '-n', type=str, dest='name', action='store', help='client name')
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -790,18 +792,23 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print(f"  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable{bcolors.ENDC}")
+                print(f"  {bcolors.OKGREEN}secrets-manager client add "
+                      f"--app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} "
+                      f"--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} "
+                      f"--name {bcolors.OKBLUE}[CLIENT NAME] "
+                      f"--editable{bcolors.ENDC}")
                 return
 
             count = kwargs.get('count')
             unlock_ip = kwargs.get('unlockIp')
+            client_name = kwargs.get('name')
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
 
             is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
 
-            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min)
+            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min, client_name)
             return tokens if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
@@ -1236,7 +1243,8 @@ class KSMCommand(Command):
             print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
 
     @staticmethod
-    def add_client(params, app_name_or_uid, count, unlock_ip, firstAccessExpireOn, access_expire_in_min):
+    def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
+                   client_name=None):
 
         if isinstance(unlock_ip, bool):
             is_ip_unlocked = unlock_ip
@@ -1245,7 +1253,7 @@ class KSMCommand(Command):
 
         curr_ms = int(time() * 1000)
 
-        first_access_expire_on_ms = curr_ms + (int(firstAccessExpireOn) * 60 * 1000)
+        first_access_expire_on_ms = curr_ms + (int(first_access_expire_on) * 60 * 1000)
 
         if access_expire_in_min:
             access_expire_on_ms = curr_ms + (int(access_expire_in_min) * 60 * 1000)
@@ -1295,6 +1303,9 @@ class KSMCommand(Command):
 
             rq.clientId = mac
 
+            if client_name:
+                rq.id = client_name
+
             api_request_payload = ApiRequestPayload()
             api_request_payload.payload = rq.SerializeToString()
             api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
@@ -1321,8 +1332,11 @@ class KSMCommand(Command):
                 token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
                 tokens.append(token)
 
-                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n' \
-                            f'IP Lock: {lock_ip_stat}\n' \
+                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n'
+                if client_name:
+                    otat_str += f'Name: {client_name}\n'
+
+                otat_str += f'IP Lock: {lock_ip_stat}\n' \
                             f'Token Expires On: {exp_date_str}\n' \
                             f'App Access Expires on: {app_expire_on_str}\n'
 
