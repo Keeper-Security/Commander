@@ -16,6 +16,7 @@ import argparse
 import logging
 import datetime
 import getpass
+import subprocess
 import sys
 import platform
 from datetime import timedelta
@@ -81,6 +82,7 @@ def register_commands(commands):
     commands['set'] = SetCommand()
     commands['help'] = HelpCommand()
     commands['secrets-manager'] = KSMCommand()
+    commands['ksm'] = KSMCliCommand()
     commands['version'] = VersionCommand()
     commands['keep-alive'] = KeepAliveCommand()
 
@@ -203,6 +205,14 @@ help_parser = argparse.ArgumentParser(prog='help', description='Displays help on
 help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
+
+
+ksm_cli_parser = argparse.ArgumentParser(
+    prog='ksm', description='Keeper Secrets Management (KSM) Cli Commands', add_help=False
+)
+ksm_cli_parser.add_argument('command', nargs='*')
+ksm_cli_parser.error = raise_parse_exception
+ksm_cli_parser.exit = suppress_exit
 
 
 ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands',
@@ -686,6 +696,17 @@ class CheckEnforcementsCommand(Command):
                 finally:
                     del params.settings['must_perform_account_share_by']
                     del params.settings['share_account_to']
+
+
+class KSMCliCommand(Command):
+
+    def get_parser(self):
+        return ksm_cli_parser
+
+    def execute(self, params, **kwargs):
+
+        ksm_cli_command = kwargs.get('command')
+        subprocess.check_call(['ksm'] + ksm_cli_command)
 
 
 class KSMCommand(Command):
