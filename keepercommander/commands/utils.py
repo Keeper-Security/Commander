@@ -491,7 +491,7 @@ class WhoamiCommand(Command):
         if params.session_token:
             print('{0:>20s}: {1:<20s}'.format('User', params.user))
             print('{0:>20s}: {1:<20s}'.format('Server', params.server))
-            hostname = get_hostname(params.server)
+            hostname = get_hostname(params.rest_context.server_base)
             if hostname:
                 print('{0:>20s}: {1:<20s}'.format('Data Center', get_data_center(hostname)))
                 environment = get_environment(hostname)
