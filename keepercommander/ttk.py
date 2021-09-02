@@ -36,6 +36,9 @@ class TimeToKeepalive:
 
     def update(self, params):
         """Update the timer, and possibly issue a keepalive."""
+        if not params.session_token:
+            return
+
         current_time = time.time()
 
         self.lookup_server_logout_window(params)

@@ -459,7 +459,8 @@ def loop(params):  # type: (KeeperParams) -> int
         init_recordv3_commands(params)
 
     while True:
-        ttk.TTK.update(params)
+        if params.session_token:
+            ttk.TTK.update(params)
 
         command = ''
         if len(params.commands) > 0:
