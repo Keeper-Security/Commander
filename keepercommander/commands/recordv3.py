@@ -272,7 +272,7 @@ class RecordAddCommand(Command):
         has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
         has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
         if has_v2_options and has_v3_options:
-            logging.error(bcolors.FAIL + 'Use either legacy arguments only (--title, --pass, --login --url, --notes, --custom) or record type options only (type=login title=MyRecord etc.) see. https://github.com/Keeper-Security/Commander/blob/master/record-types.md' + bcolors.ENDC)
+            logging.error(bcolors.FAIL + 'Use either legacy arguments only (--title, --pass, --login --url, --notes, --custom) or record type options only (type=login title=MyRecord etc.) see. https://github.com/Keeper-Security/Commander/blob/master/record_types.md' + bcolors.ENDC)
             return
 
         # v2 record: when --legacy flag is set or a legacy option (--title, --login, --pass, --url, --notes, --custom)
