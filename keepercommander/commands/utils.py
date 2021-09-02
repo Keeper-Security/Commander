@@ -489,14 +489,13 @@ class WhoamiCommand(Command):
 
     def execute(self, params, **kwargs):
         if params.session_token:
-            print('{0:>20s}: {1:<20s}'.format('User', params.user))
-            print('{0:>20s}: {1:<20s}'.format('Server', params.server))
             hostname = get_hostname(params.rest_context.server_base)
-            if hostname:
-                print('{0:>20s}: {1:<20s}'.format('Data Center', get_data_center(hostname)))
-                environment = get_environment(hostname)
-                if environment:
-                    print('{0:>20s}: {1:<20s}'.format('Environment', get_environment(hostname)))
+            print('{0:>20s}: {1:<20s}'.format('User', params.user))
+            print('{0:>20s}: {1:<20s}'.format('Server', hostname))
+            print('{0:>20s}: {1:<20s}'.format('Data Center', get_data_center(hostname)))
+            environment = get_environment(hostname)
+            if environment:
+                print('{0:>20s}: {1:<20s}'.format('Environment', get_environment(hostname)))
             display_admin = 'No' if params.enterprise is None else 'Yes'
             print('{0:>20s}: {1:<20s}'.format('Admin', display_admin))
             if params.license:
