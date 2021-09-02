@@ -18,6 +18,7 @@ import threading
 import functools
 import logging
 import re
+import subprocess
 
 from collections import OrderedDict
 
@@ -176,10 +177,14 @@ def do_command(params, command_line):
         return
 
     if command_line.startswith('ksm'):
-        ksm_args = command_line[3:].strip()
-        if not ksm_args.startswith('-- '):
-            ksm_args = f'-- {ksm_args}'
-        command_line = f'ksm {ksm_args}'
+        try:
+            which_cmd = 'where' if sys.platform.startswith('win') else 'which'
+            subprocess.check_call([which_cmd, 'ksm'])
+        except subprocess.CalledProcessError:
+            logging.error('Please install the ksm application to run ksm commands.')
+        else:
+            subprocess.check_call(command_line)
+        return
     elif '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):
             print("usage: history|h [-h]")
