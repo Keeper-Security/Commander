@@ -43,10 +43,9 @@ def get_data_center(hostname):
     if hostname.endswith('.eu'):
         data_center = 'EU'
     elif hostname.endswith('.com'):
-        if hostname == 'govcloud.keepersecurity.com':
-            data_center = 'US GOV'
-        else:
-            data_center = 'US'
+        data_center = 'US'
+    elif hostname.endswith('govcloud.keepersecurity.us'):
+        data_center = 'US GOV'
     elif hostname.endswith('.au'):
         data_center = 'AU'
     else:
