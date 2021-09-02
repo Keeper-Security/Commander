@@ -1357,10 +1357,11 @@ class LogoutCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
-        try:
-            api.communicate_rest(params, None, 'vault/logout_v3')
-        except:
-            pass
+        if params.session_token:
+            try:
+                api.communicate_rest(params, None, 'vault/logout_v3')
+            except:
+                pass
         params.clear_session()
 
 

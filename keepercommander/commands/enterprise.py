@@ -38,7 +38,7 @@ from argparse import RawTextHelpFormatter
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .record import RecordAddCommand
-from .. import api, rest_api, APIRequest_pb2 as proto
+from .. import api, rest_api, APIRequest_pb2 as proto, constants
 from ..display import bcolors
 from ..record import Record
 from ..params import KeeperParams
@@ -160,8 +160,9 @@ enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store
 enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
 enterprise_role_parser.add_argument('--node', dest='node', action='store', help='node Name or ID')
 enterprise_role_parser.add_argument('--name', dest='name', action='store', help='role\'s new name')
-enterprise_role_parser.add_argument('--add-user', dest='add_user', action='append', help='add user to role')
-enterprise_role_parser.add_argument('--remove-user', dest='remove_user', action='append', help='remove user from role')
+enterprise_role_parser.add_argument('--add-user', dest='add_user', action='append', metavar='EMAIL', help='add user to role')
+enterprise_role_parser.add_argument('--remove-user', dest='remove_user', action='append', metavar='EMAIL', help='remove user from role')
+enterprise_role_parser.add_argument('--enforcement', dest='enforcements', action='append', metavar='KEY:VALUE', help='sets role enforcement')
 enterprise_role_parser.add_argument('--add-admin', dest='add_admin', action='append', help='add managed node to role')
 enterprise_role_parser.add_argument('--cascade', dest='cascade', action='store', choices=['on', 'off'], help='apply to the children nodes. \'add-admin\' only')
 enterprise_role_parser.add_argument('--remove-admin', dest='remove_admin', action='append', help='remove managed node from role')
@@ -1741,6 +1742,71 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         else:
                             request_batch.append(rq)
 
+            elif kwargs.get('enforcements'):
+                for enforcement in kwargs['enforcements']:
+                    tokens = enforcement.split(':')
+                    if len(tokens) != 2:
+                        logging.warning('Enforcement %s is skipped. Expected format:  KEY:[VALUE]', enforcement)
+                        continue
+                    key = tokens[0].strip().lower()
+                    enforcement_type = constants.ENFORCEMENTS.get(key)
+                    if not enforcement_type:
+                        logging.warning('Enforcement \"%s\" does not exist', key)
+                        continue
+                    enforcement_value = tokens[1].strip()
+                    if enforcement_value:
+                        if enforcement_type == 'long':
+                            try:
+                                enforcement_value = int(enforcement_value)
+                            except ValueError:
+                                logging.warning('Enforcement %s expects integer value', key)
+                                continue
+                        elif enforcement_type == 'boolean':
+                            enforcement_value = enforcement_value.lower()
+                            if enforcement_value in {'true', 't', '1'}:
+                                enforcement_value = True
+                            elif enforcement_value in {'false', 'f', '0'}:
+                                enforcement_value = None
+                            else:
+                                logging.warning('Enforcement %s expects boolean value', key)
+                                continue
+                        elif enforcement_type == 'string':
+                            pass
+                        else:
+                            logging.warning('Enforcement \"%s\". Value type \"%s\" is not supported', key, enforcement_type)
+                            continue
+                    else:
+                        enforcement_value = None
+
+                    role_enforcements = params.enterprise.get('role_enforcements') or []
+                    for role in matched_roles:
+                        role_id = role['role_id']
+                        enforcements = next((x['enforcements'] for x in role_enforcements if x['role_id'] == role_id), None)
+                        existing_enforcement = enforcements.get(key) if enforcements else None
+                        if enforcement_value is not None:
+                            rq = {
+                                'command': 'role_enforcement_update' if existing_enforcement else 'role_enforcement_add',
+                                'role_id': role_id,
+                                'enforcement': key
+                            }
+                            if type(enforcement_value) is bool:
+                                if existing_enforcement:
+                                    logging.warning('Enforcement \"%s\" is already set for role %d. Skipping', key, role_id)
+                                    continue
+                            else:
+                                rq['value'] = enforcement_value
+                            request_batch.append(rq)
+                        else:
+                            if existing_enforcement:
+                                rq = {
+                                    'command': 'role_enforcement_remove',
+                                    'role_id': role_id,
+                                    'enforcement': key
+                                }
+                                request_batch.append(rq)
+                            else:
+                                logging.warning('Enforcement \"%s\" is not set for role %d. Skipping', key, role_id)
+
             elif kwargs.get('add_admin') or kwargs.get('remove_admin'):
                 node_lookup = {}
                 if 'nodes' in params.enterprise:
@@ -1854,6 +1920,19 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 logging.info('\'%s\' role is %s managing node \'%s\'', role_name, 'assigned to' if command == 'role_managed_node_add' else 'removed from', node_name)
                             else:
                                 logging.warning('\'%s\' role failed to %s managing node \'%s\': %s', role_name, 'assign' if command == 'role_managed_node_add' else 'remove', node_name, rs['message'])
+                        elif command in {'role_enforcement_add', 'role_enforcement_update', 'role_enforcement_remove'}:
+                            enforcement = rq['enforcement']
+                            if rs['result'] == 'success':
+                                logging.info('Enforcement \'%s\' is %s role \'%s\'',
+                                             enforcement,
+                                             'removed from' if command == 'role_enforcement_remove' else 'set to',
+                                             role_name)
+                            else:
+                                logging.warning('Enforcement \'%s\' role failed to be %s role \'%s\': %s',
+                                                enforcement,
+                                                'removed from' if command == 'role_enforcement_remove' else 'set to',
+                                                role_name,
+                                                rs['message'])
                         else:
                             if rs['result'] != 'success':
                                 logging.warning('\'%s\' error: %s', command, rs['message'])
@@ -1914,6 +1993,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         value = enforcements.get(p[1])
                         if value is not None:
                             print('{0:>24s}: {1}'.format(p[0], value))
+                if 'allow_secrets_manager' in enforcements:
+                    print('{0:>24s}: {1}'.format('Allow Secrets Manager', 'True'))
 
 
 class EnterpriseTeamCommand(EnterpriseCommand):
