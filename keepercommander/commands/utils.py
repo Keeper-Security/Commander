@@ -704,9 +704,13 @@ class KSMCliCommand(Command):
         return ksm_cli_parser
 
     def execute(self, params, **kwargs):
-
-        ksm_cli_command = kwargs.get('command')
-        subprocess.check_call(['ksm'] + ksm_cli_command)
+        try:
+            which_cmd = 'where' if sys.platform.startswith('win') else 'which'
+            subprocess.check_call([which_cmd, 'ksm'])
+        except subprocess.CalledProcessError:
+            print('Please install the ksm application to run ksm commands.')
+        else:
+            subprocess.check_call(['ksm'] + kwargs.get('command'))
 
 
 class KSMCommand(Command):
