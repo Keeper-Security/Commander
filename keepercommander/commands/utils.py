@@ -496,11 +496,13 @@ class WhoamiCommand(Command):
             environment = get_environment(hostname)
             if environment:
                 print('{0:>20s}: {1:<20s}'.format('Environment', get_environment(hostname)))
-            display_admin = 'No' if params.enterprise is None else 'Yes'
-            print('{0:>20s}: {1:<20s}'.format('Admin', display_admin))
             if params.license:
-                print('')
                 account_type = params.license['account_type'] if 'account_type' in params.license else None
+                if account_type == 2:
+                    display_admin = 'No' if params.enterprise is None else 'Yes'
+                    print('{0:>20s}: {1:<20s}'.format('Admin', display_admin))
+
+                print('')
                 account_type_name = 'Enterprise' if account_type == 2 \
                     else 'Family Plan' if account_type == 1 \
                     else params.license['product_type_name']
@@ -514,6 +516,9 @@ class WhoamiCommand(Command):
                     storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0     # note: int64 in protobuf in python produces string  as opposed to an int or long.
                     print('{0:>20s}: {1:<20s}'.format('Usage', f'{storage_usage}%'))
                     print('{0:>20s}: {1:<20s}'.format('Storage Renewal Date', params.license['storage_expiration_date']))
+                print('{0:>20s}: {1:<20s}'.format('Breach Watch', 'Yes' if params.license.get('breach_watch_enabled') else 'No'))
+                if params.enterprise:
+                    print('{0:>20s}: {1:<20s}'.format('Reporting & Alerts', 'Yes' if params.license.get('audit_and_reporting_enabled') else 'No'))
 
             if kwargs.get('verbose', False):
                 print('')
