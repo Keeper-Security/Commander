@@ -65,7 +65,10 @@ def get_params_from_config(config_filename):
                         params.user = params.config['user'].lower()
 
                     if 'server' in params.config:
-                        params.server = params.config['server']
+                        if '://' not in params.config['server']:
+                            params.server = f'https://{params.config["server"]}'
+                        else:
+                            params.server = params.config['server']
 
                     if 'password' in params.config:
                         params.password = params.config['password']

@@ -26,8 +26,6 @@ import requests
 import tempfile
 import json
 
-from urllib.parse import urlsplit
-
 from google.protobuf.json_format import MessageToDict
 from tabulate import tabulate
 from Cryptodome.Cipher import AES
@@ -52,6 +50,7 @@ from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
+from .helpers.whoami import get_hostname, get_environment, get_data_center
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
@@ -489,57 +488,35 @@ class WhoamiCommand(Command):
         return whoami_parser
 
     def execute(self, params, **kwargs):
-        is_verbose = kwargs.get('verbose') or False
-        if is_verbose:
-            if params.server:
-                parts = urlsplit(params.server)
-                host = parts[1]
-                cp = host.rfind(':')
-                if cp > 0:
-                    host = host[:cp]
-
-                host_str = host.lower()
-
-                if host_str.endswith('.eu'):
-                    data_center = 'EU'
-                elif host_str.endswith('.com'):
-                    data_center = 'US'
-                elif host_str.endswith('.au'):
-                    data_center = 'AU'
-                else:
-                    # Ideally we should determine TLD which might require additional lib
-                    data_center = host_str
-
-                print('{0:>20s}: {1}'.format('Data Center', data_center))
-                environment = ''
-                if host.startswith('dev.'):
-                    environment = 'DEV'
-                elif host.startswith('qa.'):
-                    environment = 'QA'
-                if environment:
-                    print('{0:>20s}: {1}'.format('Environment', environment))
-            print('')
-
         if params.session_token:
-            print('{0:>20s}: {1:<20s}'.format('Logged in as', params.user))
+            print('{0:>20s}: {1:<20s}'.format('User', params.user))
+            print('{0:>20s}: {1:<20s}'.format('Server', params.server))
+            hostname = get_hostname(params.server)
+            if hostname:
+                print('{0:>20s}: {1:<20s}'.format('Data Center', get_data_center(hostname)))
+                environment = get_environment(hostname)
+                if environment:
+                    print('{0:>20s}: {1:<20s}'.format('Environment', get_environment(hostname)))
+            display_admin = 'No' if params.enterprise is None else 'Yes'
+            print('{0:>20s}: {1:<20s}'.format('Admin', display_admin))
             if params.license:
                 print('')
                 account_type = params.license['account_type'] if 'account_type' in params.license else None
                 account_type_name = 'Enterprise' if account_type == 2 \
                     else 'Family Plan' if account_type == 1 \
                     else params.license['product_type_name']
-                print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', account_type_name))
-                print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
+                print('{0:>20s}: {1:<20s}'.format('Account Type', account_type_name))
+                print('{0:>20s}: {1:<20s}'.format('Renewal Date', params.license['expiration_date']))
                 if 'bytes_total' in params.license:
                     storage_bytes = int(params.license['bytes_total'])  # note: int64 in protobuf in python produces string as opposed to an int or long.
                     storage_gb = storage_bytes >> 30
                     storage_bytes_used = params.license['bytes_used'] if 'bytes_used' in params.license else 0
-                    print('{0:>20s} {1:>20s}: {2}GB'.format('Storage', 'Capacity', storage_gb))
+                    print('{0:>20s}: {1:<20s}'.format('Storage Capacity', f'{storage_gb}GB'))
                     storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0     # note: int64 in protobuf in python produces string  as opposed to an int or long.
-                    print('{0:>20s} {1:>20s}: {2}%'.format('', 'Usage', storage_usage))
-                    print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['storage_expiration_date']))
+                    print('{0:>20s}: {1:<20s}'.format('Usage', f'{storage_usage}%'))
+                    print('{0:>20s}: {1:<20s}'.format('Storage Renewal Date', params.license['storage_expiration_date']))
 
-            if is_verbose:
+            if kwargs.get('verbose', False):
                 print('')
                 print('{0:>20s}: {1}'.format('Records', len(params.record_cache)))
                 sf_count = len(params.shared_folder_cache)
