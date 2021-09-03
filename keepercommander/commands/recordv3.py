@@ -655,6 +655,11 @@ class RecordEditCommand(Command):
                 recordv2.RecordEditCommand().execute(params, **kwargs)
             return
 
+        # if record is v2
+        if rv <= 2:
+            recordv2.RecordEditCommand().execute(params, **kwargs)
+            return
+
         recordv3.RecordV3.validate_access(params, record_uid)
         convert = bool(kwargs.get('convert'))
         if convert:
