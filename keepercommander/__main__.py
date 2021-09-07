@@ -174,7 +174,6 @@ def main(from_package=False):
         logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
         logging.info('Debug %s', 'OFF' if is_debug else 'ON')
 
-
     if opts.batch_mode:
         params.batch_mode = True
 
@@ -215,19 +214,24 @@ def main(from_package=False):
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
     else:
-        if opts.command not in {'shell', '-'}:
-            if opts.command:
-                flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
-                options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
-                command = ' '.join([opts.command, flags])
-                if options:
-                    command += ' -- ' + options
-                params.commands.append(command)
+        if opts.command in {'shell', '-'}:
+            if opts.command == '-':
+                params.batch_mode = True
+        elif os.path.isfile(opts.command):
+            with open(opts.command, 'r') as f:
+                lines = f.readlines()
+                params.commands.extend([x.strip() for x in lines])
             params.commands.append('q')
             params.batch_mode = True
         else:
-            if opts.command == '-':
-                params.batch_mode = True
+            flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
+            options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
+            command = ' '.join([opts.command, flags])
+            if options:
+                command += ' -- ' + options
+            params.commands.append(command)
+            params.commands.append('q')
+            params.batch_mode = True
 
         errno = cli.loop(params)
 

@@ -11,6 +11,7 @@
 
 import argparse
 import collections
+import logging
 import re
 import fnmatch
 import shutil
@@ -262,7 +263,8 @@ class FolderMakeCommand(Command):
             if rs is not None:
                 base_folder, name = rs
                 if len(name) == 0:
-                    raise CommandError('mkdir', 'Folder "{0}" already exists'.format(kwargs['folder']))
+                    logging.info('mkdir: Folder "%s" already exists', kwargs['folder'])
+                    return
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
         user_folder = kwargs['user_folder'] if 'user_folder' in kwargs else None
