@@ -9,36 +9,36 @@
 # Contact: ops@keepersecurity.com
 #
 
-import os
-import sys
-import getpass
 import datetime
-import time
-import threading
 import functools
+import getpass
 import logging
+import os
 import re
 import shlex
 import subprocess
-
+import sys
+import threading
+import time
 from collections import OrderedDict
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.enums import EditingMode
+from prompt_toolkit.shortcuts import CompleteStyle
 
+from . import api, display, loginv3, ttk
+from .autocomplete import CommandCompleter
+from .commands import (
+    register_commands, register_enterprise_commands, register_msp_commands,
+    aliases, commands, command_info, enterprise_commands, msp_commands
+)
 from .commands.msp import get_mc_by_name_or_id
-
-from .params import KeeperParams
-from . import display, loginv3, api
-# from .api import sync_down, login, communicate, query_enterprise, query_msp, login_and_get_mc_params, login_and_get_mc_params_login_v3
+from .constants import OS_WHICH_CMD
 from .error import AuthenticationError, CommunicationError, CommandError
+from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
-from .autocomplete import CommandCompleter
-from .commands import register_commands, register_enterprise_commands, register_msp_commands, aliases, commands, \
-    command_info, enterprise_commands, msp_commands
-from . import ttk
+
 
 stack = []
 command_info = OrderedDict()
@@ -179,8 +179,7 @@ def do_command(params, command_line):
 
     if command_line.startswith('ksm'):
         try:
-            which_cmd = 'where' if sys.platform.startswith('win') else 'which'
-            subprocess.check_call([which_cmd, 'ksm'], stdout=subprocess.DEVNULL)
+            subprocess.check_call([OS_WHICH_CMD, 'ksm'], stdout=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
             logging.error(
                 'Please install the ksm application to run ksm commands.\n'
