@@ -180,7 +180,7 @@ def do_command(params, command_line):
     if command_line.startswith('ksm'):
         try:
             which_cmd = 'where' if sys.platform.startswith('win') else 'which'
-            subprocess.check_call([which_cmd, 'ksm'])
+            subprocess.check_call([which_cmd, 'ksm'], stdout=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
             logging.error(
                 'Please install the ksm application to run ksm commands.\n'
