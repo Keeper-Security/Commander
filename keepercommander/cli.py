@@ -182,7 +182,12 @@ def do_command(params, command_line):
             which_cmd = 'where' if sys.platform.startswith('win') else 'which'
             subprocess.check_call([which_cmd, 'ksm'])
         except subprocess.CalledProcessError:
-            logging.error('Please install the ksm application to run ksm commands.')
+            logging.error(
+                'Please install the ksm application to run ksm commands.\n'
+                'See https://docs.keeper.io/secrets-manager/secrets-manager'
+                '/secrets-manager-command-line-interface'
+                '#secrets-manager-cli-installation'
+            )
         else:
             if sys.platform.startswith('win'):
                 subprocess.check_call(command_line)
