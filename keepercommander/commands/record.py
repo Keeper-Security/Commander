@@ -189,7 +189,32 @@ shared_records_report_parser.error = raise_parse_exception
 shared_records_report_parser.exit = suppress_exit
 
 
-class RecordAddCommand(Command):
+class RecordUtils(object):
+    parameter_pattern = re.compile(r'^\${([^:]+?):([^}]+?)}$')
+
+    @staticmethod
+    def custom_field_value(value):  # type: (any) -> str
+        if not value:
+            return ''
+        if type(value) != str:
+            return value
+        m = RecordUtils.parameter_pattern.match(value.strip())
+        if m:
+            parts = m.groups()
+            if len(parts) == 2:
+                if parts[0].lower() == 'file':
+                    filename = parts[1].strip()
+                    if os.path.isfile(filename):
+                        with open(filename, 'r') as f:
+                            return f.read()
+                elif parts[0].lower() == 'env':
+                    if parts[1] in os.environ:
+                        return os.environ[parts[1]]
+
+        return value
+
+
+class RecordAddCommand(Command, RecordUtils):
     def get_parser(self):
         return add_parser
 
@@ -224,10 +249,10 @@ class RecordAddCommand(Command):
                 if custom_list[0] == '{' and custom_list[-1] == '}':
                     try:
                         custom_json = json.loads(custom_list)
-                        for k,v in custom_json.items():
+                        for k, v in custom_json.items():
                             custom.append({
                                 'name': k,
-                                'value': str(v)
+                                'value': self.custom_field_value(v)
                             })
                     except ValueError as e:
                         raise CommandError('add', 'Invalid custom fields JSON input: {0}'.format(e))
@@ -238,7 +263,7 @@ class RecordAddCommand(Command):
                         if idx > 0:
                             custom.append({
                                 'name': pair[:idx].strip(),
-                                'value': pair[idx+1:].strip()
+                                'value': self.custom_field_value(pair[idx+1:].strip())
                             })
                         else:
                             raise CommandError('add', 'Invalid custom fields input. Expected: "Key:Value". Got: "{0}"'.format(pair))
@@ -251,7 +276,7 @@ class RecordAddCommand(Command):
                         if name and value:
                             custom.append({
                                 'name': name,
-                                'value': value
+                                'value': self.custom_field_value(value)
                             })
 
         folder = None
@@ -323,12 +348,12 @@ class RecordAddCommand(Command):
         return record_uid
 
 
-class RecordEditCommand(Command):
+class RecordEditCommand(Command, RecordUtils):
     def get_parser(self):
         return edit_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
+        name = kwargs.get('record')
 
         if not name:
             self.get_parser().print_help()
@@ -394,7 +419,7 @@ class RecordEditCommand(Command):
                         for k,v in custom_json.items():
                             custom.append({
                                 'name': k,
-                                'value': str(v)
+                                'value': self.custom_field_value(v)
                             })
                     except ValueError as e:
                         raise CommandError('edit', 'Invalid custom fields JSON input: {0}'.format(e))
@@ -405,7 +430,7 @@ class RecordEditCommand(Command):
                         if idx > 0:
                             custom.append({
                                 'name': pair[:idx].strip(),
-                                'value': pair[idx+1:].strip()
+                                'value': self.custom_field_value(pair[idx+1:].strip())
                             })
                         else:
                             raise CommandError('edit', 'Invalid custom fields input. Expected: "Key:Value". Got: "{0}"'.format(pair))
@@ -417,7 +442,7 @@ class RecordEditCommand(Command):
                         if name and value:
                             custom.append({
                                 'name': name,
-                                'value': value
+                                'value': self.custom_field_value(value)
                             })
             if custom:
                 for c in custom:

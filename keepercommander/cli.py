@@ -506,6 +506,8 @@ def loop(params):  # type: (KeeperParams) -> int
             if command.startswith("@"):
                 suppress_errno = True
                 command = command[1:]
+            if params.batch_mode:
+                print(f'> {command}')
             error_no = 1
             result = do_command(params, command)
             error_no = 0

@@ -262,7 +262,7 @@ file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
 
-class RecordAddCommand(Command):
+class RecordAddCommand(Command, recordv2.RecordUtils):
     def get_parser(self):
         return add_parser
 
@@ -315,7 +315,11 @@ class RecordAddCommand(Command):
                 options.append('f.url='+ str(kwargs.get('url')))
                 kwargs['url'] = None
             if kwargs.get('custom'):
-                kwargs['custom_list'] = recordv3.RecordV3.custom_options_to_list(kwargs.get('custom'))
+                clst = recordv3.RecordV3.custom_options_to_list(kwargs.get('custom'))
+                for c in clst:
+                    if 'value' in c:
+                        c['value'] = self.custom_field_value(c['value'])
+                kwargs['custom_list'] = clst
                 kwargs['custom'] = None
             kwargs['option'] = options
 
@@ -574,7 +578,7 @@ class RecordAddCommand(Command):
             return record_uid
 
 
-class RecordEditCommand(Command):
+class RecordEditCommand(Command, recordv2.RecordUtils):
     def get_parser(self):
         return edit_parser
 
@@ -824,6 +828,9 @@ class RecordEditCommand(Command):
         copt = kwargs.get('custom')
         if copt:
             clst = recordv3.RecordV3.custom_options_to_list(copt)
+            for c in clst:
+                if 'value' in c:
+                    c['value'] = self.custom_field_value(c['value'])
 
             # any custom.text field conflicts with any legacy --custom option text fields
             # ex. c.text.label=abc c.text=abc will overwrite first legacy --custom text field
