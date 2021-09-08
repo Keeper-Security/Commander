@@ -193,7 +193,7 @@ delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
 
 
-clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-copy', description='Retrieve the password for a specific record')
+clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-copy|cc', description='Retrieve the password for a specific record')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='password output destination')
 clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='output login name instead of password')
