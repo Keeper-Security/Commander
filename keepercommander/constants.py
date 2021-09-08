@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 
+# Timeout constants
 # Set to default value by using timedelta of 0
 TIMEOUT_DEFAULT = timedelta(0)
 TIMEOUT_MIN = timedelta(minutes=1)
@@ -8,6 +9,7 @@ TIMEOUT_MAX = timedelta(days=30)
 TIMEOUT_DEFAULT_UNIT = 'minutes'
 TIMEOUT_ALLOWED_UNITS = ('days', 'hours', 'minutes')
 
+# Enforcement constants
 _ENFORCEMENTS = [
     ("MASTER_PASSWORD_MINIMUM_LENGTH", 10, "LONG"),
     ("MASTER_PASSWORD_MINIMUM_SPECIAL", 11, "LONG"),
@@ -111,3 +113,10 @@ _ENFORCEMENTS = [
 ENFORCEMENTS = {}
 for e in _ENFORCEMENTS:
     ENFORCEMENTS[e[0].lower()] = e[2].lower()
+
+# OS dependent constants
+if sys.platform.startswith('win'):
+        OS_WHICH_CMD = 'where'
+    else:
+        OS_WHICH_CMD = 'which'
+
