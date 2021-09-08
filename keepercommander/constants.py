@@ -1,3 +1,4 @@
+import sys
 from datetime import timedelta
 
 
@@ -116,7 +117,6 @@ for e in _ENFORCEMENTS:
 
 # OS dependent constants
 if sys.platform.startswith('win'):
-        OS_WHICH_CMD = 'where'
-    else:
-        OS_WHICH_CMD = 'which'
-
+    OS_WHICH_CMD = 'where'
+else:
+    OS_WHICH_CMD = 'which'
