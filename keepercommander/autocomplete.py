@@ -210,13 +210,13 @@ class CommandCompleter(Completer):
                     extra['have_initial_double_quote'] = bool(raw_input) and raw_input[0] == '"'
                     context = ''
                     if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
-                               'rm', 'clipboard-copy', 'find-password'}:
+                               'rm', 'ls', 'clipboard-copy', 'find-password'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             opts, _ = record_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
-                    elif cmd in {'ls', 'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
+                    elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             opts, _ = folder_parser.parse_known_args(shlex.split(args))

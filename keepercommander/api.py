@@ -1483,10 +1483,7 @@ def communicate_rest(params, request, endpoint):
     if request:
         api_request_payload.payload = request.SerializeToString()
 
-    try:
-        rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
-    except Exception as e:
-        raise KeeperApiError('Rest API', str(e))
+    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
     if type(rs) == bytes:
         TTK.update_time_of_last_activity()
         return rs

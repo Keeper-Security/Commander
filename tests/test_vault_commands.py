@@ -1,9 +1,11 @@
 import tempfile
 import json
 import os
+import shutil
 import warnings
-
 from unittest import TestCase, mock
+
+import pytest
 
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
@@ -11,13 +13,14 @@ from keepercommander import cli, api
 from keepercommander.subfolder import BaseFolderNode
 
 
+@pytest.mark.integration
 class TestConnectedCommands(TestCase):
     params = None
 
     @classmethod
     def setUpClass(cls):
         cls.params = KeeperParams()
-        read_config_file(cls.params)
+        read_config_file(cls.params, 'vault.json')
         api.login(cls.params)
         TestConnectedCommands.wipe_out_data()
 
@@ -74,11 +77,15 @@ class TestConnectedCommands(TestCase):
 
     def setUp(self):
         warnings.simplefilter('ignore', category=ImportWarning)
+        # Windows doesn't play nice with temp files, so create tmpdir that may fail to delete
+        # self.tmpdir = os.path.join(os.path.dirname(__file__), 'tmp')
+        # os.makedirs(self.tmpdir, exist_ok=True)
+        # self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 
     def test_commands(self):
         params = TestConnectedCommands.params # type: KeeperParams
         with mock.patch('builtins.input', side_effect = KeyboardInterrupt()), mock.patch('builtins.print'):
-            record_uid = cli.do_command(params, 'add  --login="user@keepersecurity.com" --pass=password --url="https://keepersecurity.com/" --custom="{\\"cmdr:plugin\\":\\"noop\\"}" "Record 1"')
+            record_uid = cli.do_command(params, 'add  --login="user@keepersecurity.com" --pass=password --url="https://keepersecurity.com/" --custom="{\\"cmdr:plugin\\":\\"noop\\"}" --title="Record 1"')
             cli.do_command(params, 'sync-down')
 
             rec = api.get_record(params, record_uid)
@@ -115,11 +122,15 @@ class TestConnectedCommands(TestCase):
             cli.do_command(params, 'search record')
             cli.do_command(params, 'search folder')
 
-            with tempfile.NamedTemporaryFile() as f:
-                f.write(b'data')
-                f.flush()
-                cli.do_command(params, 'cd "User Folder 1"')
-                cli.do_command(params, 'upload-attachment --file="{0}" "Record 1"'.format(f.name))
+            with tempfile.NamedTemporaryFile(delete=False) as f:
+                try:
+                    f.write(b'data')
+                    f.flush()
+                    cli.do_command(params, 'cd "User Folder 1"')
+                    cli.do_command(params, 'upload-attachment --file="{0}" "Record 1"'.format(f.name))
+                    f.close()
+                finally:
+                    os.remove(f.name)
             cli.do_command(params, 'sync-down')
 
             rec = api.get_record(params, record_uid)

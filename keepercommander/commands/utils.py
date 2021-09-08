@@ -8,7 +8,6 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-import hashlib
 import hmac
 import re
 import os
@@ -19,14 +18,13 @@ import datetime
 import getpass
 import sys
 import platform
-from time import time
+from datetime import timedelta
 from distutils.util import strtobool
+from time import time
 
 import requests
 import tempfile
 import json
-
-from urllib.parse import urlsplit
 
 from google.protobuf.json_format import MessageToDict
 from tabulate import tabulate
@@ -36,9 +34,9 @@ from Cryptodome.Math.Numbers import Integer
 
 from .recordv3 import get_record
 from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
-    GetAppInfoRequest, GetAppInfoResponse, AppClient, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
+    GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
-from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain, sync_down, search_records
+from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..cli import init_recordv3_commands
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
@@ -46,9 +44,13 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..record import Record
 from .. import api, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
-from ..record_pb2 import RecordsAddRequest, RecordAdd, RecordsModifyResponse, RecordModifyResult, ApplicationAddRequest
+from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
+from .helpers.timeout import (
+    enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
+)
+from .helpers.whoami import get_hostname, get_environment, get_data_center
 from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
@@ -88,7 +90,6 @@ def register_command_info(aliases, command_info):
     aliases['v'] = 'version'
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
-    aliases['ksm'] = 'secrets-manager'
     for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser
               ]:
@@ -114,6 +115,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
+      --name [CLIENT NAME] : Name of the client (Default: Random 10 characters string)
       --first-access-expires-in-min [MIN] : First time access expiration (Default 60, Max 1440)
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --unlock-ip : Does not lock IP address to first requesting device
@@ -230,6 +232,7 @@ ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true
                         help='Unlock IP Address.')
 ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
                         help='Return Tokens', default='false')
+ksm_parser.add_argument('--name', '-n', type=str, dest='name', action='store', help='client name')
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -355,9 +358,10 @@ class ThisDeviceCommand(Command):
         elif action == 'timeout' or action == 'to':
 
             value = ops[1]
-            value_extracted = ThisDeviceCommand.get_setting_str_to_value('logout_timer', value)
-            loginv3.LoginV3API.set_user_setting(params, 'logout_timer', value_extracted)
-            print("Successfully modified 'logout_timer' setting")
+            timeout_delta = enforce_timeout_range(ThisDeviceCommand.get_setting_str_to_value('logout_timer', value))
+            loginv3.LoginV3API.set_user_setting(params, 'logout_timer', get_timeout_setting_from_delta(timeout_delta))
+            dispay_value = 'default value' if timeout_delta == timedelta(0) else format_timeout(timeout_delta)
+            print(f'Successfully set "logout_timer" to {dispay_value}.')
 
         else:
             raise Exception("Unknown sub-command " + action + ". Available sub-commands: ", ", ".join(this_device_available_command_verbs))
@@ -376,9 +380,7 @@ class ThisDeviceCommand(Command):
             else:
                 raise Exception("Unknown value. Available values 'yes'/'no', 'y'/'n', 'on'/'off', '1'/'0', 'true'/'false'")
         elif name == 'logout_timer':
-            if not loginv3.CommonHelperMethods.check_int(value):
-                raise Exception("Entered value is not an integer. Please enter integer")
-            final_val = value
+            final_val = parse_timeout(value)
         else:
             raise Exception("Unhandled settings name '" + name + "'")
 
@@ -447,9 +449,8 @@ class ThisDeviceCommand(Command):
             print("{:>20}: {}".format('Persistent Login', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
 
         if 'logoutTimer' in acct_summary_dict['settings']:
-            logoutTimer = acct_summary_dict['settings']['logoutTimer']
-            logoutTimerMin = int(logoutTimer) / 1000 / 60
-            print("{:>20}: {} minutes".format('Logout Timeout', int(logoutTimerMin)))
+            timeout_delta = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
+            print("{:>20}: {}".format('Logout Timeout', format_timeout(timeout_delta)))
 
         else:
             print("{:>20}: Default".format('Logout Timeout'))
@@ -487,57 +488,39 @@ class WhoamiCommand(Command):
         return whoami_parser
 
     def execute(self, params, **kwargs):
-        is_verbose = kwargs.get('verbose') or False
-        if is_verbose:
-            if params.server:
-                parts = urlsplit(params.server)
-                host = parts[1]
-                cp = host.rfind(':')
-                if cp > 0:
-                    host = host[:cp]
-
-                host_str = host.lower()
-
-                if host_str.endswith('.eu'):
-                    data_center = 'EU'
-                elif host_str.endswith('.com'):
-                    data_center = 'US'
-                elif host_str.endswith('.au'):
-                    data_center = 'AU'
-                else:
-                    # Ideally we should determine TLD which might require additional lib
-                    data_center = host_str
-
-                print('{0:>20s}: {1}'.format('Data Center', data_center))
-                environment = ''
-                if host.startswith('dev.'):
-                    environment = 'DEV'
-                elif host.startswith('qa.'):
-                    environment = 'QA'
-                if environment:
-                    print('{0:>20s}: {1}'.format('Environment', environment))
-            print('')
-
         if params.session_token:
-            print('{0:>20s}: {1:<20s}'.format('Logged in as', params.user))
+            hostname = get_hostname(params.rest_context.server_base)
+            print('{0:>20s}: {1:<20s}'.format('User', params.user))
+            print('{0:>20s}: {1:<20s}'.format('Server', hostname))
+            print('{0:>20s}: {1:<20s}'.format('Data Center', get_data_center(hostname)))
+            environment = get_environment(hostname)
+            if environment:
+                print('{0:>20s}: {1:<20s}'.format('Environment', get_environment(hostname)))
             if params.license:
-                print('')
                 account_type = params.license['account_type'] if 'account_type' in params.license else None
+                if account_type == 2:
+                    display_admin = 'No' if params.enterprise is None else 'Yes'
+                    print('{0:>20s}: {1:<20s}'.format('Admin', display_admin))
+
+                print('')
                 account_type_name = 'Enterprise' if account_type == 2 \
                     else 'Family Plan' if account_type == 1 \
                     else params.license['product_type_name']
-                print('{0:>20s} {1:>20s}: {2}'.format('Account', 'Type', account_type_name))
-                print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['expiration_date']))
+                print('{0:>20s}: {1:<20s}'.format('Account Type', account_type_name))
+                print('{0:>20s}: {1:<20s}'.format('Renewal Date', params.license['expiration_date']))
                 if 'bytes_total' in params.license:
                     storage_bytes = int(params.license['bytes_total'])  # note: int64 in protobuf in python produces string as opposed to an int or long.
                     storage_gb = storage_bytes >> 30
                     storage_bytes_used = params.license['bytes_used'] if 'bytes_used' in params.license else 0
-                    print('{0:>20s} {1:>20s}: {2}GB'.format('Storage', 'Capacity', storage_gb))
+                    print('{0:>20s}: {1:<20s}'.format('Storage Capacity', f'{storage_gb}GB'))
                     storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0     # note: int64 in protobuf in python produces string  as opposed to an int or long.
-                    print('{0:>20s} {1:>20s}: {2}%'.format('', 'Usage', storage_usage))
-                    print('{0:>20s} {1:>20s}: {2}'.format('', 'Renewal Date', params.license['storage_expiration_date']))
+                    print('{0:>20s}: {1:<20s}'.format('Usage', f'{storage_usage}%'))
+                    print('{0:>20s}: {1:<20s}'.format('Storage Renewal Date', params.license['storage_expiration_date']))
+                print('{0:>20s}: {1:<20s}'.format('Breach Watch', 'Yes' if params.license.get('breach_watch_enabled') else 'No'))
+                if params.enterprise:
+                    print('{0:>20s}: {1:<20s}'.format('Reporting & Alerts', 'Yes' if params.license.get('audit_and_reporting_enabled') else 'No'))
 
-            if is_verbose:
+            if kwargs.get('verbose', False):
                 print('')
                 print('{0:>20s}: {1}'.format('Records', len(params.record_cache)))
                 sf_count = len(params.shared_folder_cache)
@@ -790,18 +773,23 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print(f"  {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} --secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} --editable{bcolors.ENDC}")
+                print(f"  {bcolors.OKGREEN}secrets-manager client add "
+                      f"--app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} "
+                      f"--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} "
+                      f"--name {bcolors.OKBLUE}[CLIENT NAME] "
+                      f"--editable{bcolors.ENDC}")
                 return
 
             count = kwargs.get('count')
             unlock_ip = kwargs.get('unlockIp')
+            client_name = kwargs.get('name')
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
 
             is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
 
-            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min)
+            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min, client_name)
             return tokens if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
@@ -817,20 +805,38 @@ class KSMCommand(Command):
         print(f"{bcolors.WARNING}Unknown combination of KSM commands. Type 'secrets-manager' for more details'{bcolors.ENDC}")
 
     @staticmethod
+    def get_master_key_from_record(rec_cache_val):
+
+        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
+        app_record = json.loads(r_unencr_json_data)
+
+        if 'fields' in app_record:
+            # TODO:
+            #  This check can be removed even now. Adding it here just to make sure test apps that were created
+            #  by the team are still working. There are no records with this format were created by any of the customers
+            master_key_str = app_record.get('fields')[0].get('value')[0]
+            logging.warning("\n-----------------------------------------------------------------------------------\n"
+                            "  This App uid=%s uses old format which will not work properly in \n"
+                            "  the Web interface and it is recommended to delete it and create a new one.\n"
+                            "-----------------------------------------------------------------------------------"
+                            % rec_cache_val.get('record_uid'))
+        else:
+            master_key_str = app_record.get('app_key')  # TODO: Search for field = password and get 1st value
+
+        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+
+        return master_key
+
+    @staticmethod
     def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
 
         rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
-
         if rec_cache_val is None:
             logging.warning('Application "%s" not found.' % app_name_or_uid)
             return
 
         app_record_uid = rec_cache_val.get('record_uid')
-        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
-        app_record = json.loads(r_unencr_json_data)
-
-        master_key_str = app_record.get('fields')[0].get('value')[0] # TODO: Get
-        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+        master_key = KSMCommand.get_master_key_from_record(rec_cache_val)
 
         KSMCommand.share_secret(
             params=params,
@@ -1081,15 +1087,13 @@ class KSMCommand(Command):
                 data = json.loads(rec.get('data_unencrypted'))
                 rec_uid = rec.get('record_uid')
                 rec_title = data.get('title')
-                rec_type = data.get('type')
 
-                if rec_type == 'app':
-                    if rec_uid == search_str.strip() or rec_title.lower() == search_str.strip().lower():
-                        search_results_rec_data.append(
-                            {
-                                'uid': rec_uid,
-                                'data': data
-                            })
+                if rec_uid == search_str.strip() or rec_title.lower() == search_str.strip().lower():
+                    search_results_rec_data.append(
+                        {
+                            'uid': rec_uid,
+                            'data': data
+                        })
 
         return search_results_rec_data
 
@@ -1108,13 +1112,7 @@ class KSMCommand(Command):
 
         app_record_data = {
             'title': app_name,
-            'type': 'app',
-            'fields': [
-                {
-                    'type': 'password',
-                    'value': [master_key_str]
-                }
-            ]
+            'app_key': master_key_str
         }
 
         data_json = json.dumps(app_record_data)
@@ -1226,15 +1224,17 @@ class KSMCommand(Command):
             print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
 
     @staticmethod
-    def add_client(params, app_name_or_uid, count, unlock_ip, firstAccessExpireOn, access_expire_in_min):
+    def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
+                   client_name=None):
 
-        if unlock_ip is str:
+        if isinstance(unlock_ip, bool):
+            is_ip_unlocked = unlock_ip
+        else:
             is_ip_unlocked = bool(strtobool(unlock_ip))
-        is_ip_unlocked = unlock_ip
 
         curr_ms = int(time() * 1000)
 
-        first_access_expire_on_ms = curr_ms + (int(firstAccessExpireOn) * 60 * 1000)
+        first_access_expire_on_ms = curr_ms + (int(first_access_expire_on) * 60 * 1000)
 
         if access_expire_in_min:
             access_expire_on_ms = curr_ms + (int(access_expire_in_min) * 60 * 1000)
@@ -1251,10 +1251,9 @@ class KSMCommand(Command):
         app_record = json.loads(r_unencr_json_data)
 
         # master_key = app_record.
-        logging.debug("App uid=%s, unlock_ip=%s" % (app_record.get('record_uid'), unlock_ip))
+        logging.debug("App uid=%s, unlock_ip=%s" % (rec_cache_val.get('record_uid'), unlock_ip))
 
-        master_key_str = app_record.get('fields')[0].get('value')[0]  # TODO: Search for field = password and get 1st value
-        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
+        master_key = KSMCommand.get_master_key_from_record(rec_cache_val)
 
         keys_str = ""
         otat_str = ""
@@ -1285,6 +1284,9 @@ class KSMCommand(Command):
 
             rq.clientId = mac
 
+            if client_name:
+                rq.id = client_name
+
             api_request_payload = ApiRequestPayload()
             api_request_payload.payload = rq.SerializeToString()
             api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
@@ -1311,8 +1313,11 @@ class KSMCommand(Command):
                 token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
                 tokens.append(token)
 
-                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n' \
-                            f'IP Lock: {lock_ip_stat}\n' \
+                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n'
+                if client_name:
+                    otat_str += f'Name: {client_name}\n'
+
+                otat_str += f'IP Lock: {lock_ip_stat}\n' \
                             f'Token Expires On: {exp_date_str}\n' \
                             f'App Access Expires on: {app_expire_on_str}\n'
 
@@ -1333,10 +1338,11 @@ class LogoutCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
-        try:
-            api.communicate_rest(params, None, 'vault/logout_v3')
-        except:
-            pass
+        if params.session_token:
+            try:
+                api.communicate_rest(params, None, 'vault/logout_v3')
+            except:
+                pass
         params.clear_session()
 
 

@@ -11,6 +11,7 @@
 
 import argparse
 import collections
+import logging
 import re
 import fnmatch
 import shutil
@@ -46,6 +47,8 @@ ls_parser = argparse.ArgumentParser(prog='ls', description='List folder contents
 ls_parser.add_argument('-l', '--list', dest='detail', action='store_true', help='show detailed list')
 ls_parser.add_argument('-f', '--folders', dest='folders', action='store_true', help='display folders')
 ls_parser.add_argument('-r', '--records', dest='records', action='store_true', help='display records')
+ls_parser.add_argument('-s', '--short', dest='short', action='store_true',
+                       help='Do not display record details.')
 ls_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 ls_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 ls_parser.error = raise_parse_exception
@@ -173,7 +176,8 @@ class FolderListCommand(Command):
                 if len(records) > 0:
                     if len(records) < 5:
                         api.get_record_shares(params, [x.record_uid for x in records])
-                    display.formatted_records(records, folder=folder.uid, verbose=kwargs['verbose'])
+                    display.formatted_records(records, folder=folder.uid, verbose=kwargs.get('verbose', False),
+                                              skip_details=kwargs.get('short', False))
             else:
                 names = []
                 for f in folders:
@@ -259,7 +263,8 @@ class FolderMakeCommand(Command):
             if rs is not None:
                 base_folder, name = rs
                 if len(name) == 0:
-                    raise CommandError('mkdir', 'Folder "{0}" already exists'.format(kwargs['folder']))
+                    logging.info('mkdir: Folder "%s" already exists', kwargs['folder'])
+                    return
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
         user_folder = kwargs['user_folder'] if 'user_folder' in kwargs else None

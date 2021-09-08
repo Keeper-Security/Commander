@@ -18,6 +18,7 @@ import threading
 import functools
 import logging
 import re
+import subprocess
 
 from collections import OrderedDict
 
@@ -175,7 +176,16 @@ def do_command(params, command_line):
         display.formatted_history(stack)
         return
 
-    if '-h' in command_line.lower():
+    if command_line.startswith('ksm'):
+        try:
+            which_cmd = 'where' if sys.platform.startswith('win') else 'which'
+            subprocess.check_call([which_cmd, 'ksm'])
+        except subprocess.CalledProcessError:
+            logging.error('Please install the ksm application to run ksm commands.')
+        else:
+            subprocess.check_call(command_line)
+        return
+    elif '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):
             print("usage: history|h [-h]")
             print("\nShow command history.")
@@ -459,7 +469,8 @@ def loop(params):  # type: (KeeperParams) -> int
         init_recordv3_commands(params)
 
     while True:
-        ttk.TTK.update(params)
+        if params.session_token:
+            ttk.TTK.update(params)
 
         command = ''
         if len(params.commands) > 0:
@@ -495,6 +506,8 @@ def loop(params):  # type: (KeeperParams) -> int
             if command.startswith("@"):
                 suppress_errno = True
                 command = command[1:]
+            if params.batch_mode:
+                print(f'> {command}')
             error_no = 1
             result = do_command(params, command)
             error_no = 0
