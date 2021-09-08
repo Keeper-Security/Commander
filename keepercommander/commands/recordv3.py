@@ -1480,7 +1480,7 @@ class ClipboardCommand(Command):
                 logging.info(f'{copy_item} copied to clipboard')
             else:
                 print(f'{copy_item}:\n{txt}')
-            if not kwargs.get('login') and not kwargs.get('copy_uid'):
+            if copy_item == 'Password':
                 params.queue_audit_event('copy_password', record_uid=record_uid)
 
 
