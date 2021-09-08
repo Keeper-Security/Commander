@@ -1479,7 +1479,7 @@ class ClipboardCommand(Command):
                 pyperclip.copy(txt)
                 logging.info(f'{copy_item} copied to clipboard')
             else:
-                print(f'{copy_item}:\n{txt}')
+                print(txt)
             if copy_item == 'Password':
                 params.queue_audit_event('copy_password', record_uid=record_uid)
 
