@@ -27,7 +27,6 @@ from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
 from . import api, display, loginv3, ttk
-from .autocomplete import CommandCompleter
 from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
@@ -38,6 +37,7 @@ from .error import AuthenticationError, CommunicationError, CommandError
 from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
+from .autocomplete import CommandCompleter
 
 
 stack = []
