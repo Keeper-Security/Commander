@@ -263,7 +263,7 @@ class FolderMakeCommand(Command):
             if rs is not None:
                 base_folder, name = rs
                 if len(name) == 0:
-                    logging.info('mkdir: Folder "%s" already exists', kwargs['folder'])
+                    logging.warning('mkdir: Folder "%s" already exists', kwargs['folder'])
                     return
 
         shared_folder = kwargs['shared_folder'] if 'shared_folder' in kwargs else None
