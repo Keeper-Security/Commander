@@ -197,6 +197,7 @@ clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-co
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='password output destination')
 clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='output login name instead of password')
+clipboard_copy_parser.add_argument('-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 clipboard_copy_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 clipboard_copy_parser.error = raise_parse_exception
@@ -1463,15 +1464,23 @@ class ClipboardCommand(Command):
 
         recordv3.RecordV3.validate_access(params, record_uid)
         rec = api.get_record(params, record_uid)
-        txt = rec.login if kwargs.get('login') else rec.password
+        if kwargs.get('login'):
+            copy_item = 'Login'
+            txt = rec.login
+        elif kwargs.get('copy_uid'):
+            copy_item = 'Record UID'
+            txt = record_uid
+        else:
+            copy_item = 'Password'
+            txt = rec.password
         if txt:
             if kwargs['output'] == 'clipboard':
                 import pyperclip
                 pyperclip.copy(txt)
-                logging.info('Copied to clipboard')
+                logging.info(f'{copy_item} copied to clipboard')
             else:
-                print(txt)
-            if not kwargs.get('login'):
+                print(f'{copy_item}:\n{txt}')
+            if not kwargs.get('login') and not kwargs.get('copy_uid'):
                 params.queue_audit_event('copy_password', record_uid=record_uid)
 
 
