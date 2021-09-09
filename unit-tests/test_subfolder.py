@@ -2,8 +2,9 @@
 
 """Test keepercommander.subfolder."""
 
-from unittest import TestCase, skip
 from unittest.mock import Mock
+
+import pytest
 
 import keepercommander.subfolder as subfolder
 
@@ -44,159 +45,37 @@ def create_fake_params():
     return params, root_bfn, cd_tests_bfn
 
 
-class TestSubfolderTryResolvePath(TestCase):
-    """Tests for subfolders.try_resolve_path."""
+(global_params, global_root_bfn, global_cd_tests_bfn) = create_fake_params()
 
-    def setUp(self):
-        """Set up self.params, self.root_bfn and self.cd_tests_bfn."""
-        (self.params, self.root_bfn, self.cd_tests_bfn) = create_fake_params()
-
-    def test_a(self):
-        """Try an a try_resolve_path, where a does not preexist."""
-        folder, final = subfolder.try_resolve_path(self.params, 'a')
-        assert folder is self.root_bfn
-        assert final == 'a'
-
-    def test_slash_a(self):
-        """Try a /a try_resolve_path, where /a does not preexist."""
-        folder, final = subfolder.try_resolve_path(self.params, '/a')
-        assert folder is self.root_bfn
-        assert final == 'a'
-
-    def test_slash_a_b(self):
-        """Try a /a/b try_resolve_path, where neither /a/b nor /a preexist."""
-        folder, final = subfolder.try_resolve_path(self.params, '/a/b')
-        assert folder is self.root_bfn
-        assert final == 'a/b'
-
-    def test_slash_cd_tests_a(self):
-        """Try a /cd-tests/a try_resolve_path, where /cd-tests preexists, but /cd-tests/b does not."""
-        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/a')
-        assert folder is self.cd_tests_bfn
-        assert final == 'a'
-
-    def test_slash_cd_tests(self):
-        """Try a /cd-tests try_resolve_path, where /cd-tests preexists."""
-        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests')
-        assert folder is self.cd_tests_bfn
-        assert final == ''
-
-    def test_a_slash_slash_b(self):
-        """Try an a//b try_resolve_path, where neither a/b nor a preexist."""
-        folder, final = subfolder.try_resolve_path(self.params, 'a//b')
-        assert folder is self.root_bfn
-        assert final == 'a//b'
-
-    def test_slash_slash_a(self):
-        """Try a //a try_resolve_path, where /a does not preexist.  Note that we want to create '/a', not 'a' in /."""
-        folder, final = subfolder.try_resolve_path(self.params, '//a')
-        assert folder is self.root_bfn
-        assert final == '//a'
-
-    def test_slash_slash_a_slash_slash_b(self):
-        """
-        Try a //a//b try_resolve_path, where neither.
-
-        Note that we want to create '/a/b', not 'a' in / and b in that.
-        """
-        folder, final = subfolder.try_resolve_path(self.params, '//a//b')
-        assert folder is self.root_bfn
-        assert final == '//a//b'
-
-    def test_cd_tests_slash_a_slash_slash_b_slash_slash_c(self):
-        """
-        Try a /cd-tests/a//b//c try_resolve_path.
-
-        Note that we want to create 'cd-tests/a/b/c', not 'a' in cd-tests and b in that and c in that.
-        """
-        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/a//b//c')
-        assert folder is self.cd_tests_bfn
-        assert final == 'a//b//c'
-
-    def test_cd_tests_dot_dot(self):
-        """Try a /cd-tests/.. try_resolve_path, where /cd-tests preexists."""
-        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/..')
-        assert folder is self.root_bfn
-        assert final == ''
-
-    def test_cd_tests_dot(self):
-        """Try a /cd-test/. try_resolve_path, where /cd-tests preexists."""
-        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests/.')
-        assert folder is self.cd_tests_bfn
-        assert final == ''
-
-    def test_slash_dot_dot(self):
-        """Try a /.. try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/..')
-        assert folder is self.root_bfn
-        assert final == ''
-
-    def test_slash_dot(self):
-        """Try a /. try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/.')
-        assert folder is self.root_bfn
-        assert final == ''
-
-    def test_slash_dot_cd_tests(self):
-        """Try a /./cd-tests try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/./cd-tests')
-        assert folder is self.cd_tests_bfn
-        assert final == ''
-
-    def test_slash_dot_cd_tests_nonexistent(self):
-        """Try a /./cd-tests/nonexistent try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/./cd-tests/nonexistent')
-        assert folder is self.cd_tests_bfn
-        assert final == 'nonexistent'
-
-    def test_slash_dot_cd_tests_dot_nonexistent(self):
-        """Try a /./cd-tests/./nonexistent try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/./cd-tests/./nonexistent')
-        assert folder is self.cd_tests_bfn
-        assert final == 'nonexistent'
-
-    def test_slash_cd_tests_space(self):
-        """Try a '/cd-tests ' try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/cd-tests ')
-        assert folder is self.cd_tests_bfn
-        assert final == ''
-
-    def test_slash_space_cd_tests(self):
-        """Try a '/ cd-tests' try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/ cd-tests')
-        assert folder is self.cd_tests_bfn
-        assert final == ''
-
-    def test_slash_space_cd_tests_space(self):
-        """Try a '/ cd-tests ' try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/ cd-tests ')
-        assert folder is self.cd_tests_bfn
-        assert final == ''
-
-    @skip("This is a corner case that we don't really care about much.")
-    def test_slash_space_slash_a(self):
-        """Try a '/ /a' try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/ /a')
-        assert folder is self.root_bfn
-        assert final == '//a'
-
-    def test_slash(self):
-        """Try a '/' try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '/')
-        assert folder is self.root_bfn
-        assert final == ''
-
-    def test_slash_slash(self):
-        """Try a '//' try_resolve_path."""
-        folder, final = subfolder.try_resolve_path(self.params, '//')
-        assert folder is self.root_bfn
-        assert final == '//'
+global_test_params = (
+    ('a', global_root_bfn, 'a'),
+    ('/a', global_root_bfn, 'a'),
+    ('/a/b', global_root_bfn, 'a/b'),
+    ('/cd-tests/a', global_cd_tests_bfn, 'a'),
+    ('/cd-tests', global_cd_tests_bfn, ''),
+    ('a//b', global_root_bfn, 'a//b'),
+    ('//a', global_root_bfn, '//a'),
+    ('//a//b', global_root_bfn, '//a//b'),
+    ('/cd-tests/a//b//c', global_cd_tests_bfn, 'a//b//c'),
+    ('/cd-tests/..', global_root_bfn, ''),
+    ('/cd-tests/.', global_cd_tests_bfn, ''),
+    ('/..', global_root_bfn, ''),
+    ('/.', global_root_bfn, ''),
+    ('/./cd-tests', global_cd_tests_bfn, ''),
+    ('/./cd-tests/nonexistent', global_cd_tests_bfn, 'nonexistent'),
+    ('/./cd-tests/./nonexistent', global_cd_tests_bfn, 'nonexistent'),
+    ('/./cd-tests/ ', global_cd_tests_bfn, ''),
+    ('/ cd-tests', global_cd_tests_bfn, ''),
+    ('/ cd-tests ', global_cd_tests_bfn, ''),
+    # ('/ /a', global_root_bfn, '//a'),  # This is a corner case we are willing to ignore
+    ('/', global_root_bfn, ''),
+    ('//', global_root_bfn, '//'),
+)
 
 
-if __name__ == '__main__':
-    instance = TestSubfolderTryResolvePath()
-    if hasattr(instance, 'setUp'):
-        instance.setUp()
-    instance.test_slash_slash()
-    if hasattr(instance, 'tearDown'):
-        instance.tearDown()
+@pytest.mark.parametrize('input_, expected_folder, expected_final', global_test_params)
+def test_subfolder_try_resolve_path(input_, expected_folder, expected_final):
+    """Test try_resolve_path."""
+    actual_folder, actual_final = subfolder.try_resolve_path(global_params, input_)
+    assert actual_folder is expected_folder
+    assert actual_final == expected_final
