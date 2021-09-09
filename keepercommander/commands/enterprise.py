@@ -3344,10 +3344,7 @@ class SecurityAuditReportCommand(Command):
             format = kwargs['format']
 
         rq = proto.SecurityReportRequest()
-        rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data')
-
-        security_report_data_rs = proto.SecurityReportResponse()
-        security_report_data_rs.ParseFromString(rs)
+        security_report_data_rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data', rs_type=proto.SecurityReportResponse)
 
         rows = []
         for sr in security_report_data_rs.securityReport:
