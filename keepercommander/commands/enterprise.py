@@ -3027,7 +3027,8 @@ class AuditReportCommand(Command):
             return ''
 
         if field == "created":
-            dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+            parsed_time = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S.%f')
+            dt = parsed_time.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
             rt = kwargs.get('report_type') or ''
             if rt in {'day', 'week'}:
                 dt = dt.date()
