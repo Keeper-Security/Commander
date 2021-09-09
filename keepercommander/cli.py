@@ -454,21 +454,14 @@ def loop(params):  # type: (KeeperParams) -> int
         logging.getLogger().setLevel(logging.WARNING)
 
     if params.user:
-        if len(params.commands) == 0:
-            if not params.login_v3 and not params.password:
-                logging.info('Enter password for {0}'.format(params.user))
-                try:
-                    if not params.login_v3:
-                        params.password = getpass.getpass(prompt='Password: ', stream=None)
-                except KeyboardInterrupt:
-                    print('')
-                except EOFError:
-                    return 0
-    # if params.password:
         try:
             api.login(params)
             if params.session_token:
                 do_command(params, 'sync-down')
+        except KeyboardInterrupt:
+            print('')
+        except EOFError:
+            return 0
         except Exception as e:
             logging.error(e)
 

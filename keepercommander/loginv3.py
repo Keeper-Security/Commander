@@ -455,8 +455,11 @@ class LoginV3Flow:
                 else:
                     print(f"     {channel_desc}")
 
+            print(f"  q. Quit login attempt and return to Commander prompt")
             try:
-                selection: str = input('Selection: ')
+                selection = input('Selection: ')
+                if selection == 'q':
+                    raise KeyboardInterrupt()
                 idx = 1 if not selection else int(selection)
                 assert 1 <= idx <= len(channel_types)
                 channel_type = list(channel_types.keys())[idx - 1]
@@ -466,7 +469,7 @@ class LoginV3Flow:
             except AssertionError:
                 print("Invalid entry, additional factors of authentication shown may be configured if not currently enabled.")
                 return
-            except (KeyboardInterrupt, EOFError):
+            except EOFError:
                 exit(1)
 
         mfa_prompt = False
