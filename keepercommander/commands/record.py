@@ -1566,10 +1566,7 @@ class SharedRecordsReport(Command):
         export_format = kwargs['format'] if 'format' in kwargs else None
         export_name = kwargs['name'] if 'name' in kwargs else None
 
-        rs = api.communicate_rest(params, None, 'report/get_shared_record_report')
-
-        shared_records_data_rs = SharedRecordResponse()
-        shared_records_data_rs.ParseFromString(rs)
+        shared_records_data_rs = api.communicate_rest(params, None, 'report/get_shared_record_report', rs_type=SharedRecordResponse)
 
         shared_from_mapping = {
             1: "Direct Share",
