@@ -11,3 +11,4 @@ keepercommander.egg-info
 keeper.txt
 *.kdbx
 *.csv
+Makefile
