@@ -32,6 +32,7 @@ from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
 from .enterprise_pb2 import SharedRecordResponse
+from . import record_common
 
 
 def register_commands(commands):
@@ -1500,6 +1501,11 @@ class TotpCommand(Command):
                     if not done:
                         TotpCommand.display_code(rec.totp)
                         tmer = threading.Timer(1, print_code).start()
+
+                if kwargs['details']:
+                    extra = json.loads(params.record_cache[record_uid]['extra_unencrypted'])
+                    record_common.display_totp_details(extra, is_v2=True)
+
                 try:
                     print('Press <Enter> to exit\n')
                     print_code()
