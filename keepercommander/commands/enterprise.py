@@ -3027,15 +3027,17 @@ class AuditReportCommand(Command):
             return ''
 
         if field == "created":
-            parsed_time = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S.%f')
-            dt = parsed_time.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-            rt = kwargs.get('report_type') or ''
-            if rt in {'day', 'week'}:
-                dt = dt.date()
-            elif rt == 'month':
-                dt = dt.strftime('%B, %Y')
-            elif rt == 'hour':
-                dt = dt.strftime('%Y-%m-%d @%H:00')
+            if isinstance(value, str):
+                dt = value
+            else:
+                dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+                rt = kwargs.get('report_type') or ''
+                if rt in {'day', 'week'}:
+                    dt = dt.date()
+                elif rt == 'month':
+                    dt = dt.strftime('%B, %Y')
+                elif rt == 'hour':
+                    dt = dt.strftime('%Y-%m-%d @%H:00')
 
             return dt
         elif field in {"first_created", "last_created"}:
