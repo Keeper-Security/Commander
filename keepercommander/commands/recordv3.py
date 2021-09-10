@@ -23,7 +23,6 @@ import threading
 from Cryptodome.Cipher import AES
 from pathlib import Path
 from tabulate import tabulate
-import urllib.parse
 
 from ..team import Team
 from .. import api, display, generator
@@ -37,6 +36,7 @@ from ..error import CommandError
 from .enterprise_pb2 import SharedRecordResponse
 from . import record as recordv2
 from .register import FileReportCommand
+from . import record_common
 
 
 def register_commands(commands):
@@ -1770,35 +1770,6 @@ class TotpEndpoint:
         self.paths = paths
 
 
-def extract_otp_url(data):
-    """Get the otpauth url from our decoded json as a string."""
-    assert isinstance(data, dict)
-    fields = data['fields']
-    assert isinstance(fields, list)
-    for subdict in fields:
-        if subdict['type'] == 'oneTimeCode':
-            value = subdict['value']
-            assert isinstance(value, list)
-            assert len(value) == 1
-            return value[0]
-    raise AssertionError('No otpauth URL found')
-
-
-def extract_query_fields(otp_url):
-    """Get the query fields from an otpauth query string as a dict."""
-    parsed_url = urllib.parse.urlparse(otp_url)
-    query_string = parsed_url.query
-    parsed_query = urllib.parse.parse_qs(query_string)
-    return parsed_query
-
-
-def display_totp_details(query_fields):
-    """Display the details of totp data."""
-    for key in ('secret', 'issuer', 'period'):
-        assert len(query_fields[key]) == 1
-        print('{}: {}'.format(key, query_fields[key][0]))
-
-
 class TotpCommand(Command):
     LastRevision = 0 # int
     Endpoints = []   # type: List[TotpEndpoint]
@@ -1866,9 +1837,7 @@ class TotpCommand(Command):
                     tmer = threading.Timer(1, print_code).start()
 
             if kwargs['details']:
-                otp_url = extract_otp_url(data)
-                query_fields = extract_query_fields(otp_url)
-                display_totp_details(query_fields)
+                record_common.display_totp_details(data, is_v2=False)
 
             try:
                 print('Press <Enter> to exit\n')
