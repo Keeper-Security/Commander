@@ -4,14 +4,9 @@
 
 import urllib.parse
 
-import pudb
 
-
-def display_totp_details(data, *, is_v2=False):
+def display_totp_details(otp_url):
     """Display Time-based One Time Password details."""
-    pudb.set_trace()
-    # assert key in ('data', 'oneTimeCode')
-    otp_url = extract_otp_url(data, is_v2)
     query_fields = extract_query_fields(otp_url)
     display_totp_query_fields(query_fields)
 

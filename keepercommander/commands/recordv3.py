@@ -1807,26 +1807,24 @@ class TotpCommand(Command):
                     else:
                         raise CommandError('totp', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
 
-        is_v2 = bool(kwargs.get('legacy'))
-        record = params.record_cache[record_uid] if record_uid in params.record_cache else {}
-        version = record.get('version') or 0
-        if is_v2 or version < 3:
-            recordv2.TotpCommand().execute(params, **kwargs)
-            return
-
-        recordv3.RecordV3.validate_access(params, record_uid)
-        if version != 3:
-            raise CommandError('get', 'Record is not version 3 (record type)')
-
         if record_uid:
+            record = params.record_cache[record_uid] if record_uid in params.record_cache else {}
+            version = record.get('version') or 0
             rec = api.get_record(params, record_uid)
+            if version == 3:
+                recordv3.RecordV3.validate_access(params, record_uid)
+                data = record.get('data_unencrypted') or '{}'
+                data = json.loads(data)
+                fields = data['fields'] if 'fields' in data else []
+                fields.extend(data['custom'] if 'custom' in data else [])
+                totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
+                rec.totp = totp[0] if totp else totp
+            if not rec.totp:
+                raise CommandError('totp', f'Record \"{rec.title}\" does not contain TOTP codes')
 
-            data = record.get('data_unencrypted') or '{}'
-            data = json.loads(data)
-            fields = data['fields'] if 'fields' in data else []
-            fields.extend(data['custom'] if 'custom' in data else [])
-            totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
-            rec.totp = totp[0] if totp else totp
+            if kwargs['details']:
+                record_common.display_totp_details(rec.totp)
+
 
             tmer = None     # type: threading.Timer or None
             done = False
@@ -1835,9 +1833,6 @@ class TotpCommand(Command):
                 if not done:
                     TotpCommand.display_code(rec.totp)
                     tmer = threading.Timer(1, print_code).start()
-
-            if kwargs['details']:
-                record_common.display_totp_details(data, is_v2=False)
 
             try:
                 print('Press <Enter> to exit\n')
@@ -1885,15 +1880,16 @@ class TotpCommand(Command):
             TotpCommand.LastRevision = params.revision
             TotpCommand.Endpoints.clear()
             for record_uid in params.record_cache:
+                rec = params.record_cache[record_uid]
+                version = rec.get('version')
                 record = api.get_record(params, record_uid)
-
-                rec = params.record_cache[record_uid] if record_uid in params.record_cache else {}
-                data = rec.get('data_unencrypted') or '{}'
-                data = json.loads(data)
-                fields = data['fields'] if 'fields' in data else []
-                fields.extend(data['custom'] if 'custom' in data else [])
-                totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
-                record.totp = totp[0] if totp else totp
+                if version == 3:
+                    data = rec.get('data_unencrypted') or '{}'
+                    data = json.loads(data)
+                    fields = data['fields'] if 'fields' in data else []
+                    fields.extend(data['custom'] if 'custom' in data else [])
+                    totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
+                    record.totp = totp[0] if totp else totp
 
                 if record.totp:
                     paths = []

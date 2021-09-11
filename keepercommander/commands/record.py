@@ -1489,6 +1489,8 @@ class TotpCommand(Command):
         print_totp = kwargs.get('print')
         if record_uid:
             rec = api.get_record(params, record_uid)
+            if not rec.totp:
+                raise CommandError('totp', f'Record \"{rec.title}\" does not contain TOTP codes')
             if print_totp:
                 if rec.totp:
                     code, remains, total = get_totp_code(rec.totp)
@@ -1503,8 +1505,7 @@ class TotpCommand(Command):
                         tmer = threading.Timer(1, print_code).start()
 
                 if kwargs['details']:
-                    extra = json.loads(params.record_cache[record_uid]['extra_unencrypted'])
-                    record_common.display_totp_details(extra, is_v2=True)
+                    record_common.display_totp_details(rec.totp)
 
                 try:
                     print('Press <Enter> to exit\n')
