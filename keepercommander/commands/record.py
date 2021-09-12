@@ -32,6 +32,7 @@ from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
 from .enterprise_pb2 import SharedRecordResponse
+from . import record_common
 
 
 def register_commands(commands):
@@ -1488,6 +1489,8 @@ class TotpCommand(Command):
         print_totp = kwargs.get('print')
         if record_uid:
             rec = api.get_record(params, record_uid)
+            if not rec.totp:
+                raise CommandError('totp', f'Record \"{rec.title}\" does not contain TOTP codes')
             if print_totp:
                 if rec.totp:
                     code, remains, total = get_totp_code(rec.totp)
@@ -1500,6 +1503,10 @@ class TotpCommand(Command):
                     if not done:
                         TotpCommand.display_code(rec.totp)
                         tmer = threading.Timer(1, print_code).start()
+
+                if kwargs['details']:
+                    record_common.display_totp_details(rec.totp)
+
                 try:
                     print('Press <Enter> to exit\n')
                     print_code()
