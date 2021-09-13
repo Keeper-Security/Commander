@@ -341,6 +341,13 @@ class RecordAddCommand(Command, RecordUtils):
         }
         Record.validate_record_data(data, None, None)
 
+        # extract password from data and check if it is breached.
+        pw = data['secret2']
+        if pw:
+            if not record_common.are_all_good_passwords(params, [pw]):
+                logging.error('Password breached - please try another')
+                return
+
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)
@@ -457,6 +464,14 @@ class RecordEditCommand(Command, RecordUtils):
 
         if changed:
             params.sync_data = True
+
+            # extract password from record and check if it is breached.
+            pw = record.password
+            if pw:
+                if not record_common.are_all_good_passwords(params, [pw]):
+                    logging.error('Password breached - please try another')
+                    return
+
             api.update_record(params, record)
 
 

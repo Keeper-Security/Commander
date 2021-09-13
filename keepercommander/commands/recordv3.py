@@ -372,6 +372,12 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 rec = data_opts.get('record')
                 data = json.dumps(rec) if rec else ''
 
+        # extract password from json data and check if it is breached.
+        pw = record_common.extract_password_from_json(data)
+        if not record_common.are_all_good_passwords(params, [pw]):
+            logging.error('Password breached - please try another')
+            return
+
         data = data.strip() if data else None
         if not data:
             logging.error(bcolors.FAIL + "Empty data. Unable to insert record." + bcolors.ENDC)
@@ -790,6 +796,12 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         data_dict = json.loads(data)
+
+        pw = record_common.extract_password_from_dict(data_dict)
+        if not record_common.are_all_good_passwords(params, [pw]):
+            logging.error('Password breached - please try another')
+            return
+
         changed = rdata_dict != data_dict
         # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
         if changed:

@@ -36,6 +36,8 @@ from .enterprise import EnterpriseCommand, EnterprisePushCommand
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
+from ..proto import breachwatch_pb2
+from .. import crypto
 
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
@@ -47,6 +49,7 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['create-user'] = RegisterCommand()
+    commands['breachwatch'] = BreachWatchCommand()
     # commands['file-report'] = FileReportCommand()
 
 
@@ -55,7 +58,7 @@ def register_command_info(aliases, command_info):
     aliases['sf'] = 'share-folder'
     aliases['cu'] = 'create-user'
 
-    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
+    for p in [share_record_parser, share_folder_parser, share_report_parser, breach_watch_parser, record_permission_parser,
             #   file_report_parser,
               register_parser]:
         command_info[p.prog] = p.description
@@ -158,6 +161,13 @@ file_report_parser.add_argument('-d', '--try-download', dest='try_download', act
                                 help='Try downloading every attachment you have access to.')
 file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
+
+breach_watch_parser = argparse.ArgumentParser(
+    prog='breach-watch',
+    description='Display report about and act upon Dark Web breaches.',
+)
+breach_watch_parser.error = raise_parse_exception
+breach_watch_parser.exit = suppress_exit
 
 
 class RegisterCommand(Command):
@@ -708,6 +718,33 @@ class ShareFolderCommand(Command):
             except KeeperApiError as kae:
                 if kae.result_code != 'bad_inputs_nothing_to_do':
                     raise kae
+
+
+class BreachWatchCommand(Command):
+    """Display report about and act upon Dark Web breaches."""
+
+    def get_parser(self):
+        """Return the parser."""
+        return breach_watch_parser
+
+    def execute(self, params, **kwargs):
+        """Execute the breachwatch command."""
+        rs = api.communicate_rest(params, None, 'breachwatch/initialize', rs_type=breachwatch_pb2.BreachWatchTokenResponse)
+
+        token = rs.breachWatchToken
+        if rs.clientEncrypted:
+            token = crypto.decrypt_aes_v2(token, params.data_key)
+        else:
+            rq = breachwatch_pb2.BreachWatchTokenRequest()
+            rq.breachWatchToken = crypto.encrypt_aes_v2(token, params.data_key)
+            api.communicate_rest(params, rq, 'breachwatch/save_token')
+
+        rq = breachwatch_pb2.BreachWatchTokenRequest()
+        rq.breachWatchToken = token
+        rs = api.communicate_rest(params, rq, 'breachwatch/anonymize_token', rs_type=breachwatch_pb2.AnonymizedTokenResponse)
+
+        token = rs.passwordToken
+        print(token)
 
 
 class ShareRecordCommand(Command):
