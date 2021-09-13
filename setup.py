@@ -11,7 +11,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 install_requires = [
     'colorama',
-    'cryptography',
+    'cryptography>=3.4.8',
     'pycryptodomex>=3.7.2',
     'libkeepass',
     'requests',
@@ -34,13 +34,13 @@ setup(name='keepercommander',
       classifiers=["Development Status :: 4 - Beta",
                    "License :: OSI Approved :: MIT License",
                    "Operating System :: OS Independent",
-                   "Programming Language :: Python :: 3.5",
+                   "Programming Language :: Python :: 3.6",
                    "Topic :: Security"],
       keywords='security password',
 
       packages=find_packages(),
       include_package_data=True,
-      python_requires='>=3.5',
+      python_requires='>=3.6',
       entry_points={
           "console_scripts": [
               "keeper=keepercommander.__main__:main",
