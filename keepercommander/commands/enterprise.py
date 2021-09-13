@@ -463,7 +463,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if len(root_nodes) > 1:
                 logging.warning('More than one node \"%s\" found. Use Node ID.', subnode)
                 return
-            logging.info('Output is limited to \'{0}\' node'.format(root_nodes[0]['data'].get('displayname') or str(root_nodes[0]['node_id'])))
+            logging.info('Output is limited to \"%s\" node', subnode)
 
             node_tree = {}
             for node in params.enterprise['nodes']:
@@ -475,7 +475,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             nl = [x for x in root_nodes]
             pos = 0
             while pos < len(nl):
-                nl.extend(node_tree[nl[pos]])
+                if nl[pos] in node_tree:
+                    nl.extend(node_tree[nl[pos]])
                 pos += 1
                 if pos > 100:
                     break
