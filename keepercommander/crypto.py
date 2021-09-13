@@ -45,7 +45,7 @@ def get_random_bytes(length):
 
 
 def generate_rsa_key():
-    private_key = rsa.generate_private_key(key_size=2048, public_exponent=0x10001)
+    private_key = rsa.generate_private_key(key_size=2048, public_exponent=0x10001, backend=_CRYPTO_BACKEND)
     return private_key, private_key.public_key()
 
 
@@ -69,7 +69,7 @@ def unload_rsa_public_key(public_key):
 
 
 def generate_ec_key():
-    private_key = ec.generate_private_key(curve=_CURVE)
+    private_key = ec.generate_private_key(curve=_CURVE, backend=_CRYPTO_BACKEND)
     return private_key, private_key.public_key()
 
 

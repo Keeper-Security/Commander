@@ -31,7 +31,7 @@ from .base import user_choice, suppress_exit, raise_parse_exception, dump_report
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
-from .enterprise_pb2 import SharedRecordResponse
+from ..proto.enterprise_pb2 import SharedRecordResponse
 from . import record_common
 
 

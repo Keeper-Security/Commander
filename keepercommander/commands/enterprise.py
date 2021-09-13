@@ -44,7 +44,7 @@ from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
-from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
+from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
                              ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
@@ -313,7 +313,7 @@ class GetEnterpriseDataCommand(Command):
 
 class EnterpriseCommand(Command):
     def __init__(self):
-        Command.__init__(self)
+        super(EnterpriseCommand, self).__init__()
         self.public_keys = {}
         self.team_keys = {}
 

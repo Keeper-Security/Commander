@@ -26,7 +26,7 @@ from .plugins import humps as humps
 
 from . import api
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .commands.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
+from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
