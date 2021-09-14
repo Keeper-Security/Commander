@@ -1,7 +1,10 @@
 name: Test with pytest
 
 on:
-#   pull_request
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
   workflow_dispatch:
 
 env:
