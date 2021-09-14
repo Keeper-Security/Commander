@@ -13,6 +13,7 @@ install_requires = [
     'asciitree',
     'colorama',
     'cryptography>=3.4.8',
+    'libkeepass',
     'prompt_toolkit>=2.0.4,<=2.0.10',
     'protobuf>=3.13.0',
     'pycryptodomex>=3.7.2',
@@ -21,7 +22,6 @@ install_requires = [
     'tabulate',
 ]
 adpasswd_requires = ['ldap3']
-keepass_requires = ['libkeepass']
 test_requires = ['pytest', 'testfixtures']
 
 setup(
@@ -52,8 +52,7 @@ setup(
     install_requires=install_requires,
     extras_require={
         'adpasswd': adpasswd_requires,
-        'keepass': keepass_requires,
         'test': test_requires,
-        'all': adpasswd_requires + keepass_requires + test_requires
+        'all': adpasswd_requires + test_requires
     }
 )
