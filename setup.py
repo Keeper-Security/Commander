@@ -16,7 +16,7 @@ install_requires = [
     'prompt_toolkit>=2.0.4,<=2.0.10',
     'protobuf>=3.13.0',
     'pycryptodomex>=3.7.2',
-    'pyperclip'
+    'pyperclip',
     'requests',
     'tabulate',
 ]
