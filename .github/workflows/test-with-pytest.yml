@@ -1,0 +1,30 @@
+name: Test with pytest
+
+on: pull_request
+
+env:
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  test-with-pytest:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: [3.6, 3.9]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package with test dependencies
+        run: pip install .[test]
+
+      - name: Run import tests
+        run: pytest tests/test_imports.py
