@@ -1,7 +1,10 @@
 name: Test with pytest
 
 on:
-#   pull_request
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
   workflow_dispatch:
 
 env:
@@ -11,7 +14,7 @@ jobs:
   test-with-pytest:
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, windows-latest]
         python-version: [3.6, 3.9]
 
     runs-on: ${{ matrix.os }}
@@ -26,7 +29,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package with test dependencies
-        run: pip install .[test]
+        run: pip install .[all]
 
-      - name: Run import tests
-        run: pytest tests/test_imports.py
+      - name: Run non-integration tests
+        run: pytest -m "not integration"
