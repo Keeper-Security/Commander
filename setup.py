@@ -10,17 +10,19 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 install_requires = [
+    'asciitree',
     'colorama',
     'cryptography>=3.4.8',
+    'prompt_toolkit>=2.0.4,<=2.0.10',
+    'protobuf>=3.13.0',
     'pycryptodomex>=3.7.2',
-    'libkeepass',
+    'pyperclip'
     'requests',
     'tabulate',
-    'prompt_toolkit>=2.0.4,<=2.0.10',
-    'asciitree',
-    'protobuf>=3.13.0',
-    'pyperclip'
 ]
+adpasswd_requires = ['ldap3']
+keepass_requires = ['libkeepass']
+test_requires = ['pytest', 'testfixtures']
 
 setup(name='keepercommander',
       version=keepercommander.__version__,
@@ -46,5 +48,11 @@ setup(name='keepercommander',
               "keeper=keepercommander.__main__:main",
           ],
       },
-      install_requires=install_requires
+      install_requires=install_requires,
+      extras_require={
+          'adpasswd': adpasswd_requires,
+          'keepass': keepass_requires,
+          'test': test_requires,
+          'all': adpasswd_requires + keepass_requires + test_requires
+      }
       )
