@@ -28,5 +28,5 @@ jobs:
       - name: Install package with test dependencies
         run: pip install .[all]
 
-      - name: Run import tests
+      - name: Run non-integration tests
         run: pytest -m "not integration"
