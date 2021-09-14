@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package with test dependencies
-        run: pip install .[test]
+        run: pip install .[all]
 
       - name: Run import tests
         run: pytest tests/test_imports.py
