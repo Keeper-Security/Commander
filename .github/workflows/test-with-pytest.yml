@@ -1,6 +1,8 @@
 name: Test with pytest
 
-on: pull_request
+on:
+#   pull_request
+  workflow_dispatch:
 
 env:
   PYTHONUNBUFFERED: 1
