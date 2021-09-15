@@ -10,6 +10,7 @@
 #
 
 import argparse
+import collections
 import shlex
 import logging
 import json
@@ -17,6 +18,7 @@ import os
 import re
 import csv
 import sys
+import abc
 
 from tabulate import tabulate
 from collections import OrderedDict
@@ -29,6 +31,7 @@ commands = {}       # type: {str, Command}
 enterprise_commands = {}     # type: {str, Command}
 msp_commands = {}   # type: {str, Command}
 command_info = OrderedDict()
+
 
 class ParseError(Exception):
     pass
@@ -61,9 +64,12 @@ def register_commands(commands, aliases, command_info):
 
 
 def register_enterprise_commands(commands, aliases, command_info):
-    from .enterprise import register_commands as enterprise_commands, register_command_info as enterprise_command_info
-    enterprise_commands(commands)
-    enterprise_command_info(aliases, command_info)
+    from . import enterprise
+    enterprise.register_commands(commands)
+    enterprise.register_command_info(aliases, command_info)
+    from . import automator
+    automator.register_commands(commands)
+    automator.register_command_info(aliases, command_info)
 
 
 def register_msp_commands(commands, aliases, command_info):
@@ -183,7 +189,16 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
 parameter_pattern = re.compile(r'\${(\w+)}')
 
 
-class Command:
+class CliCommand(abc.ABC):
+    @abc.abstractmethod
+    def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, dict) -> any
+        pass
+
+    def is_authorised(self):
+        return True
+
+
+class Command(CliCommand):
     def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
         raise NotImplemented()
 
@@ -192,9 +207,9 @@ class Command:
 
         global parameter_pattern
         try:
-            parser = self.get_parser()
             d = {}
             d.update(kwargs)
+            parser = self._get_parser_safe()
             if parser is not None:
                 if args:
                     pos = 0
@@ -218,8 +233,75 @@ class Command:
         except ParseError as e:
             logging.error(e)
 
-    def get_parser(self):   # type: () -> argparse.ArgumentParser or None
+    def get_parser(self):   # type: () -> argparse.ArgumentParser | None
         return None
 
-    def is_authorised(self):
-        return True
+    def _ensure_parser(func):
+        def _wrapper(self):
+            parser = func(self)
+            if parser:
+                if parser.exit != suppress_exit:
+                    parser.exit = suppress_exit
+                if parser.error != raise_parse_exception:
+                    parser.error = raise_parse_exception
+            return parser
+        return _wrapper
+
+    @_ensure_parser
+    def _get_parser_safe(self):
+        return self.get_parser()
+    _ensure_parser = staticmethod(_ensure_parser)
+
+
+class GroupCommand(CliCommand):
+    def __init__(self):
+        self._commands = collections.OrderedDict()     # type: dict[str, Command]
+        self._command_info = {}    # type: dict[str, str]
+        self.default_verb = ''
+
+    def register_command(self, verb, command, description=None):   # type: (any, Command, str) -> None
+        verb = verb.lower()
+        self._commands[verb] = command
+        if not description:
+            parser = command.get_parser()
+            if parser:
+                description = parser.description
+        if description:
+            self._command_info[verb] = description
+
+    def execute_args(self, params, args, **kwargs):  # type: (KeeperParams, str, dict) -> any
+        pos = args.find(' ')
+        if pos > 0:
+            verb = args[:pos].strip()
+            args = args[pos + 1:].strip()
+        else:
+            verb = args.strip()
+            args = ''
+
+        print_help = False
+        if not verb:
+            verb = self.default_verb
+            print_help = True
+        if verb:
+            verb = verb.lower()
+
+        command = self._commands.get(verb)
+        if not command:
+            print_help = True
+            if verb not in ['--help', '-h', 'help', '']:
+                logging.warning('Invalid command: %s', verb)
+
+        if print_help:
+            logging.info('%s command [--options]', kwargs.get('command'))
+            table = []
+            headers = ['Command', 'Description']
+            for verb in self._commands.keys():
+                row = [verb, self._command_info.get(verb) or '']
+                table.append(row)
+            print('')
+            dump_report_data(table, headers=headers)
+            print('')
+
+        if command:
+            kwargs['action'] = verb
+            command.execute_args(params, args, **kwargs)

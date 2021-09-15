@@ -98,6 +98,7 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.enterprise = None
+        self.automators = None
         self.enterprise_id = 0
         self.msp_tree_key = None
         self.prepare_commands = False
@@ -149,6 +150,7 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.enterprise = None
+        self.automators = None
         self.enterprise_id = 0
         self.msp_tree_key = None
         self.prepare_commands = True

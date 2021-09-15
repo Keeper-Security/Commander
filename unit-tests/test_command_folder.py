@@ -1,4 +1,5 @@
 from unittest import TestCase, mock
+import logging
 
 from data_vault import get_synced_params
 from helper import KeeperApiHelper
@@ -81,7 +82,7 @@ class TestFolder(TestCase):
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         shared_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'shared_folder']))
-        with self.assertRaises(CommandError):
+        with self.assertLogs(level=logging.WARNING):
             cmd.execute(params, folder=shared_folder.name)
 
         params.current_folder = shared_folder.uid

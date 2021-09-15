@@ -44,7 +44,7 @@ from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
-from .enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
+from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
                              ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 
@@ -313,7 +313,7 @@ class GetEnterpriseDataCommand(Command):
 
 class EnterpriseCommand(Command):
     def __init__(self):
-        Command.__init__(self)
+        super(EnterpriseCommand, self).__init__()
         self.public_keys = {}
         self.team_keys = {}
 
@@ -453,7 +453,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         print('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
         root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
-        node_scope = {x['node_id'] for x in params.enterprise['nodes']}
+        node_scope = set()
         if kwargs.get('node'):
             subnode = kwargs.get('node').lower()
             root_nodes = [x['node_id'] for x in self.resolve_nodes(params, subnode)]
@@ -463,7 +463,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if len(root_nodes) > 1:
                 logging.warning('More than one node \"%s\" found. Use Node ID.', subnode)
                 return
-            logging.info('Output is limited to \'{0}\' node'.format(root_nodes[0]['data'].get('displayname') or str(root_nodes[0]['node_id'])))
+            logging.info('Output is limited to \"%s\" node', subnode)
 
             node_tree = {}
             for node in params.enterprise['nodes']:
@@ -475,11 +475,14 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             nl = [x for x in root_nodes]
             pos = 0
             while pos < len(nl):
-                nl.extend(node_tree[nl[pos]])
+                if nl[pos] in node_tree:
+                    nl.extend(node_tree[nl[pos]])
                 pos += 1
                 if pos > 100:
                     break
             node_scope.update(nl)
+        else:
+            node_scope.update((x['node_id'] for x in params.enterprise['nodes']))
 
         nodes = {}
         for node in params.enterprise['nodes']:
@@ -3027,14 +3030,17 @@ class AuditReportCommand(Command):
             return ''
 
         if field == "created":
-            dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-            rt = kwargs.get('report_type') or ''
-            if rt in {'day', 'week'}:
-                dt = dt.date()
-            elif rt == 'month':
-                dt = dt.strftime('%B, %Y')
-            elif rt == 'hour':
-                dt = dt.strftime('%Y-%m-%d @%H:00')
+            if isinstance(value, str):
+                dt = value
+            else:
+                dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+                rt = kwargs.get('report_type') or ''
+                if rt in {'day', 'week'}:
+                    dt = dt.date()
+                elif rt == 'month':
+                    dt = dt.strftime('%B, %Y')
+                elif rt == 'hour':
+                    dt = dt.strftime('%Y-%m-%d @%H:00')
 
             return dt
         elif field in {"first_created", "last_created"}:
@@ -3344,10 +3350,7 @@ class SecurityAuditReportCommand(Command):
             format = kwargs['format']
 
         rq = proto.SecurityReportRequest()
-        rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data')
-
-        security_report_data_rs = proto.SecurityReportResponse()
-        security_report_data_rs.ParseFromString(rs)
+        security_report_data_rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data', rs_type=proto.SecurityReportResponse)
 
         rows = []
         for sr in security_report_data_rs.securityReport:

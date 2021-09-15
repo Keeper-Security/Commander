@@ -913,9 +913,7 @@ def sync_down(params):
         rq.standard = True
         rq.user = True
         rq.enterprise = True
-        rs = communicate_rest(params, rq, 'vault/get_record_types')
-        record_types_rs = records.RecordTypesResponse()
-        record_types_rs.ParseFromString(rs)
+        record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
 
         if len(record_types_rs.recordTypes) > 0:
             params.record_type_cache = {}
@@ -1476,7 +1474,7 @@ def prepare_record_v3(params, record):
     return record_object
 
 
-def communicate_rest(params, request, endpoint):
+def communicate_rest(params, request, endpoint, rs_type=None):
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
@@ -1486,7 +1484,12 @@ def communicate_rest(params, request, endpoint):
     rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
     if type(rs) == bytes:
         TTK.update_time_of_last_activity()
-        return rs
+        if rs_type:
+            proto_rs = rs_type()
+            proto_rs.ParseFromString(rs)
+            return proto_rs
+        else:
+            return rs
     elif type(rs) == dict:
         kae = KeeperApiError(rs['error'], rs['message'])
         if kae.result_code == 'session_token_expired':

@@ -9,7 +9,7 @@ from google.protobuf import reflection as _reflection
 from google.protobuf import symbol_database as _symbol_database
 # @@protoc_insertion_point(imports)
 
-from .commands import enterprise_pb2 as enterprise__pb2
+from .proto import enterprise_pb2 as enterprise__pb2
 
 _sym_db = _symbol_database.Default()
 
