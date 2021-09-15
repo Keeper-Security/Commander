@@ -30,6 +30,7 @@ def check_roundtrip_wo_in_double_quotes(string):
 strings_to_test = (
     '\\"k',
     'a//',
+    'c ',
     'c\\ ',
     r"e\'f",
     r'g\"',
@@ -39,6 +40,7 @@ strings_to_test = (
     r'"\"k',
     '"a//',
     '"c ',
+    '"c\\ ',
     '"e\'f',
     r'"g\"',
     r'"i\\',
