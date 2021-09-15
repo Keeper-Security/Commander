@@ -2989,6 +2989,12 @@ Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Defaul
 --shared-folder-uid Shared Folder UID
 '''
 
+audit_report_misc_fields = (
+    'to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node', 'channel', 'status'
+)
+audit_report_record_lookup_fields = ('record_title', 'record_url')
+audit_report_record_lookup_attrs = ('title', 'login_url')
+
 in_pattern = re.compile(r"\s*in\s*\(\s*(.*)\s*\)", re.IGNORECASE)
 between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
@@ -2998,6 +3004,7 @@ class AuditReportCommand(Command):
         self.team_lookup = None
         self.role_lookup = None
         self.node_lookup = None
+        self.record_lookup = None
         self._detail_lookup = None
 
     def get_value(self, params, field, event):
@@ -3030,6 +3037,9 @@ class AuditReportCommand(Command):
             elif field == 'node':
                 val = self.resolve_node_name(params, val)
             return val
+
+        elif field in audit_report_record_lookup_fields and 'record_uid' in event:
+            return self.resolve_record_lookup(params, field, event.get('record_uid'))
         return ''
 
     def resolve_team_name(self, params, team_uid):
@@ -3074,6 +3084,21 @@ class AuditReportCommand(Command):
         if id in self.node_lookup:
             return '{0} ({1})'.format(self.node_lookup[id], id)
         return id
+
+    def resolve_record_lookup(self, params, field, record_uid):
+        if record_uid:
+            if self.record_lookup is None:
+                self.record_lookup = {}
+            if record_uid not in self.record_lookup:
+                self.record_lookup[record_uid] = dict.fromkeys(audit_report_record_lookup_fields, '')
+                if record_uid in params.record_cache:
+                    r = api.get_record(params, record_uid)
+                    if r:
+                        for fld, attr in zip(audit_report_record_lookup_fields, audit_report_record_lookup_attrs):
+                            self.record_lookup[record_uid][fld] = getattr(r, attr, '')
+            return self.record_lookup[record_uid][field]
+        else:
+            return ''
 
     def get_parser(self):
         return audit_report_parser
@@ -3176,7 +3201,7 @@ class AuditReportCommand(Command):
         columns = []
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
-            rq['columns'] = columns
+            rq['columns'] = [c for c in columns if c not in audit_report_record_lookup_fields]
         if report_type == 'dim' and len(columns) == 0:
             raise CommandError('audit-report', "'columns' parameter is missing")
 
@@ -3221,8 +3246,7 @@ class AuditReportCommand(Command):
         details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
-            misc_fields = ['to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node',
-                           'channel', 'status'] if kwargs.get('report_format') == 'fields' else ['message']
+            misc_fields = list(audit_report_misc_fields) if kwargs.get('report_format') == 'fields' else ['message']
 
             for event in rs['audit_event_overview_report_rows']:
                 if misc_fields:
@@ -3234,9 +3258,12 @@ class AuditReportCommand(Command):
                             val = event.get(mf)
                             if val:
                                 fields.append(mf)
+                                if mf == 'record_uid':
+                                    fields.extend(audit_report_record_lookup_fields)
                     if len(fields) > lenf:
                         for f in fields[lenf:]:
-                            misc_fields.remove(f)
+                            if f not in audit_report_record_lookup_fields:
+                                misc_fields.remove(f)
 
                 row = []
                 for field in fields:
@@ -3278,7 +3305,14 @@ class AuditReportCommand(Command):
             for event in rs['audit_event_overview_report_rows']:
                 row = []
                 for f in fields:
-                    row.append(self.convert_value(f, event.get(f), report_type=report_type, details=details, params=params))
+                    if f in event:
+                        row.append(
+                            self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
+                        )
+                    elif f in audit_report_record_lookup_fields and 'record_uid' in event:
+                        row.append(self.resolve_record_lookup(params, f, event.get('record_uid')))
+                    else:
+                        row.append('')
                 table.append(row)
             dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
