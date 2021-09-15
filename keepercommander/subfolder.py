@@ -76,7 +76,7 @@ def path_split(params, folder, path_string):
         path_string = path_string[1:]
 
     components = [s.replace('\0', '/') for s in path_string.replace('//', '\0').split('/')]
-    return folder, [c.strip() for c in components]
+    return folder, components
 
 
 def try_resolve_path(params, path):
