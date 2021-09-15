@@ -64,10 +64,13 @@ global_test_params = (
     ('/./cd-tests', global_cd_tests_bfn, ''),
     ('/./cd-tests/nonexistent', global_cd_tests_bfn, 'nonexistent'),
     ('/./cd-tests/./nonexistent', global_cd_tests_bfn, 'nonexistent'),
-    ('/./cd-tests/ ', global_cd_tests_bfn, ''),
-    ('/ cd-tests', global_cd_tests_bfn, ''),
-    ('/ cd-tests ', global_cd_tests_bfn, ''),
-    # ('/ /a', global_root_bfn, '//a'),  # This is a corner case we are willing to ignore
+    # The next three were complicating tab completion, so they no longer work.
+    # ('/./cd-tests/ ', global_cd_tests_bfn, ''),
+    # ('/ cd-tests', global_cd_tests_bfn, ''),
+    # ('/ cd-tests ', global_cd_tests_bfn, ''),
+
+    # This is a corner case we are willing to ignore
+    # ('/ /a', global_root_bfn, '//a'),
     ('/', global_root_bfn, ''),
     ('//', global_root_bfn, '//'),
 )
