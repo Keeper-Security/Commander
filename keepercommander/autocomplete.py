@@ -20,6 +20,7 @@ from .commands.folder import mv_parser
 from .commands.utils import ConnectCommand
 from .commands import commands, enterprise_commands
 from . import api
+from .subfolder import try_resolve_path as sf_try_resolve_path
 
 
 def no_parse_exception(m):
@@ -45,62 +46,6 @@ folder_parser.add_argument('-r', '--record', dest='record', action='append')
 folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='record path or UID')
 folder_parser.error = no_parse_exception
 folder_parser.exit = no_exit
-
-
-def try_resolve_path(params, path):
-    if type(path) is str:
-        folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
-        if len(path) > 0:
-            if path[0] == '/':
-                folder = params.root_folder
-                path = path[1:]
-
-            start = 0
-            while True:
-                idx = path.find('/', start)
-                path_component = ''
-                if idx < 0:
-                    if len(path) > 0:
-                        path_component = path.strip()
-                elif idx > 0 and path[idx - 1] == '\\':
-                    start = idx + 1
-                    continue
-                else:
-                    path_component = path[:idx].strip()
-
-                if len(path_component) == 0:
-                    break
-
-                folder_uid = None
-                if path_component == '.':
-                    folder_uid = folder.uid
-                elif path_component == '..':
-                    folder_uid = folder.parent_uid or ''
-                else:
-                    for uid in folder.subfolders:
-                        sf = params.folder_cache[uid]
-                        if sf.name == path_component:
-                            folder_uid = uid
-
-                if folder_uid is None:
-                    break
-
-                if folder_uid == '':
-                    folder = params.root_folder
-                elif folder_uid in params.folder_cache:
-                    folder = params.folder_cache[folder_uid]
-                else:
-                    break
-                if idx < 0:
-                    path = ''
-                    break
-
-                path = path[idx+1:]
-                start = 0
-
-        return folder, path
-
-    return None
 
 
 def unescape_string(have_initial_double_quote, string):
@@ -249,7 +194,7 @@ class CommandCompleter(Completer):
                             context = 'connect'
 
                     if context in {'folder', 'path'}:
-                        rs = try_resolve_path(self.params, extra['prefix'])
+                        rs = sf_try_resolve_path(self.params, extra['prefix'])
                         if rs is not None:
                             folder, possible_prefix = rs
                             is_path = False if possible_prefix else True
