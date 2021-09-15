@@ -5,14 +5,16 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2017 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 """Import and export functionality."""
 
 from contextlib import contextmanager
-import collections
+from typing import Iterator, List, Optional, Union
+import collections, itertools
+import math
 import base64
 import hashlib
 import io
@@ -20,6 +22,7 @@ import json
 import logging
 import os
 import re
+import copy
 
 from Cryptodome.Cipher import AES
 import requests
@@ -28,15 +31,22 @@ from keepercommander import api
 from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..params import KeeperParams
 
-from .importer import importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter, \
-    Record as ImportRecord, Folder as ImportFolder, SharedFolder as ImportSharedFolder,  Permission as ImportPermission,\
-    Attachment as ImportAttachment, BaseImporter
-from ..subfolder import BaseFolderNode, find_folders
+from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
+                       BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
+                       SharedFolder as ImportSharedFolder, Permission as ImportPermission,
+                       Attachment as ImportAttachment, RecordSchemaField, File as ImportFile,
+                       RecordReferences)
+from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
 from .. import folder_pb2
-from ..record import Record
+from .. import utils, crypto
+from .. import record_pb2 as record_proto
+from ..proto import breachwatch_pb2 as breachwatch_proto
+from ..recordv3 import RecordV3
+from ..commands.base import user_choice
 
 TWO_FACTOR_CODE = 'TFC:Keeper'
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
+FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 
 
 def get_import_folder(params, folder_uid, record_uid):
@@ -97,14 +107,108 @@ def get_folder_path(params, folder_uid):
     return path
 
 
-def export(params, file_format, filename, **export_args):
+def convert_keeper_record(record, has_attachments=False):
+    # type: (dict, bool) -> Optional[ImportRecord]
+    record_uid = record.get('record_uid')
+    if not record_uid:
+        logging.debug('Invalid Keeper record: no record uid')
+        return
+
+    version = record.get('version') or 2
+    if type(version) != int:
+        try:
+            version = int(version)
+        except:
+            logging.debug('Invalid Keeper record \"%s\" version: %s', record_uid, str(version))
+            return
+    if 'data_unencrypted' not in record:
+        return
+
+    data = json.loads(record['data_unencrypted'])
+    rec = ImportRecord()
+    rec.uid = record_uid
+    rec.title = data.get('title') or ''
+    rec.notes = data.get('notes') or ''
+    if version == 2:
+        rec.login = data.get('secret1') or ''
+        rec.password = data.get('secret2') or ''
+        rec.login_url = data.get('link')
+        if 'custom' in data:
+            for custom in data['custom']:
+                rf = ImportRecordField()
+                rf.label = custom.get('name') or ''
+                rf.value = custom.get('value') or ''
+                rec.fields.append(rf)
+        if 'extra_unencrypted' in record:
+            extra = json.loads(record['extra_unencrypted'])
+            if 'fields' in extra:
+                for field in extra['fields']:
+                    if field['field_type'] == 'totp':
+                        rf = ImportRecordField()
+                        rf.type = FIELD_TYPE_ONE_TIME_CODE
+                        rf.value = field['data']
+                        rec.fields.append(rf)
+
+    elif version == 3 and 'type' in data:
+        rec.type = data['type']
+        rec.schema = []
+        if 'fields' in data:
+            for field in data['fields']:
+                field_type = field.get('type') or ''
+                if field_type:
+                    schema_field = RecordSchemaField()
+                    schema_field.ref = field_type
+                    schema_field.label = field.get('label') or ''
+                    rec.schema.append(schema_field)
+
+        fields = data.get('fields') if 'fields' in data else []
+        custom = data.get('custom') if 'custom' in data else []
+        for field in itertools.chain(fields, custom):
+            field_value = field.get('value') or ''
+            if type(field_value) is list and len(field_value) == 1:
+                field_value = field_value[0]
+            field_type = field.get('type') or ''
+
+            if field_type == 'login' and not rec.login and type(field_value) == str:
+                rec.login = field_value
+            elif field_type == 'password' and not rec.password and type(field_value) == str:
+                rec.password = field_value
+            elif field_type == 'url' and not rec.login_url and type(field_value) == str:
+                rec.login_url = field_value
+            elif field_type.endswith('Ref'):
+                ref_type = field_type[:-3]
+                if ref_type == 'file' and not has_attachments:
+                    continue
+                uids = field_value if isinstance(field_value, list) else [str(field_value)]
+                references = RecordReferences()
+                references.type = ref_type
+                references.uids = [x for x in uids]
+                if not rec.references:
+                    rec.references = []
+                rec.references.append(references)
+            else:
+                rf = ImportRecordField()
+                rf.type = field_type
+                rf.label = field['label'] if 'label' in field else ''
+                rf.value = field_value
+                if not rf.value:
+                    base_field = next((x for x in rec.schema if x.ref == rf.type and x.label == rf.label), None)
+                    if base_field:
+                        continue
+                rec.fields.append(rf)
+    else:
+        return
+
+    return rec
+
+
+def export(params, file_format, filename, **kwargs):
     """Export data from Vault to a file in an assortment of formats."""
     api.sync_down(params)
 
     exporter = exporter_for_format(file_format)()  # type: BaseExporter
-    if export_args:
-        if 'max_size' in export_args:
-            exporter.max_size = int(export_args['max_size'])
+    if 'max_size' in kwargs:
+        exporter.max_size = int(kwargs['max_size'])
 
     to_export = []
     if exporter.has_shared_folders():
@@ -138,55 +242,74 @@ def export(params, file_format, filename, **export_args):
             to_export.append(fol)
     sf_count = len(to_export)
 
-    records = [api.get_record(params, record_uid) for record_uid in params.record_cache]
-    records.sort(key=lambda x: x.title.lower(), reverse=False)
+    v3_enabled = params.settings.get('record_types_enabled') if params.settings else False
+    if v3_enabled and not exporter.supports_v3_record():
+        answer = user_choice(f'Export to {file_format} does not support typed records\n\n'
+                             f'Do you want to continue?', 'yn', 'n')
+        if answer.lower() != 'y':
+            return
 
-    for r in records:
-        rec = ImportRecord()
-        rec.uid = r.record_uid
-        rec.title = r.title.strip('\x00') if r.title else ''
-        rec.login = r.login.strip('\x00') if r.login else ''
-        rec.password = r.password.strip('\x00') if r.password else ''
-        rec.login_url = r.login_url.strip('\x00') if r.login_url else ''
-        rec.notes = r.notes.strip('\x00') if r.notes else ''
-        for cf in r.custom_fields:
-            name = cf.get('name')
-            value = cf.get('value')
-            if name and value:
-                rec.custom_fields[name] = value
-        if r.totp:
-            rec.custom_fields[TWO_FACTOR_CODE] = r.totp
+    # # assign export record id`
+    # external_ids = {}
+    # ext_id = 0
+    # for record_uid in params.record_cache.keys():
+    #     ext_id += 1
+    #     external_ids[record_uid] = ext_id
 
-        for folder_uid in find_folders(params, r.record_uid):
-            if folder_uid in params.folder_cache:
-                folder = get_import_folder(params, folder_uid, r.record_uid)
-                if rec.folders is None:
-                    rec.folders = []
-                rec.folders.append(folder)
-        if exporter.has_attachments() and r.attachments:
-            rec.attachments = []
-            names = set()
-            for a in r.attachments:
-                orig_name = a.get('title') or a.get('name') or 'attachment'
-                name = orig_name
-                counter = 0
-                while name in names:
-                    counter += 1
-                    name = "{0}-{1}".format(orig_name, counter)
-                names.add(name)
-                atta = KeeperAttachment(params, rec.uid)
-                atta.file_id = a['id']
-                atta.name = name
-                atta.size = a['size']
-                atta.key = base64.urlsafe_b64decode(a['key'] + '==')
-                atta.mime = a.get('type') or ''
-                rec.attachments.append(atta)
+    for record_uid in params.record_cache:
+        record = params.record_cache[record_uid]
+        record_version = record.get('version') or 0
+        if record_version == 2 or record_version == 3:
+            rec = convert_keeper_record(record, exporter.has_attachments())
+            if not rec:
+                continue
+            if not exporter.supports_v3_record() and rec.type and rec.type != 'login':
+                continue
 
-        to_export.append(rec)
+            if exporter.has_attachments() and 'extra_unencrypted' in record:
+                extra = json.loads(record['extra_unencrypted'])
+                if 'files' in extra:
+                    rec.attachments = []
+                    names = set()
+                    for a in extra['files']:
+                        orig_name = a.get('title') or a.get('name') or 'attachment'
+                        name = orig_name
+                        counter = 0
+                        while name in names:
+                            counter += 1
+                            name = "{0}-{1}".format(orig_name, counter)
+                        names.add(name)
+                        atta = KeeperAttachment(params, rec.uid)
+                        atta.file_id = a['id']
+                        atta.name = name
+                        atta.size = a['size']
+                        atta.key = base64.urlsafe_b64decode(a['key'] + '==')
+                        atta.mime = a.get('type') or ''
+                        rec.attachments.append(atta)
+
+            for folder_uid in find_folders(params, record_uid):
+                if folder_uid in params.folder_cache:
+                    folder = get_import_folder(params, folder_uid, record_uid)
+                    if rec.folders is None:
+                        rec.folders = []
+                    rec.folders.append(folder)
+
+            to_export.append(rec)
+        elif record_version == 4:
+            if 'data_unencrypted' in record:
+                data = json.loads(record['data_unencrypted'])
+                file = ImportFile()
+                file.file_id = record['record_uid']
+                file.name = data.get('name')
+                file.title = data.get('title')
+                file.size = data.get('size')
+                file.mime = data.get('type')
+                to_export.append(file)
+
     rec_count = len(to_export) - sf_count
 
     if len(to_export) > 0:
-        file_password = export_args.get('keepass_file_password') if export_args else None
+        file_password = kwargs.get('keepass_file_password')
         exporter.execute(filename, to_export, file_password)
         params.queue_audit_event('exported_records', file_format=file_format)
         logging.info('%d records exported', rec_count)
@@ -195,6 +318,17 @@ def export(params, file_format, filename, **export_args):
 def _import(params, file_format, filename, **kwargs):
     """Import records from one of a variety of sources."""
     api.sync_down(params)
+
+    enterprise_public_key = None
+    # check if enterprise account
+    if params.license and 'account_type' in params.license:
+        if params.license['account_type'] == 2:
+            try:
+                rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
+                if rs.enterpriseECCPublicKey:
+                    enterprise_public_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
+            except Exception as e:
+                logging.debug('Get enterprise public key: %s', e)
 
     shared = kwargs.get('shared') or False
     import_into = kwargs.get('import_into') or ''
@@ -206,8 +340,10 @@ def _import(params, file_format, filename, **kwargs):
 
     records_before = len(params.record_cache)
 
-    folders = []  # type: [ImportSharedFolder]
-    records = []  # type: [ImportRecord]
+    folders = []        # type: List[ImportSharedFolder]
+    records = []        # type: List[ImportRecord]
+    files = []          # type: List[ImportFile]
+
     for x in importer.execute(filename):
         if type(x) is ImportRecord:
             if shared or import_into:
@@ -277,15 +413,219 @@ def _import(params, file_format, filename, **kwargs):
             api.execute_batch(params, permissions)
             api.sync_down(params)
 
-    if records:
-        # create/update records
-        records_to_add, records_to_update = prepare_record_add_or_update(update_flag, params, records)
-        if records_to_add:
-            _, rec_rs = execute_import_folder_record(params, None, records_to_add)
-            _ = rec_rs
-            api.sync_down(params)
-        if records_to_update:
-            execute_update_record(params, records_to_update)
+    if files:
+        pass
+
+    record_keys = {}
+    audit_uids = []
+
+    if records:  # create/update records
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings else False
+
+        records_v2_to_add = []      # type: List[folder_pb2.RecordRequest]
+        records_v2_to_update = []   # type: List[dict]
+        records_v3_to_add = []      # type: List[record_proto.RecordAdd]
+        records_v3_to_update = []   # type: List[record_proto.RecordUpdate]
+
+        records_to_import = prepare_record_add_or_update(update_flag, params, records)
+
+        reference_uids = set()
+        for import_record in records_to_import:
+            existing_record = params.record_cache.get(import_record.uid)
+            record_key = existing_record['record_key_unencrypted'] if existing_record else utils.generate_aes_key()
+            record_keys[import_record.uid] = record_key
+
+            reference_uids.clear()
+            if import_record.references:
+                for ref in import_record.references:
+                    reference_uids.update([x for x in ref.uids if x in params.record_cache])
+
+            if import_record.type and import_record.fields:
+                for field in import_record.fields:
+                    if field.type in RecordV3.field_values:
+                        type_value = RecordV3.field_values[field.type].get('value')
+                        if type_value is None:
+                            continue
+                        field_type = type(type_value)
+                        if isinstance(field.value, list):
+                            field.value = [x for x in field.value if isinstance(x, field_type)]
+                        else:
+                            if not isinstance(field.value, field_type):
+                                field.value = copy.deepcopy(type_value)
+
+            if existing_record:
+                if import_record.type:   # V3
+                    if not v3_enabled:
+                        continue
+                    orig_data = json.loads(existing_record['data_unencrypted'])
+                    v3_upd_rq = record_proto.RecordUpdate()
+                    v3_upd_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                    v3_upd_rq.client_modified_time = utils.current_milli_time()
+                    v3_upd_rq.revision = existing_record.get('revision') or 0
+                    data = _construct_record_v3_data(import_record, orig_data)
+                    data_str = json.dumps(data)
+                    padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
+                    if padding:
+                        data_str = data_str.ljust(padding)
+                    v3_upd_rq.data = crypto.encrypt_aes_v2(data_str.encode('utf-8'), record_key)
+
+                    orig_refs = set()
+                    if 'fields' in orig_data:
+                        for field in itertools.chain(orig_data['fields'], orig_data['custom'] if 'custom' in orig_data else []):
+                            if 'type' in field and 'value' in field:
+                                if field['type'].endswith('Ref'):
+                                    uids = field['value']
+                                    if type(uids) is not list:
+                                        uids = [uids]
+                                    for uid in uids:
+                                        if uid in params.record_cache:
+                                            orig_refs.add(uid)
+
+                    for uid in orig_refs.difference(reference_uids):
+                        v3_upd_rq.record_links_remove.append(utils.base64_url_decode(uid))
+
+                    for uid in reference_uids.difference(orig_refs):
+                        link = record_proto.RecordLink()
+                        link.record_uid = utils.base64_url_decode(uid)
+                        v3_upd_rq.record_links_add.append(link)
+
+                    records_v3_to_update.append(v3_upd_rq)
+                else:
+                    orig_extra = json.loads(existing_record['extra_unencrypted']) if 'extra_unencrypted' in existing_record else None
+
+                    data, extra = _construct_record_v2(import_record, orig_extra)
+                    encrypted_data = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), record_key)
+                    v2_upd_rq = {
+                        'record_uid': import_record.uid,
+                        'data': utils.base64_url_encode(encrypted_data),
+                        'version': 2,
+                        'client_modified_time': api.current_milli_time(),
+                        'revision': existing_record.get('revision') or 0,
+                    }
+                    if extra:
+                        encrypted_extra = crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), record_key)
+                        v2_upd_rq['extra'] = utils.base64_url_encode(encrypted_extra)
+
+                    records_v2_to_update.append(v2_upd_rq)
+            else:
+                # pick a folder to insert the record
+                folder_type = BaseFolderNode.UserFolderType
+                folder_uid = ''
+                shared_folder_key = b''
+                if import_record.folders:
+                    folder_uid = import_record.folders[0].uid
+                if folder_uid in params.folder_cache:
+                    folder = params.folder_cache[folder_uid]    # type: Union[BaseFolderNode, SharedFolderFolderNode]
+                    folder_type = folder.type
+                    if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        shared_folder_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
+                        shared_folder = params.shared_folder_cache[shared_folder_uid]
+                        shared_folder_key = shared_folder.get('shared_folder_key_unencrypted')
+                    else:
+                        if folder.type == BaseFolderNode.RootFolderType:
+                            folder_uid = ''
+
+                if import_record.type:   # V3
+                    if not v3_enabled:
+                        continue
+                    v3_add_rq = record_proto.RecordAdd()
+                    v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                    v3_add_rq.client_modified_time = utils.current_milli_time()
+                    data = _construct_record_v3_data(import_record)
+                    data_str = json.dumps(data)
+                    padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
+                    if padding:
+                        data_str = data_str.ljust(padding)
+                    v3_add_rq.data = crypto.encrypt_aes_v2(data_str.encode('utf-8'), record_key)
+                    v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
+                    v3_add_rq.folder_type = \
+                        record_proto.user_folder if folder_type == BaseFolderNode.UserFolderType else \
+                        record_proto.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
+                        record_proto.shared_folder_folder
+
+                    if folder_uid:
+                        v3_add_rq.folder_uid = utils.base64_url_decode(folder_uid)
+                        if shared_folder_key:
+                            v3_add_rq.folder_key = crypto.encrypt_aes_v2(record_key, shared_folder_key)
+                    for uid in reference_uids:
+                        link = record_proto.RecordLink()
+                        link.record_uid = utils.base64_url_decode(uid)
+                        v3_add_rq.record_links.append(link)
+
+                    if enterprise_public_key:
+                        audit_data = {
+                            'title': import_record.title,
+                            'record_type': import_record.type
+                        }
+                        if import_record.login_url:
+                            audit_data['url'] = import_record.login_url
+                        v3_add_rq.audit.version = 0
+                        v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), enterprise_public_key)
+
+                    records_v3_to_add.append(v3_add_rq)
+                else:
+                    v2_add_rq = folder_pb2.RecordRequest()
+                    v2_add_rq.recordUid = utils.base64_url_decode(import_record.uid)
+                    v2_add_rq.recordType = 0
+                    v2_add_rq.howLongAgo = 0
+                    data, extra = _construct_record_v2(import_record)
+                    v2_add_rq.recordData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), record_key)
+                    if extra:
+                        v2_add_rq.extra = crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), record_key)
+                    v2_add_rq.encryptedRecordKey = crypto.encrypt_aes_v1(record_key, params.data_key)
+                    v2_add_rq.folderType = \
+                        folder_pb2.user_folder if folder_type == BaseFolderNode.UserFolderType else \
+                        folder_pb2.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
+                        folder_pb2.shared_folder_folder
+                    if folder_uid:
+                        v2_add_rq.folderUid = utils.base64_url_decode(folder_uid)
+                        if shared_folder_key:
+                            v2_add_rq.encryptedRecordFolderKey = crypto.encrypt_aes_v1(record_key, shared_folder_key)
+
+                    records_v2_to_add.append(v2_add_rq)
+                    if enterprise_public_key:
+                        audit_uids.append(import_record.uid)
+
+        for v3_add_rq in records_v3_to_add:
+            record_uid = utils.base64_url_encode(v3_add_rq.record_uid)
+            record_key = record_keys.get(record_uid)
+            for link in v3_add_rq.record_links:
+                link_uid = link.record_uid
+                link_key = record_keys.get(link_uid)
+                if record_key and link_key:
+                    link.record_key = crypto.encrypt_aes_v2(link_key, record_key)
+
+        for v3_upd_rq in records_v3_to_update:
+            record_uid = utils.base64_url_encode(v3_upd_rq.record_uid)
+            record_key = record_keys.get(record_uid)
+            for link in v3_upd_rq.record_links_add:
+                link_uid = link.record_uid
+                link_key = record_keys.get(link_uid)
+                if record_key and link_key:
+                    link.record_key = crypto.encrypt_aes_v2(link_key, record_key)
+
+        if records_v2_to_add:
+            _, rec_rs = execute_import_folder_record(params, None, records_v2_to_add)
+        if records_v3_to_add:
+            rec_rs = execute_records_add(params, records_v3_to_add)
+        if records_v2_to_update:
+            execute_update_v2_record(params, records_v2_to_update)
+        if records_v3_to_update:
+            rec_rs = execute_records_update(params, records_v3_to_update)
+
+        api.sync_down(params)
+
+        # update audit data
+        if audit_uids and enterprise_public_key:
+            audit_records = list(parepare_record_audit(params, audit_uids, enterprise_public_key))
+            while audit_records:
+                try:
+                    rq = record_proto.AddAuditDataRequest()
+                    rq.records.extend(audit_records[:999])
+                    audit_records = audit_records[999:]
+                    api.communicate_rest(params, rq, 'vault/record_add_audit_data')
+                except Exception as e:
+                    logging.debug('Update record audit error: %s', e)
             api.sync_down(params)
 
         # ensure records are linked to folders
@@ -333,7 +673,7 @@ def chunks(list_, n):
         yield list_[offset:offset + n]
 
 
-def execute_update_record(params, records_to_update):
+def execute_update_v2_record(params, records_to_update):
     """Interact with the API to update preexisting records: we only change the password(s)."""
     for chunk in chunks(records_to_update, 100):
         request = {
@@ -384,9 +724,55 @@ def execute_import_folder_record(params, folders, records):
             rs_record.extend(import_rs.recordResponse)
 
     report_statuses('folder', (element.status for element in rs_folder))
-    report_statuses('record', (element.status for element in rs_record))
+    report_statuses('legacy record', (element.status for element in rs_record))
 
     return rs_folder, rs_record
+
+
+def record_status_to_str(status):  # type: (record_proto.RecordModifyStatus) -> str
+    if status == record_proto.RS_SUCCESS:
+        return 'success'
+    if status == record_proto.RS_OUT_OF_SYNC:
+        return 'out of sync'
+    if status == record_proto.RS_ACCESS_DENIED:
+        return 'access denied'
+    if status == record_proto.RS_SHARE_DENIED:
+        return 'share denied'
+    if status == record_proto.RS_RECORD_EXISTS:
+        return 'record exists'
+    if status == record_proto.RS_OLD_RECORD_VERSION_TYPE:
+        return 'old record version type'
+    return str(status)
+
+
+def execute_records_add(params, records):  # type: (KeeperParams, List[record_proto.RecordAdd]) -> List[record_proto.RecordModifyResult]
+    rs_record = []
+    while records:
+        rq = record_proto.RecordsAddRequest()
+        rq.client_time = utils.current_milli_time()
+        rq.records.extend(records[:999])
+        records = records[999:]
+        rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_proto.RecordsModifyResponse)
+        rs_record.extend(rs.records)
+
+    report_statuses('record', (record_status_to_str(x.status) for x in rs_record))
+
+    return rs_record
+
+
+def execute_records_update(params, records):  # type: (KeeperParams, List[record_proto.RecordUpdate]) -> List[record_proto.RecordModifyResult]
+    rs_record = []
+    while records:
+        rq = record_proto.RecordsUpdateRequest()
+        rq.client_time = utils.current_milli_time()
+        rq.records.extend(records[:999])
+        records = records[999:]
+        rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_proto.RecordsModifyResponse)
+        rs_record.extend(rs.records)
+
+    report_statuses('record', (x.status for x in rs_record))
+
+    return rs_record
 
 
 def upload_attachment(params, attachments):
@@ -678,17 +1064,99 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def tokenize_partial_import_record(record):   # type: (ImportRecord) -> [str]
+def parepare_record_audit(params, uids, enterprise_public_key):  # type: (KeeperParams, Iterator[str], any) -> Iterator[record_proto.RecordAddAuditData]
+    for uid in uids:
+        if uid in params.record_cache:
+            keeper_record = params.record_cache[uid]
+            import_record = convert_keeper_record(keeper_record)
+            if import_record:
+                audit_data = {
+                    'title': import_record.title,
+                    'record_type': import_record.type
+                }
+                if import_record.login_url:
+                    audit_data['url'] = import_record.login_url
+                record_audit_rq = record_proto.RecordAddAuditData()
+                record_audit_rq.record_uid = utils.base64_url_decode(uid)
+                record_audit_rq.revision = 0
+                record_audit_rq.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), enterprise_public_key)
+                yield record_audit_rq
+
+
+RECORD_FIELD_TYPES = {'login', 'password', 'url'}
+IGNORABLE_FIELD_TYPES = {'text', 'fileRef', 'cardRef', 'oneTimeCode'}
+
+
+def value_to_token(value): # type: (any) -> str
+    if not value:
+        return ''
+    if type(value) == str:
+        return value
+    if type(value) == list:
+        return ','.join((value_to_token(x) for x in value))
+    if type(value) == dict:
+        pairs = [x for x in value.items()]
+        pairs.sort(key=lambda x: x[0])
+        return ';'.join(f'{k}={value_to_token(v)}' for k, v in pairs)
+    return str(value)
+
+
+def tokenize_record_key(record):   # type: (ImportRecord) -> Iterator[str]
     """
     Turn a record-to-import into an iterable of str's for hashing.  This is really about import --update.
 
     Examine just the relevant parts of the record.
     """
-    yield record.title or ''
-    yield record.login or ''
-    yield record.login_url or ''
+    record_type = record.type or ""
+    yield f'$type:{record_type}'
+    yield f'$title:{record.title or ""}'
+    yield f'$login:{record.login or ""}'
+    yield f'$url:{record.login_url or ""}'
+
+    if record_type in {'', 'login'}:
+        return
+
+    excluded = {x for x in RECORD_FIELD_TYPES}
+    excluded.update(IGNORABLE_FIELD_TYPES)
+    fields = {x.name_key(): x.value for x in record.fields if x.type and x.type not in excluded}
+    if record.type == 'bankCard':
+        if '$paymentcard' in fields:
+            payment_card = fields.pop('$paymentcard')
+        else:
+            payment_card = {}
+        yield '$paymentcard:' + value_to_token(payment_card.get('cardNumber'))
+    elif record.type == 'bankAccount':
+        yield value_to_token(fields.get('bankAccount'))
+        yield value_to_token(fields.get('name'))
+    elif record.type == 'address':
+        yield value_to_token(fields.get('address'))
+    else:
+        fields = [x for x in record.fields if x.type not in excluded]
+        fields.sort(key=ImportRecordField.name_key, reverse=False)
+        for field in fields:
+            yield field.hash_key()
 
 
+def tokenize_full_import_record(record):   # type: (ImportRecord) -> Iterator[str]
+    """
+    Turn a record-to-import into an iterable of str's for hashing.
+
+    Examine the entire record.
+    """
+    yield f'$type:{record.type or ""}'
+    yield f'$title:{record.title or ""}'
+    yield f'$login:{record.login or ""}'
+    yield f'$password:{record.password or ""}'
+    yield f'$url:{record.login_url or ""}'
+    yield f'$notes:{record.notes or ""}'
+
+    fields = [x for x in record.fields]
+    fields.sort(key=ImportRecordField.name_key, reverse=False)
+    for field in fields:
+        yield field.hash_key()
+
+
+'''
 def tokenize_partial_preexisting_record(record):   # type: (Record) -> [str]
     """
     Turn a preexisting record into an iterable of str's for hashing.
@@ -698,191 +1166,167 @@ def tokenize_partial_preexisting_record(record):   # type: (Record) -> [str]
     For now at least, this is the same as tokenize_partial_import_record().
     """
     return tokenize_partial_import_record(record)
+'''
 
-
-def tokenize_full_import_record(record):   # type: (ImportRecord) -> [str]
-    """
-    Turn a record-to-import into an iterable of str's for hashing.
-
-    Examine the entire record.
-    """
-    yield record.title or ''
-    yield record.login or ''
-    yield record.password or ''
-    yield record.login_url or ''
-    yield record.notes or ''
-
-    if len(record.custom_fields) > 0:
-        keys = list(record.custom_fields.keys())
-        keys.sort()
-        for key in keys:
-            yield key + ':' + record.custom_fields[key]
-
-
-def tokenize_full_preexisting_record(record):   # type: (Record) -> [str]
+'''
+def tokenize_full_record(record):   # type: (ImportRecord) -> Iterator[str]
     """Turn a preexisting record into an iterable of str's for hashing."""
-    yield record.title or ''
-    yield record.login or ''
-    yield record.password or ''
-    yield record.login_url or ''
-    yield record.notes or ''
+yield record.title or ''
+yield record.login or ''
+yield record.password or ''
+yield record.login_url or ''
+yield record.notes or ''
 
-    custom = {}
-    if record.custom_fields:
-        for cf in record.custom_fields:
-            if cf.get('name') and cf.get('value'):
-                custom[cf.get('name')] = cf.get('value')
-    if record.totp:
-        custom[TWO_FACTOR_CODE] = record.totp
-    if len(custom) > 0:
-        keys = list(custom.keys())
-        keys.sort()
-        for key in keys:
-            yield key + ':' + custom[key]
-
-
-def construct_import_rec_req(params, preexisting_record_hash, rec_to_import):
-    """Build a rec_req for rec_to_import."""
-    r_hash = build_record_hash(record=rec_to_import, tokenize_gen=tokenize_full_import_record)
-
-    if r_hash in preexisting_record_hash:
-        # Nothing to do.  We already have this identical record.
-        return None
-    else:
-        rec_to_import.uid = api.generate_record_uid()
-        preexisting_record_hash[r_hash] = rec_to_import.uid
-        record_key = os.urandom(32)
-        rec_req = folder_pb2.RecordRequest()
-        rec_req.recordUid = base64.urlsafe_b64decode(rec_to_import.uid + '==')
-        rec_req.recordType = 0
-        rec_req.encryptedRecordKey = base64.urlsafe_b64decode(api.encrypt_aes(record_key, params.data_key) + '==')
-        rec_req.howLongAgo = 0
-        rec_req.folderType = 1
-
-        folder_uid = None
-        if rec_to_import.folders:
-            folder_uid = rec_to_import.folders[0].uid
-        if folder_uid:
-            if folder_uid in params.folder_cache:
-                folder = params.folder_cache[folder_uid]
-                if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
-                    rec_req.folderType = 2 if folder.type == BaseFolderNode.SharedFolderType else 3
-
-                    sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
-                    sf = params.shared_folder_cache[sh_uid]
-                    rec_req.encryptedRecordFolderKey = base64.urlsafe_b64decode(
-                        api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted']) + '=='
-                    )
-                else:
-                    rec_req.folderType = 1
-                    if folder.type != BaseFolderNode.RootFolderType:
-                        rec_req.folderUid = base64.urlsafe_b64decode(folder.uid + '==')
-
-        custom_fields = []
-        totp = None
-        if rec_to_import.custom_fields:
-            for cf in rec_to_import.custom_fields:
-                if cf == TWO_FACTOR_CODE:
-                    totp = rec_to_import.custom_fields[cf]
-                else:
-                    custom_fields.append({
-                        'name': cf,
-                        'value': rec_to_import.custom_fields[cf]
-                    })
-
-        data = {
-            'title': rec_to_import.title or '',
-            'secret1': rec_to_import.login or '',
-            'secret2': rec_to_import.password or '',
-            'link': rec_to_import.login_url or '',
-            'notes': rec_to_import.notes or '',
-            'custom': custom_fields
-        }
-        rec_req.recordData = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key) + '==')
-        if totp:
-            extra = {
-                'fields': [
-                    {
-                        'id': api.generate_record_uid(),
-                        'field_type': 'totp',
-                        'field_title': 'Two-Factor Code',
-                        'type': 0,
-                        'data': totp
-                    }]
-            }
-            rec_req.extra = base64.urlsafe_b64decode(api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key) + '==')
-        return rec_req
-
-
-def construct_update_rec_req(params, preexisting_record_hash, rec_to_update):
-    """
-    Build a rec_req for rec_to_import.
-
-    Based on https://keeper.atlassian.net/wiki/spaces/KA/pages/13238307/record+update+-+deprecated
-    and upload_attachment(params, attachments), which appears elsewhere in this file.
-
-    We're not doing records_update yet, because it requires v3 and we don't do v3 yet.
-    """
-    # FIXME: This assert probably can be sorted out during code review.
-    assert len(rec_to_update.folders) == 1, "What should we do with records that aren't in exactly one folder?"
-    data = {
-        'folder': rec_to_update.folders[0].get_folder_path(),
-        'title': rec_to_update.title,
-        'secret1': rec_to_update.login,
-        'secret2': rec_to_update.password,
-        'link': rec_to_update.login_url,
-        # We add notes and custom a little later.
-    }
-
-    current_rec = params.record_cache[rec_to_update.uid]
-    # This should always exist, because this is an import --update.
-    preexisting_record = params.record_cache[rec_to_update.uid]
-
-    preexisting_record_fields_str = preexisting_record['data_unencrypted'].decode('utf-8')
-    preexisting_record_fields_dict = json.loads(preexisting_record_fields_str)
-
-    # These fields need to be preserved - per our design.
-    field_tuple = ('notes', 'custom')
-    for field_name in field_tuple:
-        # these need to be preserved
-        if field_name in preexisting_record_fields_dict:
-            data[field_name] = preexisting_record_fields_dict[field_name]
-
-    unencrypted_key = preexisting_record['record_key_unencrypted']
-
-    encrypted_data = api.encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
-    record_key = api.encrypt_aes(unencrypted_key, params.data_key)
-    one_rec_req = {
-        'record_uid': rec_to_update.uid,
-        'record_key': record_key,
-        'record_key_unencrypted': base64.urlsafe_b64encode(unencrypted_key).decode('utf-8'),
-        'data': encrypted_data,
-        'version': 2,
-        'client_modified_time': api.current_milli_time(),
-        'revision': current_rec['revision']
-    }
-    return one_rec_req
-
-
-def build_record_hash(record, tokenize_gen):
-    """Build a sha256 hash of record using tokenize_gen."""
-    hasher = hashlib.sha256()
-    for token in tokenize_gen(record):
-        hasher.update(token.encode())
-    return hasher.hexdigest()
-
-
+custom = {}
+if record.custom_fields:
+    for cf in record.custom_fields:
+        if cf.get('name') and cf.get('value'):
+            custom[cf.get('name')] = cf.get('value')
+if record.totp:
+    custom[TWO_FACTOR_CODE] = record.totp
+if len(custom) > 0:
+    keys = list(custom.keys())
+    keys.sort()
+    for key in keys:
+        yield key + ':' + custom[key]
+        
 def build_hash_dict(params, tokenize_gen):
     """Return a dict of hashes to record uid's with a parameterized tokenizing generator."""
     preexisting_record_hash = {}
     for preexisting_r_uid in params.record_cache:
-        preexisting_rec = api.get_record(params, preexisting_r_uid)
-        preexisting_record_hash[build_record_hash(preexisting_rec, tokenize_gen)] = preexisting_r_uid
+        preexisting_record_hash[build_record_hash(params.record_cache[preexisting_r_uid], tokenize_gen)] = preexisting_r_uid
     return preexisting_record_hash
+'''
+
+
+def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord, Optional[dict]) -> (dict, dict)
+    totp = None
+    custom_fields = []
+    for field in rec_to_import.fields:
+        value = ''
+        if type(field.value) == str:
+            value = field.value
+        elif type(field.value) == list:
+            value = field.value[0]
+        elif field.value:
+            value = str(value)
+
+        if field.type == FIELD_TYPE_ONE_TIME_CODE:
+            if value:
+                totp = value
+        else:
+            name = field.label or field.type or ''
+            custom_fields.append({
+                'name': name,
+                'value': value
+            })
+
+    data = {
+        'title': rec_to_import.title or '',
+        'secret1': rec_to_import.login or '',
+        'secret2': rec_to_import.password or '',
+        'link': rec_to_import.login_url or '',
+        'notes': rec_to_import.notes or '',
+        'custom': custom_fields
+    }
+
+    if totp and orig_extra:
+        if 'fields' in orig_extra:
+            orig_totp = next((x.get('data') for x in orig_extra['fields'] if x.get('field_type') == 'totp'), None)
+            if orig_totp == totp:
+                totp = None
+
+    extra = None
+    if totp:
+        extra = orig_extra or {}
+        if 'fields' in extra:
+            fields = extra['fields']
+        else:
+            fields = []
+            extra['fields'] = fields
+        fields.append({
+            'id': utils.generate_uid(),
+            'field_type': 'totp',
+            'field_title': 'Two-Factor Code',
+            'type': 0,
+            'data': totp
+        })
+
+    return data, extra
+
+
+def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
+    if value is None:
+        value = ''
+    field = {
+        'type': schema.ref or 'text',
+        'value': value if type(value) is list else [value]
+    }
+    if schema.label:
+        field['label'] = schema.label
+    return field
+
+
+def _construct_record_v3_data(rec_to_import, orig_data=None):    # type: (ImportRecord, Optional[dict]) -> dict
+    data = {}
+    if orig_data:
+        data.update(orig_data)
+    data['title'] = rec_to_import.title or ''
+    data['type'] = rec_to_import.type or ''
+    data['notes'] = rec_to_import.notes or ''
+    record_fields = [x for x in rec_to_import.fields]
+    record_refs = [x for x in rec_to_import.references or []]
+    data['fields'] = []
+    for field in rec_to_import.schema or []:
+        if field.ref == 'login':
+            data['fields'].append(_create_field_v3(field, rec_to_import.login))
+        elif field.ref == 'password':
+            data['fields'].append(_create_field_v3(field, rec_to_import.password))
+        elif field.ref == 'url':
+            data['fields'].append(_create_field_v3(field, rec_to_import.login_url))
+        else:
+            index = -1
+            if field.ref.endswith('Ref'):
+                for i, ref_value in enumerate(record_refs):
+                    if ref_value.type == field.ref:
+                        index = i
+                        break
+                ref_value = record_fields.pop(index) if index >= 0 else None
+                data['fields'].append(_create_field_v3(field, ref_value.value if ref_value else []))
+            else:
+                for i, field_value in enumerate(record_fields):
+                    if field_value.type == field.ref and (field_value.label or '') == (field.label or ''):
+                        index = i
+                        break
+                field_value = record_fields.pop(index) if index >= 0 else None
+                data['fields'].append(_create_field_v3(field, field_value.value if field_value else []))
+    data['custom'] = []
+    for field_value in record_fields:
+        field = RecordSchemaField()
+        field.ref = field_value.type or 'text'
+        if field_value.label:
+            field.label = field_value.label
+        data['custom'].append(_create_field_v3(field, field_value.value))
+
+    for reference in record_refs:
+        field = RecordSchemaField()
+        field.ref = reference.type + 'Ref'
+        field.label = reference.label
+        data['custom'].append(_create_field_v3(field, reference.uids))
+
+    return data
+
+
+def build_record_hash(tokens):    # type: (Iterator[str]) -> str
+    """Build a sha256 hash of record using tokenize_gen."""
+    hasher = hashlib.sha256()
+    for token in tokens:
+        hasher.update(token.encode())
+    return hasher.hexdigest()
 
 
 def prepare_record_add_or_update(update_flag, params, records):
+    # type: (bool, KeeperParams, Iterator[ImportRecord]) -> List[ImportRecord]
     """
     Find what records to import or update.
 
@@ -891,13 +1335,85 @@ def prepare_record_add_or_update(update_flag, params, records):
         Otherwise import the record, risking creating an almost-duplicate.
     If update_flag is True:
        if a unique field match (on title, login, and url) is found, then request a change in password only.
-       Do not update the TOTP custom field, even if it exists.
     """
-    recs_to_import_or_update = records
-    del records
-    preexisting_entire_record_hash = build_hash_dict(params, tokenize_full_preexisting_record)
-    preexisting_partial_record_hash = build_hash_dict(params, tokenize_partial_preexisting_record)
+    preexisting_entire_record_hash = {}
+    preexisting_partial_record_hash = {}
+    for record_uid in params.record_cache:
+        import_record = convert_keeper_record(params.record_cache[record_uid])
+        if import_record:
+            record_hash = build_record_hash(tokenize_full_import_record(import_record))
+            preexisting_entire_record_hash[record_hash] = record_uid
+            if update_flag:
+                record_hash = build_record_hash(tokenize_record_key(import_record))
+                preexisting_partial_record_hash[record_hash] = record_uid
+        else:
+            pass
 
+    record_to_import = []   # type: List[ImportRecord]
+    record_uid_to_update = set()
+    external_lookup = {}
+
+    for import_record in records:
+        record_hash = build_record_hash(tokenize_full_import_record(import_record))
+        if record_hash in preexisting_entire_record_hash:
+            if import_record.uid:
+                record_uid = preexisting_entire_record_hash[record_hash]
+                external_lookup[import_record.uid] = record_uid
+            continue
+
+        if update_flag:
+            record_hash = build_record_hash(tokenize_record_key(import_record))
+            if record_hash in preexisting_partial_record_hash:
+                record_uid = preexisting_partial_record_hash[record_hash]
+                if import_record.uid:
+                    external_lookup[import_record.uid] = record_uid
+                if record_uid not in record_uid_to_update:
+                    record_uid_to_update.add(record_uid)
+                    import_record.uid = record_uid
+                    record_to_import.append(import_record)
+                continue
+
+        record_uid = utils.generate_uid()
+        if import_record.uid:
+            external_lookup[import_record.uid] = record_uid
+        import_record.uid = record_uid
+        record_to_import.append(import_record)
+
+    record_types = {}
+    if params.record_type_cache:
+        for rts in params.record_type_cache.values():
+            try:
+                rto = json.loads(rts)
+                if '$id' in rto:
+                    record_types[rto['$id']] = rto
+            except:
+                pass
+
+    for import_record in record_to_import:
+        if not import_record.type:
+            continue
+        if import_record.schema:
+            continue
+        record_type = import_record.type
+        if record_type in record_types:
+            fields = record_types[record_type].get('fields') or []
+            import_record.schema = []
+            for field in fields:
+                if '$ref' in field:
+                    f = RecordSchemaField()
+                    f.ref = field['$ref']
+                    f.label = field.get('label') or ''
+                    import_record.schema.append(f)
+
+    for import_record in record_to_import:
+        if import_record.references:
+            for ref in import_record.references:
+                ref.uids = [external_lookup[x] for x in ref.uids if x in external_lookup]
+
+    return record_to_import
+
+
+'''
     record_adds = []
     record_updates = []
     for rec_to_import_or_update in recs_to_import_or_update:
@@ -935,6 +1451,7 @@ def prepare_record_add_or_update(update_flag, params, records):
             raise AssertionError('perform_import_or_update has a strange value: {}'.format(perform_import_or_update))
 
     return record_adds, record_updates
+'''
 
 
 def prepare_record_link(params, records):
@@ -1180,7 +1697,7 @@ class KeeperAttachment(ImportAttachment):
     Note that this may be a duplicate of keepercommander/importer/commands.py's KeeperAttachment.
     """
 
-    def __init__(self, params, record_uid,):
+    def __init__(self, params, record_uid):
         """Initialize."""
         ImportAttachment.__init__(self)
         self.params = params

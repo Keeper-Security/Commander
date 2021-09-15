@@ -5,6 +5,7 @@ from binascii import hexlify
 import requests
 from xml.etree import ElementTree as etree
 from . import blob
+from .version import __version__
 from .exceptions import (
     NetworkError,
     InvalidResponseError,
@@ -19,6 +20,7 @@ from .session import Session
 
 
 http = requests
+headers = {'user-agent': 'lastpass-python/{}'.format(__version__)}
 
 
 def login(username, password, multifactor_password=None, client_id=None):
@@ -49,7 +51,8 @@ def fetch(session, web_client=http):
 
 def request_iteration_count(username, web_client=http):
     response = web_client.post('https://lastpass.com/iterations.php',
-                               data={'email': username})
+                               data={'email': username},
+                               headers=headers)
     if response.status_code != requests.codes.ok:
         raise NetworkError()
 
@@ -80,7 +83,8 @@ def request_login(username, password, key_iteration_count, multifactor_password=
         body['imei'] = client_id
 
     response = web_client.post('https://lastpass.com/login.php',
-                               data=body)
+                               data=body,
+                               headers=headers)
 
     if response.status_code != requests.codes.ok:
         raise NetworkError()

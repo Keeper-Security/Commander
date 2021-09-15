@@ -6,9 +6,9 @@ from io import BytesIO
 import struct
 import re
 
-from Cryptodome.Cipher import AES, PKCS1_OAEP
-from Cryptodome.Util import number
-from Cryptodome.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
+from Crypto.Util import number
+from Crypto.PublicKey import RSA
 
 from .account import Account
 from .chunk import Chunk
