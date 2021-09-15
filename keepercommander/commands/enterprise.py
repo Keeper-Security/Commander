@@ -453,7 +453,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         print('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
         root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
-        node_scope = {x['node_id'] for x in params.enterprise['nodes']}
+        node_scope = set()
         if kwargs.get('node'):
             subnode = kwargs.get('node').lower()
             root_nodes = [x['node_id'] for x in self.resolve_nodes(params, subnode)]
@@ -481,6 +481,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if pos > 100:
                     break
             node_scope.update(nl)
+        else:
+            node_scope.update((x['node_id'] for x in params.enterprise['nodes']))
 
         nodes = {}
         for node in params.enterprise['nodes']:
