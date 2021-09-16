@@ -3201,7 +3201,13 @@ class AuditReportCommand(Command):
         columns = []
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
-            rq['columns'] = [c for c in columns if c not in audit_report_record_lookup_fields]
+            rq_columns = columns.copy()
+            for lookup_field in audit_report_record_lookup_fields:
+                if lookup_field in rq_columns:
+                    rq_columns.remove(lookup_field)
+                    if 'record_uid' not in rq_columns:
+                        rq_columns.append('record_uid')
+            rq['columns'] = rq_columns
         if report_type == 'dim' and len(columns) == 0:
             raise CommandError('audit-report', "'columns' parameter is missing")
 
