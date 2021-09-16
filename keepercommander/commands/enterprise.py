@@ -10,6 +10,7 @@
 #
 
 import argparse
+import itertools
 import json
 import base64
 import string
@@ -47,7 +48,7 @@ from ..error import CommandError
 from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
                              ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
-
+from .. import record_pb2 as record_proto
 
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
@@ -1775,6 +1776,51 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 continue
                         elif enforcement_type == 'string':
                             pass
+                        elif enforcement_type == 'record_types':
+                            record_types = {
+                                'std': [],
+                                'ent': []
+                            }
+                            types = [x.strip().lower() for x in enforcement_value.split(',')]
+
+                            rq = record_proto.RecordTypesRequest()
+                            rq.standard = True
+                            rq.user = True
+                            rq.enterprise = True
+                            record_types_rs = api.communicate_rest(params, rq, 'vault/get_record_types', rs_type=record_proto.RecordTypesResponse)
+                            lookup = {}
+                            for rti in record_types_rs.recordTypes:
+                                try:
+                                    rto = json.loads(rti.content)
+                                    if '$id' in rto:
+                                        lookup[rto['$id'].lower()] = (rti.recordTypeId, rti.scope)
+                                except:
+                                    pass
+                            all_resolved = True
+                            for rt in types:
+                                if rt in lookup:
+                                    rti = lookup[rt]
+                                    if rti[1] == record_proto.RT_STANDARD:
+                                        record_types['std'].append(rti[0])
+                                    elif rti[1] == record_proto.RT_ENTERPRISE:
+                                        record_types['ent'].append(rti[0])
+                                else:
+                                    if rt == 'all':
+                                        record_types['std'].clear()
+                                        record_types['ent'].clear()
+                                        for rti in lookup.values():
+                                            if rti[1] == record_proto.RT_STANDARD:
+                                                record_types['std'].append(rti[0])
+                                            elif rti[1] == record_proto.RT_ENTERPRISE:
+                                                record_types['ent'].append(rti[0])
+                                        break
+                                    else:
+                                        logging.warning('Enforcement %s. Record type \'%s\' not found', key, rt)
+                                        all_resolved = False
+                                        break
+                            if not all_resolved:
+                                continue
+                            enforcement_value = record_types
                         else:
                             logging.warning('Enforcement \"%s\". Value type \"%s\" is not supported', key, enforcement_type)
                             continue
@@ -1792,7 +1838,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 'role_id': role_id,
                                 'enforcement': key
                             }
-                            if type(enforcement_value) is bool:
+                            if isinstance(enforcement_value, bool):
                                 if existing_enforcement:
                                     logging.warning('Enforcement \"%s\" is already set for role %d. Skipping', key, role_id)
                                     continue
@@ -1998,6 +2044,19 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             print('{0:>24s}: {1}'.format(p[0], value))
                 if 'allow_secrets_manager' in enforcements:
                     print('{0:>24s}: {1}'.format('Allow Secrets Manager', 'True'))
+                if 'restrict_record_types' in enforcements:
+                    try:
+                        rto = enforcements.get('restrict_record_types')
+                        if params.record_type_cache:
+                            record_types = []
+                            for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
+                                if record_type_id in params.record_type_cache:
+                                    rtc = json.loads(params.record_type_cache[record_type_id])
+                                    if '$id' in rtc:
+                                        record_types.append(rtc['$id'])
+                            print('{0:>24s}: {1}'.format('Restrict Record Types', ', '.join(record_types)))
+                    except:
+                        pass
 
 
 class EnterpriseTeamCommand(EnterpriseCommand):
