@@ -115,7 +115,7 @@ class KeeperParams:
         self.device_private_key = None
         self.account_uid_bytes = None
         self.session_token_bytes = None
-        self.record_type_cache = {} # RT definitions only
+        self.record_type_cache = {}   # RT definitions only
 
     def clear_session(self):
         self.auth_verifier = None

@@ -5,11 +5,39 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
-keepass_instructions = """
+import os
+import logging
+import base64
+import getpass
+import gzip
+import io
+import re
+import uuid
+
+from xml.sax.saxutils import escape
+
+from contextlib import contextmanager
+
+from lxml import objectify, etree
+
+from typing import List
+
+from Cryptodome.Cipher import AES
+
+from ... import utils
+from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
+    Record, Folder, SharedFolder, Permission, Attachment, RecordField
+
+from keepercommander.api import unpad_binary
+
+try:
+    import libkeepass
+except:
+    keepass_instructions = """
 libkeepass is not installed
 
 Please see \'Install Keepass library\' section of README.md file for detailed instructions
@@ -21,41 +49,27 @@ if above-mentioned command fails installing lxml package then install pre-compil
 Download appropriate package from PyPI [https://pypi.org/project/lxml/#description]
 or for Windows platform, from Unofficial Windows Binaries [https://www.lfd.uci.edu/~gohlke/pythonlibs/#lxml]
 
-For example: Python 3.5.0 for Windows 64 bit 
-the library file name is going to be similar to \'lxml-4.2.3-cp35-cp35m-win-amd64.whl\'  
+For example: Python 3.6.0 for Windows 64 bit 
+the library file name is going to be similar to \'lxml-4.2.3-cp36-cp36m-win-amd64.whl\'  
 
 Install the downloaded package:
-pip3 install lxml-4.2.3-cp35-cp35m-win-amd64.whl
+pip3 install lxml-4.2.3-cp36-cp36m-win-amd64.whl
 pip3 install libkeepass
 """
-
-try:
-    import libkeepass
-except:
     raise Exception(keepass_instructions)
-
-import os
-import logging
-import base64
-import getpass
-import gzip
-import io
-import re
-import uuid
-
-from contextlib import contextmanager
-
-from lxml import objectify, etree
-
-from Cryptodome.Cipher import AES
-
-from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
-    Record, Folder, SharedFolder, Permission, Attachment
-
-from keepercommander.api import unpad_binary
 
 
 _REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
+
+
+class XmlUtils(object):
+    @staticmethod
+    def escape_string(plain):   # type: (str) -> str
+        if not plain:
+            return ''
+        output = escape(plain)
+        return output.replace('\'', '&apos;').replace('\"', '&quot;')
+
 
 class KeepassImporter(BaseFileImporter):
 
@@ -186,7 +200,21 @@ class KeepassImporter(BaseFileImporter):
                                 elif key == 'Notes':
                                     record.notes = value
                                 else:
-                                    record.custom_fields[key] = value
+                                    if key[0] == '$':
+                                        pos = key.find(':')
+                                        if pos > 0:
+                                            field_type = key[1:pos].strip()
+                                            field_label = key[pos+1:].strip()
+                                        else:
+                                            field_type = key[1:]
+                                            field_label = ''
+                                    else:
+                                        field_type = ''
+                                        field_label = key
+                                    field = RecordField()
+                                    field.type = field_type
+                                    field.label = field_label
+                                    field.value = value
 
                             if hasattr(kdb.obj_root.Meta, 'Binaries'):
                                 for bin in entry.findall('Binary'):
@@ -267,9 +295,8 @@ class KeepassImporter(BaseFileImporter):
                         record.password = resolve_references(record.password)
                         record.login_url = resolve_references(record.login_url)
                         record.notes = resolve_references(record.notes)
-                        if record.custom_fields:
-                            for key in record.custom_fields.keys():
-                                record.custom_fields[key] = resolve_references(record.custom_fields[key])
+                        for field in record.fields:
+                            field.value = resolve_references(field.value)
                     except Exception as e:
                         logging.debug(e)
                     yield record
@@ -278,7 +305,17 @@ class KeepassImporter(BaseFileImporter):
         return 'kdbx'
 
 
-class KeepassExporter(BaseExporter):
+class KeepassExporter(BaseExporter, XmlUtils):
+    @staticmethod
+    def to_keepass_value(keeper_value):  # type: (any) -> str
+        if not keeper_value:
+            return ''
+        if isinstance(keeper_value, list):
+            return ','.join((KeepassExporter.to_keepass_value(x) for x in keeper_value))
+        elif isinstance(keeper_value, dict):
+            return ';\n'.join((f'{k}:{KeepassExporter.to_keepass_value(v)}' for k, v in keeper_value.items()))
+        else:
+            return str(keeper_value)
 
     def do_export(self, filename, records, file_password=None):
         master_password = file_password
@@ -286,12 +323,12 @@ class KeepassExporter(BaseExporter):
             print('Choose password for your Keepass file')
             master_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
 
-        sfs = []  # type: [SharedFolder]
-        rs = []   # type: [Record]
+        sfs = []  # type: List[SharedFolder]
+        rs = []   # type: List[Record]
         for x in records:
-            if type(x) is Record:
+            if isinstance(x, Record):
                 rs.append(x)
-            elif type(x) is SharedFolder:
+            elif isinstance(x, SharedFolder):
                 sfs.append(x)
 
         template_file = os.path.join(os.path.dirname(__file__), 'template.kdbx')
@@ -303,7 +340,7 @@ class KeepassExporter(BaseExporter):
                 node = root
                 for i in range(len(comps)):
                     comp = comps[i]
-                    sub_node = node.find("Group[Name=\'{0}\']".format(comp))
+                    sub_node = node.find('Group[Name=\'{0}\']'.format(self.escape_string(comp)))
                     if sub_node is None:
                         sub_node = objectify.Element('Group')
                         sub_node.UUID = base64.b64encode(os.urandom(16)).decode()
@@ -377,14 +414,21 @@ class KeepassExporter(BaseExporter):
                         'URL': r.login_url,
                         'Notes': r.notes
                     }
-                    if r.custom_fields:
-                        for cf in r.custom_fields:
-                            strings[cf] = r.custom_fields[cf]
+                    if r.fields:
+                        for cf in r.fields:
+                            if cf.type and cf.label:
+                                title = f'${cf.type}:{cf.label}'
+                            elif cf.type:
+                                title = f'{cf.type}'
+                            else:
+                                title = cf.label or ''
+                            strings[title] = self.to_keepass_value(cf.value)
 
                     if entry is None:
                         entry = objectify.Element('Entry')
+
                         if r.uid:
-                            entry.UUID = base64.b64encode(base64.urlsafe_b64decode(r.uid + '==')).decode()
+                            entry.UUID = base64.b64encode(utils.base64_url_decode(r.uid)).decode()
                         else:
                             entry.UUID = base64.b64encode(os.urandom(16)).decode()
                         node.append(entry)
@@ -401,7 +445,7 @@ class KeepassExporter(BaseExporter):
                                     if value:
                                         str_node.Value = value
                                         strings.pop(key)
-                    if not fol is None:
+                    if fol is not None:
                         if fol.domain:
                             keeper = entry.find('Keeper')
                             if keeper is None:
@@ -420,7 +464,7 @@ class KeepassExporter(BaseExporter):
                                     link.CanEdit = f.can_edit
                                     link.CanShare = f.can_share
                                 if f.path:
-                                    link.Path = f.Path
+                                    link.Path = f.path
 
                     for key in strings:
                         value = strings[key]
@@ -497,6 +541,9 @@ class KeepassExporter(BaseExporter):
 
     def extension(self):
         return 'kdbx'
+
+    def supports_v3_record(self):
+        return False
 
 
 class KeepassAttachment(Attachment):

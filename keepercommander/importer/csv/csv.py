@@ -12,7 +12,7 @@
 import csv
 import sys
 
-from ..importer import BaseFileImporter, BaseExporter, Record, Folder
+from ..importer import BaseFileImporter, BaseExporter, Record, Folder, RecordField
 
 
 '''
@@ -65,7 +65,13 @@ class KeeperCsvImporter(BaseFileImporter):
                                 key = (row[i] or '').strip()
                                 value = (row[i+1] or '').strip()
                                 if key and value:
-                                    record.custom_fields[key] = value
+                                    if key == '$record_uid':
+                                        record.uid = value
+                                    else:
+                                        field = RecordField()
+                                        field.label = key
+                                        field.value = value
+                                        record.fields.append(field)
                     yield record
 
     def extension(self):
@@ -74,7 +80,7 @@ class KeeperCsvImporter(BaseFileImporter):
 
 class KeeperCsvExporter(BaseExporter):
 
-    def do_export(self, filename, records, file_password):
+    def do_export(self, filename, records, file_password=None):
         csvfile = open(filename, 'w', encoding='utf-8', newline='') if filename else sys.stdout
         writer = csv.writer(csvfile)
         for r in records:
@@ -91,11 +97,14 @@ class KeeperCsvExporter(BaseExporter):
                             if folder.can_share:
                                 domain = domain + '#reshare'
                         break
-                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain, r.uid]
-                if r.custom_fields:
-                    for cf in r.custom_fields:
-                        row.append(cf)
-                        row.append(r.custom_fields[cf])
+                row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
+                if r.fields:
+                    for cf in r.fields:
+                        if cf.label:
+                            row.append(cf.label)
+                            row.append(str(cf.value))
+                    row.append('$record_uid')
+                    row.append(r.uid)
                 writer.writerow(row)
         if filename:
             csvfile.flush()
@@ -106,3 +115,6 @@ class KeeperCsvExporter(BaseExporter):
 
     def supports_stdout(self):
         return True
+
+    def supports_v3_record(self):
+        return False
