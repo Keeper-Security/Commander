@@ -26,7 +26,7 @@ from .plugins import humps as humps
 
 from . import api
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
+from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse, DomainPasswordRulesRequest
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
@@ -193,6 +193,10 @@ class LoginV3Flow:
                             'Vault at https://keepersecurity.com/vault'
                         )
                         raise Exception(msg)
+                    elif resp.sessionTokenType == proto.ACCOUNT_RECOVERY:
+                        LoginV3Flow.get_data_key(resp, params)
+                        if not LoginV3Flow.change_master_password(params, encryptedDeviceToken):
+                            raise Exception('Change password failed')
                     else:
                         raise Exception('Please log into the web Vault to update your account settings.')
 
@@ -233,32 +237,11 @@ class LoginV3Flow:
             elif resp.loginState == proto.UPGRADE:
                 raise Exception('Application or device is out of date and requires an update.')
             elif resp.loginState == proto.LOGGED_IN:
-
                 params.user = resp.primaryUsername
                 session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
                 params.session_token = session_token
 
-                if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
-                    decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
-                    params.data_key = decrypted_data_key
-                    login_type_message = bcolors.UNDERLINE + "Persistent Login"
-
-                elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
-
-                    params.data_key = api.decrypt_encryption_params(
-                        CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
-                        params.password)
-
-                    login_type_message = bcolors.UNDERLINE + "Password"
-
-                elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
-                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
-
-                    login_type_message = bcolors.UNDERLINE + "Master Password"
-
-                elif resp.encryptedDataKeyType == proto.NO_KEY \
-                        or resp.encryptedDataKeyType == proto.BY_BIO:
-                    raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
+                login_type_message = LoginV3Flow.get_data_key(resp, params)
 
                 params.clone_code = resp.cloneCode
                 CommonHelperMethods.persist_state_data(params)
@@ -270,6 +253,66 @@ class LoginV3Flow:
                 return
             else:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
+
+    @staticmethod
+    def get_data_key(resp: proto.LoginResponse, params: KeeperParams):
+        if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
+            decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
+            params.data_key = decrypted_data_key
+            login_type_message = bcolors.UNDERLINE + "Persistent Login"
+
+        elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
+
+            params.data_key = api.decrypt_encryption_params(
+                CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
+                params.password)
+
+            login_type_message = bcolors.UNDERLINE + "Password"
+
+        elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
+            params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
+
+            login_type_message = bcolors.UNDERLINE + "Master Password"
+
+        elif resp.encryptedDataKeyType == proto.NO_KEY \
+                or resp.encryptedDataKeyType == proto.BY_BIO:
+            raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
+
+        return login_type_message
+
+    @staticmethod
+    def change_master_password(params: KeeperParams, encrypted_device_token):
+        user_params = LoginV3API.get_domain_password_rules(params)
+        try:
+            while True:
+                print('')
+                print('Please choose a new Master Password.')
+                password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'),
+                                           stream=None).strip()
+                if not password:
+                    raise KeyboardInterrupt()
+                password2 = getpass.getpass(prompt='... {0:>24}: '.format('Re-Enter Password'),
+                                            stream=None).strip()
+
+                if password == password2:
+                    failed_rules = []
+                    for desc, regex in zip(user_params.passwordMatchDescription,
+                                           user_params.passwordMatchRegex):
+                        pattern = re.compile(regex)
+                        if not re.match(pattern, password):
+                            failed_rules.append(desc)
+                    if len(failed_rules) == 0:
+                        LoginV3API.change_master_password(params, password)
+                        logging.info('Password changed')
+                        return True
+                    else:
+                        for rule in failed_rules:
+                            logging.warning(rule)
+                else:
+                    logging.warning('Passwords do not match.')
+        except KeyboardInterrupt:
+            logging.info('Canceled')
+        return False
 
     @staticmethod
     def populateAccountSummary(params: KeeperParams):
@@ -860,6 +903,33 @@ class LoginV3API:
         rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
 
         api.communicate_rest(params, rq, 'authentication/update_device')
+
+    @staticmethod
+    def change_master_password(params: KeeperParams, password):
+        auth_salt = os.urandom(16)
+        data_salt = os.urandom(16)
+        rq = {
+            'command': 'change_master_password',
+            'auth_verifier': api.create_auth_verifier(password, auth_salt, params.iterations),
+            'encryption_params': api.create_encryption_params(password, data_salt, params.iterations, params.data_key)
+        }
+        rs = api.communicate(params, rq)
+        params.password = password
+        params.salt = auth_salt
+
+    @staticmethod
+    def get_domain_password_rules(params: KeeperParams) -> proto.NewUserMinimumParams:
+        rq = DomainPasswordRulesRequest()
+        rq.username = params.user.lower()
+
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        rs = rest_api.execute_rest(params.rest_context, 'authentication/get_domain_password_rules', api_request_payload)
+
+        # if type(rs) == bytes:
+        min_params = proto.NewUserMinimumParams()
+        min_params.ParseFromString(rs)
+        return min_params
 
     @staticmethod
     def register_encrypted_data_key_for_device(params: KeeperParams):
