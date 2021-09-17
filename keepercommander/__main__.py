@@ -155,6 +155,9 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
 
 
 def main(from_package=False):
+    logger = logging.getLogger()
+    if logger:
+        logger.name = 'keepercommander'
 
     set_working_dir()
 
