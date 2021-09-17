@@ -2992,16 +2992,19 @@ Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Defaul
 audit_report_misc_fields = (
     'to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node', 'channel', 'status'
 )
+audit_report_lookup_methods = {
+    'record_uid': 'resolve_record_lookup'
+}
 audit_report_lookup_fields = {
     'record_uid': ('record_title', 'record_url')
 }
 audit_report_lookup_attrs = {
     'record_uid': ('title', 'login_url')
 }
-audit_report_fields_to_lookup = {}
+audit_report_fields_to_uid_name = {}
 for k, v in audit_report_lookup_fields.items():
     for f in v:
-        audit_report_fields_to_lookup[f] = (k, v)
+        audit_report_fields_to_uid_name[f] = k
 
 
 in_pattern = re.compile(r"\s*in\s*\(\s*(.*)\s*\)", re.IGNORECASE)
@@ -3047,7 +3050,7 @@ class AuditReportCommand(Command):
                 val = self.resolve_node_name(params, val)
             return val
 
-        elif field in audit_report_fields_to_lookup:
+        elif field in audit_report_fields_to_uid_name:
             return self.resolve_lookup(params, field, event)
         return ''
 
@@ -3094,17 +3097,20 @@ class AuditReportCommand(Command):
             return '{0} ({1})'.format(self.node_lookup[id], id)
         return id
 
+    def resolve_record_lookup(self, params, uid_name, uid_value):
+        if uid_value in params.record_cache:
+            r = api.get_record(params, uid_value)
+            if r:
+                for fld, attr in zip(audit_report_lookup_fields[uid_name], audit_report_lookup_attrs[uid_name]):
+                    self.lookup[uid_value][fld] = getattr(r, attr, '')
+
     def resolve_lookup(self, params, field, event):
-        uid_name, lookup_fields = audit_report_fields_to_lookup[field]
+        uid_name = audit_report_fields_to_uid_name[field]
         uid_value = event.get(uid_name)
         if uid_value:
             if uid_value not in self.lookup:
-                self.lookup[uid_value] = dict.fromkeys(lookup_fields, '')
-                if uid_value in params.record_cache:
-                    r = api.get_record(params, uid_value)
-                    if r:
-                        for fld, attr in zip(lookup_fields, audit_report_lookup_attrs[uid_name]):
-                            self.lookup[uid_value][fld] = getattr(r, attr, '')
+                self.lookup[uid_value] = dict.fromkeys(audit_report_lookup_fields[uid_name], '')
+                getattr(self, audit_report_lookup_methods[uid_name])(params, uid_name, uid_value)
             return self.lookup[uid_value][field]
         else:
             return ''
@@ -3211,8 +3217,7 @@ class AuditReportCommand(Command):
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
             rq_columns = columns.copy()
-            for lookup_field, lookup in audit_report_fields_to_lookup.items():
-                uid_name, _ = lookup
+            for lookup_field, uid_name in audit_report_fields_to_uid_name.items():
                 if lookup_field in rq_columns:
                     rq_columns.remove(lookup_field)
                     if uid_name not in rq_columns:
@@ -3278,7 +3283,7 @@ class AuditReportCommand(Command):
                                     fields.extend(audit_report_lookup_fields[mf])
                     if len(fields) > lenf:
                         for f in fields[lenf:]:
-                            if f not in audit_report_fields_to_lookup:
+                            if f not in audit_report_fields_to_uid_name:
                                 misc_fields.remove(f)
 
                 row = []
@@ -3325,7 +3330,7 @@ class AuditReportCommand(Command):
                         row.append(
                             self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
                         )
-                    elif f in audit_report_fields_to_lookup:
+                    elif f in audit_report_fields_to_uid_name:
                         row.append(self.resolve_lookup(params, f, event))
                     else:
                         row.append('')
