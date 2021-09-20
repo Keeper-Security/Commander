@@ -178,7 +178,7 @@ class LoginV3Flow:
                 if LoginV3Flow.post_login_processing(params, resp):
                     return
                 else:
-                    # Restart login process
+                    # Not successfully authenticated, so restart login process
                     clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
                     resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
