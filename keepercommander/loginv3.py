@@ -909,20 +909,6 @@ class LoginV3API:
         params.salt = auth_salt
 
     @staticmethod
-    def get_domain_password_rules(params: KeeperParams) -> proto.NewUserMinimumParams:
-        rq = DomainPasswordRulesRequest()
-        rq.username = params.user.lower()
-
-        api_request_payload = proto.ApiRequestPayload()
-        api_request_payload.payload = rq.SerializeToString()
-        rs = rest_api.execute_rest(params.rest_context, 'authentication/get_domain_password_rules', api_request_payload)
-
-        # if type(rs) == bytes:
-        min_params = proto.NewUserMinimumParams()
-        min_params.ParseFromString(rs)
-        return min_params
-
-    @staticmethod
     def register_encrypted_data_key_for_device(params: KeeperParams):
         rq = proto.RegisterDeviceDataKeyRequest()
 
