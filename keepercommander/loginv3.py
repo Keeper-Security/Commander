@@ -202,6 +202,10 @@ class LoginV3Flow:
 
     @staticmethod
     def post_login_processing(params, resp):
+        """Processing after login
+
+        Returns True if authentication is successful and False otherwise.
+        """
         params.user = resp.primaryUsername
         params.account_uid_bytes = resp.accountUid
         session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
@@ -238,6 +242,10 @@ class LoginV3Flow:
 
     @staticmethod
     def get_data_key(resp: proto.LoginResponse, params: KeeperParams):
+        """Get decrypted data key and store in params.data_key
+
+        Returns login_type_message which is one of ("Persistent Login", "Password", "Master Password").
+        """
         if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
             decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
             login_type_message = bcolors.UNDERLINE + "Persistent Login"
@@ -261,6 +269,10 @@ class LoginV3Flow:
 
     @staticmethod
     def change_master_password(params: KeeperParams):
+        """Change the master password when expired
+
+        Return True if the master password is successfully changed and False otherwise.
+        """
         try:
             print('Your Master Password has expired, you are required to change it before you can login.')
             print('')
