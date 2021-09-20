@@ -175,54 +175,12 @@ class LoginV3Flow:
                         else:
                             raise kae
 
-                # login_state = proto.LoginState.Name(resp.loginState)
-
-                params.user = resp.primaryUsername
-                params.account_uid_bytes = resp.accountUid
-                params.session_token_bytes = resp.encryptedSessionToken
-                params.session_token_restriction = resp.sessionTokenType  # getSessionTokenScope(login_resp.sessionTokenType)
-                params.clone_code = resp.cloneCode
-                # params.device_token_bytes = encryptedDeviceToken
-                # auth_context.message_session_uid = login_resp.messageSessionUid
-
-                if resp.sessionTokenType != proto.NO_RESTRICTION:
-                    # This is not a happy-path login.  Let the user know what's wrong.
-                    if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
-                        msg = (
-                            'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
-                            'Vault at https://keepersecurity.com/vault'
-                        )
-                        raise Exception(msg)
-                    elif resp.sessionTokenType == proto.ACCOUNT_RECOVERY:
-                        LoginV3Flow.get_data_key(resp, params)
-                        if not LoginV3Flow.change_master_password(params, encryptedDeviceToken):
-                            raise Exception('Change password failed')
-                    else:
-                        raise Exception('Please log into the web Vault to update your account settings.')
-
-                if not params.device_private_key:
-                    params.device_private_key = CommonHelperMethods.get_private_key_ecc(params)
-
-                if resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_DEVICE_PUBLIC_KEY"):
-                    params.data_key = resp.encryptedDataKey
-                    # raise Exception("Encrypted device public key is not supported by Commander")
-
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_PASSWORD"):
-                    params.data_key = api.decrypt_encryption_params(
-                        CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
-                        params.password)
-
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_ALTERNATE"):
-                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
-                    # raise Exception("Alternate data key encryption is not supported by Commander")
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_BIO"):
-                    raise Exception("Biometrics encryption is not supported by Commander")
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("NO_KEY"):
-                    raise Exception("No key encryption is not supported by Commander")
+                if LoginV3Flow.post_login_processing(params, resp):
+                    return
                 else:
-                    raise Exception("Unhandled encryption data key ''" % resp.encryptedDataKeyType)
-
-                CommonHelperMethods.persist_state_data(params)
+                    # Restart login process
+                    clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
+                    resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
             elif resp.loginState == proto.DEVICE_ACCOUNT_LOCKED:
                 params.clear_session()
@@ -237,55 +195,76 @@ class LoginV3Flow:
             elif resp.loginState == proto.UPGRADE:
                 raise Exception('Application or device is out of date and requires an update.')
             elif resp.loginState == proto.LOGGED_IN:
-                params.user = resp.primaryUsername
-                session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
-                params.session_token = session_token
-
-                login_type_message = LoginV3Flow.get_data_key(resp, params)
-
-                params.clone_code = resp.cloneCode
-                CommonHelperMethods.persist_state_data(params)
-
-                LoginV3Flow.populateAccountSummary(params)
-
-                logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
-
+                LoginV3Flow.post_login_processing(params, resp)
                 return
             else:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
 
     @staticmethod
+    def post_login_processing(params, resp):
+        params.user = resp.primaryUsername
+        params.account_uid_bytes = resp.accountUid
+        session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
+        params.session_token = session_token
+
+        login_type_message = LoginV3Flow.get_data_key(resp, params)
+
+        params.clone_code = resp.cloneCode
+        CommonHelperMethods.persist_state_data(params)
+
+        LoginV3Flow.populateAccountSummary(params)
+
+        if resp.sessionTokenType != proto.NO_RESTRICTION:
+            # This is not a happy-path login.  Let the user know what's wrong.
+            if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
+                msg = (
+                    'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
+                    'Vault at https://keepersecurity.com/vault'
+                )
+                raise Exception(msg)
+            elif resp.sessionTokenType == proto.ACCOUNT_RECOVERY:
+                if LoginV3Flow.change_master_password(params):
+                    return False
+                else:
+                    raise Exception('Change password failed')
+            else:
+                raise Exception('Please log into the web Vault to update your account settings.')
+
+        if not params.device_private_key:
+            params.device_private_key = CommonHelperMethods.get_private_key_ecc(params)
+
+        logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
+        return True
+
+    @staticmethod
     def get_data_key(resp: proto.LoginResponse, params: KeeperParams):
         if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
             decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
-            params.data_key = decrypted_data_key
             login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
         elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
-
-            params.data_key = api.decrypt_encryption_params(
+            decrypted_data_key = api.decrypt_encryption_params(
                 CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
                 params.password)
-
             login_type_message = bcolors.UNDERLINE + "Password"
 
         elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
-            params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
-
+            decrypted_data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
             login_type_message = bcolors.UNDERLINE + "Master Password"
 
         elif resp.encryptedDataKeyType == proto.NO_KEY \
                 or resp.encryptedDataKeyType == proto.BY_BIO:
             raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
 
+        params.data_key = decrypted_data_key
         return login_type_message
 
     @staticmethod
-    def change_master_password(params: KeeperParams, encrypted_device_token):
-        user_params = LoginV3API.get_domain_password_rules(params)
+    def change_master_password(params: KeeperParams):
         try:
+            print('Your Master Password has expired, you are required to change it before you can login.')
+            print('')
             while True:
-                print('')
                 print('Please choose a new Master Password.')
                 password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'),
                                            stream=None).strip()
@@ -296,18 +275,18 @@ class LoginV3Flow:
 
                 if password == password2:
                     failed_rules = []
-                    for desc, regex in zip(user_params.passwordMatchDescription,
-                                           user_params.passwordMatchRegex):
-                        pattern = re.compile(regex)
+                    for rule in params.settings['rules']:
+                        pattern = re.compile(rule['pattern'])
                         if not re.match(pattern, password):
-                            failed_rules.append(desc)
+                            failed_rules.append(rule['description'])
                     if len(failed_rules) == 0:
                         LoginV3API.change_master_password(params, password)
                         logging.info('Password changed')
+                        params.password = password
                         return True
                     else:
-                        for rule in failed_rules:
-                            logging.warning(rule)
+                        for description in failed_rules:
+                            logging.warning(description)
                 else:
                     logging.warning('Passwords do not match.')
         except KeyboardInterrupt:
