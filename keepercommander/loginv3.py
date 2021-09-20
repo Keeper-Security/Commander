@@ -201,7 +201,7 @@ class LoginV3Flow:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
 
     @staticmethod
-    def post_login_processing(params, resp):
+    def post_login_processing(params: KeeperParams, resp: proto.LoginResponse):
         """Processing after login
 
         Returns True if authentication is successful and False otherwise.
@@ -211,7 +211,7 @@ class LoginV3Flow:
         session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
         params.session_token = session_token
 
-        login_type_message = LoginV3Flow.get_data_key(resp, params)
+        login_type_message = LoginV3Flow.get_data_key(params, resp)
 
         params.clone_code = resp.cloneCode
         CommonHelperMethods.persist_state_data(params)
@@ -241,7 +241,7 @@ class LoginV3Flow:
         return True
 
     @staticmethod
-    def get_data_key(resp: proto.LoginResponse, params: KeeperParams):
+    def get_data_key(params: KeeperParams, resp: proto.LoginResponse):
         """Get decrypted data key and store in params.data_key
 
         Returns login_type_message which is one of ("Persistent Login", "Password", "Master Password").
