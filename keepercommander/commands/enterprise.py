@@ -3138,7 +3138,7 @@ class AuditReportCommand(Command):
                             default_value = params.enterprise['enterprise_name'] if attr == 'displayname' else ''
                             self.lookup[uid][fld] = node['data'].get(attr, default_value)
         node_id = str(node_id)
-        if node_id not in self.node_lookup:
+        if node_id not in self.lookup:
             self.lookup[node_id] = lookup_type.init_fields('')
         return self.lookup[node_id][field]
 
