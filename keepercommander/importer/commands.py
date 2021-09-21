@@ -38,13 +38,7 @@ import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'k
 import_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
-import_parser.add_argument(
-    '--update',
-    dest='update',
-    default=False,
-    action='store_true',
-    help='Update records with common login, url or title',
-)
+import_parser.add_argument('--update',  dest='update',  action='store_true',  help='Update records with common login, url or title')
 import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -128,7 +122,7 @@ class RecordImportCommand(ImporterCommand):
         return import_parser
 
     def execute(self, params, **kwargs):
-        update_flag = kwargs['update']
+        update_flag = kwargs['update'] if 'update' in kwargs else False
         import_format = kwargs['format'] if 'format' in kwargs else None
         import_name = kwargs['name'] if 'name' in kwargs else None
         shared = kwargs.get('shared') or False

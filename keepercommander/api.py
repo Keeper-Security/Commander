@@ -5,7 +5,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2017 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -20,7 +20,7 @@ import hashlib
 import logging
 import urllib.parse
 
-from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
+from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -1476,7 +1476,7 @@ def prepare_record_v3(params, record):
 def communicate_rest(params, request, endpoint, rs_type=None):
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
-        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+        api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
     if request:
         api_request_payload.payload = request.SerializeToString()
 
