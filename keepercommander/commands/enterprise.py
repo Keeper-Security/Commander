@@ -2996,9 +2996,6 @@ between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
 class AuditReportCommand(Command):
     def __init__(self):
-        self.team_lookup = None
-        self.role_lookup = None
-        self.node_lookup = None
         self._detail_lookup = None
         self.lookup = {}
 
