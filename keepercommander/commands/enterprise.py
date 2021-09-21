@@ -3024,61 +3024,11 @@ class AuditReportCommand(Command):
             return message
 
         elif field in event:
-            val = event.get(field)
-            if field == 'team_uid':
-                val = self.resolve_team_name(params, val)
-            elif field == 'role_id':
-                val = self.resolve_role_name(params, val)
-            elif field == 'node':
-                val = self.resolve_node_name(params, val)
-            return val
+            return event.get(field)
 
         elif field in audit_report.fields_to_uid_name:
             return self.resolve_lookup(params, field, event)
         return ''
-
-    def resolve_team_name(self, params, team_uid):
-        if self.team_lookup is None:
-            self.team_lookup = {}
-            if params.enterprise:
-                if 'teams' in params.enterprise:
-                    for team in params.enterprise['teams']:
-                        if 'team_uid' in team and 'name' in team:
-                            self.team_lookup[team['team_uid']] = team['name']
-        if team_uid in self.team_lookup:
-            return '{0} ({1})'.format(self.team_lookup[team_uid], team_uid)
-        return team_uid
-
-    def resolve_role_name(self, params, role_id):
-        if self.role_lookup is None:
-            self.role_lookup = {}
-            if params.enterprise:
-                if 'roles' in params.enterprise:
-                    for role in params.enterprise['roles']:
-                        if 'role_id' in role:
-                            id = str(role['role_id'])
-                            name = role['data'].get('displayname')
-                            if name:
-                                self.role_lookup[id] = name
-        if role_id in self.role_lookup:
-            return '{0} ({1})'.format(self.role_lookup[role_id], role_id)
-        return role_id
-
-    def resolve_node_name(self, params, node_id):
-        if self.node_lookup is None:
-            self.node_lookup = {}
-            if params.enterprise:
-                if 'nodes' in params.enterprise:
-                    for node in params.enterprise['nodes']:
-                        if 'node_id' in node:
-                            id = str(node['node_id'])
-                            name = node['data'].get('displayname') or params.enterprise['enterprise_name']
-                            if name:
-                                self.node_lookup[id] = name
-        id = str(node_id)
-        if id in self.node_lookup:
-            return '{0} ({1})'.format(self.node_lookup[id], id)
-        return id
 
     def resolve_lookup(self, params, field, event):
         lookup_type = audit_report.LookupType.lookup_type_from_field_name(field)
