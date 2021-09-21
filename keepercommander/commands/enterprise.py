@@ -2996,7 +2996,6 @@ between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
 class AuditReportCommand(Command):
     def __init__(self):
-        self._detail_lookup = None
         self.lookup = {}
 
     def get_value(self, params, field, event):
@@ -3102,13 +3101,8 @@ class AuditReportCommand(Command):
     def get_parser(self):
         return audit_report_parser
 
-    @property
-    def detail_lookup(self):
-        if self._detail_lookup is None:
-            self._detail_lookup = {}
-        return self._detail_lookup
-
-    def convert_value(self, field, value, **kwargs):
+    @staticmethod
+    def convert_value(field, value, **kwargs):
         if not value:
             return ''
 
@@ -3128,39 +3122,6 @@ class AuditReportCommand(Command):
             return dt
         elif field in {"first_created", "last_created"}:
             return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-        elif field in {'record_uid', 'shared_folder_uid', 'team_uid', 'node'}:
-            if kwargs.get('details') and kwargs.get('params'):
-                params = kwargs['params']
-                if value not in self.detail_lookup:
-                    self.detail_lookup[value] = ''
-                    if field == 'record_uid':
-                        if value in params.record_cache:
-                            r = api.get_record(params, value)
-                            if r:
-                                self.detail_lookup[value] = r.title or ''
-                    elif field == 'shared_folder_uid':
-                        if value in params.shared_folder_cache:
-                            sf = api.get_shared_folder(params, value)
-                            if sf:
-                                self.detail_lookup[value] = sf.name or ''
-                    elif field == 'team_uid' and params.enterprise:
-                        team = None
-                        if 'teams' in params.enterprise:
-                            team = next((x for x in params.enterprise['teams'] if x['team_uid'] == value), None)
-                        if not team and 'queued_teams' in params.enterprise:
-                            team = next((x for x in params.enterprise['queued_teams'] if x['team_uid'] == value), None)
-                        if team and 'name' in team:
-                            self.detail_lookup[value] = team['name'] or ''
-                    elif field == 'node' and params.enterprise:
-                        node = None
-                        if 'nodes' in params.enterprise:
-                            node = next((x for x in params.enterprise['nodes'] if str(x['node_id']) == value), None)
-                        if node and 'data' in node:
-                            self.detail_lookup[value] = node['data'].get('displayname') or ''
-
-                detail_value = self.detail_lookup.get(value)
-                if detail_value:
-                    return '{1} ({0})'.format(value, detail_value)
         return value
 
     def execute(self, params, **kwargs):
