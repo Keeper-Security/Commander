@@ -8,3 +8,5 @@ asciitree
 pytest
 protobuf
 pyperclip
+lastpass-python
+libkeepass
