@@ -3051,6 +3051,16 @@ class AuditReportCommand(Command):
                     self.lookup[record_uid][fld] = getattr(r, attr, '')
         return self.lookup[record_uid][field]
 
+    def resolve_shared_folder_lookup(self, params, lookup_type, shared_folder_uid, field):
+        if shared_folder_uid not in self.lookup:
+            self.lookup[shared_folder_uid] = lookup_type.init_fields('')
+        if shared_folder_uid in params.shared_folder_cache:
+            sf = api.get_shared_folder(params, shared_folder_uid)
+            if sf:
+                for fld, attr in lookup_type.field_attrs():
+                    self.lookup[shared_folder_uid][fld] = getattr(sf, attr, '')
+        return self.lookup[shared_folder_uid][field]
+
     def resolve_team_lookup(self, params, lookup_type, team_uid, field):
         if params.enterprise and 'teams' in params.enterprise:
             for team in params.enterprise['teams']:

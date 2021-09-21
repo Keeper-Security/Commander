@@ -35,6 +35,12 @@ lookup_types = {
         attrs=('title', 'login_url'),
         method='resolve_record_lookup'
     ),
+    'shared_folder_uid': LookupType(
+        uid='shared_folder_uid',
+        fields=('shared_folder_title',),
+        attrs=('name',),
+        method='resolve_shared_folder_lookup'
+    ),
     'team_uid': LookupType(
         uid='team_uid', fields=('team_title',), attrs=('name',), method='resolve_team_lookup'
     ),
