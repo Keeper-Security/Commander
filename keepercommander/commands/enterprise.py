@@ -247,7 +247,6 @@ audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-audit_report_parser.add_argument('--details', dest='details', action='store_true', help='lookup column details')
 audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], required=True, action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
