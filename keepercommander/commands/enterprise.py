@@ -38,6 +38,7 @@ from collections import OrderedDict as OD
 from argparse import RawTextHelpFormatter
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .helpers import audit_report
 from .record import RecordAddCommand
 from .. import api, rest_api, APIRequest_pb2 as proto, constants
 from ..display import bcolors
@@ -2989,24 +2990,6 @@ Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Defaul
 --shared-folder-uid Shared Folder UID
 '''
 
-audit_report_misc_fields = (
-    'to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node', 'channel', 'status'
-)
-audit_report_lookup_methods = {
-    'record_uid': 'resolve_record_lookup'
-}
-audit_report_lookup_fields = {
-    'record_uid': ('record_title', 'record_url')
-}
-audit_report_lookup_attrs = {
-    'record_uid': ('title', 'login_url')
-}
-audit_report_fields_to_uid_name = {}
-for k, v in audit_report_lookup_fields.items():
-    for f in v:
-        audit_report_fields_to_uid_name[f] = k
-
-
 in_pattern = re.compile(r"\s*in\s*\(\s*(.*)\s*\)", re.IGNORECASE)
 between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
@@ -3050,7 +3033,7 @@ class AuditReportCommand(Command):
                 val = self.resolve_node_name(params, val)
             return val
 
-        elif field in audit_report_fields_to_uid_name:
+        elif field in audit_report.fields_to_uid_name:
             return self.resolve_lookup(params, field, event)
         return ''
 
@@ -3097,23 +3080,67 @@ class AuditReportCommand(Command):
             return '{0} ({1})'.format(self.node_lookup[id], id)
         return id
 
-    def resolve_record_lookup(self, params, uid_name, uid_value):
-        if uid_value in params.record_cache:
-            r = api.get_record(params, uid_value)
-            if r:
-                for fld, attr in zip(audit_report_lookup_fields[uid_name], audit_report_lookup_attrs[uid_name]):
-                    self.lookup[uid_value][fld] = getattr(r, attr, '')
-
     def resolve_lookup(self, params, field, event):
-        uid_name = audit_report_fields_to_uid_name[field]
-        uid_value = event.get(uid_name)
+        lookup_type = audit_report.LookupType.lookup_type_from_field_name(field)
+        uid_value = event.get(lookup_type.uid)
         if uid_value:
-            if uid_value not in self.lookup:
-                self.lookup[uid_value] = dict.fromkeys(audit_report_lookup_fields[uid_name], '')
-                getattr(self, audit_report_lookup_methods[uid_name])(params, uid_name, uid_value)
-            return self.lookup[uid_value][field]
+            if uid_value in self.lookup:
+                return self.lookup[uid_value][field]
+            else:
+                return getattr(self, lookup_type.method)(params, lookup_type, uid_value, field)
         else:
             return ''
+
+    def resolve_record_lookup(self, params, lookup_type, record_uid, field):
+        if record_uid not in self.lookup:
+            self.lookup[record_uid] = lookup_type.init_fields('')
+        if record_uid in params.record_cache:
+            r = api.get_record(params, record_uid)
+            if r:
+                for fld, attr in lookup_type.field_attrs():
+                    self.lookup[record_uid][fld] = getattr(r, attr, '')
+        return self.lookup[record_uid][field]
+
+    def resolve_team_lookup(self, params, lookup_type, team_uid, field):
+        if params.enterprise and 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
+                if 'team_uid' in team:
+                    uid = team['team_uid']
+                    if uid not in self.lookup:
+                        self.lookup[uid] = lookup_type.init_fields('')
+                        for fld, attr in lookup_type.field_attrs():
+                            self.lookup[uid][fld] = team.get(attr, '')
+        if team_uid not in self.lookup:
+            self.lookup[team_uid] = lookup_type.init_fields('')
+        return self.lookup[team_uid][field]
+
+    def resolve_role_lookup(self, params, lookup_type, role_id, field):
+        if params.enterprise and 'roles' in params.enterprise:
+            for role in params.enterprise['roles']:
+                if 'role_id' in role:
+                    uid = str(role['role_id'])
+                    if uid not in self.lookup:
+                        self.lookup[uid] = lookup_type.init_fields('')
+                        for fld, attr in lookup_type.field_attrs():
+                            self.lookup[uid][fld] = role['data'].get(attr, '')
+        if role_id not in self.lookup:
+            self.lookup[role_id] = lookup_type.init_fields('')
+        return self.lookup[role_id][field]
+
+    def resolve_node_lookup(self, params, lookup_type, node_id, field):
+        if params.enterprise and 'nodes' in params.enterprise:
+            for node in params.enterprise['nodes']:
+                if 'node_id' in node:
+                    uid = str(node['node_id'])
+                    if uid not in self.lookup:
+                        self.lookup[uid] = lookup_type.init_fields('')
+                        for fld, attr in lookup_type.field_attrs():
+                            default_value = params.enterprise['enterprise_name'] if attr == 'displayname' else ''
+                            self.lookup[uid][fld] = node['data'].get(attr, default_value)
+        node_id = str(node_id)
+        if node_id not in self.node_lookup:
+            self.lookup[node_id] = lookup_type.init_fields('')
+        return self.lookup[node_id][field]
 
     def get_parser(self):
         return audit_report_parser
@@ -3217,7 +3244,7 @@ class AuditReportCommand(Command):
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
             rq_columns = columns.copy()
-            for lookup_field, uid_name in audit_report_fields_to_uid_name.items():
+            for lookup_field, uid_name in audit_report.fields_to_uid_name.items():
                 if lookup_field in rq_columns:
                     rq_columns.remove(lookup_field)
                     if uid_name not in rq_columns:
@@ -3267,7 +3294,7 @@ class AuditReportCommand(Command):
         details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
-            misc_fields = list(audit_report_misc_fields) if kwargs.get('report_format') == 'fields' else ['message']
+            misc_fields = list(audit_report.MISC_FIELDS) if kwargs.get('report_format') == 'fields' else ['message']
 
             for event in rs['audit_event_overview_report_rows']:
                 if misc_fields:
@@ -3279,11 +3306,11 @@ class AuditReportCommand(Command):
                             val = event.get(mf)
                             if val:
                                 fields.append(mf)
-                                if mf in audit_report_lookup_fields:
-                                    fields.extend(audit_report_lookup_fields[mf])
+                                if mf in audit_report.lookup_types:
+                                    fields.extend(audit_report.lookup_types[mf].fields)
                     if len(fields) > lenf:
                         for f in fields[lenf:]:
-                            if f not in audit_report_fields_to_uid_name:
+                            if f not in audit_report.fields_to_uid_name:
                                 misc_fields.remove(f)
 
                 row = []
@@ -3330,7 +3357,7 @@ class AuditReportCommand(Command):
                         row.append(
                             self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
                         )
-                    elif f in audit_report_fields_to_uid_name:
+                    elif f in audit_report.fields_to_uid_name:
                         row.append(self.resolve_lookup(params, f, event))
                     else:
                         row.append('')
