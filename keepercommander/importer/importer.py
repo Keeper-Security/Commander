@@ -5,33 +5,36 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import abc
 import os.path
 import importlib
 import logging
 import collections
+
+from typing import List, Optional, Union
 
 from ..error import CommandError
 
 PathDelimiter = '\\'
 
 
-def importer_for_format(format):
-    full_name = 'keepercommander.importer.' + format
+def importer_for_format(input_format):
+    full_name = 'keepercommander.importer.' + input_format
     module = importlib.import_module(full_name)
     if hasattr(module, 'Importer'):
         return module.Importer
-    raise Exception('Cannot resolve importer for format {}'.format(format))
+    raise Exception('Cannot resolve importer for format {}'.format(input_format))
 
 
-def exporter_for_format(format):
-    full_name = 'keepercommander.importer.' + format
+def exporter_for_format(output_format):
+    full_name = 'keepercommander.importer.' + output_format
     module = importlib.import_module(full_name)
     if hasattr(module, 'Exporter'):
         return module.Exporter
-    raise Exception('Cannot resolve exporter for format {}'.format(format))
+    raise Exception('Cannot resolve exporter for format {}'.format(output_format))
 
 
 def strip_path_delimiter(name, delimiter=PathDelimiter):
@@ -118,16 +121,16 @@ class Attachment:
         self.mime = None
 
     def open(self):
-        raise NotImplemented
+        raise NotImplementedError()
 
 
 class Folder:
     def __init__(self):
-        self.uid = None
-        self.domain = None   # type: str or None
-        self.path = None     # type: str or None
-        self.can_edit = None
-        self.can_share = None
+        self.uid = None        # type: str | None
+        self.domain = None     # type: str | None
+        self.path = None       # type: str | None
+        self.can_edit = None   # type: bool | None
+        self.can_share = None  # type: bool | None
 
     def get_folder_path(self):
         path = self.domain or ''
@@ -138,17 +141,56 @@ class Folder:
         return path
 
 
+class RecordField:
+    def __init__(self):
+        self.type = None    # type: Optional[str]
+        self.label = None   # type: Optional[str]
+        self.value = None   # type: any
+
+    def name_key(self):
+        if self.type and self.label:
+            return f'${self.type.lower()}.{self.label.lower()}'
+        elif self.type:
+            return f'${self.type.lower()}'
+        else:
+            return (self.label or '').lower()
+
+    def hash_key(self):
+        value = self.value
+        if value:
+            if type(value) is str:
+                pass
+            elif type(value) is list:
+                value = '|'.join((str(x) for x in value))
+            else:
+                value = str(value)
+        else:
+            value = ''
+        name = self.name_key()
+        return f'{name}:{value}'
+
+
+class RecordReferences:
+    def __init__(self):
+        self.type = ''
+        self.label = None
+        self.uids = []   # type: List[str]
+
+
 class Record:
     def __init__(self):
         self.uid = None
+        self.type = None         # type: Optional[str]
         self.title = None
         self.login = None
         self.password = None
         self.login_url = None
         self.notes = None
-        self.custom_fields = {}
-        self.folders = None     # type: [Folder]
-        self.attachments = None # type: [Attachment]
+        self.fields = []         # type: List[RecordField]
+        self.folders = None      # type: Optional[List[Folder]]
+        self.attachments = None  # type: Optional[List[Attachment]]
+        self.references = None   # type: Optional[List[RecordReferences]]
+        self.schema = None       # type: Optional[List[RecordSchemaField]]
 
     def validate(self):
         if not self.title:
@@ -158,26 +200,46 @@ class Record:
                 for attr in ['can_edit', 'can_share']:
                     if hasattr(f, attr):
                         if not check_if_bool(getattr(f, attr)):
-                            raise CommandError('import', 'record\'s folder property \'{0}\' should be a boolean'.format(attr))
+                            raise CommandError('import', f'record\'s folder property \'{attr}\' should be a boolean')
 
 
-class BaseImporter:
-    def execute(self, name):
-        # type: (BaseImporter, str) -> collections.Iterable[Record or SharedFolder]
+class RecordSchemaField:
+    def __init__(self):
+        self.ref = ''
+        self.label = ''
 
+
+class File:
+    def __init__(self):
+        self.file_id = None
+        self.title = None
+        self.name = None
+        self.size = None
+        self.key = None
+        self.mime = None
+
+    def open(self):
+        raise NotImplementedError()
+
+    def validate(self):
+        pass
+
+
+class BaseImporter(abc.ABC):
+    def execute(self, name):  # type: (BaseImporter, str) -> collections.Iterable[Union[Record, SharedFolder, File]]
         yield from self.do_import(name)
 
-    def do_import(self, filename):
-        # type: (BaseImporter, str) -> collections.Iterable[Record or SharedFolder]
-        raise NotImplemented()
+    @abc.abstractmethod
+    def do_import(self, filename):  # type: (BaseImporter, str) -> collections.Iterable[Union[Record, SharedFolder, File]]
+        pass
 
     def extension(self):
         return ''
 
 
-class BaseFileImporter(BaseImporter):
+class BaseFileImporter(BaseImporter, abc.ABC):
     def execute(self, name):
-        # type: (BaseFileImporter, str) -> collections.Iterable[Record or SharedFolder]
+        # type: (BaseFileImporter, str) -> collections.Iterable[Union[Record, SharedFolder, File]]
 
         path = os.path.expanduser(name)
         if not os.path.isfile(path):
@@ -191,12 +253,12 @@ class BaseFileImporter(BaseImporter):
         yield from self.do_import(path)
 
 
-class BaseExporter:
+class BaseExporter(abc.ABC):
     def __init__(self):
         self.max_size = 10 * 1024 * 1024
 
-    def execute(self, filename, records, file_password=None):
-        # type: (BaseExporter, str, [Record or SharedFolder], str or None) -> None
+    def execute(self, filename, items, file_password=None):
+        # type: (str, List[Union[Record, SharedFolder, File]], Optional[str]) -> None
 
         if filename:
             filename = os.path.expanduser(filename)
@@ -208,11 +270,11 @@ class BaseExporter:
             logging.error("stdout is not supported for this file format")
             return
 
-        self.do_export(filename, records, file_password)
+        self.do_export(filename, items, file_password)
 
-    def do_export(self, filename, records, file_password=None):
-        # type: (BaseExporter, str, [Record or SharedFolder], str or None) -> None
-        raise NotImplemented()
+    @abc.abstractmethod
+    def do_export(self, filename, records, file_password=None):  # type: (str, List[Record, File], Optional[str]) -> None
+        pass
 
     def has_shared_folders(self):
         return False
@@ -225,3 +287,6 @@ class BaseExporter:
 
     def supports_stdout(self):
         return False
+
+    def supports_v3_record(self):
+        return True

@@ -1,7 +1,5 @@
 from unittest import TestCase, mock
 
-import pytest
-
 from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
 from keepercommander.importer import importer, commands
@@ -39,7 +37,6 @@ class TestImporterUtils(TestCase):
         self.assertEqual(len(comps), 1)
         self.assertEqual(comps[0], 'wwww')
 
-    @pytest.mark.xfail(reason="TODO: This test needs investigation")
     def test_export_import(self):
         params_export = get_synced_params()
         cmd_export = commands.RecordExportCommand()
@@ -61,7 +58,7 @@ class TestImporterUtils(TestCase):
             cmd_export.execute(params_export, format='json', name='json')
 
         with mock.patch('keepercommander.api.sync_down'), mock.patch('builtins.open', mock.mock_open()) as m_open, \
-                mock.patch('keepercommander.importer.imp_exp.execute_import_folder_record', return_value=([],[])):
+                mock.patch('keepercommander.importer.imp_exp.execute_import_folder_record', return_value=([], [])):
             m_open.return_value.read = mock_read
             self.communicate_mock.side_effect = None
             self.communicate_mock.return_value = {
@@ -71,6 +68,3 @@ class TestImporterUtils(TestCase):
             }
             with mock.patch('os.path.isfile', return_value=True):
                 cmd_import.execute(param_import, format='json', name='json')
-
-
-
