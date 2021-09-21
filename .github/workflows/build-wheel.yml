@@ -1,0 +1,34 @@
+name: Build Commander
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Commander
+        uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Build Commander
+        run: |
+          pip install wheel
+          pip install build
+          python3 -m build
+        shell: bash
+
+      - name: Archive Commander
+        run: |
+          COMMANDER_VERSION=`python3 -c "import keepercommander.__init__ as init; print(init.__version__);"`
+          echo "COMMANDER_VERSION=$COMMANDER_VERSION" >> $GITHUB_ENV
+        shell: bash
+      - uses: actions/upload-artifact@v2
+        with:
+          name: KeeperCommanderWheel
+          retention-days: 3
+          path: dist/keepercommander-${{ env.COMMANDER_VERSION }}-py3-none-any.whl
+          if-no-files-found: error
