@@ -2,7 +2,8 @@ from dataclasses import dataclass
 
 
 MISC_FIELDS = (
-    'to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node', 'channel', 'status'
+    'to_username', 'from_username', 'record_uid', 'shared_folder_uid',
+    'node', 'role_id', 'team_uid', 'channel', 'status'
 )
 
 
