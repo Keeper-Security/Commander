@@ -39,8 +39,8 @@ lookup_types = {
     'role_id': LookupType(
         uid='role_id', fields=('role_title',), attrs=('displayname',), method='resolve_role_lookup'
     ),
-    'node_id': LookupType(
-        uid='node_id', fields=('node_title',), attrs=('displayname',), method='resolve_node_lookup'
+    'node': LookupType(
+        uid='node', fields=('node_title',), attrs=('displayname',), method='resolve_node_lookup'
     ),
 }
 
