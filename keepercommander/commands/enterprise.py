@@ -3293,7 +3293,7 @@ class AuditReportCommand(Command):
 
         details = kwargs.get('details') or False
         if report_type == 'raw':
-            fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
+            fields.extend(audit_report.RAW_FIELDS)
             misc_fields = list(audit_report.MISC_FIELDS) if kwargs.get('report_format') == 'fields' else ['message']
 
             for event in rs['audit_event_overview_report_rows']:
