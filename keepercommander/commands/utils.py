@@ -32,7 +32,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
-from .recordv3 import get_record
+from .recordv3 import get_record, RecordRemoveCommand
 from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
@@ -112,6 +112,12 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Create Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}
 
+  {bcolors.BOLD}Remove Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app remove {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+    Options: 
+      --purge : Remove the application and purge it from the trash
+      --force : Do not prompt for confirmation
+
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
@@ -123,7 +129,10 @@ Commands to configure and manage the Keeper Secrets Manager platform.
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
-
+    Options: 
+      --force : Do not prompt for confirmation
+      --client : Client name or ID. Provide `*` or `all` to delete all clients at once
+      
   {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
     Options: 
@@ -233,6 +242,8 @@ ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true
 ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
                         help='Return Tokens', default='false')
 ksm_parser.add_argument('--name', '-n', type=str, dest='name', action='store', help='client name')
+ksm_parser.add_argument('--purge', dest='purge', action='store_true', help='remove the record from all folders and purge it from the trash')
+ksm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -671,6 +682,8 @@ class CheckEnforcementsCommand(Command):
 
 class KSMCommand(Command):
 
+    CLIENT_SHORT_ID_LENGTH = 8
+
     def get_parser(self):
         return ksm_parser
 
@@ -736,11 +749,20 @@ class KSMCommand(Command):
             KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add)
             return
 
+        if ksm_obj in ['app', 'apps'] and ksm_action in ['remove', 'rem', 'rm']:
+            app_name_or_uid = ksm_command[2]
+            purge = kwargs.get('purge')
+            force = kwargs.get('force')
+
+            KSMCommand.remove_v5_app(params=params, app_name_or_uid=app_name_or_uid, purge=purge, force=force)
+
+            return
+
         if ksm_obj in ['share', 'secret'] and ksm_action is None:
             print("  Add Secret to the App\n\n"
-                    + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
-                    + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
-                    + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
+                  + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]"
+                  + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]"
+                  + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
@@ -798,7 +820,12 @@ class KSMCommand(Command):
 
             client_names_or_ids = kwargs.get('client_names_or_ids')
 
-            KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+            force = kwargs.get('force')
+
+            if len(client_names_or_ids) == 1 and client_names_or_ids[0] in ['*', 'all']:
+                KSMCommand.remove_all_clients(params, app_name_or_uid, force)
+            else:
+                KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
 
             return
 
@@ -910,6 +937,16 @@ class KSMCommand(Command):
 
         app_info = KSMCommand.get_app_info(params, uid)
 
+        def shorten_client_id(all_clients, original_id, number_of_characters):
+
+            new_id = original_id[0:number_of_characters]
+
+            res = list(filter(lambda x: CommonHelperMethods.bytes_to_url_safe_str(x.clientId).startswith(new_id), all_clients))
+            if len(res) == 1 or new_id == original_id:
+                return new_id
+            else:
+                return shorten_client_id(all_clients, original_id, number_of_characters+1)
+
         if len(app_info) == 0:
             print(bcolors.WARNING + 'No Secrets Manager Applications returned.' + bcolors.ENDC)
             return
@@ -937,10 +974,12 @@ class KSMCommand(Command):
                         ip_address = c.ipAddress
                         # public_key = c.publicKey
 
+                        short_client_id = shorten_client_id(ai.clients, client_id, KSMCommand.CLIENT_SHORT_ID_LENGTH)
+
                         client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n"\
                                              f"=============================\n"\
                                              f'  Name: {id}\n' \
-                                             f'  ID: {client_id}\n' \
+                                             f'  Short ID: {short_client_id}\n' \
                                              f'  Created On: {created_on}\n' \
                                              f'  First Access: {first_access}\n' \
                                              f'  Last Access: {last_access}\n' \
@@ -1098,9 +1137,38 @@ class KSMCommand(Command):
         return search_results_rec_data
 
     @staticmethod
+    def remove_v5_app(params, app_name_or_uid, purge, force):
+
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+        app_uid = app.get('record_uid')
+
+        app_info = KSMCommand.get_app_info(params, app_uid)
+
+        clients_count = len(app_info[0].clients)
+        shared_folders_count = sum(map(lambda s: s.shareType == 1, app_info[0].shares))
+        shared_records_count = sum(map(lambda s: s.shareType == 0, app_info[0].shares))
+
+        if not force:
+
+            print("This Application (uid: %s) has %d client(s), %d shared folder(s), and %d record(s)."
+                  % (app_uid, clients_count, shared_folders_count, shared_records_count))
+            uc = user_choice('\tAre you sure you want to delete this application?', 'yn', default='n')
+            if uc.lower() != 'y':
+                return
+
+        logging.info("Removed Application uid: %s" % app_uid)
+
+        cmd = RecordRemoveCommand()
+        cmd.execute(params, purge=purge, force=True, record=app_uid)
+
+    @staticmethod
     def add_new_v5_app(params, app_name, force_to_add=False):
 
-        logging.debug("Creating new KSM Application named '%s'" % app_name)
+        logging.debug("Creatixng new KSM Application named '%s'" % app_name)
 
         found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
@@ -1145,7 +1213,6 @@ class KSMCommand(Command):
 
         params.sync_data = True
 
-
     @staticmethod
     def remove_share(params, app_name_or_uid, secret_uids):
         app = KSMCommand.get_app_record(params, app_name_or_uid)
@@ -1168,8 +1235,42 @@ class KSMCommand(Command):
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
         else:
-            print(bcolors.OKGREEN + "Secret share was successfully removed from the application" + bcolors.ENDC)
+            print(bcolors.OKGREEN + "Secret share was successfully removed from the application\n" + bcolors.ENDC)
 
+    @staticmethod
+    def remove_all_clients(params, app_name_or_uid, force):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        app_uid = app.get('record_uid')
+
+        app_info = KSMCommand.get_app_info(params, app_uid)
+
+        clients_count = len(app_info[0].clients)
+
+        if clients_count == 0:
+            print(bcolors.WARNING + "No client devices registered for this Application\n" + bcolors.ENDC)
+            return
+
+        if not force:
+
+            print("This app has %d client(s) connections." % clients_count)
+            uc = user_choice('\tAre you sure you want to delete all clients from this application?', 'yn', default='n')
+            if uc.lower() != 'y':
+                return
+
+        client_ids_to_rem = []
+
+        for ai in app_info:
+
+            if len(ai.clients) > 0:
+                for c in ai.clients:
+                    client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+
+                    client_ids_to_rem.append(client_id)
+
+        KSMCommand.remove_client(params, app_name_or_uid, client_ids_to_rem)
 
     @staticmethod
     def remove_client(params, app_name_or_uid, client_names_and_hashes):
@@ -1187,8 +1288,12 @@ class KSMCommand(Command):
                         name = c.id
                         client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
 
-                        if name in cnahs or client_id in cnahs:
-                            client_id_hashes_bytes.append(c.clientId)
+                        for cnah in cnahs:
+                            if name == cnah:
+                                client_id_hashes_bytes.append(c.clientId)
+                            else:
+                                if len(cnah) >= KSMCommand.CLIENT_SHORT_ID_LENGTH and client_id.startswith(cnah):
+                                    client_id_hashes_bytes.append(c.clientId)
 
             return client_id_hashes_bytes
 
@@ -1203,9 +1308,16 @@ class KSMCommand(Command):
 
         client_hashes = convert_ids_and_hashes_to_hashes(client_names_and_hashes, app_uid)
 
-        if len(client_hashes) == 0:
-            print("No Client Devices found with given name or ID")
+        found_clients_count = len(client_hashes)
+        if found_clients_count == 0:
+            print(bcolors.WARNING + "No Client Devices found with given name or ID\n" + bcolors.ENDC)
             return
+        else:
+            uc = user_choice(
+                '\tAre you sure you want to delete %d matching clients from this application?' % found_clients_count
+                , 'yn', default='n')
+            if uc.lower() != 'y':
+                return
 
         rq = RemoveAppClientsRequest()
 
@@ -1221,7 +1333,7 @@ class KSMCommand(Command):
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
         else:
-            print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
+            print(bcolors.OKGREEN + "\nClient removal was successful\n" + bcolors.ENDC)
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
