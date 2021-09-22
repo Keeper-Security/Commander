@@ -8,9 +8,6 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from dataclasses import dataclass
-
-
 RAW_FIELDS = ('created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location')
 MISC_FIELDS = (
     'to_username', 'from_username', 'record_uid', 'shared_folder_uid',
@@ -18,13 +15,18 @@ MISC_FIELDS = (
 )
 
 
-@dataclass
 class LookupType:
     """Helper class for looking up fields given the uid"""
     uid: str
     fields: tuple
     attrs: tuple
     method: str
+
+    def __init__(self, uid: str, fields: tuple, attrs: tuple, method: str):
+        self.uid = uid
+        self.fields = fields
+        self.attrs = attrs
+        self.method = method
 
     @staticmethod
     def lookup_type_from_field_name(field_name: str):

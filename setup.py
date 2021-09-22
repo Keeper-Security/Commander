@@ -13,7 +13,6 @@ install_requires = [
     'asciitree',
     'colorama',
     'cryptography>=3.4.8',
-    'dataclasses; python_version < "3.7"',
     'libkeepass',
     'prompt_toolkit>=2.0.4,<=2.0.10',
     'protobuf>=3.13.0',
