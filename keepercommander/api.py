@@ -19,6 +19,7 @@ import os
 import hashlib
 import logging
 import urllib.parse
+from datetime import datetime
 
 from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
@@ -310,12 +311,16 @@ def change_master_password(params):
     return False
 
 
-def accept_account_transfer_consent(params, share_account_to):
-    print('')
-    answer = input('Do you accept Account Transfer policy? Accept/C(ancel): ')
+def accept_account_transfer_consent(params):
+    share_account_by = params.get_share_account_timestamp()
+    print(constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y')))
+
+    expired = datetime.today() > share_account_by
+    input_options = 'Accept/L(ogout)' if expired else 'Accept/L(ater)'
+    answer = input('Do you accept Account Transfer policy? {}: '.format(input_options))
     answer = answer.lower()
     if answer.lower() == 'accept':
-        for role in share_account_to:
+        for role in params.settings['share_account_to']:
             public_key = RSA.importKey(base64.urlsafe_b64decode(role['public_key'] + '=='))
             transfer_key = encrypt_rsa(params.data_key, public_key)
             request = {
@@ -326,9 +331,9 @@ def accept_account_transfer_consent(params, share_account_to):
             communicate(params, request)
         return True
     else:
-        logging.info('Canceled')
-
-    return False
+        if not expired:
+            logging.info('Canceled')
+        return False
 
 
 def pad_aes_gcm(json):

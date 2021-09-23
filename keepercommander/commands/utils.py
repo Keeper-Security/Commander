@@ -667,14 +667,8 @@ class CheckEnforcementsCommand(Command):
 
         if params.settings:
             if 'share_account_to' in params.settings:
-                dt = datetime.datetime.fromtimestamp(params.settings['must_perform_account_share_by'] // 1000)
-                print('Your Keeper administrator has enabled the ability to transfer your vault records\n'
-                      'in accordance with company operating procedures and policies.\n'
-                      'Please acknowledge this change in account settings by typing ''Accept''.')
-                print('If you do not accept this change by {0}, you will be locked out of your account.'.format(dt.strftime('%a, %d %b %Y')))
-
                 try:
-                    api.accept_account_transfer_consent(params, params.settings['share_account_to'])
+                    api.accept_account_transfer_consent(params)
                 finally:
                     del params.settings['must_perform_account_share_by']
                     del params.settings['share_account_to']
