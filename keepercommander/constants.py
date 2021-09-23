@@ -1,5 +1,6 @@
 import sys
 from datetime import timedelta
+from urllib.parse import urlparse
 
 
 # Timeout constants
@@ -120,3 +121,23 @@ if sys.platform.startswith('win'):
     OS_WHICH_CMD = 'where'
 else:
     OS_WHICH_CMD = 'which'
+
+
+KEEPER_PUBLIC_HOSTS = {
+    'US': 'keepersecurity.com',
+    'EU': 'keepersecurity.eu',
+    'AU': 'keepersecurity.com.au',
+    'GOV': 'govcloud.keepersecurity.us'
+}
+
+
+def get_abbrev_by_host(host):
+    # Return abbreviation of the Keeper's public host
+
+    if host.startswith('https:'):
+        host = urlparse(host).netloc    # https://keepersecurity.com/api/v2/ --> keepersecurity.com
+
+    keys = [k for k, v in KEEPER_PUBLIC_HOSTS.items() if v == host]
+    if keys:
+        return keys[0]
+    return None
