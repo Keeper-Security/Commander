@@ -41,7 +41,7 @@ from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
-from .. import api, rest_api, loginv3
+from .. import api, constants, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
@@ -73,6 +73,7 @@ def register_commands(commands):
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
+    commands['accept-transfer'] = AcceptTransferCommand()
     commands['connect'] = ConnectCommand()
     commands['delete-corrupted'] = DeleteCorruptedCommand()
     commands['echo'] = EchoCommand()
@@ -176,6 +177,11 @@ logout_parser.exit = suppress_exit
 
 check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements',
                                                     description='Check enterprise enforcements')
+check_enforcements_parser.error = raise_parse_exception
+check_enforcements_parser.exit = suppress_exit
+
+
+accept_transfer_parser = argparse.ArgumentParser(prog='accept-transfer', description='Accept account transfer')
 check_enforcements_parser.error = raise_parse_exception
 check_enforcements_parser.exit = suppress_exit
 
@@ -664,13 +670,29 @@ class CheckEnforcementsCommand(Command):
                         except Exception as e:
                             logging.error('Enterprise %s failure: %s', action, e)
 
-        if params.settings:
-            if 'share_account_to' in params.settings:
-                try:
-                    api.accept_account_transfer_consent(params)
-                finally:
-                    del params.settings['must_perform_account_share_by']
-                    del params.settings['share_account_to']
+        share_account_by = params.get_share_account_timestamp()
+        if share_account_by is not None:
+            warn_msg = constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y'))
+            warn_msg += 'Use the command accept-transfer to accept.'
+            logging.warning(warn_msg)
+
+
+class AcceptTransferCommand(Command):
+    def get_parser(self):
+        return check_enforcements_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        share_account_by = params.get_share_account_timestamp()
+        if share_account_by is not None:
+            if api.accept_account_transfer_consent(params):
+                logging.info('Account transfer accepted.')
+            else:
+                logging.info('Account transfer canceled.')
+        else:
+            logging.info('There is no account transfer to accept.')
 
 
 class KSMCommand(Command):
