@@ -21,7 +21,7 @@ import logging
 import urllib.parse
 from datetime import datetime
 
-from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
+from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
