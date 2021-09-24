@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 import argparse
+import ipaddress
 import itertools
 import json
 import base64
@@ -1775,6 +1776,59 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 continue
                         elif enforcement_type == 'string':
                             pass
+                        elif enforcement_type.startswith('ternary_'):
+                            if enforcement_value in {'e', 'enforce'}:
+                                enforcement_value = 'enforce'
+                            elif enforcement_value in {'d', 'disable'}:
+                                enforcement_value = 'disable'
+                            else:
+                                logging.warning('Enforcement %s expects either "enforce" or "disable"', key)
+                                continue
+                        elif enforcement_type == 'two_factor_duration':
+                            if enforcement_value == 'login':
+                                enforcement_value = '0'
+                            elif enforcement_value == '30_days':
+                                enforcement_value = '0,30'
+                            elif enforcement_value == 'forever':
+                                enforcement_value = '0,30,9999'
+                            else:
+                                logging.warning('Enforcement %s expects "login", "30_days", or "forever"', key)
+                                continue
+                        elif enforcement_type == 'ip_whitelist':
+                            ip_ranges = [x.strip().lower() for x in enforcement_value.split(',')]
+                            all_resolved = True
+                            for i in range(len(ip_ranges)):
+                                range_str = ip_ranges[i]
+                                ranges = range_str.split('-')
+                                if len(ranges) == 2:
+                                    try:
+                                        ip_addr1 = ipaddress.ip_address(ranges[0])
+                                        ip_addr2 = ipaddress.ip_address(ranges[1])
+                                        if ip_addr1 > ip_addr2:
+                                            ip_ranges[i] = f'{ip_addr2}-{ip_addr1}'
+                                        else:
+                                            ip_ranges[i] = f'{ip_addr1}-{ip_addr2}'
+                                    except ValueError:
+                                        all_resolved = False
+                                elif len(ranges) == 1:
+                                    try:
+                                        ip_addr = ipaddress.ip_address(range_str)
+                                        ip_ranges[i] = f'{ip_addr}-{ip_addr}'
+                                    except ValueError:
+                                        try:
+                                            ip_net = ipaddress.ip_network(range_str)
+                                            ip_ranges[i] = f'{ip_net[0]}-{ip_net[-1]}'
+                                        except ValueError:
+                                            all_resolved = False
+                                else:
+                                    all_resolved = False
+                                if not all_resolved:
+                                    logging.warning('Enforcement %s. IP address range \'%s\' not valid', key, range_str)
+                                    break
+                            if all_resolved:
+                                enforcement_value = ','.join(ip_ranges)
+                            else:
+                                continue
                         elif enforcement_type == 'record_types':
                             record_types = {
                                 'std': [],
@@ -1994,7 +2048,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 self.display_role(params, role, kwargs.get('verbose'))
             print('\n')
 
-    def display_role(self, params, role, is_verbose = False):
+    def display_role(self, params, role, is_verbose=False):
         role_id = role['role_id']
         print('{0:>24s}: {1}'.format('Role ID', role_id))
         print('{0:>24s}: {1}'.format('Role Name', role['data'].get('displayname')))
@@ -2031,31 +2085,41 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     break
             if enforcements:
                 print('{0:>24s}: '.format('Role Enforcements'))
-                if 'master_password_minimum_length' in enforcements:
-                    print('{0:>24s}: '.format('Password Complexity'))
-                    for p in [('Length', 'master_password_minimum_length'),
-                              ('Digits', 'master_password_minimum_digits'),
-                              ('Special Characters', 'master_password_minimum_special'),
-                              ('Uppercase Letters', 'master_password_minimum_upper'),
-                              ('Lowercase Letters', 'master_password_minimum_lower')]:
-                        value = enforcements.get(p[1])
-                        if value is not None:
-                            print('{0:>24s}: {1}'.format(p[0], value))
-                if 'allow_secrets_manager' in enforcements:
-                    print('{0:>24s}: {1}'.format('Allow Secrets Manager', 'True'))
-                if 'restrict_record_types' in enforcements:
-                    try:
-                        rto = enforcements.get('restrict_record_types')
-                        if params.record_type_cache:
-                            record_types = []
-                            for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
-                                if record_type_id in params.record_type_cache:
-                                    rtc = json.loads(params.record_type_cache[record_type_id])
-                                    if '$id' in rtc:
-                                        record_types.append(rtc['$id'])
-                            print('{0:>24s}: {1}'.format('Restrict Record Types', ', '.join(record_types)))
-                    except:
-                        pass
+                enforcement_list = constants.enforcement_list()
+                if not is_verbose:
+                    enforcement_list = [x for x in enforcement_list if x[1] in enforcements]
+                last_group = ''
+                for e in enforcement_list:
+                    if e[0] != last_group:
+                        last_group = e[0]
+                        print('\n{0}'.format(last_group))
+                    value = enforcements.get(e[1])
+                    if value:
+                        value_type = e[2]
+                        if value_type == 'record_types':
+                            try:
+                                rto = value
+                                if params.record_type_cache:
+                                    record_types = []
+                                    for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
+                                        if record_type_id in params.record_type_cache:
+                                            rtc = json.loads(params.record_type_cache[record_type_id])
+                                            if '$id' in rtc:
+                                                record_types.append(rtc['$id'])
+                                    value = ', '.join(record_types)
+                            except:
+                                value = 'Error'
+                        elif value_type == 'two_factor_duration':
+                            value = [x.strip() for x in value.split(',')]
+                            value = ['login' if x == '0' else
+                                     '30_days' if x == '30' else
+                                     'forever' if x == '9999' else x for x in value]
+                            value = ', '.join(value)
+                        else:
+                            value = str(value)
+                    else:
+                        value = ''
+                    print('{0:<40s}: {1}'.format(e[1], value))
 
 
 class EnterpriseTeamCommand(EnterpriseCommand):
