@@ -14,11 +14,10 @@ import os
 import base64
 import argparse
 import logging
-import datetime
 import getpass
 import sys
 import platform
-from datetime import timedelta
+from datetime import datetime, timedelta
 from distutils.util import strtobool
 from time import time
 from urllib.parse import urlparse
@@ -44,7 +43,7 @@ from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
-from .. import api, rest_api, loginv3
+from .. import api, constants, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
@@ -77,6 +76,7 @@ def register_commands(commands):
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
+    commands['accept-transfer'] = AcceptTransferCommand()
     commands['connect'] = ConnectCommand()
     commands['delete-corrupted'] = DeleteCorruptedCommand()
     commands['echo'] = EchoCommand()
@@ -185,6 +185,11 @@ check_enforcements_parser.error = raise_parse_exception
 check_enforcements_parser.exit = suppress_exit
 
 
+accept_transfer_parser = argparse.ArgumentParser(prog='accept-transfer', description='Accept account transfer')
+check_enforcements_parser.error = raise_parse_exception
+check_enforcements_parser.exit = suppress_exit
+
+
 connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
 connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                             help='display help on command format and template parameters')
@@ -269,7 +274,7 @@ keepalive_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
-    dt = datetime.datetime.fromtimestamp(ms // 1000)
+    dt = datetime.fromtimestamp(ms // 1000)
     df_frmt_str = dt.strftime(frmt)
 
     return df_frmt_str
@@ -671,19 +676,29 @@ class CheckEnforcementsCommand(Command):
                         except Exception as e:
                             logging.error('Enterprise %s failure: %s', action, e)
 
-        if params.settings:
-            if 'share_account_to' in params.settings:
-                dt = datetime.datetime.fromtimestamp(params.settings['must_perform_account_share_by'] // 1000)
-                print('Your Keeper administrator has enabled the ability to transfer your vault records\n'
-                      'in accordance with company operating procedures and policies.\n'
-                      'Please acknowledge this change in account settings by typing ''Accept''.')
-                print('If you do not accept this change by {0}, you will be locked out of your account.'.format(dt.strftime('%a, %d %b %Y')))
+        share_account_by = params.get_share_account_timestamp()
+        if share_account_by is not None:
+            warn_msg = constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y'))
+            warn_msg += 'Use the command accept-transfer to accept.'
+            logging.warning(warn_msg)
 
-                try:
-                    api.accept_account_transfer_consent(params, params.settings['share_account_to'])
-                finally:
-                    del params.settings['must_perform_account_share_by']
-                    del params.settings['share_account_to']
+
+class AcceptTransferCommand(Command):
+    def get_parser(self):
+        return check_enforcements_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        share_account_by = params.get_share_account_timestamp()
+        if share_account_by is not None:
+            if api.accept_account_transfer_consent(params):
+                logging.info('Account transfer accepted.')
+            else:
+                logging.info('Account transfer canceled.')
+        else:
+            logging.info('There is no account transfer to accept.')
 
 
 class KSMCommand(Command):
@@ -1426,11 +1441,11 @@ class KSMCommand(Command):
                     lock_ip_stat = bcolors.OKGREEN + "Enabled" + bcolors.ENDC
                 else:
                     lock_ip_stat = bcolors.HIGHINTENSITYRED + "Disabled" + bcolors.ENDC
-                exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                exp_date_str = bcolors.BOLD + datetime.fromtimestamp(
                     first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
 
                 if access_expire_in_min:
-                    app_expire_on_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                    app_expire_on_str = bcolors.BOLD + datetime.fromtimestamp(
                         access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
                 else:
                     app_expire_on_str = bcolors.WARNING + "Never" + bcolors.ENDC

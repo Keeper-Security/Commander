@@ -9,6 +9,7 @@
 #
 
 from urllib.parse import urlparse, urlunparse
+from datetime import datetime
 
 
 LAST_RECORD_UID = 'last_record_uid'
@@ -189,3 +190,9 @@ class KeeperParams:
 
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
+
+    def get_share_account_timestamp(self):
+        if self.settings and 'share_account_to' in self.settings and 'must_perform_account_share_by' in self.settings:
+            return datetime.fromtimestamp(int(self.settings['must_perform_account_share_by']) // 1000)
+        else:
+            return None
