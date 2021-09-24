@@ -13,8 +13,8 @@ from ..importer import BaseImporter, Record, Folder, RecordField
 import calendar
 import getpass
 
-from lastpass.vault import Vault
-from lastpass.account import Account
+from .vault import Vault
+from .account import Account
 
 
 class LastPassImporter(BaseImporter):
