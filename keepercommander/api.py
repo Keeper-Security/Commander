@@ -331,8 +331,6 @@ def accept_account_transfer_consent(params):
             communicate(params, request)
         return True
     else:
-        if not expired:
-            logging.info('Canceled')
         return False
 
 
