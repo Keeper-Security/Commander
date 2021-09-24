@@ -1640,6 +1640,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         matched_roles = list(matched.values())
 
         request_batch = []
+        skip_display = False
         if kwargs.get('add'):
             for role in matched_roles:
                 logging.warning('Role \'%s\' already exists: Skipping', role['data'].get('displayname'))
@@ -1747,6 +1748,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             request_batch.append(rq)
 
             elif kwargs.get('enforcements'):
+                skip_display = True
                 for enforcement in kwargs['enforcements']:
                     tokens = enforcement.split(':')
                     if len(tokens) != 2:
@@ -1910,6 +1912,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 logging.warning('Enforcement \"%s\" is not set for role %d. Skipping', key, role_id)
 
             elif kwargs.get('add_admin') or kwargs.get('remove_admin'):
+                skip_display = True
                 node_lookup = {}
                 if 'nodes' in params.enterprise:
                     for node in params.enterprise['nodes']:
@@ -2042,7 +2045,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         if rs['result'] != 'success':
                             logging.warning('Error: %s', rs['message'])
             api.query_enterprise(params)
-        else:
+        elif not skip_display:
             for role in matched_roles:
                 print('\n')
                 self.display_role(params, role, kwargs.get('verbose'))
