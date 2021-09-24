@@ -5,13 +5,11 @@ import json
 import logging
 import os
 import re
-import sys
 from urllib.parse import urlparse, urlunparse
 from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
 
-import requests
 from Cryptodome.Math.Numbers import Integer
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -26,7 +24,7 @@ from .plugins import humps as humps
 
 from . import api
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse, DomainPasswordRulesRequest
+from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
