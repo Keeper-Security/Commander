@@ -143,3 +143,12 @@ if sys.platform.startswith('win'):
     OS_WHICH_CMD = 'where'
 else:
     OS_WHICH_CMD = 'which'
+
+# Messages
+# Account Transfer
+ACCOUNT_TRANSFER_MSG = """
+Your Keeper administrator has enabled the ability to transfer your vault records
+in accordance with company operating procedures and policies.
+Please acknowledge this change in account settings by typing 'Accept'.
+If you do not accept this change by {0}, you will be locked out of your account.
+"""

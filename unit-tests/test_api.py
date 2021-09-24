@@ -109,21 +109,27 @@ class TestSearch(TestCase):
 
     def test_accept_account_transfer_consent(self):
         params = get_connected_params()
-        share_account_to = [{
-            'role_id': 123456789,
-            'public_key': vault_env.encoded_public_key
-        }]
+        params.settings = {
+            'must_perform_account_share_by': '1632370067000',
+            'share_account_to': [{
+                'role_id': 123456789,
+                'public_key': vault_env.encoded_public_key
+            }]
+        }
         with mock.patch('builtins.print'), mock.patch('builtins.input', return_value='accept'):
 
             KeeperApiHelper.communicate_expect(['share_account'])
-            self.assertTrue(api.accept_account_transfer_consent(params, share_account_to))
+            self.assertTrue(api.accept_account_transfer_consent(params))
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
     def test_decline_account_transfer_consent(self):
         params = get_connected_params()
-        share_account_to = [{
-            'role_id': 123456789,
-            'public_key': vault_env.encoded_public_key
-        }]
+        params.settings = {
+            'must_perform_account_share_by': '1632370067000',
+            'share_account_to': [{
+                'role_id': 123456789,
+                'public_key': vault_env.encoded_public_key
+            }]
+        }
         with mock.patch('builtins.print'), mock.patch('builtins.input', return_value='decline'):
-            self.assertFalse(api.accept_account_transfer_consent(params, share_account_to))
+            self.assertFalse(api.accept_account_transfer_consent(params))
