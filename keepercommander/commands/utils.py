@@ -14,11 +14,10 @@ import os
 import base64
 import argparse
 import logging
-import datetime
 import getpass
 import sys
 import platform
-from datetime import timedelta
+from datetime import datetime, timedelta
 from distutils.util import strtobool
 from time import time
 
@@ -263,7 +262,7 @@ keepalive_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
-    dt = datetime.datetime.fromtimestamp(ms // 1000)
+    dt = datetime.fromtimestamp(ms // 1000)
     df_frmt_str = dt.strftime(frmt)
 
     return df_frmt_str
@@ -1407,11 +1406,11 @@ class KSMCommand(Command):
                     lock_ip_stat = bcolors.OKGREEN + "Enabled" + bcolors.ENDC
                 else:
                     lock_ip_stat = bcolors.HIGHINTENSITYRED + "Disabled" + bcolors.ENDC
-                exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                exp_date_str = bcolors.BOLD + datetime.fromtimestamp(
                     first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
 
                 if access_expire_in_min:
-                    app_expire_on_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                    app_expire_on_str = bcolors.BOLD + datetime.fromtimestamp(
                         access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
                 else:
                     app_expire_on_str = bcolors.WARNING + "Never" + bcolors.ENDC
