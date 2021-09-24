@@ -230,7 +230,16 @@ class LoginV3Flow:
                 if LoginV3Flow.change_master_password(params):
                     return False
                 else:
+                    params.clear_session()
                     raise Exception('Change password failed')
+            elif resp.sessionTokenType == proto.SHARE_ACCOUNT:
+                logging.info('Account transfer required')
+                accepted = api.accept_account_transfer_consent(params)
+                if accepted:
+                    return False
+                else:
+                    params.clear_session()
+                    raise Exception('Account transfer logout')
             else:
                 raise Exception('Please log into the web Vault to update your account settings.')
 
