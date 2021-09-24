@@ -1,11 +1,6 @@
 name: Test with pytest
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-  workflow_dispatch:
+on: [pull_request, workflow_dispatch]
 
 env:
   PYTHONUNBUFFERED: 1

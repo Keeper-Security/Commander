@@ -19,8 +19,9 @@ import os
 import hashlib
 import logging
 import urllib.parse
+from datetime import datetime
 
-from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
+from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -310,12 +311,16 @@ def change_master_password(params):
     return False
 
 
-def accept_account_transfer_consent(params, share_account_to):
-    print('')
-    answer = input('Do you accept Account Transfer policy? Accept/C(ancel): ')
+def accept_account_transfer_consent(params):
+    share_account_by = params.get_share_account_timestamp()
+    print(constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y')))
+
+    expired = datetime.today() > share_account_by
+    input_options = 'Accept/L(ogout)' if expired else 'Accept/L(ater)'
+    answer = input('Do you accept Account Transfer policy? {}: '.format(input_options))
     answer = answer.lower()
     if answer.lower() == 'accept':
-        for role in share_account_to:
+        for role in params.settings['share_account_to']:
             public_key = RSA.importKey(base64.urlsafe_b64decode(role['public_key'] + '=='))
             transfer_key = encrypt_rsa(params.data_key, public_key)
             request = {
@@ -326,9 +331,7 @@ def accept_account_transfer_consent(params, share_account_to):
             communicate(params, request)
         return True
     else:
-        logging.info('Canceled')
-
-    return False
+        return False
 
 
 def pad_aes_gcm(json):
@@ -2274,7 +2277,11 @@ def query_enterprise(params):
 
                     params.enterprise = response
     except Exception as e:
-        logging.warning(e)
+        share_account_by = params.get_share_account_timestamp()
+        share_account_expired = share_account_by and datetime.today() > share_account_by
+        # An exception is expected here if an Account Transfer is expired
+        if not share_account_expired:
+            logging.warning(e)
         params.enterprise = None
 
 
