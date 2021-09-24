@@ -2280,7 +2280,11 @@ def query_enterprise(params):
 
                     params.enterprise = response
     except Exception as e:
-        logging.warning(e)
+        share_account_by = params.get_share_account_timestamp()
+        share_account_expired = share_account_by and datetime.today() > share_account_by
+        # An exception is expected here if an Account Transfer is expired
+        if not share_account_expired:
+            logging.warning(e)
         params.enterprise = None
 
 
