@@ -8,6 +8,7 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import logging
 
 from ..importer import BaseImporter, Record, Folder, RecordField
 import calendar
@@ -15,6 +16,7 @@ import getpass
 
 from .vault import Vault
 from .account import Account
+from .exceptions import LastPassUnknownError
 
 
 class LastPassImporter(BaseImporter):
@@ -42,7 +44,12 @@ class LastPassImporter(BaseImporter):
         if not twofa_code:
             twofa_code = None
 
-        vault = Vault.open_remote(username, password, multifactor_password=twofa_code)
+        try:
+            vault = Vault.open_remote(username, password, multifactor_password=twofa_code)
+        except LastPassUnknownError as lpe:
+            logging.warning(lpe)
+            return
+
         for account in vault.accounts:  # type: Account
             record = Record()
             if account.name:
@@ -77,12 +84,9 @@ class LastPassImporter(BaseImporter):
                                 'routingNumber': typed_values.get('Routing Number') or '',
                                 'accountNumber': typed_values.get('Account Number') or '',
                             }
-                            record.fields.append(bank)
-                            name = RecordField()
-                            name.type = 'name'
-                            name.value = typed_values.get('Bank Name') or '',
-                            record.fields.append(name)
-
+                            bank_name = typed_values.get('Bank Name')
+                            if bank_name:
+                                record.title = bank_name
                         elif note_type == 'Credit Card':
                             record.type = 'bankCard'
                             card = RecordField()
