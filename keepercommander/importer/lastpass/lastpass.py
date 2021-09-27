@@ -62,6 +62,8 @@ class LastPassImporter(BaseImporter):
                 record.login_url = account.url.decode('utf-8')
                 if record.login_url == 'http://sn':
                     record.login_url = None
+                elif record.login_url == 'http://group':
+                    continue
             if account.notes:
                 notes = account.notes.decode('utf-8')
                 if notes:
