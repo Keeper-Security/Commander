@@ -48,17 +48,20 @@ class Vault(object):
 
         key = encryption_key
         rsa_private_key = None
+        shared_folder = None
 
         for i in chunks:
             if i.id == b'ACCT':
                 # TODO: Put shared folder name as group in the account
-                account = parser.parse_ACCT(i, key)
+                account = parser.parse_ACCT(i, key, shared_folder)
                 if account:
                     accounts.append(account)
             elif i.id == b'PRIK':
                 rsa_private_key = parser.parse_PRIK(i, encryption_key)
             elif i.id == b'SHAR':
                 # After SHAR chunk all the folliwing accounts are enrypted with a new key
-                key = parser.parse_SHAR(i, encryption_key, rsa_private_key)['encryption_key']
+                share = parser.parse_SHAR(i, encryption_key, rsa_private_key)
+                key = share['encryption_key']
+                shared_folder = share['name']
 
         return accounts
