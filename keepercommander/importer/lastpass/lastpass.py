@@ -119,9 +119,12 @@ class LastPassImporter(BaseImporter):
                             record.fields.append(address)
 
                     record.notes = notes
-            if account.group:
+            if account.group or account.shared_folder:
                 fol = Folder()
-                fol.path = account.group.decode('utf-8')
+                if account.shared_folder:
+                    fol.domain = account.shared_folder.decode('utf-8')
+                if account.group:
+                    fol.path = account.group.decode('utf-8')
                 record.folders = [fol]
 
             yield record

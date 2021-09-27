@@ -37,7 +37,7 @@ def extract_chunks(blob):
     return chunks
 
 
-def parse_ACCT(chunk, encryption_key):
+def parse_ACCT(chunk, encryption_key, shared_folder):
     """
     Parses an account chunk, decrypts and creates an Account object.
     May return nil when the chunk does not represent an account.
@@ -67,7 +67,7 @@ def parse_ACCT(chunk, encryption_key):
             username = parsed.get('username', username)
             password = parsed.get('password', password)
 
-    return Account(id, name, username, password, url, group, notes)
+    return Account(id, name, username, password, url, group, notes, shared_folder)
 
 
 def parse_PRIK(chunk, encryption_key):
