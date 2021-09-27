@@ -21,7 +21,7 @@ import logging
 import urllib.parse
 from datetime import datetime
 
-from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils
+from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils, crypto
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -773,10 +773,16 @@ def sync_down(params):
                     logging.debug('Shared folder %s name decryption error: %s', shared_folder_uid, e)
                     shared_folder['name_unencrypted'] = shared_folder_uid
                 if 'records' in shared_folder:
+                    shared_folder_key = shared_folder['shared_folder_key_unencrypted']
                     for sfr in shared_folder['records']:
                         if 'record_key_unencrypted' not in sfr:
                             try:
-                                sfr['record_key_unencrypted'] = decrypt_data(sfr['record_key'], shared_folder['shared_folder_key_unencrypted'])
+                                encrypted_key = utils.base64_url_decode(sfr['record_key'])
+                                if len(encrypted_key) == 60:
+                                    decrypted_key = crypto.decrypt_aes_v2(encrypted_key, shared_folder_key)
+                                else:
+                                    decrypted_key = crypto.decrypt_aes_v1(encrypted_key, shared_folder_key)
+                                sfr['record_key_unencrypted'] = decrypted_key
                             except Exception as e:
                                 logging.debug('Shared folder %s record key decryption error: %s', shared_folder_uid, e)
 
