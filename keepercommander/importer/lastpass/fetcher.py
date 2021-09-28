@@ -1,5 +1,6 @@
 # coding: utf-8
 import hashlib
+import json
 from base64 import b64decode
 from binascii import hexlify
 import requests
@@ -21,6 +22,7 @@ from .session import Session
 
 http = requests
 headers = {'user-agent': 'lastpass-python/{}'.format(__version__)}
+query_string = '?mobile=1&b64=1&hash=0.0&hasplugin=3.0.23&requestsrc=android'
 
 
 def login(username, password, multifactor_password=None, client_id=None):
@@ -40,13 +42,25 @@ def logout(session, web_client=http):
 
 
 def fetch(session, web_client=http):
-    response = web_client.get('https://lastpass.com/getaccts.php?mobile=1&b64=1&hash=0.0&hasplugin=3.0.23&requestsrc=android',
-                              cookies={'PHPSESSID': session.id})
+    url = 'https://lastpass.com/getaccts.php' + query_string
+    response = web_client.get(url, cookies={'PHPSESSID': session.id})
 
     if response.status_code != requests.codes.ok:
         raise NetworkError()
 
     return blob.Blob(decode_blob(response.content), session.key_iteration_count)
+
+
+def fetch_shared_folder_members(session, shareid, web_client=http):
+    url = 'https://lastpass.com/getSharedFolderMembers.php' + query_string + f'&shareid={shareid}'
+    response = web_client.get(url, cookies={'PHPSESSID': session.id})
+
+    if response.status_code != requests.codes.ok:
+        raise NetworkError()
+
+    # We're only returning the users that have access to the share and not the groups
+    shared_folder_members = json.loads(response.content.decode('utf-8'))['users']
+    return shared_folder_members
 
 
 def request_iteration_count(username, web_client=http):
