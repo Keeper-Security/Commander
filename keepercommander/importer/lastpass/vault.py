@@ -28,6 +28,7 @@ class Vault(object):
         if not self.is_complete(chunks):
             raise InvalidResponseError('Blob is truncated')
 
+        self.shared_folders = []
         self.accounts = self.parse_accounts(chunks, encryption_key, session)
 
     def is_complete(self, chunks):
@@ -54,6 +55,7 @@ class Vault(object):
                 shareid = share['id'].decode('utf-8')
                 shared_folder_members = fetcher.fetch_shared_folder_members(session, shareid)
                 shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'), shared_folder_members)
+                self.shared_folders.append(shared_folder)
 
         fetcher.logout(session)
         return accounts
