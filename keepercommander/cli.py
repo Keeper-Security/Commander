@@ -431,8 +431,6 @@ prompt_session = None
 
 
 def loop(params):  # type: (KeeperParams) -> int
-    logging.debug('Params: %s', params)
-
     global prompt_session
     error_no = 0
     suppress_errno = False
@@ -508,7 +506,7 @@ def loop(params):  # type: (KeeperParams) -> int
                 suppress_errno = True
                 command = command[1:]
             if params.batch_mode:
-                print(f'> {command}')
+                logging.info('> %s', command)
             error_no = 1
             result = do_command(params, command)
             error_no = 0
