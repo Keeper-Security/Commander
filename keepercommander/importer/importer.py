@@ -142,10 +142,10 @@ class Folder:
 
 
 class RecordField:
-    def __init__(self):
-        self.type = None    # type: Optional[str]
-        self.label = None   # type: Optional[str]
-        self.value = None   # type: any
+    def __init__(self, type=None, label=None, value=None):
+        self.type = type    # type: Optional[str]
+        self.label = label   # type: Optional[str]
+        self.value = value   # type: any
 
     def name_key(self):
         if self.type and self.label:
@@ -155,26 +155,37 @@ class RecordField:
         else:
             return (self.label or '').lower()
 
-    def hash_key(self):
-        value = self.value
-        if value:
-            if type(value) is str:
-                pass
-            elif type(value) is list:
-                value = '|'.join((str(x) for x in value))
-            else:
-                value = str(value)
+    @staticmethod
+    def hash_value(value):  # type: (any) -> str
+        if not value:
+            return ''
+        if isinstance(value, str):
+            value = value.strip()
+        elif isinstance(value, list):
+            value = [RecordField.hash_value(x) for x in value]
+            value = '|'.join((x for x in value if x))
+        elif isinstance(value, dict):
+            keys = [x for x in value]
+            keys.sort()
+            kvp = [(x, RecordField.hash_value(value[x])) for x in keys]
+            kvp = [x for x in kvp if x[1]]
+            value = ';'.join((f'{x[0]}:{x[1]}' for x in kvp))
         else:
-            value = ''
-        name = self.name_key()
-        return f'{name}:{value}'
+            value = str(value)
+        return value
+
+    def hash_key(self):  # type: () -> Optional[str]
+        value = RecordField.hash_value(self.value)
+        if value:
+            name = self.name_key()
+            return f'{name}:{value}'
 
 
 class RecordReferences:
-    def __init__(self):
-        self.type = ''
-        self.label = None
-        self.uids = []   # type: List[str]
+    def __init__(self, type='', label=None):
+        self.type = type
+        self.label = label
+        self.uids = []   # type: List[any]
 
 
 class Record:

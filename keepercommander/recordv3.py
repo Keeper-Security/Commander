@@ -632,7 +632,10 @@ class RecordV3:
     'privateKey': {
       'type': 'privateKey',
       'value_description': 'private key in ASN.1 format',
-      'value': '' # string (PEM encoded)
+      'value': {   # object
+        'publicKey': '', # string
+        'privateKey': '' # string
+      }
     }
   }
   # field_values w/o field_type - probably migrated to different types
