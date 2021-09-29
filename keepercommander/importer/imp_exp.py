@@ -1134,7 +1134,9 @@ def tokenize_record_key(record):   # type: (ImportRecord) -> Iterator[str]
         fields = [x for x in record.fields if x.type not in excluded]
         fields.sort(key=ImportRecordField.name_key, reverse=False)
         for field in fields:
-            yield field.hash_key()
+            hash_value = field.hash_key()
+            if hash_value:
+                yield hash_value
 
 
 def tokenize_full_import_record(record):   # type: (ImportRecord) -> Iterator[str]
@@ -1153,7 +1155,9 @@ def tokenize_full_import_record(record):   # type: (ImportRecord) -> Iterator[st
     fields = [x for x in record.fields]
     fields.sort(key=ImportRecordField.name_key, reverse=False)
     for field in fields:
-        yield field.hash_key()
+        hash_key = field.hash_key()
+        if hash_key:
+            yield hash_key
 
 
 '''
@@ -1280,10 +1284,13 @@ def _construct_record_v3_data(rec_to_import, orig_data=None):    # type: (Import
     for field in rec_to_import.schema or []:
         if field.ref == 'login':
             data['fields'].append(_create_field_v3(field, rec_to_import.login))
+            rec_to_import.login = ''
         elif field.ref == 'password':
             data['fields'].append(_create_field_v3(field, rec_to_import.password))
+            rec_to_import.password = ''
         elif field.ref == 'url':
             data['fields'].append(_create_field_v3(field, rec_to_import.login_url))
+            rec_to_import.login_url = ''
         else:
             index = -1
             if field.ref.endswith('Ref'):
@@ -1300,7 +1307,26 @@ def _construct_record_v3_data(rec_to_import, orig_data=None):    # type: (Import
                         break
                 field_value = record_fields.pop(index) if index >= 0 else None
                 data['fields'].append(_create_field_v3(field, field_value.value if field_value else []))
+
     data['custom'] = []
+    if rec_to_import.login:
+        field = RecordSchemaField()
+        field.ref = 'login'
+        data['custom'].append(_create_field_v3(field, rec_to_import.login))
+        rec_to_import.login = ''
+
+    if rec_to_import.password:
+        field = RecordSchemaField()
+        field.ref = 'password'
+        data['custom'].append(_create_field_v3(field, rec_to_import.password))
+        rec_to_import.password = ''
+
+    if rec_to_import.login_url:
+        field = RecordSchemaField()
+        field.ref = 'url'
+        data['custom'].append(_create_field_v3(field, rec_to_import.login_url))
+        rec_to_import.login_url = ''
+
     for field_value in record_fields:
         field = RecordSchemaField()
         field.ref = field_value.type or 'text'
