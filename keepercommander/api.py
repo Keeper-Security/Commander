@@ -485,7 +485,6 @@ def sync_down(params):
     params.available_team_cache = None
     if 'full_sync' in response_json:
         if response_json['full_sync']:
-            if params.debug: print('Full Sync response')
             check_convert_to_folders = True
             params.record_cache.clear()
             params.meta_data_cache.clear()
