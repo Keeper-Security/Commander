@@ -2,7 +2,7 @@
 from . import fetcher
 from . import parser
 from .exceptions import InvalidResponseError
-from .shared_folder import SharedFolder
+from .shared_folder import LastpassSharedFolder
 
 
 class Vault(object):
@@ -53,7 +53,7 @@ class Vault(object):
                 key = share['encryption_key']
                 shareid = share['id'].decode('utf-8')
                 shared_folder_members = fetcher.fetch_shared_folder_members(session, shareid)
-                shared_folder = SharedFolder(shareid, share['name'].decode('utf-8'), shared_folder_members)
+                shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'), shared_folder_members)
 
         fetcher.logout(session)
         return accounts
