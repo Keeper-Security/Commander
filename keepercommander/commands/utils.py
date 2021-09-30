@@ -21,6 +21,7 @@ import platform
 from datetime import timedelta
 from distutils.util import strtobool
 from time import time
+from urllib.parse import urlparse
 
 import requests
 import tempfile
@@ -38,6 +39,7 @@ from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClie
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..cli import init_recordv3_commands
+from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -55,6 +57,7 @@ from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
 from .. import __version__
+from ..utils import json_to_base64
 from ..versioning import is_binary_app, is_up_to_date_version
 
 SSH_AGENT_FAILURE = 5
@@ -126,6 +129,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --unlock-ip : Does not lock IP address to first requesting device
       --count [NUM] : Number of tokens to generate (Default: 1)
+      --config-init [json or b64] : Initialize configuration string from a one-time token
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
@@ -244,6 +248,8 @@ ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action
 ksm_parser.add_argument('--name', '-n', type=str, dest='name', action='store', help='client name')
 ksm_parser.add_argument('--purge', dest='purge', action='store_true', help='remove the record from all folders and purge it from the trash')
 ksm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
+ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='store',
+                        help='Initialize client config')    # json, b64, file
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -795,23 +801,30 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print(f"  {bcolors.OKGREEN}secrets-manager client add "
-                      f"--app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} "
-                      f"--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} "
-                      f"--name {bcolors.OKBLUE}[CLIENT NAME] "
-                      f"--editable{bcolors.ENDC}")
+                print(f"{bcolors.OKGREEN}  secrets-manager client add "
+                      f"{bcolors.OKGREEN}--app {bcolors.OKBLUE}[APP NAME or APP UID] "
+                      f"{bcolors.OKGREEN}--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID] "
+                      f"{bcolors.OKGREEN}--name {bcolors.OKBLUE}[CLIENT NAME] "
+                      f"{bcolors.OKGREEN}--config-init [{bcolors.OKBLUE}json{bcolors.OKGREEN} or {bcolors.OKBLUE}b64{bcolors.OKGREEN}]")
                 return
 
             count = kwargs.get('count')
             unlock_ip = kwargs.get('unlockIp')
             client_name = kwargs.get('name')
+            config_init = kwargs.get('config_init')
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
 
             is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
 
-            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min, client_name)
+            tokens = KSMCommand.add_client(params,
+                                           app_name_or_uid,
+                                           count, unlock_ip,
+                                           first_access_expire_on,
+                                           access_expire_in_min,
+                                           client_name,
+                                           config_init)
             return tokens if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
@@ -1337,7 +1350,7 @@ class KSMCommand(Command):
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
-                   client_name=None):
+                   client_name=None, config_init=None):
 
         if isinstance(unlock_ip, bool):
             is_ip_unlocked = unlock_ip
@@ -1425,7 +1438,21 @@ class KSMCommand(Command):
                 token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
                 tokens.append(token)
 
-                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n'
+                if not config_init:
+                    abbrev = get_abbrev_by_host(params.server.lower())
+
+                    if abbrev:
+                        token_w_prefix = f'{abbrev}:{token}'
+                    else:
+                        token_w_prefix = f'{urlparse(params.server).netloc.lower()}:{token}'
+
+                    otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token_w_prefix}{bcolors.ENDC}\n'
+                else:
+                    config_str = KSMCommand.init_ksm_config(params,
+                                                            one_time_token=token,
+                                                            is_base64=config_init == 'b64')
+                    otat_str += f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
+
                 if client_name:
                     otat_str += f'Name: {client_name}\n'
 
@@ -1439,7 +1466,56 @@ class KSMCommand(Command):
               f'====================================\n'
               f'{otat_str}')
 
+        if config_init and not unlock_ip:
+            print(bcolors.WARNING + "\tWarning: Configuration is now locked to your current IP. To keep in unlock you "
+                                    "can add flag `--unlock-ip` or use the One-time token to generate configuration on "
+                                    "the host that has the IP that needs to be locked." + bcolors.ENDC)
+
+            logging.warning('')
+
         return tokens
+
+    @staticmethod
+    def init_ksm_config(params, one_time_token, is_base64=False):
+
+        try:
+            from keeper_secrets_manager_core import SecretsManager
+            from keeper_secrets_manager_core.configkeys import ConfigKeys
+            from keeper_secrets_manager_core.storage import InMemoryKeyValueStorage
+        except:
+            raise Exception("Keeper Secrets Manager is not installed.\n"
+                            "Install it using pip `pip3 install keeper-secrets-manager-core`")
+
+        ksm_conf_storage = InMemoryKeyValueStorage()
+
+        secrets_manager = SecretsManager(
+            hostname=params.config.get('server'),
+            token=one_time_token,
+            # verify_ssl_certs=False,
+            config=ksm_conf_storage
+        )
+
+        secrets_manager.get_secrets("NON-EXISTING-RECORD-UID")
+
+        json_str = '{' \
+                   '"hostname": "%s",' \
+                   '"clientId": "%s",' \
+                   '"privateKey": "%s",' \
+                   '"serverPublicKeyId": "%s",' \
+                   '"appKey": "%s"' \
+                   '}' % (
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_HOSTNAME),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_CLIENT_ID),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_PRIVATE_KEY),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_SERVER_PUBLIC_KEY_ID),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_APP_KEY)
+                   )
+
+        if is_base64:
+            json_b64 = json_to_base64(json_str)
+            return json_b64
+        else:
+            return json_str
 
 
 class LogoutCommand(Command):
