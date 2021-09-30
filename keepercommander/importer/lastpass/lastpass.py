@@ -12,7 +12,7 @@ import json
 import logging
 
 from typing import Optional, List
-from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences
+from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission
 import calendar, datetime
 import getpass
 
@@ -123,6 +123,23 @@ class LastPassImporter(BaseImporter):
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
+
+        for shared_folder in vault.shared_folders:
+            folder = SharedFolder()
+            folder.path = shared_folder.name
+            folder.manage_users = False
+            folder.manage_records = False
+            folder.can_edit = True
+            folder.can_share = True
+            folder.permissions = []
+            for member in shared_folder.members:
+                perm = Permission()
+                perm.name = member['username']
+                perm.manage_records = member['readonly'] == '0'
+                perm.manage_users = member['can_administer'] == '1'
+                folder.permissions.append(perm)
+
+            yield folder
 
         for account in vault.accounts:  # type: Account
             record = Record()
