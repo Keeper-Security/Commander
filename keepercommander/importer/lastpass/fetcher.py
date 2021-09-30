@@ -57,11 +57,10 @@ def fetch_shared_folder_members(session, shareid, web_client=http):
 
     if response.status_code != requests.codes.ok:
         error = f'HTTP {response.status_code}, {response.reason}'
-        return [], error
+        return [], [], error
 
     response_dict = json.loads(response.content.decode('utf-8'))
     if 'users' in response_dict:
-        # We're only returning the users that have access to the share and not the groups
         shared_folder_members = response_dict['users']
         error = None
     elif 'error' in response_dict:
@@ -72,7 +71,7 @@ def fetch_shared_folder_members(session, shareid, web_client=http):
     else:
         shared_folder_members = []
         error = 'Unknown response from Lastpass'
-    return shared_folder_members, error
+    return shared_folder_members, response_dict.get('groups', []), error
 
 
 def request_iteration_count(username, web_client=http):
