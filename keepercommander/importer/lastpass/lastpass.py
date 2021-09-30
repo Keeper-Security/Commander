@@ -8,17 +8,17 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import calendar
+import datetime
+import getpass
 import json
 import logging
-
 from typing import Optional, List
-from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences
-import calendar, datetime
-import getpass
 
-from .vault import Vault
+from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission
 from .account import Account
 from .exceptions import LastPassUnknownError
+from .vault import Vault
 
 
 class LastPassImporter(BaseImporter):
@@ -123,6 +123,27 @@ class LastPassImporter(BaseImporter):
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
+        else:
+            if len(vault.errors) > 0:
+                err_list = '\n'.join(vault.errors)
+                logging.warning(f'The following errors occurred retrieving Lastpass shared folder members:\n{err_list}')
+
+        for shared_folder in vault.shared_folders:
+            folder = SharedFolder()
+            folder.path = shared_folder.name
+            folder.manage_users = False
+            folder.manage_records = False
+            folder.can_edit = True
+            folder.can_share = True
+            folder.permissions = []
+            for member in shared_folder.members:
+                perm = Permission()
+                perm.name = member['username']
+                perm.manage_records = member['readonly'] == '0'
+                perm.manage_users = member['can_administer'] == '1'
+                folder.permissions.append(perm)
+
+            yield folder
 
         for account in vault.accounts:  # type: Account
             record = Record()
@@ -229,7 +250,7 @@ class LastPassImporter(BaseImporter):
             if account.group or account.shared_folder:
                 fol = Folder()
                 if account.shared_folder:
-                    fol.domain = account.shared_folder.decode('utf-8')
+                    fol.domain = account.shared_folder.name
                 if account.group:
                     fol.path = account.group.decode('utf-8')
                 record.folders = [fol]
