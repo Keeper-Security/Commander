@@ -123,6 +123,10 @@ class LastPassImporter(BaseImporter):
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
+        else:
+            if len(vault.errors) > 0:
+                err_list = '\n'.join(vault.errors)
+                logging.warning(f'The following errors occurred retrieving Lastpass shared folder members:\n{err_list}')
 
         for shared_folder in vault.shared_folders:
             folder = SharedFolder()

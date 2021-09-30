@@ -28,6 +28,7 @@ class Vault(object):
         if not self.is_complete(chunks):
             raise InvalidResponseError('Blob is truncated')
 
+        self.errors = set()
         self.shared_folders = []
         self.accounts = self.parse_accounts(chunks, encryption_key, session)
 
@@ -53,7 +54,9 @@ class Vault(object):
                 share = parser.parse_SHAR(i, encryption_key, rsa_private_key)
                 key = share['encryption_key']
                 shareid = share['id'].decode('utf-8')
-                shared_folder_members = fetcher.fetch_shared_folder_members(session, shareid)
+                shared_folder_members, error = fetcher.fetch_shared_folder_members(session, shareid)
+                if error:
+                    self.errors.add(error)
                 shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'), shared_folder_members)
                 self.shared_folders.append(shared_folder)
 

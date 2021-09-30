@@ -56,15 +56,23 @@ def fetch_shared_folder_members(session, shareid, web_client=http):
     response = web_client.get(url, cookies={'PHPSESSID': session.id})
 
     if response.status_code != requests.codes.ok:
-        raise NetworkError()
+        error = f'HTTP {response.status_code}, {response.reason}'
+        return [], error
 
     response_dict = json.loads(response.content.decode('utf-8'))
     if 'users' in response_dict:
         # We're only returning the users that have access to the share and not the groups
         shared_folder_members = response_dict['users']
+        error = None
+    elif 'error' in response_dict:
+        shared_folder_members = []
+        error = response_dict['error']
+        if error == 'not_allowed':
+            error += ' (Lastpass folder admin access required to access folder members)'
     else:
         shared_folder_members = []
-    return shared_folder_members
+        error = 'Unknown response from Lastpass'
+    return shared_folder_members, error
 
 
 def request_iteration_count(username, web_client=http):
