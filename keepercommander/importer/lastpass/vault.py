@@ -54,10 +54,10 @@ class Vault(object):
                 share = parser.parse_SHAR(i, encryption_key, rsa_private_key)
                 key = share['encryption_key']
                 shareid = share['id'].decode('utf-8')
-                shared_folder_members, error = fetcher.fetch_shared_folder_members(session, shareid)
+                members, teams, error = fetcher.fetch_shared_folder_members(session, shareid)
                 if error:
                     self.errors.add(error)
-                shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'), shared_folder_members)
+                shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'), members, teams)
                 self.shared_folders.append(shared_folder)
 
         fetcher.logout(session)
