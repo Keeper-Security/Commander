@@ -131,10 +131,6 @@ class LastPassImporter(BaseImporter):
         for shared_folder in vault.shared_folders:
             folder = SharedFolder()
             folder.path = shared_folder.name
-            folder.manage_users = False
-            folder.manage_records = False
-            folder.can_edit = True
-            folder.can_share = True
             folder.permissions = []
             for member in shared_folder.members:
                 perm = Permission()
