@@ -8,17 +8,17 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import calendar
+import datetime
+import getpass
 import json
 import logging
-
 from typing import Optional, List
-from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission
-import calendar, datetime
-import getpass
 
-from .vault import Vault
+from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission
 from .account import Account
 from .exceptions import LastPassUnknownError
+from .vault import Vault
 
 
 class LastPassImporter(BaseImporter):
