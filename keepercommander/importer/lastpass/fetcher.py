@@ -58,8 +58,12 @@ def fetch_shared_folder_members(session, shareid, web_client=http):
     if response.status_code != requests.codes.ok:
         raise NetworkError()
 
-    # We're only returning the users that have access to the share and not the groups
-    shared_folder_members = json.loads(response.content.decode('utf-8'))['users']
+    response_dict = json.loads(response.content.decode('utf-8'))
+    if 'users' in response_dict:
+        # We're only returning the users that have access to the share and not the groups
+        shared_folder_members = response_dict['users']
+    else:
+        shared_folder_members = []
     return shared_folder_members
 
 
