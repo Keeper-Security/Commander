@@ -961,10 +961,10 @@ def prepare_folder_add(params, folders, records):
                     if folder_type == 'shared_folder':
                         string2 = api.encrypt_aes(comp.encode('utf-8'), folder_key)
                         fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(string2 + '==')
-                        fol_req.sharedFolderFields.manageUsers = fol.manage_users
-                        fol_req.sharedFolderFields.manageRecords = fol.manage_records
-                        fol_req.sharedFolderFields.canEdit = fol.can_edit
-                        fol_req.sharedFolderFields.canShare = fol.can_share
+                        fol_req.sharedFolderFields.manageUsers = fol.manage_users or False
+                        fol_req.sharedFolderFields.manageRecords = fol.manage_records or False
+                        fol_req.sharedFolderFields.canEdit = fol.can_edit or False
+                        fol_req.sharedFolderFields.canShare = fol.can_share or False
 
                     folder_add.append(fol_req)
                     folder_hash[digest] = folder_uid, folder_type, folder_key if folder_type == 'shared_folder' else None
