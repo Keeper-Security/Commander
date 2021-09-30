@@ -138,6 +138,12 @@ class LastPassImporter(BaseImporter):
                 perm.manage_records = member['readonly'] == '0'
                 perm.manage_users = member['can_administer'] == '1'
                 folder.permissions.append(perm)
+            for team in shared_folder.teams:
+                perm = Permission()
+                perm.name = team['name']
+                perm.manage_records = team['readonly'] == '0'
+                perm.manage_users = team['can_administer'] == '1'
+                folder.permissions.append(perm)
 
             yield folder
 
