@@ -1263,7 +1263,7 @@ class CommonHelperMethods:
     @staticmethod
     def config_file_get_property_as_str(params: KeeperParams, key):
 
-        if os.path.exists(params.config_filename):
+        if params.config_filename and os.path.exists(params.config_filename):
             try:
                 try:
                     with open(params.config_filename) as config_file:
