@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import re
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
@@ -22,7 +22,7 @@ from google.protobuf.json_format import MessageToDict, MessageToJson
 from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
-from . import api
+from . import api, utils
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
@@ -40,13 +40,13 @@ permissions_error_msg = "Grant Commander SDK permissions to access Keeper by nav
 class LoginV3Flow:
 
     @staticmethod
-    def login(params):   # type: (KeeperParams) -> None
+    def login(params, new_device=False):   # type: (KeeperParams, bool) -> None
 
         logging.debug("Login v3 Start as '%s'" % params.user)
 
         CommonHelperMethods.startup_check(params)
 
-        encryptedDeviceToken = LoginV3API.get_device_id(params)
+        encryptedDeviceToken = LoginV3API.get_device_id(params, new_device)
 
         clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
         config_user = params.config.get('user')    # type: str
@@ -126,26 +126,10 @@ class LoginV3Flow:
                 raise Exception('This account need to be created.' % rest_api.CLIENT_VERSION)
 
             elif resp.loginState == proto.REGION_REDIRECT:
-                p = urlparse(params.server)
-                new_server = urlunparse((p.scheme, resp.stateSpecificValue, '', None, None, None))
-
-                warn_msg = \
-                    "\n'%s' has indicated that this account was originally created in a different region." \
-                    "\nPlease update config to use server: %s"\
-                    "\nYou may also need to register this device in the other region, unsetting the the device_token and clone_code will do this automatically upon login."\
-                    % (p.netloc.upper(), new_server)
-
-                logging.warning(warn_msg)
-
-                raise Exception("Changes to configuration are required.")
-
-                # TODO: change configuration structure so that device_token is paired with server, so that a given device_token is more certain to work for a given server, and will not be forced to be unset to "find out"
-                # params.rest_context.server_base = new_server
-                # params.server = params.rest_context.server_base
-                #
-                # LoginV3API.register_device_in_region(params)
-                #
-                # resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
+                params.server = resp.stateSpecificValue
+                logging.info('Redirecting to region: %s', params.server)
+                LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
 
@@ -219,6 +203,7 @@ class LoginV3Flow:
         if resp.sessionTokenType != proto.NO_RESTRICTION:
             # This is not a happy-path login.  Let the user know what's wrong.
             if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
+                params.session_token = None
                 msg = (
                     'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
                     'Vault at https://keepersecurity.com/vault'
@@ -655,7 +640,16 @@ class LoginV3API:
         return rs
 
     @staticmethod
-    def get_device_id(params: KeeperParams):
+    def get_device_id(params, new_device):   # type: (KeeperParams, bool) -> bytes
+        if new_device:
+            logging.info('Resetting device token')
+            params.device_token = None
+            if 'device_token' in params.config:
+                del params.config['device_token']
+            if params.device_private_key:
+                params.device_private_key = None
+            if 'private_key' in params.config:
+                del params.config['private_key']
 
         encrypted_device_token_str = None
 
@@ -694,8 +688,10 @@ class LoginV3API:
 
             CommonHelperMethods.config_file_set_property(params, "device_token", encrypted_device_token_str)
 
-        encrypted_device_token_bytes = CommonHelperMethods.url_safe_str_to_bytes(encrypted_device_token_str)
-
+        try:
+            encrypted_device_token_bytes = utils.base64_url_decode(encrypted_device_token_str)
+        except:
+            raise InvalidDeviceToken()
         return encrypted_device_token_bytes
 
     @staticmethod
@@ -757,10 +753,11 @@ class LoginV3API:
         elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
-                    params.device_id = None
-                    params.server_base = 'https://{0}/'.format(rs['region_host'])
-                    # logging.warning('Switching to region: %s', rs['region_host'])
-                    # continue
+                    params.server = rs['region_host']
+                    logging.info('Redirecting to region: %s', params.server)
+                    LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                    return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
+
                 if rs['error'] == 'bad_request':
                     # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     params.device_id = None
@@ -772,8 +769,7 @@ class LoginV3API:
                     raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
-    def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
-
+    def startLoginMessage(params, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):  # type: (KeeperParams, bytes, str, str) -> proto.LoginResponse
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.username = params.user.lower()
@@ -802,10 +798,18 @@ class LoginV3API:
         elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
-                    params.device_id = None
-                    params.server_base = 'https://{0}/'.format(rs['region_host'])
-                    # logging.warning('Switching to region: %s', rs['region_host'])
-                    # continue
+                    params.server = rs['region_host']
+                    logging.info('Redirecting to region: %s', params.server)
+                    LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                    return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
+
+                if rs['error'] == 'device_not_registered':
+                    if rs['additional_info'] == 'invalid device token, not registered in this region':
+                        LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                        return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
+                    else:
+                        raise InvalidDeviceToken()
+
                 if rs['error'] == 'bad_request':
                     # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     params.device_id = None
@@ -818,8 +822,8 @@ class LoginV3API:
                         err_msg += "\nRegister this user in the current region or change server region"
 
                     raise KeeperApiError(rs['error'], err_msg)
-                else:
-                    raise KeeperApiError(rs['error'], rs['message'])
+
+                raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
     def auth_verifier_loginv3(params: KeeperParams):
@@ -923,8 +927,8 @@ class LoginV3API:
         rq.encryptedDeviceDataKey = CommonHelperMethods.get_encrypted_device_data_key(params)
 
         try:
-            rs = api.communicate_rest(params, rq, 'authentication/register_encrypted_data_key_for_device')
-        except Exception as e:
+            api.communicate_rest(params, rq, 'authentication/register_encrypted_data_key_for_device')
+        except KeeperApiError as e:
             if e.result_code == 'device_data_key_exists':
                 return False
             raise e
@@ -932,25 +936,18 @@ class LoginV3API:
         return True
 
     @staticmethod
-    def register_device_in_region(params: KeeperParams):
+    def register_device_in_region(params, encrypted_device_token):  # type: (KeeperParams, bytes) -> None
         rq = proto.RegisterDeviceInRegionRequest()
-        rq.encryptedDeviceToken = CommonHelperMethods.url_safe_str_to_bytes(params.device_token)
+        rq.encryptedDeviceToken = encrypted_device_token
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.deviceName = CommonHelperMethods.get_device_name()
         rq.devicePublicKey = CommonHelperMethods.public_key_ecc(params)
 
-        # TODO: refactor into util for handling Standard Rest Authentication Errors
-        # try:
-        rs = api.communicate_rest(params, rq, 'authentication/register_device_in_region')
-        # except Exception as e:
-        #     # device_disabled - this device has been disabled for all users / all commands
-        #     # user_device_disabled - this user has disabled access from this device
-        #     # redirect - depending on the command, if the user is a pending enterprise user, or and existing user and they are in a different region, they will be redirected to the proper keeperapp server to submit the request
-        #     # client_version - Invalid client version
-        #     logging.error(f"Unable to register device in {params.region}: {e}")
-        #     return False
-        # else:
-        #     return True
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        rs = rest_api.execute_rest(params.rest_context, 'authentication/register_device_in_region', api_request_payload)
+        if isinstance(rs, dict):
+            raise InvalidDeviceToken()
 
     @staticmethod
     def set_user_setting(params: KeeperParams, name: str, value: str):
@@ -1394,3 +1391,7 @@ class CommonHelperMethods:
                 print('')
             except EOFError:
                 return 0
+
+
+class InvalidDeviceToken(Exception):
+    pass

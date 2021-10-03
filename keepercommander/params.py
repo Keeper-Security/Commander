@@ -62,7 +62,7 @@ class RestApiContext:
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self, config_filename='', config=None, server='https://keepersecurity.com/api/v2/', device_id=None):
+    def __init__(self, config_filename='', config=None, server='keepersecurity.com', device_id=None):
         self.config_filename = config_filename
         self.config = config or {}
         self.auth_verifier = None
