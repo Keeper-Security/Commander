@@ -118,7 +118,7 @@ def get_params_from_config(config_filename):
             logging.warning('Error: Unable to open config file %s: %s', params.config_filename, ioe)
 
     if not params.server:
-        params.server = 'https://keepersecurity.com/api/v2/'
+        params.server = 'keepersecurity.com'
 
     return params
 
@@ -181,7 +181,7 @@ def main(from_package=False):
         params.login_v3 = 'TRUE'.startswith(str(opts.login_v3).upper())
 
     if opts.server:
-        params.server = 'https://{0}/api/v2/'.format(opts.server)
+        params.server = opts.server
 
     if opts.user:
         params.user = opts.user

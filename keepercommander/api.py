@@ -82,7 +82,11 @@ def login(params):
 
     if params.login_v3:
         logging.info('Logging in to Keeper Commander')
-        loginv3.LoginV3Flow.login(params)
+        try:
+            loginv3.LoginV3Flow.login(params)
+        except loginv3.InvalidDeviceToken:
+            logging.warning('Registering new device')
+            loginv3.LoginV3Flow.login(params, new_device=True)
         return
 
     logging.info("Logging in...")
