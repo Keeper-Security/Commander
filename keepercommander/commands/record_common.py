@@ -2,16 +2,18 @@
 
 """Code/Data shared between recordv3.py and record.py."""
 
-import base64
 import hashlib
 import hmac
 import json
 import logging
 import urllib.parse
 
+from .. import api
+from .. import crypto
+from .. import utils
+from ..display import bcolors
 from ..proto import breachwatch_pb2  # has BreachWatchUpdateResponse but not BreachWatchData
 from ..proto import client_pb2  # has BreachWatchData but not BreachWatchUpdateResponse
-from .. import api
 
 
 def display_totp_details(otp_url):
@@ -56,8 +58,18 @@ def display_totp_query_fields(query_fields):
             print('{} not found'.format(key))
 
 
-def are_all_good_passwords(params, password_list, *, with_count=False):
+def are_all_good_passwords(params, password_list, *, with_count=False, with_color=False, from_command_line=False):
     """Return True iff all passwords in password_list have no breach detected by BreachWatch."""
+    if not params.license.get('breach_watch_enabled'):
+        return True
+
+    if with_color:
+        start_warning_color = bcolors.WARNING
+        end_color = bcolors.ENDC
+    else:
+        start_warning_color = ''
+        end_color = ''
+
     result = send_recv_breach_watch_status(params, password_list)
     bad_password_count = 0
     for bws_rs in result.hashStatus:
@@ -68,38 +80,57 @@ def are_all_good_passwords(params, password_list, *, with_count=False):
             else:
                 # Return False for the first bad password detected.
                 return False
+
     if bad_password_count > 0:
-        print('Detected {} breached passwords.  Please go to https://keepersecurity.com/vault/# to correct the problem'.format(
-            bad_password_count,
-        ))
+        logging.info(
+            start_warning_color +
+            'Detected {} breached passwords out of {}.'.format(bad_password_count, len(password_list)) +
+            ('  Please go to https://keepersecurity.com/vault/# to correct the problem' if not from_command_line else '') +
+            end_color
+        )
         return False
+    else:
+        len_password_list = len(password_list)
+        if len_password_list == 1:
+            logging.info('Good: One password not-breached')
+        else:
+            logging.info('Good: All %s passwords not-breached', len_password_list)
     return True
 
 
 def send_recv_breach_watch_status(params, password_list):
-    """Send a BreachWatchStatusRequest and receive+return a BreachWatchStatusResponse."""
+    """Send a BreachWatchStatusRequest and receive+return a BreachWatchStatusResponse.  Also maintain the hash1_to_euid dict."""
     assert isinstance(password_list, list)
     for password in password_list:
         assert isinstance(password, str)
     anon_token = params.anon_token
-    breach_watch_status_request = calc_breach_watch_status_request(anon_token, password_list)
+    breach_watch_status_request = calc_breach_watch_status_request(params, anon_token, password_list)
     breach_watch_status_response = api.communicate_rest_not_authed(
         params=params,
         request=breach_watch_status_request,
         endpoint='breachwatch/status',
         rs_type=breachwatch_pb2.BreachWatchStatusResponse,
     )
+    if not hasattr(params, 'hash1_to_euid'):
+        params.hash1_to_euid = {}
+    for hs in breach_watch_status_response.hashStatus:
+        params.hash1_to_euid[hs.hash1] = hs.euid
     return breach_watch_status_response
 
 
-def calc_breach_watch_status_request(anon_token, password_list):
-    """Derive a BreachWatchStatusRequest protobuf for the benefit of BeachWatch."""
+def calc_breach_watch_status_request(params, anon_token, password_list):
+    """Derive a BreachWatchStatusRequest protobuf for the benefit of BreachWatch.  Also stash password_to_hash1 dict in params."""
     breach_watch_status_request = breachwatch_pb2.BreachWatchStatusRequest()
     breach_watch_status_request.anonymizedToken = anon_token
     hashes = [calc_hash_check(pw) for pw in password_list]
     breach_watch_status_request.hashCheck.extend(hashes)
-    # FIXME: what should breach_watch_status_request.removedEuid be, if anything?  Its name suggests possibly a boolean, but it's
-    # really a repeated bytes.
+    just_hashes = [one_hash.hash1 for one_hash in hashes]
+    assert len(password_list) == len(just_hashes)
+    if not hasattr(params, 'password_to_hash1'):
+        params.password_to_hash1 = {}
+    dict_to_update_with = dict(zip(password_list, just_hashes))
+    params.password_to_hash1.update(dict_to_update_with)
+    # We intentionally ignore breach_watch_status_request.removedEuid
     return breach_watch_status_request
 
 
@@ -112,7 +143,7 @@ def calc_hash_check(password):
 
 def calc_hash1(password):
     """Derive a hash1 from password for the benefit of BreachWatch."""
-    bits = base64.urlsafe_b64decode('phl9kdMA_gkJkSfeOYWpX-FOyvfh-APhdSFecIDMyfI' + '==')
+    bits = utils.base64_url_decode('phl9kdMA_gkJkSfeOYWpX-FOyvfh-APhdSFecIDMyfI')
     pw_bytes = ('password:' + password).encode('utf-8')
     hmac_hash1 = hmac.new(bits, msg=pw_bytes, digestmod=hashlib.sha512)
     hash1_bytes = hmac_hash1.digest()
@@ -165,8 +196,6 @@ class BreachWatchRecord:
         """Initialize."""
         assert uid is not None
         assert password is not None
-        # FIXME: Should we assert this or not?
-        # assert euid is not None
         self.uid = uid
         self.password = password
         self.euid = euid
@@ -174,13 +203,24 @@ class BreachWatchRecord:
 
     def __str__(self):
         """Return a str/repr of this object."""
-        return f'BreachWatchRecord(uid={self.uid}, password={self.password}, euid={self.euid}, key={self.key}'
+        return f'BreachWatchRecord(uid={self.uid}, password={self.password}, euid={self.euid}, key={self.key})'
 
     __repr__ = __str__
 
 
-def extract_bwr_from_jsonish_record_dict(params, rec_dict):
-    """Get our a BreachWatchRecord class from the jsonish rec_dict."""
+def lookup_euid_from_password(params, password):
+    """Return the euid corresponding to this password, if any."""
+    if not hasattr(params, 'password_to_hash1'):
+        return None
+    hash1 = params.password_to_hash1[password]
+    if not hasattr(params, 'hash1_to_euid'):
+        return None
+    euid = params.hash1_to_euid[hash1]
+    return euid
+
+
+def extract_bwr_from_jsonish_record_dict_v3(params, rec_dict):
+    """Get a BreachWatchRecord class from the jsonish rec_dict."""
     fields = rec_dict.get('fields')
     assert fields is not None
     # fields:
@@ -189,13 +229,13 @@ def extract_bwr_from_jsonish_record_dict(params, rec_dict):
     #  {'type': 'fileRef', 'value': []}]
     password = None
     record_uid = None
-    # FIXME: Note that we do not currently make an effort to extract the euid.  Where should it come from, if at all?
     euid = None
     for subdict in fields:
         if subdict.get('type') == 'password':
             value = subdict.get('value')
             assert len(value) == 1
             password = value[0]
+            euid = lookup_euid_from_password(params, password)
         if subdict.get('type') == 'record_uid':
             value = subdict.get('value')
             assert len(value) == 1
@@ -209,12 +249,39 @@ def extract_bwr_from_jsonish_record_dict(params, rec_dict):
     return bwr
 
 
-def upload_records(params, jsonish_record_list):
+def upload_breachwatch_records_v3(params, jsonish_record_list):
     """Upload records to breachwatch."""
     rec_list = []
     for rec_dict in jsonish_record_list:
-        bwr = extract_bwr_from_jsonish_record_dict(params, rec_dict)
+        bwr = extract_bwr_from_jsonish_record_dict_v3(params, rec_dict)
         rec_list.append(bwr)
+    send_recv_breach_watch_update_record_data(params, rec_list)
+
+
+def extract_bwr_from_jsonish_record_dict_v2(params, rec_dict, record_uid, record_key):
+    """Get our a BreachWatchRecord class from the jsonish rec_dict."""
+    password = rec_dict['secret2']
+    euid = lookup_euid_from_password(params, password)
+    bwr = BreachWatchRecord(uid=record_uid, euid=euid, password=password, key=record_key)
+    return bwr
+
+
+def upload_breachwatch_record_v2_ji(params, jsonish_record_dict, record_uid, record_key):
+    """Upload records to breachwatch."""
+    # In this one, we cannot rely on the record cache because the record does not yet exist.
+    bwr = extract_bwr_from_jsonish_record_dict_v2(params, jsonish_record_dict, record_uid, record_key)
+    rec_list = [bwr]
+    send_recv_breach_watch_update_record_data(params, rec_list)
+
+
+def upload_breachwatch_record_v2_rec(params, record, record_uid):
+    """Upload records to breachwatch."""
+    # In this one, we can rely on the record cache because the record preexists.
+    euid = lookup_euid_from_password(params, record.password)
+    rec_from_cache = params.record_cache[record_uid]
+    key = rec_from_cache['record_key_unencrypted']
+    bwr = BreachWatchRecord(record_uid, record.password, euid, key)
+    rec_list = [bwr]
     send_recv_breach_watch_update_record_data(params, rec_list)
 
 
@@ -239,9 +306,57 @@ def send_recv_breach_watch_update_record_data(params, record_list):
     )
 
     # Check the response
-    if rs.status != 'success':
-        logging.warning('Attempted {} record updates; one or more failed'.format(len(record_list)))
-    return
+    bad_count = 0
+    if hasattr(rs, 'breachWatchRecordStatus'):
+        for elem in rs.breachWatchRecordStatus:
+            if hasattr(elem, 'status'):
+                if elem.status != 'success':
+                    bad_count += 1
+                    if hasattr(elem, 'reason'):
+                        logging.warning(elem.reason)
+            else:
+                logging.warning('elem has no status field')
+    else:
+        logging.warning('rs has no breachWatchRecordStatus field')
+
+    if len(rs.breachWatchRecordStatus) - bad_count > 0:
+        # At least one record was successfully uploaded, so stash the good ones in params As Though They Had Been Downloaded.
+        sideload_breachwatch_data(params, rs.breachWatchRecordStatus, record_list)
+
+    if bad_count:
+        logging.warning('Attempted {} record updates; {} failed'.format(len(record_list), bad_count))
+
+
+def sideload_breachwatch_data(params, breach_watch_record_status_list, record_list):
+    """
+    Stash a copy of the data we just uploaded in params.
+
+    We do this because frequently the implict sync_down after this function completes, occurs too soon after the server
+    receives our breachwatch data, so the new records aren't downloaded yet.  Without this stashing, it seems like the
+    upload (and subequent download) didn't work.  With this stashing, things look good to the user.
+    """
+    record_dict = {rec.uid: rec for rec in record_list}
+
+    for one_bwrs in breach_watch_record_status_list:
+        if one_bwrs.status == 'success':
+            # Sideload this one, because it was successfully uploaded.
+            uid = utils.base64_url_encode(one_bwrs.recordUid)
+            breach_watch_record = record_dict[uid]
+            if breach_watch_record.euid:
+                # ...but only if this record has an euid defined.  We do not (yet?) add "WEAK" data.
+                params_content = construct_bwr_dict_value(breach_watch_record)
+                params.breach_watch_records[breach_watch_record.uid] = params_content
+
+
+def construct_bwr_dict_value(breach_watch_record):
+    """Construct the jsonish data that belongs in params.bwr_dict."""
+    # {'passwords': [{'euid': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'value': 'yyyyyyyyyyyyyyyyyyyy'}]}}
+    subdict_ = {'euid': breach_watch_record.euid, 'value': breach_watch_record.password}
+    list_ = [subdict_]
+    result_dict = {'passwords': list_}
+    assert len(result_dict['passwords']) == 1
+    assert len(result_dict['passwords'][0]) == 2
+    return result_dict
 
 
 def calc_breach_watch_update_request(params, record_list):
@@ -253,7 +368,8 @@ def calc_breach_watch_update_request(params, record_list):
     breach_watch_update_request = breachwatch_pb2.BreachWatchUpdateRequest()
     breach_watch_record_request_list = list(gen_breach_watch_record_request(params, record_list=record_list))
     breach_watch_update_request.breachWatchRecordRequest.extend(breach_watch_record_request_list)
-    breach_watch_update_request.encryptedData = calc_breach_watch_data(record_list).SerializeToString()
+    # We intentionally ignore this field.
+    # breach_watch_update_request.encryptedData = calc_breach_watch_data(record_list).SerializeToString()
     return breach_watch_update_request
 
 
@@ -266,17 +382,14 @@ def gen_breach_watch_record_request(params, record_list):
     """
     for record in record_list:
         breach_watch_record_request = breachwatch_pb2.BreachWatchRecordRequest()
-        bits = base64.urlsafe_b64decode(record.uid + '==')
+        bits = utils.base64_url_decode(record.uid)
         breach_watch_record_request.recordUid = bits
-        # This is a BreachWatchRecordData message encrypted with the record key
-        # We're guessing that means BreachWatchData, really, since BreachWatchRecordData doesn't appear to exist.
         breach_watch_data = calc_breach_watch_data([record])
         breach_watch_data_bytes = breach_watch_data.SerializeToString()
-        encrypted_data = api.encrypt_aes(breach_watch_data_bytes, record.key)
-        encrypted_data_bytes = encrypted_data.encode('utf-8')
+        encrypted_data_bytes = crypto.encrypt_aes_v2(breach_watch_data_bytes, record.key)
         breach_watch_record_request.encryptedData = encrypted_data_bytes
         breach_watch_record_request.breachWatchInfoType = breachwatch_pb2.BreachWatchInfoType.RECORD
-        # FIXME: We're skipping this field, because I don't know what it's for yet, or even if it's important.
+        # We're intentionally skipping updateUserWhoScanned
         # breach_watch_record_request.updateUserWhoScanned =
         yield breach_watch_record_request
 
@@ -312,6 +425,6 @@ def gen_bw_password(record_list):
         # We assume always-good for now.
         bw_password.status = client_pb2.BWStatus.GOOD
         if record.euid:
-            # FIXME: Is it appropriate to skip this?
+            # If breached this is empty, else this is the value returned by keeperapp after submission.
             bw_password.euid = record.euid
         yield bw_password

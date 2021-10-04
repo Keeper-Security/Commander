@@ -465,6 +465,8 @@ def loop(params):  # type: (KeeperParams) -> int
         except Exception as e:
             logging.error(e)
 
+        do_command(params, 'breachwatch --with-color')
+
         # add ability to manipulate w/ legacy or v3 records
         # determined by the response from the server
         init_recordv3_commands(params)

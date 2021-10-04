@@ -372,12 +372,6 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 rec = data_opts.get('record')
                 data = json.dumps(rec) if rec else ''
 
-        # extract password from json data and check if it is breached.
-        pw = record_common.extract_password_from_json(data)
-        if not record_common.are_all_good_passwords(params, [pw]):
-            logging.error('Password breached - please try another')
-            return
-
         data = data.strip() if data else None
         if not data:
             logging.error(bcolors.FAIL + "Empty data. Unable to insert record." + bcolors.ENDC)
@@ -388,6 +382,11 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         if not title:
             logging.error(bcolors.FAIL + 'Record title is required' + bcolors.ENDC)
             return
+
+        # extract password from json data and check if it is breached.
+        pw = record_common.extract_password_from_dict(data_dict)
+        if not record_common.are_all_good_passwords(params, [pw]):
+            logging.info('High-Risk: Password breached.  Change password on website and vault record immediately.')
 
         folder = None
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
@@ -584,6 +583,10 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         res = api.add_record_v3(params, record, **{'record_links': record_links, 'rq': rq})
         if res:
             params.environment_variables[LAST_RECORD_UID] = record_uid
+            # Add the record's uid to data_dict, and pass it to upload_breachwatch_records_v3
+            subdict = dict(type='record_uid', value=[record_uid])
+            data_dict['fields'].append(subdict)
+            record_common.upload_breachwatch_records_v3(params, [data_dict])
             return record_uid
 
 
@@ -799,8 +802,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
 
         pw = record_common.extract_password_from_dict(data_dict)
         if not record_common.are_all_good_passwords(params, [pw]):
-            logging.error('Password breached - please try another')
-            return
+            logging.info('High-Risk: Password breached.  Change password on website and vault record immediately.')
 
         changed = rdata_dict != data_dict
         # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
@@ -813,6 +815,12 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             oldpass = recordv3.RecordV3.get_record_password(record_data) or ''
             if newpass != oldpass:
                 params.queue_audit_event('record_password_change', record_uid=record.record_uid)
+
+            # Add the record's uid to data_dict, and pass it to upload_breachwatch_records_v3
+            subdict = dict(type='record_uid', value=[record.record_uid])
+            data_dict['fields'].append(subdict)
+            record_common.upload_breachwatch_records_v3(params, [data_dict])
+
 
     def convert_legacy_options(self, kwargs):
         options = kwargs.get('option') or []

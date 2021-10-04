@@ -38,6 +38,7 @@ from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
 from ..proto import breachwatch_pb2
 from .. import crypto
+from . import record_common
 
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
@@ -163,9 +164,18 @@ file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
 breach_watch_parser = argparse.ArgumentParser(
-    prog='breach-watch',
+    prog='breachwatch',
     description='Display report about and act upon Dark Web breaches.',
 )
+breach_watch_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Show the passwords to be checked')
+breach_watch_parser.add_argument(
+    '-p', '--pass', '--password',
+    dest='password',
+    action='store',
+    help='Check one password from the commandline',
+)
+# An undocumented option we use internally.
+breach_watch_parser.add_argument('--with-color', dest='with_color', action='store_true', help=argparse.SUPPRESS)
 breach_watch_parser.error = raise_parse_exception
 breach_watch_parser.exit = suppress_exit
 
@@ -729,6 +739,8 @@ class BreachWatchCommand(Command):
 
     def execute(self, params, **kwargs):
         """Execute the breachwatch command."""
+        if not params.license.get('breach_watch_enabled'):
+            return
         rs = api.communicate_rest(params, None, 'breachwatch/initialize', rs_type=breachwatch_pb2.BreachWatchTokenResponse)
 
         token = rs.breachWatchToken
@@ -744,7 +756,27 @@ class BreachWatchCommand(Command):
         rs = api.communicate_rest(params, rq, 'breachwatch/anonymize_token', rs_type=breachwatch_pb2.AnonymizedTokenResponse)
 
         token = rs.passwordToken
-        print(token)
+
+        if kwargs['password']:
+            # Check just the one command passed on the command line...
+            passwords = [kwargs['password']]
+            from_command_line = True
+        else:
+            # Get a list of all of this user's passwords...
+            passwords = record_common.extract_passwords_from_params(params)
+            from_command_line = False
+        if kwargs.get('verbose'):
+            print('Passwords to check:')
+            for password in sorted(passwords):
+                print('   ', password)
+        # ...and check them using breachwatch
+        record_common.are_all_good_passwords(
+            params,
+            passwords,
+            with_count=True,
+            with_color=kwargs.get('with_color'),
+            from_command_line=from_command_line,
+        )
 
 
 class ShareRecordCommand(Command):

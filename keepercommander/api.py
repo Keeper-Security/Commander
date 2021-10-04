@@ -41,7 +41,6 @@ from Cryptodome import Random
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
-from .commands import record_common
 
 
 current_milli_time = lambda: int(round(time.time() * 1000))
@@ -444,7 +443,6 @@ def merge_lists_on_value(list1, list2, field_name):
 
 def sync_down(params):
     """Sync full or partial data down to the client"""
-
     params.sync_data = False
 
     if params.revision == 0:
@@ -727,14 +725,6 @@ def sync_down(params):
         for record in response_json['records']:
             params.record_cache[record['record_uid']] = record
 
-    if 'breach_watch_records' in response_json:
-        logging.debug('Processing breach_watch_records')
-        process_breach_watch_records(params, response_json['breach_watch_records'])
-
-    if 'breach_watch_security_data' in response_json:
-        logging.debug('Processing breach_watch_security_data')
-        params.breach_watch_security_data = response_json['breach_watch_security_data']
-
     # process team keys
     for team_uid in params.team_cache:
         team = params.team_cache[team_uid]
@@ -935,6 +925,16 @@ def sync_down(params):
             for rt in record_types_rs.recordTypes:
                 params.record_type_cache[rt.recordTypeId] = rt.content
 
+    if 'breach_watch_records' in response_json:
+        logging.debug('Processing breach_watch_records')
+        process_breach_watch_records(params, response_json['breach_watch_records'])
+
+    if 'breach_watch_security_data' in response_json:
+        logging.debug('Processing breach_watch_security_data')
+        if not hasattr(params, 'breach_watch_security_data'):
+            params.breach_watch_security_data = {}
+        params.breach_watch_security_data.update(response_json['breach_watch_security_data'])
+
     if 'full_sync' in response_json:
         logging.info('Decrypted [%s] record(s)', len(params.record_cache))
 
@@ -942,22 +942,27 @@ def sync_down(params):
 def process_breach_watch_records(params, breach_watch_list):
     """Stash a manipulated form of the breach watch data in params, extracted from response_json."""
     logging.debug('Processing breach_watch_records')
-    bwr_dict = {}
+    if hasattr(params, 'breach_watch_records'):
+        # We must preserve what we've already seen, because sync_down is incremental after the first.
+        bwr_dict = params.breach_watch_records
+    else:
+        bwr_dict = {}
     for bwr_elem in breach_watch_list:
         record_uid = bwr_elem['record_uid']
-        meta_data = params.meta_data_cache[record_uid]
-        record_key = meta_data['record_key_unencrypted']
+        record_data = params.record_cache[record_uid]
+        record_key = record_data['record_key_unencrypted']
         try:
             decoded_data = base64.urlsafe_b64decode(bwr_elem['data'] + '==')
         except binascii.Error:
+            print('Got binascii.Error exception for uid {}'.format(record_uid))
             continue
 
         try:
             decrypted_data = crypto.decrypt_aes_v2(decoded_data, record_key)
         except cryptography.exceptions.InvalidTag:
+            print('Got cryptography.exceptions.InvalidTag exception for uid {}'.format(record_uid))
             continue
 
-        # print('decrypted_data is', decrypted_data)
         bwr_elem['decrypted_data'] = decrypted_data
         breach_watch_data = client_pb2.BreachWatchData()
         breach_watch_data.ParseFromString(decrypted_data)

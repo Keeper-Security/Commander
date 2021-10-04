@@ -345,14 +345,14 @@ class RecordAddCommand(Command, RecordUtils):
         pw = data['secret2']
         if pw:
             if not record_common.are_all_good_passwords(params, [pw]):
-                logging.error('Password breached - please try another')
-                return
+                logging.info('High-Risk: Password breached.  Change password on website and vault record immediately.')
 
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)
         params.sync_data = True
         params.environment_variables[LAST_RECORD_UID] = record_uid
+        record_common.upload_breachwatch_record_v2_ji(params, data, record_uid, record_key)
         return record_uid
 
 
@@ -469,10 +469,11 @@ class RecordEditCommand(Command, RecordUtils):
             pw = record.password
             if pw:
                 if not record_common.are_all_good_passwords(params, [pw]):
-                    logging.error('Password breached - please try another')
-                    return
+                    logging.info('High-Risk: Password breached.  Change password on website and vault record immediately.')
 
             api.update_record(params, record)
+
+            record_common.upload_breachwatch_record_v2_rec(params, record, record_uid)
 
 
 class RecordAppendNotesCommand(Command):
@@ -1241,7 +1242,7 @@ class RecordHistoryCommand(Command):
             if 'revision' in kwargs and kwargs['revision'] is not None:
                 revision = kwargs['revision']
                 if revision < 1 or revision > length+1:
-                    logging.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
+                    logging.error('Invalid revision {}: valid revisions 1..{}'.format(revision, length + 1))
                     return
                 if not kwargs.get('action'):
                     action = 'show'
