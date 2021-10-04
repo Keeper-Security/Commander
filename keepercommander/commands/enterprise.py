@@ -1,15 +1,16 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
 import argparse
+import ipaddress
+import itertools
 import json
 import base64
 import string
@@ -37,6 +38,7 @@ from collections import OrderedDict as OD
 from argparse import RawTextHelpFormatter
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .helpers import audit_report
 from .record import RecordAddCommand
 from .. import api, rest_api, APIRequest_pb2 as proto, constants
 from ..display import bcolors
@@ -47,7 +49,7 @@ from ..error import CommandError
 from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
                              ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
-
+from .. import record_pb2 as record_proto
 
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
@@ -245,7 +247,6 @@ audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-audit_report_parser.add_argument('--details', dest='details', action='store_true', help='lookup column details')
 audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], required=True, action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
@@ -453,7 +454,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         print('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
         root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
-        node_scope = {x['node_id'] for x in params.enterprise['nodes']}
+        node_scope = set()
         if kwargs.get('node'):
             subnode = kwargs.get('node').lower()
             root_nodes = [x['node_id'] for x in self.resolve_nodes(params, subnode)]
@@ -481,6 +482,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if pos > 100:
                     break
             node_scope.update(nl)
+        else:
+            node_scope.update((x['node_id'] for x in params.enterprise['nodes']))
 
         nodes = {}
         for node in params.enterprise['nodes']:
@@ -1637,6 +1640,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         matched_roles = list(matched.values())
 
         request_batch = []
+        skip_display = False
         if kwargs.get('add'):
             for role in matched_roles:
                 logging.warning('Role \'%s\' already exists: Skipping', role['data'].get('displayname'))
@@ -1744,6 +1748,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             request_batch.append(rq)
 
             elif kwargs.get('enforcements'):
+                skip_display = True
                 for enforcement in kwargs['enforcements']:
                     tokens = enforcement.split(':')
                     if len(tokens) != 2:
@@ -1773,6 +1778,104 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 continue
                         elif enforcement_type == 'string':
                             pass
+                        elif enforcement_type.startswith('ternary_'):
+                            if enforcement_value in {'e', 'enforce'}:
+                                enforcement_value = 'enforce'
+                            elif enforcement_value in {'d', 'disable'}:
+                                enforcement_value = 'disable'
+                            else:
+                                logging.warning('Enforcement %s expects either "enforce" or "disable"', key)
+                                continue
+                        elif enforcement_type == 'two_factor_duration':
+                            if enforcement_value == 'login':
+                                enforcement_value = '0'
+                            elif enforcement_value == '30_days':
+                                enforcement_value = '0,30'
+                            elif enforcement_value == 'forever':
+                                enforcement_value = '0,30,9999'
+                            else:
+                                logging.warning('Enforcement %s expects "login", "30_days", or "forever"', key)
+                                continue
+                        elif enforcement_type == 'ip_whitelist':
+                            ip_ranges = [x.strip().lower() for x in enforcement_value.split(',')]
+                            all_resolved = True
+                            for i in range(len(ip_ranges)):
+                                range_str = ip_ranges[i]
+                                ranges = range_str.split('-')
+                                if len(ranges) == 2:
+                                    try:
+                                        ip_addr1 = ipaddress.ip_address(ranges[0])
+                                        ip_addr2 = ipaddress.ip_address(ranges[1])
+                                        if ip_addr1 > ip_addr2:
+                                            ip_ranges[i] = f'{ip_addr2}-{ip_addr1}'
+                                        else:
+                                            ip_ranges[i] = f'{ip_addr1}-{ip_addr2}'
+                                    except ValueError:
+                                        all_resolved = False
+                                elif len(ranges) == 1:
+                                    try:
+                                        ip_addr = ipaddress.ip_address(range_str)
+                                        ip_ranges[i] = f'{ip_addr}-{ip_addr}'
+                                    except ValueError:
+                                        try:
+                                            ip_net = ipaddress.ip_network(range_str)
+                                            ip_ranges[i] = f'{ip_net[0]}-{ip_net[-1]}'
+                                        except ValueError:
+                                            all_resolved = False
+                                else:
+                                    all_resolved = False
+                                if not all_resolved:
+                                    logging.warning('Enforcement %s. IP address range \'%s\' not valid', key, range_str)
+                                    break
+                            if all_resolved:
+                                enforcement_value = ','.join(ip_ranges)
+                            else:
+                                continue
+                        elif enforcement_type == 'record_types':
+                            record_types = {
+                                'std': [],
+                                'ent': []
+                            }
+                            types = [x.strip().lower() for x in enforcement_value.split(',')]
+
+                            rq = record_proto.RecordTypesRequest()
+                            rq.standard = True
+                            rq.user = True
+                            rq.enterprise = True
+                            record_types_rs = api.communicate_rest(params, rq, 'vault/get_record_types', rs_type=record_proto.RecordTypesResponse)
+                            lookup = {}
+                            for rti in record_types_rs.recordTypes:
+                                try:
+                                    rto = json.loads(rti.content)
+                                    if '$id' in rto:
+                                        lookup[rto['$id'].lower()] = (rti.recordTypeId, rti.scope)
+                                except:
+                                    pass
+                            all_resolved = True
+                            for rt in types:
+                                if rt in lookup:
+                                    rti = lookup[rt]
+                                    if rti[1] == record_proto.RT_STANDARD:
+                                        record_types['std'].append(rti[0])
+                                    elif rti[1] == record_proto.RT_ENTERPRISE:
+                                        record_types['ent'].append(rti[0])
+                                else:
+                                    if rt == 'all':
+                                        record_types['std'].clear()
+                                        record_types['ent'].clear()
+                                        for rti in lookup.values():
+                                            if rti[1] == record_proto.RT_STANDARD:
+                                                record_types['std'].append(rti[0])
+                                            elif rti[1] == record_proto.RT_ENTERPRISE:
+                                                record_types['ent'].append(rti[0])
+                                        break
+                                    else:
+                                        logging.warning('Enforcement %s. Record type \'%s\' not found', key, rt)
+                                        all_resolved = False
+                                        break
+                            if not all_resolved:
+                                continue
+                            enforcement_value = record_types
                         else:
                             logging.warning('Enforcement \"%s\". Value type \"%s\" is not supported', key, enforcement_type)
                             continue
@@ -1790,7 +1893,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 'role_id': role_id,
                                 'enforcement': key
                             }
-                            if type(enforcement_value) is bool:
+                            if isinstance(enforcement_value, bool):
                                 if existing_enforcement:
                                     logging.warning('Enforcement \"%s\" is already set for role %d. Skipping', key, role_id)
                                     continue
@@ -1809,6 +1912,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 logging.warning('Enforcement \"%s\" is not set for role %d. Skipping', key, role_id)
 
             elif kwargs.get('add_admin') or kwargs.get('remove_admin'):
+                skip_display = True
                 node_lookup = {}
                 if 'nodes' in params.enterprise:
                     for node in params.enterprise['nodes']:
@@ -1941,13 +2045,13 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         if rs['result'] != 'success':
                             logging.warning('Error: %s', rs['message'])
             api.query_enterprise(params)
-        else:
+        elif not skip_display:
             for role in matched_roles:
                 print('\n')
                 self.display_role(params, role, kwargs.get('verbose'))
             print('\n')
 
-    def display_role(self, params, role, is_verbose = False):
+    def display_role(self, params, role, is_verbose=False):
         role_id = role['role_id']
         print('{0:>24s}: {1}'.format('Role ID', role_id))
         print('{0:>24s}: {1}'.format('Role Name', role['data'].get('displayname')))
@@ -1984,18 +2088,41 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     break
             if enforcements:
                 print('{0:>24s}: '.format('Role Enforcements'))
-                if 'master_password_minimum_length' in enforcements:
-                    print('{0:>24s}: '.format('Password Complexity'))
-                    for p in [('Length', 'master_password_minimum_length'),
-                              ('Digits', 'master_password_minimum_digits'),
-                              ('Special Characters', 'master_password_minimum_special'),
-                              ('Uppercase Letters', 'master_password_minimum_upper'),
-                              ('Lowercase Letters', 'master_password_minimum_lower')]:
-                        value = enforcements.get(p[1])
-                        if value is not None:
-                            print('{0:>24s}: {1}'.format(p[0], value))
-                if 'allow_secrets_manager' in enforcements:
-                    print('{0:>24s}: {1}'.format('Allow Secrets Manager', 'True'))
+                enforcement_list = constants.enforcement_list()
+                if not is_verbose:
+                    enforcement_list = [x for x in enforcement_list if x[1] in enforcements]
+                last_group = ''
+                for e in enforcement_list:
+                    if e[0] != last_group:
+                        last_group = e[0]
+                        print('\n{0}'.format(last_group))
+                    value = enforcements.get(e[1])
+                    if value:
+                        value_type = e[2]
+                        if value_type == 'record_types':
+                            try:
+                                rto = value
+                                if params.record_type_cache:
+                                    record_types = []
+                                    for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
+                                        if record_type_id in params.record_type_cache:
+                                            rtc = json.loads(params.record_type_cache[record_type_id])
+                                            if '$id' in rtc:
+                                                record_types.append(rtc['$id'])
+                                    value = ', '.join(record_types)
+                            except:
+                                value = 'Error'
+                        elif value_type == 'two_factor_duration':
+                            value = [x.strip() for x in value.split(',')]
+                            value = ['login' if x == '0' else
+                                     '30_days' if x == '30' else
+                                     'forever' if x == '9999' else x for x in value]
+                            value = ', '.join(value)
+                        else:
+                            value = str(value)
+                    else:
+                        value = ''
+                    print('{0:<40s}: {1}'.format(e[1], value))
 
 
 class EnterpriseTeamCommand(EnterpriseCommand):
@@ -2934,10 +3061,7 @@ between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
 class AuditReportCommand(Command):
     def __init__(self):
-        self.team_lookup = None
-        self.role_lookup = None
-        self.node_lookup = None
-        self._detail_lookup = None
+        self.lookup = {}
 
     def get_value(self, params, field, event):
         if field == 'message':
@@ -2961,69 +3085,89 @@ class AuditReportCommand(Command):
             return message
 
         elif field in event:
-            val = event.get(field)
-            if field == 'team_uid':
-                val = self.resolve_team_name(params, val)
-            elif field == 'role_id':
-                val = self.resolve_role_name(params, val)
-            elif field == 'node':
-                val = self.resolve_node_name(params, val)
-            return val
+            return event.get(field)
+
+        elif field in audit_report.fields_to_uid_name:
+            return self.resolve_lookup(params, field, event)
         return ''
 
-    def resolve_team_name(self, params, team_uid):
-        if self.team_lookup is None:
-            self.team_lookup = {}
-            if params.enterprise:
-                if 'teams' in params.enterprise:
-                    for team in params.enterprise['teams']:
-                        if 'team_uid' in team and 'name' in team:
-                            self.team_lookup[team['team_uid']] = team['name']
-        if team_uid in self.team_lookup:
-            return '{0} ({1})'.format(self.team_lookup[team_uid], team_uid)
-        return team_uid
+    def resolve_lookup(self, params, field, event):
+        lookup_type = audit_report.LookupType.lookup_type_from_field_name(field)
+        uid_value = event.get(lookup_type.uid)
+        if uid_value:
+            if uid_value in self.lookup:
+                return self.lookup[uid_value][field]
+            else:
+                return getattr(self, lookup_type.method)(params, lookup_type, uid_value, field)
+        else:
+            return ''
 
-    def resolve_role_name(self, params, role_id):
-        if self.role_lookup is None:
-            self.role_lookup = {}
-            if params.enterprise:
-                if 'roles' in params.enterprise:
-                    for role in params.enterprise['roles']:
-                        if 'role_id' in role:
-                            id = str(role['role_id'])
-                            name = role['data'].get('displayname')
-                            if name:
-                                self.role_lookup[id] = name
-        if role_id in self.role_lookup:
-            return '{0} ({1})'.format(self.role_lookup[role_id], role_id)
-        return role_id
+    def resolve_record_lookup(self, params, lookup_type, record_uid, field):
+        if record_uid not in self.lookup:
+            self.lookup[record_uid] = lookup_type.init_fields('')
+        if record_uid in params.record_cache:
+            r = api.get_record(params, record_uid)
+            if r:
+                for fld, attr in lookup_type.field_attrs():
+                    self.lookup[record_uid][fld] = getattr(r, attr, '')
+        return self.lookup[record_uid][field]
 
-    def resolve_node_name(self, params, node_id):
-        if self.node_lookup is None:
-            self.node_lookup = {}
-            if params.enterprise:
-                if 'nodes' in params.enterprise:
-                    for node in params.enterprise['nodes']:
-                        if 'node_id' in node:
-                            id = str(node['node_id'])
-                            name = node['data'].get('displayname') or params.enterprise['enterprise_name']
-                            if name:
-                                self.node_lookup[id] = name
-        id = str(node_id)
-        if id in self.node_lookup:
-            return '{0} ({1})'.format(self.node_lookup[id], id)
-        return id
+    def resolve_shared_folder_lookup(self, params, lookup_type, shared_folder_uid, field):
+        if shared_folder_uid not in self.lookup:
+            self.lookup[shared_folder_uid] = lookup_type.init_fields('')
+        if shared_folder_uid in params.shared_folder_cache:
+            sf = api.get_shared_folder(params, shared_folder_uid)
+            if sf:
+                for fld, attr in lookup_type.field_attrs():
+                    self.lookup[shared_folder_uid][fld] = getattr(sf, attr, '')
+        return self.lookup[shared_folder_uid][field]
+
+    def resolve_team_lookup(self, params, lookup_type, team_uid, field):
+        if params.enterprise and 'teams' in params.enterprise:
+            for team in params.enterprise['teams']:
+                if 'team_uid' in team:
+                    uid = team['team_uid']
+                    if uid not in self.lookup:
+                        self.lookup[uid] = lookup_type.init_fields('')
+                        for fld, attr in lookup_type.field_attrs():
+                            self.lookup[uid][fld] = team.get(attr, '')
+        if team_uid not in self.lookup:
+            self.lookup[team_uid] = lookup_type.init_fields('')
+        return self.lookup[team_uid][field]
+
+    def resolve_role_lookup(self, params, lookup_type, role_id, field):
+        if params.enterprise and 'roles' in params.enterprise:
+            for role in params.enterprise['roles']:
+                if 'role_id' in role:
+                    uid = str(role['role_id'])
+                    if uid not in self.lookup:
+                        self.lookup[uid] = lookup_type.init_fields('')
+                        for fld, attr in lookup_type.field_attrs():
+                            self.lookup[uid][fld] = role['data'].get(attr, '')
+        if role_id not in self.lookup:
+            self.lookup[role_id] = lookup_type.init_fields('')
+        return self.lookup[role_id][field]
+
+    def resolve_node_lookup(self, params, lookup_type, node_id, field):
+        if params.enterprise and 'nodes' in params.enterprise:
+            for node in params.enterprise['nodes']:
+                if 'node_id' in node:
+                    uid = str(node['node_id'])
+                    if uid not in self.lookup:
+                        self.lookup[uid] = lookup_type.init_fields('')
+                        for fld, attr in lookup_type.field_attrs():
+                            default_value = params.enterprise['enterprise_name'] if attr == 'displayname' else ''
+                            self.lookup[uid][fld] = node['data'].get(attr, default_value)
+        node_id = str(node_id)
+        if node_id not in self.lookup:
+            self.lookup[node_id] = lookup_type.init_fields('')
+        return self.lookup[node_id][field]
 
     def get_parser(self):
         return audit_report_parser
 
-    @property
-    def detail_lookup(self):
-        if self._detail_lookup is None:
-            self._detail_lookup = {}
-        return self._detail_lookup
-
-    def convert_value(self, field, value, **kwargs):
+    @staticmethod
+    def convert_value(field, value, **kwargs):
         if not value:
             return ''
 
@@ -3043,39 +3187,6 @@ class AuditReportCommand(Command):
             return dt
         elif field in {"first_created", "last_created"}:
             return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-        elif field in {'record_uid', 'shared_folder_uid', 'team_uid', 'node'}:
-            if kwargs.get('details') and kwargs.get('params'):
-                params = kwargs['params']
-                if value not in self.detail_lookup:
-                    self.detail_lookup[value] = ''
-                    if field == 'record_uid':
-                        if value in params.record_cache:
-                            r = api.get_record(params, value)
-                            if r:
-                                self.detail_lookup[value] = r.title or ''
-                    elif field == 'shared_folder_uid':
-                        if value in params.shared_folder_cache:
-                            sf = api.get_shared_folder(params, value)
-                            if sf:
-                                self.detail_lookup[value] = sf.name or ''
-                    elif field == 'team_uid' and params.enterprise:
-                        team = None
-                        if 'teams' in params.enterprise:
-                            team = next((x for x in params.enterprise['teams'] if x['team_uid'] == value), None)
-                        if not team and 'queued_teams' in params.enterprise:
-                            team = next((x for x in params.enterprise['queued_teams'] if x['team_uid'] == value), None)
-                        if team and 'name' in team:
-                            self.detail_lookup[value] = team['name'] or ''
-                    elif field == 'node' and params.enterprise:
-                        node = None
-                        if 'nodes' in params.enterprise:
-                            node = next((x for x in params.enterprise['nodes'] if str(x['node_id']) == value), None)
-                        if node and 'data' in node:
-                            self.detail_lookup[value] = node['data'].get('displayname') or ''
-
-                detail_value = self.detail_lookup.get(value)
-                if detail_value:
-                    return '{1} ({0})'.format(value, detail_value)
         return value
 
     def execute(self, params, **kwargs):
@@ -3115,7 +3226,13 @@ class AuditReportCommand(Command):
         columns = []
         if report_type != 'raw' and kwargs.get('columns'):
             columns = kwargs['columns']
-            rq['columns'] = columns
+            rq_columns = columns.copy()
+            for lookup_field, uid_name in audit_report.fields_to_uid_name.items():
+                if lookup_field in rq_columns:
+                    rq_columns.remove(lookup_field)
+                    if uid_name not in rq_columns:
+                        rq_columns.append(uid_name)
+            rq['columns'] = rq_columns
         if report_type == 'dim' and len(columns) == 0:
             raise CommandError('audit-report', "'columns' parameter is missing")
 
@@ -3159,9 +3276,8 @@ class AuditReportCommand(Command):
 
         details = kwargs.get('details') or False
         if report_type == 'raw':
-            fields.extend(['created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location'])
-            misc_fields = ['to_username', 'from_username', 'record_uid', 'shared_folder_uid', 'node',
-                           'channel', 'status'] if kwargs.get('report_format') == 'fields' else ['message']
+            fields.extend(audit_report.RAW_FIELDS)
+            misc_fields = list(audit_report.MISC_FIELDS) if kwargs.get('report_format') == 'fields' else ['message']
 
             for event in rs['audit_event_overview_report_rows']:
                 if misc_fields:
@@ -3173,9 +3289,12 @@ class AuditReportCommand(Command):
                             val = event.get(mf)
                             if val:
                                 fields.append(mf)
+                                if mf in audit_report.lookup_types:
+                                    fields.extend(audit_report.lookup_types[mf].fields)
                     if len(fields) > lenf:
                         for f in fields[lenf:]:
-                            misc_fields.remove(f)
+                            if f not in audit_report.fields_to_uid_name:
+                                misc_fields.remove(f)
 
                 row = []
                 for field in fields:
@@ -3217,7 +3336,14 @@ class AuditReportCommand(Command):
             for event in rs['audit_event_overview_report_rows']:
                 row = []
                 for f in fields:
-                    row.append(self.convert_value(f, event.get(f), report_type=report_type, details=details, params=params))
+                    if f in event:
+                        row.append(
+                            self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
+                        )
+                    elif f in audit_report.fields_to_uid_name:
+                        row.append(self.resolve_lookup(params, f, event))
+                    else:
+                        row.append('')
                 table.append(row)
             dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 

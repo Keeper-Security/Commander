@@ -14,13 +14,13 @@ import os
 import base64
 import argparse
 import logging
-import datetime
 import getpass
 import sys
 import platform
-from datetime import timedelta
+from datetime import datetime, timedelta
 from distutils.util import strtobool
 from time import time
+from urllib.parse import urlparse
 
 import requests
 import tempfile
@@ -32,17 +32,18 @@ from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
-from .recordv3 import get_record
+from .recordv3 import get_record, RecordRemoveCommand
 from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..cli import init_recordv3_commands
+from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
-from .. import api, rest_api, loginv3
+from .. import api, constants, rest_api, loginv3
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
@@ -55,6 +56,7 @@ from . import aliases, commands, enterprise_commands
 from ..error import CommandError, KeeperApiError
 
 from .. import __version__
+from ..utils import json_to_base64
 from ..versioning import is_binary_app, is_up_to_date_version
 
 SSH_AGENT_FAILURE = 5
@@ -74,6 +76,7 @@ def register_commands(commands):
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
+    commands['accept-transfer'] = AcceptTransferCommand()
     commands['connect'] = ConnectCommand()
     commands['delete-corrupted'] = DeleteCorruptedCommand()
     commands['echo'] = EchoCommand()
@@ -112,6 +115,12 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.BOLD}Create Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager app create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}
 
+  {bcolors.BOLD}Remove Application:{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app remove {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.ENDC}
+    Options: 
+      --purge : Remove the application and purge it from the trash
+      --force : Do not prompt for confirmation
+
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
     Options: 
@@ -120,10 +129,14 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --unlock-ip : Does not lock IP address to first requesting device
       --count [NUM] : Number of tokens to generate (Default: 1)
+      --config-init [json or b64] : Initialize configuration string from a one-time token
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
-
+    Options: 
+      --force : Do not prompt for confirmation
+      --client : Client name or ID. Provide `*` or `all` to delete all clients at once
+      
   {bcolors.BOLD}Add Secret to Application:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager share add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--secret {bcolors.OKBLUE}[RECORD OR SHARED FOLDER UID]{bcolors.ENDC}
     Options: 
@@ -168,6 +181,11 @@ logout_parser.exit = suppress_exit
 
 check_enforcements_parser = argparse.ArgumentParser(prog='check-enforcements',
                                                     description='Check enterprise enforcements')
+check_enforcements_parser.error = raise_parse_exception
+check_enforcements_parser.exit = suppress_exit
+
+
+accept_transfer_parser = argparse.ArgumentParser(prog='accept-transfer', description='Accept account transfer')
 check_enforcements_parser.error = raise_parse_exception
 check_enforcements_parser.exit = suppress_exit
 
@@ -233,6 +251,10 @@ ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true
 ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
                         help='Return Tokens', default='false')
 ksm_parser.add_argument('--name', '-n', type=str, dest='name', action='store', help='client name')
+ksm_parser.add_argument('--purge', dest='purge', action='store_true', help='remove the record from all folders and purge it from the trash')
+ksm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
+ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='store',
+                        help='Initialize client config')    # json, b64, file
 
 
 # ksm_parser.add_argument('identifier', type=str, action='store', help='Object identifier (name or uid)')
@@ -252,7 +274,7 @@ keepalive_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
-    dt = datetime.datetime.fromtimestamp(ms // 1000)
+    dt = datetime.fromtimestamp(ms // 1000)
     df_frmt_str = dt.strftime(frmt)
 
     return df_frmt_str
@@ -654,22 +676,34 @@ class CheckEnforcementsCommand(Command):
                         except Exception as e:
                             logging.error('Enterprise %s failure: %s', action, e)
 
-        if params.settings:
-            if 'share_account_to' in params.settings:
-                dt = datetime.datetime.fromtimestamp(params.settings['must_perform_account_share_by'] // 1000)
-                print('Your Keeper administrator has enabled the ability to transfer your vault records\n'
-                      'in accordance with company operating procedures and policies.\n'
-                      'Please acknowledge this change in account settings by typing ''Accept''.')
-                print('If you do not accept this change by {0}, you will be locked out of your account.'.format(dt.strftime('%a, %d %b %Y')))
+        share_account_by = params.get_share_account_timestamp()
+        if share_account_by is not None:
+            warn_msg = constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y'))
+            warn_msg += 'Use the command accept-transfer to accept.'
+            logging.warning(warn_msg)
 
-                try:
-                    api.accept_account_transfer_consent(params, params.settings['share_account_to'])
-                finally:
-                    del params.settings['must_perform_account_share_by']
-                    del params.settings['share_account_to']
+
+class AcceptTransferCommand(Command):
+    def get_parser(self):
+        return check_enforcements_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        share_account_by = params.get_share_account_timestamp()
+        if share_account_by is not None:
+            if api.accept_account_transfer_consent(params):
+                logging.info('Account transfer accepted.')
+            else:
+                logging.info('Account transfer canceled.')
+        else:
+            logging.info('There is no account transfer to accept.')
 
 
 class KSMCommand(Command):
+
+    CLIENT_SHORT_ID_LENGTH = 8
 
     def get_parser(self):
         return ksm_parser
@@ -736,11 +770,20 @@ class KSMCommand(Command):
             KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add)
             return
 
+        if ksm_obj in ['app', 'apps'] and ksm_action in ['remove', 'rem', 'rm']:
+            app_name_or_uid = ksm_command[2]
+            purge = kwargs.get('purge')
+            force = kwargs.get('force')
+
+            KSMCommand.remove_v5_app(params=params, app_name_or_uid=app_name_or_uid, purge=purge, force=force)
+
+            return
+
         if ksm_obj in ['share', 'secret'] and ksm_action is None:
             print("  Add Secret to the App\n\n"
-                    + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]" \
-                    + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]" \
-                    + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
+                  + bcolors.OKGREEN + "    secrets-manager share add --app " + bcolors.OKBLUE + "[APP NAME or APP UID]"
+                  + bcolors.OKGREEN + " --secret " + bcolors.OKBLUE + "[SECRET UID or SHARED FOLDER UID]"
+                  + bcolors.OKGREEN + " --editable" + bcolors.ENDC + "\n")
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action in ['add', 'create']:
@@ -773,23 +816,30 @@ class KSMCommand(Command):
 
             if not app_name_or_uid:
                 print(bcolors.WARNING + "App name is required" + bcolors.ENDC)
-                print(f"  {bcolors.OKGREEN}secrets-manager client add "
-                      f"--app {bcolors.OKBLUE}[APP NAME or APP UID]{bcolors.OKGREEN} "
-                      f"--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID]{bcolors.OKGREEN} "
-                      f"--name {bcolors.OKBLUE}[CLIENT NAME] "
-                      f"--editable{bcolors.ENDC}")
+                print(f"{bcolors.OKGREEN}  secrets-manager client add "
+                      f"{bcolors.OKGREEN}--app {bcolors.OKBLUE}[APP NAME or APP UID] "
+                      f"{bcolors.OKGREEN}--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID] "
+                      f"{bcolors.OKGREEN}--name {bcolors.OKBLUE}[CLIENT NAME] "
+                      f"{bcolors.OKGREEN}--config-init [{bcolors.OKBLUE}json{bcolors.OKGREEN} or {bcolors.OKBLUE}b64{bcolors.OKGREEN}]")
                 return
 
             count = kwargs.get('count')
             unlock_ip = kwargs.get('unlockIp')
             client_name = kwargs.get('name')
+            config_init = kwargs.get('config_init')
 
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
 
             is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
 
-            tokens = KSMCommand.add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min, client_name)
+            tokens = KSMCommand.add_client(params,
+                                           app_name_or_uid,
+                                           count, unlock_ip,
+                                           first_access_expire_on,
+                                           access_expire_in_min,
+                                           client_name,
+                                           config_init)
             return tokens if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
@@ -798,7 +848,12 @@ class KSMCommand(Command):
 
             client_names_or_ids = kwargs.get('client_names_or_ids')
 
-            KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+            force = kwargs.get('force')
+
+            if len(client_names_or_ids) == 1 and client_names_or_ids[0] in ['*', 'all']:
+                KSMCommand.remove_all_clients(params, app_name_or_uid, force)
+            else:
+                KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
 
             return
 
@@ -910,6 +965,16 @@ class KSMCommand(Command):
 
         app_info = KSMCommand.get_app_info(params, uid)
 
+        def shorten_client_id(all_clients, original_id, number_of_characters):
+
+            new_id = original_id[0:number_of_characters]
+
+            res = list(filter(lambda x: CommonHelperMethods.bytes_to_url_safe_str(x.clientId).startswith(new_id), all_clients))
+            if len(res) == 1 or new_id == original_id:
+                return new_id
+            else:
+                return shorten_client_id(all_clients, original_id, number_of_characters+1)
+
         if len(app_info) == 0:
             print(bcolors.WARNING + 'No Secrets Manager Applications returned.' + bcolors.ENDC)
             return
@@ -937,10 +1002,12 @@ class KSMCommand(Command):
                         ip_address = c.ipAddress
                         # public_key = c.publicKey
 
+                        short_client_id = shorten_client_id(ai.clients, client_id, KSMCommand.CLIENT_SHORT_ID_LENGTH)
+
                         client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n"\
                                              f"=============================\n"\
                                              f'  Name: {id}\n' \
-                                             f'  ID: {client_id}\n' \
+                                             f'  Short ID: {short_client_id}\n' \
                                              f'  Created On: {created_on}\n' \
                                              f'  First Access: {first_access}\n' \
                                              f'  Last Access: {last_access}\n' \
@@ -1098,9 +1165,38 @@ class KSMCommand(Command):
         return search_results_rec_data
 
     @staticmethod
+    def remove_v5_app(params, app_name_or_uid, purge, force):
+
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+
+        if not app:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+        app_uid = app.get('record_uid')
+
+        app_info = KSMCommand.get_app_info(params, app_uid)
+
+        clients_count = len(app_info[0].clients)
+        shared_folders_count = sum(map(lambda s: s.shareType == 1, app_info[0].shares))
+        shared_records_count = sum(map(lambda s: s.shareType == 0, app_info[0].shares))
+
+        if not force:
+
+            print("This Application (uid: %s) has %d client(s), %d shared folder(s), and %d record(s)."
+                  % (app_uid, clients_count, shared_folders_count, shared_records_count))
+            uc = user_choice('\tAre you sure you want to delete this application?', 'yn', default='n')
+            if uc.lower() != 'y':
+                return
+
+        logging.info("Removed Application uid: %s" % app_uid)
+
+        cmd = RecordRemoveCommand()
+        cmd.execute(params, purge=purge, force=True, record=app_uid)
+
+    @staticmethod
     def add_new_v5_app(params, app_name, force_to_add=False):
 
-        logging.debug("Creating new KSM Application named '%s'" % app_name)
+        logging.debug("Creatixng new KSM Application named '%s'" % app_name)
 
         found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
@@ -1145,7 +1241,6 @@ class KSMCommand(Command):
 
         params.sync_data = True
 
-
     @staticmethod
     def remove_share(params, app_name_or_uid, secret_uids):
         app = KSMCommand.get_app_record(params, app_name_or_uid)
@@ -1168,8 +1263,42 @@ class KSMCommand(Command):
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
         else:
-            print(bcolors.OKGREEN + "Secret share was successfully removed from the application" + bcolors.ENDC)
+            print(bcolors.OKGREEN + "Secret share was successfully removed from the application\n" + bcolors.ENDC)
 
+    @staticmethod
+    def remove_all_clients(params, app_name_or_uid, force):
+        app = KSMCommand.get_app_record(params, app_name_or_uid)
+        if not app:
+            raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
+
+        app_uid = app.get('record_uid')
+
+        app_info = KSMCommand.get_app_info(params, app_uid)
+
+        clients_count = len(app_info[0].clients)
+
+        if clients_count == 0:
+            print(bcolors.WARNING + "No client devices registered for this Application\n" + bcolors.ENDC)
+            return
+
+        if not force:
+
+            print("This app has %d client(s) connections." % clients_count)
+            uc = user_choice('\tAre you sure you want to delete all clients from this application?', 'yn', default='n')
+            if uc.lower() != 'y':
+                return
+
+        client_ids_to_rem = []
+
+        for ai in app_info:
+
+            if len(ai.clients) > 0:
+                for c in ai.clients:
+                    client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
+
+                    client_ids_to_rem.append(client_id)
+
+        KSMCommand.remove_client(params, app_name_or_uid, client_ids_to_rem)
 
     @staticmethod
     def remove_client(params, app_name_or_uid, client_names_and_hashes):
@@ -1187,8 +1316,12 @@ class KSMCommand(Command):
                         name = c.id
                         client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
 
-                        if name in cnahs or client_id in cnahs:
-                            client_id_hashes_bytes.append(c.clientId)
+                        for cnah in cnahs:
+                            if name == cnah:
+                                client_id_hashes_bytes.append(c.clientId)
+                            else:
+                                if len(cnah) >= KSMCommand.CLIENT_SHORT_ID_LENGTH and client_id.startswith(cnah):
+                                    client_id_hashes_bytes.append(c.clientId)
 
             return client_id_hashes_bytes
 
@@ -1203,9 +1336,16 @@ class KSMCommand(Command):
 
         client_hashes = convert_ids_and_hashes_to_hashes(client_names_and_hashes, app_uid)
 
-        if len(client_hashes) == 0:
-            print("No Client Devices found with given name or ID")
+        found_clients_count = len(client_hashes)
+        if found_clients_count == 0:
+            print(bcolors.WARNING + "No Client Devices found with given name or ID\n" + bcolors.ENDC)
             return
+        else:
+            uc = user_choice(
+                '\tAre you sure you want to delete %d matching clients from this application?' % found_clients_count
+                , 'yn', default='n')
+            if uc.lower() != 'y':
+                return
 
         rq = RemoveAppClientsRequest()
 
@@ -1221,11 +1361,11 @@ class KSMCommand(Command):
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
         else:
-            print(bcolors.OKGREEN + "Client was successfully removed from the application" + bcolors.ENDC)
+            print(bcolors.OKGREEN + "\nClient removal was successful\n" + bcolors.ENDC)
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
-                   client_name=None):
+                   client_name=None, config_init=None):
 
         if isinstance(unlock_ip, bool):
             is_ip_unlocked = unlock_ip
@@ -1301,11 +1441,11 @@ class KSMCommand(Command):
                     lock_ip_stat = bcolors.OKGREEN + "Enabled" + bcolors.ENDC
                 else:
                     lock_ip_stat = bcolors.HIGHINTENSITYRED + "Disabled" + bcolors.ENDC
-                exp_date_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                exp_date_str = bcolors.BOLD + datetime.fromtimestamp(
                     first_access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
 
                 if access_expire_in_min:
-                    app_expire_on_str = bcolors.BOLD + datetime.datetime.fromtimestamp(
+                    app_expire_on_str = bcolors.BOLD + datetime.fromtimestamp(
                         access_expire_on_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC
                 else:
                     app_expire_on_str = bcolors.WARNING + "Never" + bcolors.ENDC
@@ -1313,7 +1453,21 @@ class KSMCommand(Command):
                 token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
                 tokens.append(token)
 
-                otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token}{bcolors.ENDC}\n'
+                if not config_init:
+                    abbrev = get_abbrev_by_host(params.server.lower())
+
+                    if abbrev:
+                        token_w_prefix = f'{abbrev}:{token}'
+                    else:
+                        token_w_prefix = f'{urlparse(params.server).netloc.lower()}:{token}'
+
+                    otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token_w_prefix}{bcolors.ENDC}\n'
+                else:
+                    config_str = KSMCommand.init_ksm_config(params,
+                                                            one_time_token=token,
+                                                            is_base64=config_init == 'b64')
+                    otat_str += f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
+
                 if client_name:
                     otat_str += f'Name: {client_name}\n'
 
@@ -1327,7 +1481,56 @@ class KSMCommand(Command):
               f'====================================\n'
               f'{otat_str}')
 
+        if config_init and not unlock_ip:
+            print(bcolors.WARNING + "\tWarning: Configuration is now locked to your current IP. To keep in unlock you "
+                                    "can add flag `--unlock-ip` or use the One-time token to generate configuration on "
+                                    "the host that has the IP that needs to be locked." + bcolors.ENDC)
+
+            logging.warning('')
+
         return tokens
+
+    @staticmethod
+    def init_ksm_config(params, one_time_token, is_base64=False):
+
+        try:
+            from keeper_secrets_manager_core import SecretsManager
+            from keeper_secrets_manager_core.configkeys import ConfigKeys
+            from keeper_secrets_manager_core.storage import InMemoryKeyValueStorage
+        except:
+            raise Exception("Keeper Secrets Manager is not installed.\n"
+                            "Install it using pip `pip3 install keeper-secrets-manager-core`")
+
+        ksm_conf_storage = InMemoryKeyValueStorage()
+
+        secrets_manager = SecretsManager(
+            hostname=params.config.get('server'),
+            token=one_time_token,
+            # verify_ssl_certs=False,
+            config=ksm_conf_storage
+        )
+
+        secrets_manager.get_secrets("NON-EXISTING-RECORD-UID")
+
+        json_str = '{' \
+                   '"hostname": "%s",' \
+                   '"clientId": "%s",' \
+                   '"privateKey": "%s",' \
+                   '"serverPublicKeyId": "%s",' \
+                   '"appKey": "%s"' \
+                   '}' % (
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_HOSTNAME),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_CLIENT_ID),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_PRIVATE_KEY),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_SERVER_PUBLIC_KEY_ID),
+                       ksm_conf_storage.config.get(ConfigKeys.KEY_APP_KEY)
+                   )
+
+        if is_base64:
+            json_b64 = json_to_base64(json_str)
+            return json_b64
+        else:
+            return json_str
 
 
 class LogoutCommand(Command):

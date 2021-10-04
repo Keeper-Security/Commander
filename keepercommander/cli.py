@@ -5,7 +5,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2017 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -32,7 +32,7 @@ from .commands import (
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
 from .commands.msp import get_mc_by_name_or_id
-from .constants import OS_WHICH_CMD
+from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import AuthenticationError, CommunicationError, CommandError
 from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
@@ -175,6 +175,24 @@ def do_command(params, command_line):
 
     if command_line.lower() == 'h' or command_line.lower() == 'history':
         display.formatted_history(stack)
+        return
+
+    if command_line.lower().startswith('server'):
+        _, sp, server = command_line.partition(' ')
+        if server:
+            if not params.session_token:
+                server = server.strip()
+                region = next((x for x in KEEPER_PUBLIC_HOSTS.items()
+                               if server.casefold() in [x[0].casefold(), x[1].casefold()]), None)
+                if region:
+                    params.server = region[1]
+                    logging.info('Keeper region is set to %s', region[0])
+                else:
+                    logging.warning('Invalid Keeper region: %s', server)
+            else:
+                logging.warning('Cannot change Keeper region while logged in')
+        else:
+            print(params.server)
         return
 
     if command_line.startswith('ksm'):
@@ -431,8 +449,6 @@ prompt_session = None
 
 
 def loop(params):  # type: (KeeperParams) -> int
-    logging.debug('Params: %s', params)
-
     global prompt_session
     error_no = 0
     suppress_errno = False
@@ -470,6 +486,12 @@ def loop(params):  # type: (KeeperParams) -> int
         # add ability to manipulate w/ legacy or v3 records
         # determined by the response from the server
         init_recordv3_commands(params)
+    else:
+        if params.server:
+            logging.info('Current Keeper region: %s', params.server)
+        logging.info('Use "server" command to change Keeper region > "server US"')
+        for region in KEEPER_PUBLIC_HOSTS:
+            logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
 
     while True:
         if params.session_token:
@@ -510,7 +532,7 @@ def loop(params):  # type: (KeeperParams) -> int
                 suppress_errno = True
                 command = command[1:]
             if params.batch_mode:
-                print(f'> {command}')
+                logging.info('> %s', command)
             error_no = 1
             result = do_command(params, command)
             error_no = 0

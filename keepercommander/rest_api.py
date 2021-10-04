@@ -17,6 +17,8 @@ import hashlib
 import hmac
 import logging
 
+from typing import Union
+
 from .params import RestApiContext
 from .error import KeeperApiError, CommunicationError
 from . import APIRequest_pb2 as proto
@@ -106,7 +108,8 @@ def derive_key_v2(domain, password, salt, iterations):
     return hmac.new(derived_key, domain.encode('utf-8'), digestmod=hashlib.sha256).digest()
 
 
-def execute_rest(context, endpoint, payload):    # type: (RestApiContext, str, proto.ApiRequestPayload) -> any
+def execute_rest(context, endpoint, payload):
+    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Union[bytes, dict]
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 

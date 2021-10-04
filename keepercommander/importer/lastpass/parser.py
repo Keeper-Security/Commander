@@ -6,9 +6,9 @@ from io import BytesIO
 import struct
 import re
 
-from Cryptodome.Cipher import AES, PKCS1_OAEP
-from Cryptodome.Util import number
-from Cryptodome.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
+from Crypto.Util import number
+from Crypto.PublicKey import RSA
 
 from .account import Account
 from .chunk import Chunk
@@ -37,7 +37,7 @@ def extract_chunks(blob):
     return chunks
 
 
-def parse_ACCT(chunk, encryption_key):
+def parse_ACCT(chunk, encryption_key, shared_folder):
     """
     Parses an account chunk, decrypts and creates an Account object.
     May return nil when the chunk does not represent an account.
@@ -67,7 +67,7 @@ def parse_ACCT(chunk, encryption_key):
             username = parsed.get('username', username)
             password = parsed.get('password', password)
 
-    return Account(id, name, username, password, url, group, notes)
+    return Account(id, name, username, password, url, group, notes, shared_folder)
 
 
 def parse_PRIK(chunk, encryption_key):

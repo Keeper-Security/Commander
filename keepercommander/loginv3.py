@@ -5,13 +5,11 @@ import json
 import logging
 import os
 import re
-import sys
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 from collections import OrderedDict
 from email.utils import parseaddr
 from sys import platform as _platform
 
-import requests
 from Cryptodome.Math.Numbers import Integer
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -24,7 +22,7 @@ from google.protobuf.json_format import MessageToDict, MessageToJson
 from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
-from . import api
+from . import api, utils
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
@@ -44,13 +42,13 @@ permissions_error_msg = "Grant Commander SDK permissions to access Keeper by nav
 class LoginV3Flow:
 
     @staticmethod
-    def login(params):   # type: (KeeperParams) -> None
+    def login(params, new_device=False):   # type: (KeeperParams, bool) -> None
 
         logging.debug("Login v3 Start as '%s'" % params.user)
 
         CommonHelperMethods.startup_check(params)
 
-        encryptedDeviceToken = LoginV3API.get_device_id(params)
+        encryptedDeviceToken = LoginV3API.get_device_id(params, new_device)
 
         clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
         config_user = params.config.get('user')    # type: str
@@ -130,26 +128,10 @@ class LoginV3Flow:
                 raise Exception('This account need to be created.' % rest_api.CLIENT_VERSION)
 
             elif resp.loginState == proto.REGION_REDIRECT:
-                p = urlparse(params.server)
-                new_server = urlunparse((p.scheme, resp.stateSpecificValue, '', None, None, None))
-
-                warn_msg = \
-                    "\n'%s' has indicated that this account was originally created in a different region." \
-                    "\nPlease update config to use server: %s"\
-                    "\nYou may also need to register this device in the other region, unsetting the the device_token and clone_code will do this automatically upon login."\
-                    % (p.netloc.upper(), new_server)
-
-                logging.warning(warn_msg)
-
-                raise Exception("Changes to configuration are required.")
-
-                # TODO: change configuration structure so that device_token is paired with server, so that a given device_token is more certain to work for a given server, and will not be forced to be unset to "find out"
-                # params.rest_context.server_base = new_server
-                # params.server = params.rest_context.server_base
-                #
-                # LoginV3API.register_device_in_region(params)
-                #
-                # resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
+                params.server = resp.stateSpecificValue
+                logging.info('Redirecting to region: %s', params.server)
+                LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
 
@@ -177,50 +159,12 @@ class LoginV3Flow:
                         else:
                             raise kae
 
-                # login_state = proto.LoginState.Name(resp.loginState)
-
-                params.user = resp.primaryUsername
-                params.account_uid_bytes = resp.accountUid
-                params.session_token_bytes = resp.encryptedSessionToken
-                params.session_token_restriction = resp.sessionTokenType  # getSessionTokenScope(login_resp.sessionTokenType)
-                params.clone_code = resp.cloneCode
-                # params.device_token_bytes = encryptedDeviceToken
-                # auth_context.message_session_uid = login_resp.messageSessionUid
-
-                if resp.sessionTokenType != proto.NO_RESTRICTION:
-                    # This is not a happy-path login.  Let the user know what's wrong.
-                    if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
-                        msg = (
-                            'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
-                            'Vault at https://keepersecurity.com/vault'
-                        )
-                        raise Exception(msg)
-                    else:
-                        raise Exception('Please log into the web Vault to update your account settings.')
-
-                if not params.device_private_key:
-                    params.device_private_key = CommonHelperMethods.get_private_key_ecc(params)
-
-                if resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_DEVICE_PUBLIC_KEY"):
-                    params.data_key = resp.encryptedDataKey
-                    # raise Exception("Encrypted device public key is not supported by Commander")
-
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_PASSWORD"):
-                    params.data_key = api.decrypt_encryption_params(
-                        CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
-                        params.password)
-
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_ALTERNATE"):
-                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
-                    # raise Exception("Alternate data key encryption is not supported by Commander")
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("BY_BIO"):
-                    raise Exception("Biometrics encryption is not supported by Commander")
-                elif resp.encryptedDataKeyType == proto.EncryptedDataKeyType.Value("NO_KEY"):
-                    raise Exception("No key encryption is not supported by Commander")
+                if LoginV3Flow.post_login_processing(params, resp):
+                    return
                 else:
-                    raise Exception("Unhandled encryption data key ''" % resp.encryptedDataKeyType)
-
-                CommonHelperMethods.persist_state_data(params)
+                    # Not successfully authenticated, so restart login process
+                    clone_code_bytes = CommonHelperMethods.config_file_get_property_as_bytes(params, 'clone_code')
+                    resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
             elif resp.loginState == proto.DEVICE_ACCOUNT_LOCKED:
                 params.clear_session()
@@ -235,44 +179,127 @@ class LoginV3Flow:
             elif resp.loginState == proto.UPGRADE:
                 raise Exception('Application or device is out of date and requires an update.')
             elif resp.loginState == proto.LOGGED_IN:
-                params.user = resp.primaryUsername
-                session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
-                params.session_token = session_token
-
-                if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
-                    decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
-                    params.data_key = decrypted_data_key
-                    login_type_message = bcolors.UNDERLINE + "Persistent Login"
-
-                elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
-
-                    params.data_key = api.decrypt_encryption_params(
-                        CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
-                        params.password)
-
-                    login_type_message = bcolors.UNDERLINE + "Password"
-
-                elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
-                    params.data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
-
-                    login_type_message = bcolors.UNDERLINE + "Master Password"
-
-                elif resp.encryptedDataKeyType == proto.NO_KEY \
-                        or resp.encryptedDataKeyType == proto.BY_BIO:
-                    raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
-
-                params.clone_code = resp.cloneCode
-                CommonHelperMethods.persist_state_data(params)
-
-                LoginV3Flow.populateAccountSummary(params)
-
-                logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
-
-                params.anon_token = get_anon_token(params)
-
+                LoginV3Flow.post_login_processing(params, resp)
                 return
             else:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
+
+    @staticmethod
+    def post_login_processing(params: KeeperParams, resp: proto.LoginResponse):
+        """Processing after login
+
+        Returns True if authentication is successful and False otherwise.
+        """
+        params.user = resp.primaryUsername
+        params.account_uid_bytes = resp.accountUid
+        session_token = CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
+        params.session_token = session_token
+
+        login_type_message = LoginV3Flow.get_data_key(params, resp)
+
+        params.clone_code = resp.cloneCode
+        CommonHelperMethods.persist_state_data(params)
+
+        LoginV3Flow.populateAccountSummary(params)
+
+        if resp.sessionTokenType != proto.NO_RESTRICTION:
+            # This is not a happy-path login.  Let the user know what's wrong.
+            if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
+                params.session_token = None
+                msg = (
+                    'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
+                    'Vault at https://keepersecurity.com/vault'
+                )
+                raise Exception(msg)
+            elif resp.sessionTokenType == proto.ACCOUNT_RECOVERY:
+                if LoginV3Flow.change_master_password(params):
+                    return False
+                else:
+                    params.clear_session()
+                    raise Exception('Change password failed')
+            elif resp.sessionTokenType == proto.SHARE_ACCOUNT:
+                logging.info('Account transfer required')
+                accepted = api.accept_account_transfer_consent(params)
+                if accepted:
+                    return False
+                else:
+                    params.clear_session()
+                    raise Exception('Account transfer logout')
+            else:
+                raise Exception('Please log into the web Vault to update your account settings.')
+
+        if not params.device_private_key:
+            params.device_private_key = CommonHelperMethods.get_private_key_ecc(params)
+
+        logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
+        return True
+
+    @staticmethod
+    def get_data_key(params: KeeperParams, resp: proto.LoginResponse):
+        """Get decrypted data key and store in params.data_key
+
+        Returns login_type_message which is one of ("Persistent Login", "Password", "Master Password").
+        """
+        if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
+            decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
+            login_type_message = bcolors.UNDERLINE + "Persistent Login"
+
+        elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
+            decrypted_data_key = api.decrypt_encryption_params(
+                CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
+                params.password)
+            login_type_message = bcolors.UNDERLINE + "Password"
+
+        elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
+            decrypted_data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
+            login_type_message = bcolors.UNDERLINE + "Master Password"
+
+        elif resp.encryptedDataKeyType == proto.NO_KEY \
+                or resp.encryptedDataKeyType == proto.BY_BIO:
+            raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
+
+        params.data_key = decrypted_data_key
+        params.anon_token = get_anon_token(params)
+
+        return login_type_message
+
+    @staticmethod
+    def change_master_password(params: KeeperParams):
+        """Change the master password when expired
+
+        Return True if the master password is successfully changed and False otherwise.
+        """
+        try:
+            print('Your Master Password has expired, you are required to change it before you can login.')
+            print('')
+            while True:
+                print('Please choose a new Master Password.')
+                password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'),
+                                           stream=None).strip()
+                if not password:
+                    raise KeyboardInterrupt()
+                password2 = getpass.getpass(prompt='... {0:>24}: '.format('Re-Enter Password'),
+                                            stream=None).strip()
+
+                if password == password2:
+                    failed_rules = []
+                    for rule in params.settings['rules']:
+                        pattern = re.compile(rule['pattern'])
+                        if not re.match(pattern, password):
+                            failed_rules.append(rule['description'])
+                    if len(failed_rules) == 0:
+                        LoginV3API.change_master_password(params, password)
+                        logging.info('Password changed')
+                        params.password = password
+                        return True
+                    else:
+                        for description in failed_rules:
+                            logging.warning(description)
+                else:
+                    logging.warning('Passwords do not match.')
+        except KeyboardInterrupt:
+            logging.info('Canceled')
+        return False
 
     @staticmethod
     def populateAccountSummary(params: KeeperParams):
@@ -439,7 +466,7 @@ class LoginV3Flow:
         channel_types = OrderedDict([
             ('TWO_FA_CT_U2F', 'U2F (FIDO Security Key)'),
             ('TWO_FA_CT_SMS', 'Send SMS Code'),
-            ('TWO_FA_CT_TOTP', 'TOTP (Google Authenticator)'),
+            ('TWO_FA_CT_TOTP', 'TOTP (Google and Microsoft Authenticator)'),
             ('TWO_FA_CT_DUO', 'DUO'),
             # ('TWO_FA_CODE_RSA', 'RSA Authenticator'),
         ])
@@ -617,7 +644,16 @@ class LoginV3API:
         return rs
 
     @staticmethod
-    def get_device_id(params: KeeperParams):
+    def get_device_id(params, new_device):   # type: (KeeperParams, bool) -> bytes
+        if new_device:
+            logging.info('Resetting device token')
+            params.device_token = None
+            if 'device_token' in params.config:
+                del params.config['device_token']
+            if params.device_private_key:
+                params.device_private_key = None
+            if 'private_key' in params.config:
+                del params.config['private_key']
 
         encrypted_device_token_str = None
 
@@ -656,8 +692,10 @@ class LoginV3API:
 
             CommonHelperMethods.config_file_set_property(params, "device_token", encrypted_device_token_str)
 
-        encrypted_device_token_bytes = CommonHelperMethods.url_safe_str_to_bytes(encrypted_device_token_str)
-
+        try:
+            encrypted_device_token_bytes = utils.base64_url_decode(encrypted_device_token_str)
+        except:
+            raise InvalidDeviceToken()
         return encrypted_device_token_bytes
 
     @staticmethod
@@ -719,10 +757,11 @@ class LoginV3API:
         elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
-                    params.device_id = None
-                    params.server_base = 'https://{0}/'.format(rs['region_host'])
-                    # logging.warning('Switching to region: %s', rs['region_host'])
-                    # continue
+                    params.server = rs['region_host']
+                    logging.info('Redirecting to region: %s', params.server)
+                    LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                    return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
+
                 if rs['error'] == 'bad_request':
                     # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     params.device_id = None
@@ -734,8 +773,7 @@ class LoginV3API:
                     raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
-    def startLoginMessage(params: KeeperParams, encryptedDeviceToken, cloneCode = None, loginType: str = 'NORMAL'):
-
+    def startLoginMessage(params, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):  # type: (KeeperParams, bytes, str, str) -> proto.LoginResponse
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.username = params.user.lower()
@@ -764,10 +802,18 @@ class LoginV3API:
         elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
-                    params.device_id = None
-                    params.server_base = 'https://{0}/'.format(rs['region_host'])
-                    # logging.warning('Switching to region: %s', rs['region_host'])
-                    # continue
+                    params.server = rs['region_host']
+                    logging.info('Redirecting to region: %s', params.server)
+                    LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                    return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
+
+                if rs['error'] == 'device_not_registered':
+                    if rs['additional_info'] == 'invalid device token, not registered in this region':
+                        LoginV3API.register_device_in_region(params, encryptedDeviceToken)
+                        return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
+                    else:
+                        raise InvalidDeviceToken()
+
                 if rs['error'] == 'bad_request':
                     # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
                     params.device_id = None
@@ -780,8 +826,8 @@ class LoginV3API:
                         err_msg += "\nRegister this user in the current region or change server region"
 
                     raise KeeperApiError(rs['error'], err_msg)
-                else:
-                    raise KeeperApiError(rs['error'], rs['message'])
+
+                raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
     def auth_verifier_loginv3(params: KeeperParams):
@@ -865,6 +911,19 @@ class LoginV3API:
         api.communicate_rest(params, rq, 'authentication/update_device')
 
     @staticmethod
+    def change_master_password(params: KeeperParams, password):
+        auth_salt = os.urandom(16)
+        data_salt = os.urandom(16)
+        rq = {
+            'command': 'change_master_password',
+            'auth_verifier': api.create_auth_verifier(password, auth_salt, params.iterations),
+            'encryption_params': api.create_encryption_params(password, data_salt, params.iterations, params.data_key)
+        }
+        rs = api.communicate(params, rq)
+        params.password = password
+        params.salt = auth_salt
+
+    @staticmethod
     def register_encrypted_data_key_for_device(params: KeeperParams):
         rq = proto.RegisterDeviceDataKeyRequest()
 
@@ -872,8 +931,8 @@ class LoginV3API:
         rq.encryptedDeviceDataKey = CommonHelperMethods.get_encrypted_device_data_key(params)
 
         try:
-            rs = api.communicate_rest(params, rq, 'authentication/register_encrypted_data_key_for_device')
-        except Exception as e:
+            api.communicate_rest(params, rq, 'authentication/register_encrypted_data_key_for_device')
+        except KeeperApiError as e:
             if e.result_code == 'device_data_key_exists':
                 return False
             raise e
@@ -881,25 +940,18 @@ class LoginV3API:
         return True
 
     @staticmethod
-    def register_device_in_region(params: KeeperParams):
+    def register_device_in_region(params, encrypted_device_token):  # type: (KeeperParams, bytes) -> None
         rq = proto.RegisterDeviceInRegionRequest()
-        rq.encryptedDeviceToken = CommonHelperMethods.url_safe_str_to_bytes(params.device_token)
+        rq.encryptedDeviceToken = encrypted_device_token
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.deviceName = CommonHelperMethods.get_device_name()
         rq.devicePublicKey = CommonHelperMethods.public_key_ecc(params)
 
-        # TODO: refactor into util for handling Standard Rest Authentication Errors
-        # try:
-        rs = api.communicate_rest(params, rq, 'authentication/register_device_in_region')
-        # except Exception as e:
-        #     # device_disabled - this device has been disabled for all users / all commands
-        #     # user_device_disabled - this user has disabled access from this device
-        #     # redirect - depending on the command, if the user is a pending enterprise user, or and existing user and they are in a different region, they will be redirected to the proper keeperapp server to submit the request
-        #     # client_version - Invalid client version
-        #     logging.error(f"Unable to register device in {params.region}: {e}")
-        #     return False
-        # else:
-        #     return True
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = rq.SerializeToString()
+        rs = rest_api.execute_rest(params.rest_context, 'authentication/register_device_in_region', api_request_payload)
+        if isinstance(rs, dict):
+            raise InvalidDeviceToken()
 
     @staticmethod
     def set_user_setting(params: KeeperParams, name: str, value: str):
@@ -1212,7 +1264,7 @@ class CommonHelperMethods:
     @staticmethod
     def config_file_get_property_as_str(params: KeeperParams, key):
 
-        if os.path.exists(params.config_filename):
+        if params.config_filename and os.path.exists(params.config_filename):
             try:
                 try:
                     with open(params.config_filename) as config_file:
@@ -1364,3 +1416,7 @@ def get_anon_token(params):
     token = rs.passwordToken
 
     return token
+
+
+class InvalidDeviceToken(Exception):
+    pass

@@ -36,6 +36,12 @@ def base64_url_encode(b):       # type: (bytes) -> str
     return bs.decode('utf-8').rstrip('=')
 
 
+def json_to_base64(json_str):
+    json_bytes = json_str.encode('utf-8')
+    json_b64 = base64.b64encode(json_bytes).decode()
+    return json_b64
+
+
 def decrypt_encryption_params(encryption_params, password):     # type: (str, str) -> bytes
 
     decoded_encryption_params = base64_url_decode(encryption_params)

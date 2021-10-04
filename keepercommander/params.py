@@ -9,6 +9,7 @@
 #
 
 from urllib.parse import urlparse, urlunparse
+from datetime import datetime
 
 
 LAST_RECORD_UID = 'last_record_uid'
@@ -61,7 +62,7 @@ class RestApiContext:
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self, config_filename='', config=None, server='https://keepersecurity.com/api/v2/', device_id=None):
+    def __init__(self, config_filename='', config=None, server='keepersecurity.com', device_id=None):
         self.config_filename = config_filename
         self.config = config or {}
         self.auth_verifier = None
@@ -189,3 +190,9 @@ class KeeperParams:
 
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
+
+    def get_share_account_timestamp(self):
+        if self.settings and 'share_account_to' in self.settings and 'must_perform_account_share_by' in self.settings:
+            return datetime.fromtimestamp(int(self.settings['must_perform_account_share_by']) // 1000)
+        else:
+            return None

@@ -5,19 +5,110 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
-from ..importer import BaseImporter, Record, Folder
-
+import calendar
+import datetime
 import getpass
+import json
+import logging
+from typing import Optional, List
 
-from .vault import Vault
+from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission
 from .account import Account
+from .exceptions import LastPassUnknownError
+from .vault import Vault
 
 
 class LastPassImporter(BaseImporter):
+    def __init__(self):
+        self.addresses = []  # type: List[LastPassAddress]
+        self.months = {}
+        _months = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+                   'September', 'October', 'November', 'December']
+        for i in range(len(_months)):
+            if _months[i]:
+                month = _months[i].casefold()
+                if month not in self.months:
+                    self.months[month] = i
+
+        for i in range(len(calendar.month_name)):
+            if calendar.month_name[i]:
+                month = calendar.month_name[i].casefold()
+                if month not in self.months:
+                    self.months[month] = i
+
+    def card_expiration(self, from_lastpass):  # type: (str) -> str
+        if from_lastpass:
+            comp = [x.strip().casefold() for x in from_lastpass.split(',')]
+            if len(comp) == 2 and all(comp):
+                try:
+                    year = int(comp[1])
+                    if year < 200:
+                        year += 2000
+                        comp[1] = str(year)
+                except ValueError:
+                    pass
+                if comp[0] in self.months:
+                    return f'{self.months[comp[0]]:0>2}/{comp[1]}'
+        return from_lastpass
+
+    def lastpass_date(self, from_lastpass):  # type: (str) -> int
+        if from_lastpass:
+            comp = [x.strip().casefold() for x in from_lastpass.split(',')]
+            if len(comp) == 3 and all(comp):
+                try:
+                    month = self.months[comp[0]]
+                    day = int(comp[1])
+                    year = int(comp[2])
+                    dt = datetime.date(year, month, day)
+                    return int(datetime.datetime.fromordinal(dt.toordinal()).timestamp() * 1000)
+                except:
+                    pass
+        return -1
+
+    def find_address(self, address):  # type: (LastPassAddress) -> Optional[int]
+        for i in range(len(self.addresses)):
+            if self.addresses[i] == address:
+                return i + 1
+
+    def append_address(self, address):  # type: (LastPassAddress) -> Optional[int]
+        if isinstance(address, LastPassAddress):
+            self.addresses.append(address)
+            return len(self.addresses)
+
+    def parse_typed_notes(self, notes):    # type: (str) -> dict
+        lines = notes.split('\n')
+        fields = {}
+        key = ''
+        value = ''
+        for line in lines:
+            k, s, v = line.partition(':')
+            if s == ':':
+                if key:
+                    if key == 'Notes':
+                        value += line
+                    elif key == 'Private Key':
+                        if k == 'Public Key':
+                            fields[key] = value
+                            key = k
+                            value = v
+                        else:
+                            value += '\n' + line
+                    else:
+                        fields[key] = value
+                        key = k
+                        value = v
+                else:
+                    key = k
+                    value = v
+            else:
+                if key:
+                    value += '\n' + line
+        if key:
+            fields[key] = value
+        return fields
 
     def do_import(self, name):
         username = name
@@ -27,7 +118,35 @@ class LastPassImporter(BaseImporter):
         if not twofa_code:
             twofa_code = None
 
-        vault = Vault.open_remote(username, password, multifactor_password=twofa_code)
+        try:
+            vault = Vault.open_remote(username, password, multifactor_password=twofa_code)
+        except LastPassUnknownError as lpe:
+            logging.warning(lpe)
+            return
+        else:
+            if len(vault.errors) > 0:
+                err_list = '\n'.join(vault.errors)
+                logging.warning(f'The following errors occurred retrieving Lastpass shared folder members:\n{err_list}')
+
+        for shared_folder in vault.shared_folders:
+            folder = SharedFolder()
+            folder.path = shared_folder.name
+            folder.permissions = []
+            for member in shared_folder.members:
+                perm = Permission()
+                perm.name = member['username']
+                perm.manage_records = member['readonly'] == '0'
+                perm.manage_users = member['can_administer'] == '1'
+                folder.permissions.append(perm)
+            for team in shared_folder.teams:
+                perm = Permission()
+                perm.name = team['name']
+                perm.manage_records = team['readonly'] == '0'
+                perm.manage_users = team['can_administer'] == '1'
+                folder.permissions.append(perm)
+
+            yield folder
+
         for account in vault.accounts:  # type: Account
             record = Record()
             if account.name:
@@ -38,11 +157,441 @@ class LastPassImporter(BaseImporter):
                 record.password = account.password.decode('utf-8')
             if account.url:
                 record.login_url = account.url.decode('utf-8')
+                if record.login_url == 'http://sn':
+                    record.login_url = None
+                elif record.login_url == 'http://group':
+                    continue
             if account.notes:
-                record.notes = account.notes.decode('utf-8')
-            if account.group:
+                notes = account.notes.decode('utf-8')
+                if notes.startswith('NoteType:'):
+                    typed_values = self.parse_typed_notes(notes)
+                    if 'NoteType' in typed_values:
+                        note_type = typed_values.pop('NoteType', '')
+                        notes = typed_values.pop('Notes', '')
+                        typed_values.pop('Language', None)
+
+                        if note_type == 'Bank Account':
+                            self.populate_bank_account(record, typed_values)
+                        elif note_type == 'Credit Card':
+                            self.populate_credit_card(record, typed_values)
+                        elif note_type == 'Address':
+                            address = LastPassAddress.from_lastpass(typed_values)
+                            if address:
+                                addr_ref = self.append_address(address)
+                                if addr_ref:
+                                    record.uid = addr_ref
+                                self.populate_address_only(record, address)
+                                self.populate_address(record, typed_values)
+                        elif note_type == 'Driver\'s License':
+                            address_record = self.populate_driver_license(record, typed_values)
+                            if address_record is not None:
+                                yield address_record
+                        elif note_type == 'Passport':
+                            self.populate_passport(record, typed_values)
+                        elif note_type == 'Social Security':
+                            self.populate_ssn_card(record, typed_values)
+                        elif note_type == 'Health Insurance' or note_type == 'Insurance':
+                            self.populate_health_insurance(record, typed_values)
+                        elif note_type == 'Membership':
+                            self.populate_membership(record, typed_values)
+                        elif note_type == 'Email Account' or note_type == 'Instant Messenger':
+                            record.type = 'login'
+                        elif note_type == 'Database':
+                            self.populate_database(record, typed_values)
+                        elif note_type == 'Server':
+                            self.populate_server(record, typed_values)
+                        elif note_type == 'SSH Key':
+                            self.populate_ssh_key(record, typed_values)
+                        elif note_type == 'Software License':
+                            self.populate_software_license(record, typed_values)
+
+                    username = typed_values.pop('Username', '')
+                    if username:
+                        if record.login:
+                            if record.login != username:
+                                cf = RecordField(label='Username', value=username)
+                                if record.type:
+                                    cf.type = 'login'
+                                record.fields.append(cf)
+                        else:
+                            record.login = username
+
+                    password = typed_values.pop('Password', '')
+                    if password:
+                        if record.password:
+                            if record.password != password:
+                                cf = RecordField(label='Password', value=password)
+                                if record.type:
+                                    cf.type = 'password'
+                                record.fields.append(cf)
+                        else:
+                            record.password = password
+
+                    url = typed_values.pop('URL', '')
+                    if url:
+                        if record.login_url:
+                            if record.login_url != url:
+                                cf = RecordField(label='URL', value=url)
+                                if record.type:
+                                    cf.type = 'url'
+                                record.fields.append(cf)
+                        else:
+                            record.login_url = url
+
+                    for key in typed_values:
+                        value = typed_values[key]
+                        if value:
+                            if record.type:
+                                cf = RecordField(type='text', label=key, value=str(value))
+                            else:
+                                cf = RecordField(label=key, value=str(value))
+                            record.fields.append(cf)
+
+                record.notes = notes
+
+            if account.group or account.shared_folder:
                 fol = Folder()
-                fol.path = account.group.decode('utf-8')
+                if account.shared_folder:
+                    fol.domain = account.shared_folder.name
+                if account.group:
+                    fol.path = account.group.decode('utf-8')
                 record.folders = [fol]
 
             yield record
+
+    def populate_address(self, record, notes):  # type: (Record, dict) -> None
+        person = LastPassPersonName()
+        person.first = notes.pop('First Name', '')
+        person.middle = notes.pop('Middle Name', '')
+        person.last = notes.pop('Last Name', '')
+
+        if person.first or person.last:
+            pf = RecordField(type='name')
+            pf.value = {
+                'first': person.first,
+                'middle': person.middle,
+                'last': person.last
+            }
+            record.fields.append(pf)
+
+        dt = self.lastpass_date(notes.pop('Birthday', None))
+        if dt != -1:
+            dtf = RecordField(type='birthDate', value=dt)
+            record.fields.append(dtf)
+
+        email = notes.pop('Email Address', None)
+        if email:
+            dtf = RecordField(type='email', value=email)
+            record.fields.append(dtf)
+        for phone_type in ['Phone', 'Evening Phone', 'Mobile Phone', 'Fax']:
+            phone = notes.pop(phone_type, '')
+            if phone:
+                try:
+                    phone_dict = json.loads(phone)
+                    if isinstance(phone_dict, dict):
+                        if 'num' in phone_dict:
+                            phone_number = phone_dict['num']
+                            phone_ext = phone_dict.get('ext') or ''
+                            phone_country_code = phone_dict.get('cc3l') or ''
+                            phf = RecordField(type='phone', label=phone_type)
+                            phf.value = {
+                              #  'region': phone_country_code,
+                                'number': phone_number,
+                                'ext': phone_ext,
+                                'type': ('Mobile' if phone_type.startswith('Mobile') else
+                                         'Home' if phone_type.startswith('Evening') else
+                                         'Work')
+                            }
+                            record.fields.append(phf)
+                except:
+                    pass
+
+    def populate_address_only(self, record, lastpass_address):  # type: (Record, LastPassAddress) -> None
+        if lastpass_address:
+            record.type = 'address'
+            address = RecordField(type='address')
+            address.value = {
+                'street1': lastpass_address.street1 or '',
+                'street2': lastpass_address.street2 or '',
+                'city': lastpass_address.city or '',
+                'state': lastpass_address.state or '',
+                'zip': lastpass_address.zip or '',
+                'country': lastpass_address.country or '',
+            }
+            record.fields.append(address)
+
+    def populate_credit_card(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'bankCard'
+        card = RecordField(type='paymentCard')
+        card.value = {
+            'cardNumber': notes.pop('Number', ''),
+            'cardExpirationDate': self.card_expiration(notes.pop('Expiration Date', '')),
+            'cardSecurityCode': notes.pop('Security Code', '')
+        }
+        record.fields.append(card)
+        card_holder = RecordField(type='text', label='cardholderName', value=notes.pop('Name on Card', ''))
+        record.fields.append(card_holder)
+
+        dt = self.lastpass_date(notes.pop('Start Date', None))
+        if dt != -1:
+            dtf = RecordField(type='date', label='Start Date', value=dt)
+            record.fields.append(dtf)
+
+
+    def populate_bank_account(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'bankAccount'
+        bank = RecordField(type='bankAccount')
+        bank.value = {
+            'accountType': notes.pop('Account Type', ''),
+            'routingNumber': notes.pop('Routing Number', ''),
+            'accountNumber': notes.pop('Account Number', ''),
+        }
+        record.fields.append(bank)
+        bank_name = notes.pop('Bank Name', '')
+        if bank_name:
+            record.title = bank_name
+
+    def populate_passport(self, record, notes): # type: (Record, dict) -> None
+        record.type = 'passport'
+        number = RecordField(type='accountNumber', label='passportNumber', value=notes.pop('Number', None))
+        record.fields.append(number)
+        person = LastPassPersonName.from_lastpass(notes.pop('Name', None))
+        if person:
+            pf = RecordField(type='name')
+            pf.value = {
+                'first': person.first,
+                'middle': person.middle,
+                'last': person.last
+            }
+            record.fields.append(pf)
+        dt = self.lastpass_date(notes.pop('Date of Birth', None))
+        if dt != -1:
+            dtf = RecordField(type='birthDate', value=dt)
+            record.fields.append(dtf)
+        dt = self.lastpass_date(notes.pop('Expiration Date', None))
+        if dt != -1:
+            dtf = RecordField(type='expirationDate', value=dt)
+            record.fields.append(dtf)
+        dt = self.lastpass_date(notes.pop('Issued Date', None))
+        if dt != -1:
+            dtf = RecordField(type='date', label='dateIssued', value=dt)
+            record.fields.append(dtf)
+
+    def populate_driver_license(self, record, notes):  # type: (Record, dict) -> Optional[Record]
+        record.type = 'driverLicense'
+        account_number = RecordField(type='accountNumber', label='dlNumber', value=notes.pop('Number', ''))
+        record.fields.append(account_number)
+        dt = self.lastpass_date(notes.pop('Expiration Date', None))
+        if dt != -1:
+            dtf = RecordField(type='expirationDate', value=dt)
+            record.fields.append(dtf)
+        dt = self.lastpass_date(notes.pop('Date of Birth', None))
+        if dt != -1:
+            dtf = RecordField(type='birthDate', value=dt)
+            record.fields.append(dtf)
+        person = LastPassPersonName.from_lastpass(notes.pop('Name', None))
+        if person:
+            pf = RecordField(type='name')
+            pf.value = {
+                'first': person.first,
+                'middle': person.middle,
+                'last': person.last
+            }
+            record.fields.append(pf)
+        address = LastPassAddress.from_lastpass(notes)
+        address_record = None
+        if address:
+            ref_no = self.find_address(address)
+            if ref_no:
+                if record.references is None:
+                    record.references = []
+                address_ref = next((x for x in record.references if x.type == 'address'), None)
+                if address_ref is None:
+                    address_ref = RecordReferences(type='address')
+                    record.references.append(address_ref)
+                address_ref.uids.append(ref_no)
+        return address_record
+
+    def populate_ssn_card(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'ssnCard'
+        number = RecordField(type='accountNumber', label='identityNumber', value=notes.pop('Number', None))
+        record.fields.append(number)
+        person = LastPassPersonName.from_lastpass(notes.pop('Name', None))
+        if person:
+            pf = RecordField(type='name')
+            pf.value = {
+                'first': person.first,
+                'middle': person.middle,
+                'last': person.last
+            }
+            record.fields.append(pf)
+
+    def populate_health_insurance(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'healthInsurance'
+        number = RecordField(type='accountNumber', value=notes.pop('Policy Number', None))
+        record.fields.append(number)
+
+    def populate_membership(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'membership'
+        number = RecordField(type='accountNumber', value=notes.pop('Membership Number', None))
+        record.fields.append(number)
+        person = LastPassPersonName.from_lastpass(notes.pop('Member Name', None))
+        if person:
+            pf = RecordField(type='name')
+            pf.value = {
+                'first': person.first,
+                'middle': person.middle,
+                'last': person.last
+            }
+            record.fields.append(pf)
+        dt = self.lastpass_date(notes.pop('Start Date', None))
+        if dt != -1:
+            dtf = RecordField(type='date', label='Start Date', value=dt)
+            record.fields.append(dtf)
+        dt = self.lastpass_date(notes.pop('Expiration Date', None))
+        if dt != -1:
+            dtf = RecordField(type='date', label='Expiration Date', value=dt)
+            record.fields.append(dtf)
+
+    def populate_database(self,  record, notes):  # type: (Record, dict) -> None
+        record.type = 'databaseCredentials'
+        db_type = RecordField(type='text', label='type', value=notes.pop('Type', None))
+        record.fields.append(db_type)
+
+        host = RecordField(type='host')
+        host.value = {
+            'hostName': notes.pop('Hostname', ''),
+            'port': notes.pop('Port', ''),
+        }
+        record.fields.append(host)
+        record.login_url = ''
+
+    def populate_server(self, record, notes):  # type: (str, Record, dict) -> None
+        record.type = 'serverCredentials'
+        host = RecordField(type='host')
+        host.value = {
+            'hostName': notes.pop('Hostname', ''),
+            'port': notes.pop('Port', ''),
+        }
+        record.fields.append(host)
+
+    def populate_ssh_key(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'sshKeys'
+        passphrase = notes.pop('Passphrase', None)
+        if passphrase:
+            if record.password:
+                if record.password != passphrase:
+                    passphrase = RecordField(type='password', label='passphrase', value=passphrase)
+                    record.fields.append(passphrase)
+            else:
+                record.password = passphrase
+        host = RecordField(type='host')
+        host.value = {
+            'hostName': notes.pop('Hostname', ''),
+            'port': notes.pop('Port', ''),
+        }
+        record.fields.append(host)
+        private_key = notes.pop('Private Key', None)
+        public_key = notes.pop('Public Key', None)
+        if private_key or public_key:
+            value = {
+                'privateKey': private_key,
+                'publicKey': public_key
+            }
+            pk = RecordField(type='keyPair', value=value)
+            record.fields.append(pk)
+
+        dt = self.lastpass_date(notes.pop('Date', None))
+        if dt != -1:
+            dtf = RecordField(type='date', value=dt)
+            record.fields.append(dtf)
+
+    def populate_software_license(self, record, notes):  # type: (Record, dict) -> None
+        record.type = 'softwareLicense'
+        number = RecordField(type='licenseNumber', value=notes.pop('License Key', None))
+        record.fields.append(number)
+        dt = self.lastpass_date(notes.pop('Purchase Date', None))
+        if dt != -1:
+            dtf = RecordField(type='date', label='dateActive', value=dt)
+            record.fields.append(dtf)
+
+
+class LastPassPersonName(object):
+    def __init__(self):
+        self.first = ''
+        self.middle = ''
+        self.last = ''
+
+    @staticmethod
+    def from_lastpass(name):  # type: (str) -> 'Optional[LastPassPersonName]'
+        if not name:
+            return None
+        if not isinstance(name, str):
+            return None
+        person = LastPassPersonName()
+        last, sep, other = name.partition(',')
+        if sep == ',':
+            person.last = last.strip()
+            comps = [x for x in other.strip().split(' ') if x]
+        else:
+            comps = [x for x in name.split(' ') if x]
+            person.last = comps.pop(-1)
+        if len(comps) > 0:
+            person.first = comps.pop(0)
+        if len(comps) > 0:
+            person.middle = ' '.join(comps)
+
+        if not person.first and not person.last:
+            return None
+
+        return person
+
+
+class LastPassAddress(object):
+    def __init__(self):
+        self.street1 = ''
+        self.street2 = ''
+        self.city = ''
+        self.state = ''
+        self.zip = ''
+        self.country = ''
+
+    @staticmethod
+    def _compare_case_insensitive(s1, s2):  # type: (any, any) -> bool
+        if isinstance(s1, str) and isinstance(s2, str):
+            return s1.casefold() == s2.casefold()
+        if s1 is None and s2 is None:
+            return True
+        return False
+
+    def __eq__(self, other):
+        if not isinstance(other, LastPassAddress):
+            return False
+        return (self._compare_case_insensitive(self.street1, other.street1) and
+                self._compare_case_insensitive(self.street2, other.street2) and
+                self._compare_case_insensitive(self.city, other.city) and
+                self._compare_case_insensitive(self.state, other.state))
+
+    @staticmethod
+    def from_lastpass(notes):  # type: (dict) -> 'Optional[LastPassAddress]'
+        if not isinstance(notes, dict):
+            return None
+
+        address = LastPassAddress()
+        if 'Address 1' in notes:
+            address.street1 = notes.pop('Address 1', '')
+            address.street2 = notes.pop('Address 2', '')
+        elif 'Address' in notes:
+            s1, sep, s2 = notes.pop('Address', '').partition(',')
+            address.street1 = s1.strip()
+            if sep == ',':
+                address.street2 = s2.strip()
+        else:
+            return None
+
+        address.city = notes.pop('City / Town', '')
+        address.state = notes.pop('State', '')
+        address.zip = notes.pop('Zip / Postal Code', '')
+        address.country = notes.pop('Country', '')
+
+        return address

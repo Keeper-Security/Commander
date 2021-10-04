@@ -225,10 +225,10 @@ class AutomatorCreateCommand(EnterpriseCommand, AutomatorMixin):
         node = kwargs.get('node')
         nodes = list(self.resolve_nodes(params, node))
         if len(nodes) == 0:
-            logging.warning('Node name \'%s\' is not found', name)
+            logging.warning('Node name \'%s\' is not found', node)
             return
         if len(nodes) > 1:
-            logging.warning('Node name \'%s\' is not unique. Skipping.', name)
+            logging.warning('Node name \'%s\' is not unique. Use Node ID.', node)
             return
         matched_node = nodes[0]
 

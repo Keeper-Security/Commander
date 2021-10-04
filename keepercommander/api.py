@@ -5,7 +5,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2017 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -25,6 +25,9 @@ from google.protobuf.json_format import MessageToJson
 
 from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
 from .proto import client_pb2
+from datetime import datetime
+
+from . import constants, utils, crypto
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -34,7 +37,6 @@ from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
 from keepercommander.recordv3 import RecordV3
 from .ttk import TTK
-from . import crypto
 import cryptography.exceptions
 
 from Cryptodome import Random
@@ -87,7 +89,11 @@ def login(params):
 
     if params.login_v3:
         logging.info('Logging in to Keeper Commander')
-        loginv3.LoginV3Flow.login(params)
+        try:
+            loginv3.LoginV3Flow.login(params)
+        except loginv3.InvalidDeviceToken:
+            logging.warning('Registering new device')
+            loginv3.LoginV3Flow.login(params, new_device=True)
         return
 
     logging.info("Logging in...")
@@ -316,12 +322,16 @@ def change_master_password(params):
     return False
 
 
-def accept_account_transfer_consent(params, share_account_to):
-    print('')
-    answer = input('Do you accept Account Transfer policy? Accept/C(ancel): ')
+def accept_account_transfer_consent(params):
+    share_account_by = params.get_share_account_timestamp()
+    print(constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y')))
+
+    expired = datetime.today() > share_account_by
+    input_options = 'Accept/L(ogout)' if expired else 'Accept/L(ater)'
+    answer = input('Do you accept Account Transfer policy? {}: '.format(input_options))
     answer = answer.lower()
     if answer.lower() == 'accept':
-        for role in share_account_to:
+        for role in params.settings['share_account_to']:
             public_key = RSA.importKey(base64.urlsafe_b64decode(role['public_key'] + '=='))
             transfer_key = encrypt_rsa(params.data_key, public_key)
             request = {
@@ -332,9 +342,7 @@ def accept_account_transfer_consent(params, share_account_to):
             communicate(params, request)
         return True
     else:
-        logging.info('Canceled')
-
-    return False
+        return False
 
 
 def pad_aes_gcm(json):
@@ -490,7 +498,6 @@ def sync_down(params):
     params.available_team_cache = None
     if 'full_sync' in response_json:
         if response_json['full_sync']:
-            if params.debug: print('Full Sync response')
             check_convert_to_folders = True
             params.record_cache.clear()
             params.meta_data_cache.clear()
@@ -776,10 +783,16 @@ def sync_down(params):
                     logging.debug('Shared folder %s name decryption error: %s', shared_folder_uid, e)
                     shared_folder['name_unencrypted'] = shared_folder_uid
                 if 'records' in shared_folder:
+                    shared_folder_key = shared_folder['shared_folder_key_unencrypted']
                     for sfr in shared_folder['records']:
                         if 'record_key_unencrypted' not in sfr:
                             try:
-                                sfr['record_key_unencrypted'] = decrypt_data(sfr['record_key'], shared_folder['shared_folder_key_unencrypted'])
+                                encrypted_key = utils.base64_url_decode(sfr['record_key'])
+                                if len(encrypted_key) == 60:
+                                    decrypted_key = crypto.decrypt_aes_v2(encrypted_key, shared_folder_key)
+                                else:
+                                    decrypted_key = crypto.decrypt_aes_v1(encrypted_key, shared_folder_key)
+                                sfr['record_key_unencrypted'] = decrypted_key
                             except Exception as e:
                                 logging.debug('Shared folder %s record key decryption error: %s', shared_folder_uid, e)
 
@@ -1524,7 +1537,7 @@ def prepare_record_v3(params, record):
 def communicate_rest(params, request, endpoint, rs_type=None):
     api_request_payload = proto.ApiRequestPayload()
     if params.session_token:
-        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+        api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
     if request:
         api_request_payload.payload = request.SerializeToString()
 
@@ -2349,7 +2362,11 @@ def query_enterprise(params):
 
                     params.enterprise = response
     except Exception as e:
-        logging.warning(e)
+        share_account_by = params.get_share_account_timestamp()
+        share_account_expired = share_account_by and datetime.today() > share_account_by
+        # An exception is expected here if an Account Transfer is expired
+        if not share_account_expired:
+            logging.warning(e)
         params.enterprise = None
 
 

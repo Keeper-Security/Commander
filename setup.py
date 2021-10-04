@@ -10,16 +10,16 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 install_requires = [
+    'asciitree',
     'colorama',
-    'cryptography',
-    'pycryptodomex>=3.7.2',
+    'cryptography>=3.4.8',
     'libkeepass',
+    'prompt_toolkit>=2.0.4,<=2.0.10',
+    'protobuf>=3.13.0',
+    'pycryptodomex>=3.7.2',
+    'pyperclip',
     'requests',
     'tabulate',
-    'prompt_toolkit>=2.0.4,<=2.0.10',
-    'asciitree',
-    'protobuf>=3.13.0',
-    'pyperclip'
 ]
 adpasswd_requires = ['ldap3']
 test_requires = ['pytest', 'testfixtures']
@@ -38,7 +38,7 @@ setup(
     classifiers=["Development Status :: 4 - Beta",
                  "License :: OSI Approved :: MIT License",
                  "Operating System :: OS Independent",
-                 "Programming Language :: Python :: 3.5",
+                 "Programming Language :: Python :: 3.6",
                  "Topic :: Security"],
     keywords='security password',
 

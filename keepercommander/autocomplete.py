@@ -20,6 +20,7 @@ from .commands.folder import mv_parser
 from .commands.utils import ConnectCommand
 from .commands import commands, enterprise_commands
 from . import api
+from .subfolder import try_resolve_path as sf_try_resolve_path
 
 
 def no_parse_exception(m):
@@ -47,60 +48,48 @@ folder_parser.error = no_parse_exception
 folder_parser.exit = no_exit
 
 
-def try_resolve_path(params, path):
-    if type(path) is str:
-        folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
-        if len(path) > 0:
-            if path[0] == '/':
-                folder = params.root_folder
-                path = path[1:]
+def unescape_string(have_initial_double_quote, string):
+    """Remove escape sequences; return a literal string for matching."""
+    if have_initial_double_quote:
+        tuple_ = (
+            ('//', '/'),
+            ('\\"', '"'),
+            ('\\\\', '\\'),
+        )
+    else:
+        tuple_ = (
+            ('//', '\0'),
+            ('\\ ', ' '),
+            ('\\"', '"'),
+            (r"\'", "'"),
+            ('\\\\', '\\'),
+            ('\0', '/'),
+        )
+    for from_str, to_str in tuple_:
+        string = string.replace(from_str, to_str)
+    return string
 
-            start = 0
-            while True:
-                idx = path.find('/', start)
-                path_component = ''
-                if idx < 0:
-                    if len(path) > 0:
-                        path_component = path.strip()
-                elif idx > 0 and path[idx - 1] == '\\':
-                    start = idx + 1
-                    continue
-                else:
-                    path_component = path[:idx].strip()
 
-                if len(path_component) == 0:
-                    break
 
-                folder_uid = None
-                if path_component == '.':
-                    folder_uid = folder.uid
-                elif path_component == '..':
-                    folder_uid = folder.parent_uid or ''
-                else:
-                    for uid in folder.subfolders:
-                        sf = params.folder_cache[uid]
-                        if sf.name == path_component:
-                            folder_uid = uid
-
-                if folder_uid is None:
-                    break
-
-                if folder_uid == '':
-                    folder = params.root_folder
-                elif folder_uid in params.folder_cache:
-                    folder = params.folder_cache[folder_uid]
-                else:
-                    break
-                if idx < 0:
-                    path = ''
-                    break
-
-                path = path[idx+1:]
-                start = 0
-
-        return folder, path
-
-    return None
+def escape_string(have_initial_double_quote, string):
+    """Replace special characters in string, for interactive shell quoting, as part of tab-completion."""
+    if have_initial_double_quote:
+        tuple_ = (
+            ('\\', '\\\\'),
+            ('"', r'\"'),
+            ('/', '//'),
+        )
+    else:
+        tuple_ = (
+            ('\\', '\\\\'),
+            ("'", r"\'"),
+            (' ', r'\ '),
+            ('"', r'\"'),
+            ('/', '//'),
+        )
+    for from_str, to_str in tuple_:
+        string = string.replace(from_str, to_str)
+    return string
 
 
 class CommandCompleter(Completer):
@@ -118,7 +107,7 @@ class CommandCompleter(Completer):
         is_double_quote = False
         for c in txt:
             if c == '\\':
-                isEscape = not is_escape
+                is_escape = not is_escape
             elif not is_escape:
                 if c == '\'':
                     if is_double_quote:
@@ -130,10 +119,10 @@ class CommandCompleter(Completer):
                     is_double_quote = not is_double_quote
 
         if is_quote:
-            return txt + '\''
+            txt = txt + '\''
 
         if is_double_quote:
-            return txt + '"'
+            txt = txt + '"'
 
         return txt
 
@@ -161,28 +150,26 @@ class CommandCompleter(Completer):
                             cmd = ali[0]
                         else:
                             cmd = ali
-                    raw_input = document.text[pos+1:].strip()
-                    context = ''
                     extra = dict()
+                    raw_input = document.text[pos+1:].lstrip()
+                    extra['have_initial_double_quote'] = bool(raw_input) and raw_input[0] == '"'
+                    context = ''
                     if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
                                'rm', 'ls', 'clipboard-copy', 'find-password'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            extra['escape_space'] = args == raw_input
                             opts, _ = record_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
                     elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            extra['escape_space'] = args == raw_input
                             opts, _ = folder_parser.parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.folder or ''
                             context = 'folder'
                     elif cmd in {'mv', 'ln'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            extra['escape_space'] = args == raw_input
                             opts, _ = mv_parser.parse_known_args(shlex.split(args))
                             if opts.dst is None:
                                 word = document.get_word_under_cursor()
@@ -207,22 +194,41 @@ class CommandCompleter(Completer):
                             context = 'connect'
 
                     if context in {'folder', 'path'}:
-                        rs = try_resolve_path(self.params, extra['prefix'])
+                        rs = sf_try_resolve_path(self.params, extra['prefix'])
                         if rs is not None:
-                            folder, name = rs
-                            is_path = False if name else True
+                            folder, possible_prefix = rs
+                            is_path = False if possible_prefix else True
+                            unescaped_possible_prefix = unescape_string(extra['have_initial_double_quote'], possible_prefix)
                             for uid in folder.subfolders:
                                 f = self.params.folder_cache[uid]
-                                if f.name.startswith(name) and len(name) < len(f.name):
-                                    n = f.name
-                                    if is_path and not extra['prefix'].endswith('/'):
-                                        n = '/' + n
-                                    if extra.get('escape_space'):
-                                        n = n.replace(' ', '\\ ')
-                                    yield Completion(n, display=n + '/', start_position=-len(name))
+                                full_folder_or_path_str = f.name
+                                if (
+                                    full_folder_or_path_str.startswith(unescaped_possible_prefix) and 
+                                    len(unescaped_possible_prefix) < len(full_folder_or_path_str)
+                                ):
+                                    escd_full_folder_or_path_str = escape_string(
+                                        extra['have_initial_double_quote'],
+                                        full_folder_or_path_str,
+                                    )
+                                    if is_path and not extra['prefix'].endswith('/') and bool(extra['prefix']):
+                                        escd_full_folder_or_path_str = '/' + escd_full_folder_or_path_str
+                                    # This is a little precarious.  shlex has stripped out the quoting previously, and we've
+                                    # imposed our own layer of quoting as well.  Here we're trying to put it back the way it
+                                    # was for just /part/ of the original input.  If we don't get it precisely correct,
+                                    # then the completion will appear in the wrong place in the line of edited text in the
+                                    # keeper shell.
+                                    escaped_possible_prefix = escape_string(
+                                         extra['have_initial_double_quote'],
+                                         unescaped_possible_prefix,
+                                    )
+                                    yield Completion(
+                                        text=escd_full_folder_or_path_str,
+                                        display=escd_full_folder_or_path_str + '/',
+                                        start_position=-len(escaped_possible_prefix),
+                                    )
 
                             if context == 'path':
-                                name = name.lower()
+                                possible_prefix = possible_prefix.lower()
                                 folder_uid = folder.uid or ''
                                 if folder_uid in self.params.subfolder_record_cache:
                                     for uid in self.params.subfolder_record_cache[folder_uid]:
@@ -232,13 +238,12 @@ class CommandCompleter(Completer):
                                             r['display_name'] = rec.title or rec.record_uid
                                         n = r.get('display_name') or ''
                                         if len(n) > 0:
-                                            if n.lower().startswith(name) and len(name) < len(n):
-                                                if extra.get('escape_space'):
-                                                    n = n.replace(' ', '\\ ')
+                                            if n.lower().startswith(possible_prefix) and len(possible_prefix) < len(n):
+                                                n = escape_string(extra['have_initial_double_quote'], n)
                                                 d = n
                                                 if len(d) > 39:
                                                     d = d[:29] + '...' + d[-7:]
-                                                yield Completion(n, display=d, start_position=-len(name))
+                                                yield Completion(text=n, display=d, start_position=-len(possible_prefix))
                     elif context == 'command':
                         cmd = extra['prefix']
                         for c in itertools.chain(commands.keys(), enterprise_commands.keys()):
@@ -257,7 +262,7 @@ class CommandCompleter(Completer):
                                 if name.startswith(comp):
                                     names.append(x.name)
                         for name in names:
-                            yield Completion(name, display=name, start_position=-len(cmd))
+                            yield Completion(text=name, display=name, start_position=-len(cmd))
 
         except Exception as e:
             pass
