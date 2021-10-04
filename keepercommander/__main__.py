@@ -40,18 +40,13 @@ def get_params_from_config(config_filename):
         logging.debug("Setting config file from KEEPER_CONFIG_FILE env variable %s" % os.getenv('KEEPER_CONFIG_FILE'))
         params.config_filename = os.getenv('KEEPER_CONFIG_FILE')
     elif opts.launched_with_shortcut:
-        current_user_home_path = str(Path.home())
-        path_sep = os.path.sep
+        launcher_keeper_folder_path = Path.home().joinpath('.keeper')
+        launcher_keeper_folder_path.mkdir(parents=True, exist_ok=True)
 
         # unix: /Users/username/.keeper/
         # win: C:\\Users\\username\\.keeper\\
 
-        laucher_keeper_folder_path = current_user_home_path + path_sep + '.keeper'
-        logging.debug("Launcher keeper folder: %s" % laucher_keeper_folder_path)
-
-        Path(laucher_keeper_folder_path).mkdir(parents=True, exist_ok=True)
-
-        params.config_filename = laucher_keeper_folder_path + path_sep + 'config.json'
+        params.config_filename = str(launcher_keeper_folder_path.joinpath('config.json'))
     else:
         params.config_filename = config_filename or 'config.json'
 
@@ -168,14 +163,13 @@ def main(from_package=False):
     opts, flags = parser.parse_known_args(sys.argv[1:])
     params = get_params_from_config(opts.config)
 
-    if opts.debug:
-        params.debug = opts.debug
-        is_debug = logging.getLogger().level <= logging.DEBUG
-        logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
-        logging.info('Debug %s', 'OFF' if is_debug else 'ON')
-
     if opts.batch_mode:
         params.batch_mode = True
+
+    if opts.debug:
+        params.debug = opts.debug
+
+    logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO, format='%(message)s')
 
     if opts.login_v3:
         params.login_v3 = 'TRUE'.startswith(str(opts.login_v3).upper())
@@ -209,8 +203,6 @@ def main(from_package=False):
         if opts.command == '?' or not params.commands:
             usage('')
 
-    logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s', force=True)
-
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
     else:
@@ -243,12 +235,7 @@ def set_working_dir():
     opts, flags = parser.parse_known_args(sys.argv[1:])
 
     if opts.launched_with_shortcut:
-        current_user_home_path = str(Path.home())
-
-        logging.debug("User home: %s" % current_user_home_path)
-
-        current_user_home_path = str(Path.home())
-        os.chdir(current_user_home_path)
+        os.chdir(Path.home())
 
 
 if __name__ == '__main__':
