@@ -209,7 +209,8 @@ def main(from_package=False):
         if opts.command == '?' or not params.commands:
             usage('')
 
-    logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.INFO, format='%(message)s')
+    logging.basicConfig(format='%(message)s')
+    logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.INFO)
 
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
