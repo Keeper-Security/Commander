@@ -938,14 +938,16 @@ def sync_down(params):
             for rt in record_types_rs.recordTypes:
                 params.record_type_cache[rt.recordTypeId] = rt.content
 
+    if not hasattr(params, 'breach_watch_security_data'):
+        params.breach_watch_records = {}
     if 'breach_watch_records' in response_json:
         logging.debug('Processing breach_watch_records')
         process_breach_watch_records(params, response_json['breach_watch_records'])
 
+    if not hasattr(params, 'breach_watch_security_data'):
+        params.breach_watch_security_data = {}
     if 'breach_watch_security_data' in response_json:
         logging.debug('Processing breach_watch_security_data')
-        if not hasattr(params, 'breach_watch_security_data'):
-            params.breach_watch_security_data = {}
         params.breach_watch_security_data.update(response_json['breach_watch_security_data'])
 
     if 'full_sync' in response_json:
