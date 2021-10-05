@@ -77,7 +77,13 @@ def register_command_info(aliases, command_info):
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Show the history of a record modifications.')
-record_history_parser.add_argument('-a', '--action', dest='action', choices=['list', 'diff', 'show', 'restore'], action='store', help='filter by record history type. (default: \'list\')')
+record_history_parser.add_argument(
+    '-a', '--action',
+    dest='action',
+    choices=['list', 'diff', 'show', 'restore'],
+    action='store',
+    help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
+)
 record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='only show the details for a specific revision')
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 record_history_parser.error = raise_parse_exception
