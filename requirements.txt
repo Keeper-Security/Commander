@@ -9,3 +9,4 @@ pytest
 protobuf
 pyperclip
 libkeepass
+keeper-secrets-manager-core
