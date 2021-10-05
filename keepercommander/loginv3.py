@@ -640,7 +640,7 @@ class LoginV3API:
         return rs
 
     @staticmethod
-    def get_device_id(params, new_device):   # type: (KeeperParams, bool) -> bytes
+    def get_device_id(params, new_device=False):   # type: (KeeperParams, bool) -> bytes
         if new_device:
             logging.info('Resetting device token')
             params.device_token = None
