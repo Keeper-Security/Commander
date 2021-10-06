@@ -226,9 +226,6 @@ class LoginV3Flow:
             else:
                 raise Exception('Please log into the web Vault to update your account settings.')
 
-        if not params.device_private_key:
-            params.device_private_key = CommonHelperMethods.get_private_key_ecc(params)
-
         logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
         return True
 
