@@ -35,7 +35,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile,
-                       RecordReferences)
+                       RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
 from .. import folder_pb2
 from .. import utils, crypto
@@ -44,9 +44,7 @@ from ..proto import breachwatch_pb2 as breachwatch_proto
 from ..recordv3 import RecordV3
 from ..commands.base import user_choice
 
-TWO_FACTOR_CODE = 'TFC:Keeper'
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
-FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 
 
 def get_import_folder(params, folder_uid, record_uid):
@@ -315,22 +313,69 @@ def export(params, file_format, filename, **kwargs):
         logging.info('%d records exported', rec_count)
 
 
-def _import(params, file_format, filename, **kwargs):
-    """Import records from one of a variety of sources."""
+def _import_user_permissions(params, shared_folders):  # type: (KeeperParams, List[ImportSharedFolder]) -> None
+    if not shared_folders:
+        return
+
+    folders = [x for x in shared_folders if isinstance(x, ImportSharedFolder) and x.permissions]
+    if not folders:
+        return
+
     api.sync_down(params)
 
-    enterprise_public_key = None
-    # check if enterprise account
-    if params.license and 'account_type' in params.license:
-        if params.license['account_type'] == 2:
-            try:
-                rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
-                if rs.enterpriseECCPublicKey:
-                    enterprise_public_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
-            except Exception as e:
-                logging.debug('Get enterprise public key: %s', e)
+    folder_lookup = {}
+    if params.folder_cache:
+        for f_uid in params.folder_cache:
+            fol = params.folder_cache[f_uid]
+            f_key = '{0}|{1}'.format((fol.name or '').casefold(), fol.parent_uid or '')
+            folder_lookup[f_key] = f_uid, fol.type
 
+    for fol in folders:
+        comps = list(path_components(fol.path))
+        parent_uid = ''
+        fol_type = BaseFolderNode.RootFolderType
+        for i in range(len(comps)):
+            is_last = False
+            if i == len(comps) - 1:
+                is_last = True
+            comp = comps[i]
+            if not comp:
+                continue
+            f_key = '{0}|{1}'.format(comp.casefold(), parent_uid)
+            if f_key in folder_lookup:
+                parent_uid, fol_type = folder_lookup[f_key]
+                if is_last and fol_type == BaseFolderNode.SharedFolderType:
+                    fol.uid = parent_uid
+            else:
+                break
+
+    folders = [x for x in folders if x.uid in params.shared_folder_cache]
+    if folders:
+        permissions = prepare_folder_permission(params, folders)
+        if permissions:
+            rs = api.execute_batch(params, permissions)
+            api.sync_down(params)
+            if rs:
+                teams_added = 0
+                users_added = 0
+                for r in rs:
+                    if 'add_teams' in r:
+                        teams_added += len([x for x in r['add_teams'] if x.get('status') == 'success'])
+                    if 'add_users' in r:
+                        users_added += len([x for x in r['add_users'] if x.get('status') == 'success'])
+                if teams_added > 0:
+                    logging.info("%d team(s) added to shared folders", teams_added)
+                if users_added > 0:
+                    logging.info("%d user(s) added to shared folders", users_added)
+
+
+def _import(params, file_format, filename, **kwargs):
+    """Import records from one of a variety of sources."""
     shared = kwargs.get('shared') or False
+    import_users = kwargs.get('users_only') or False
+    old_domain = kwargs.get('old_domain')
+    new_domain = kwargs.get('new_domain')
+
     import_into = kwargs.get('import_into') or ''
     if import_into:
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
@@ -344,7 +389,7 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
-    for x in importer.execute(filename):
+    for x in importer.execute(filename, users_only=import_users, old_domain=old_domain, new_domain=new_domain):
         if type(x) is ImportRecord:
             if shared or import_into:
                 if not x.folders:
@@ -380,6 +425,23 @@ def _import(params, file_format, filename, **kwargs):
 
             folders.append(x)
 
+    if import_users:
+        _import_user_permissions(params, folders)
+        return
+
+    api.sync_down(params)
+
+    enterprise_public_key = None
+    # check if enterprise account
+    if params.license and 'account_type' in params.license:
+        if params.license['account_type'] == 2:
+            try:
+                rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
+                if rs.enterpriseECCPublicKey:
+                    enterprise_public_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
+            except Exception as e:
+                logging.debug('Get enterprise public key: %s', e)
+
     if shared:
         manage_users = kwargs.get('manage_users') or False
         manage_records = kwargs.get('manage_records') or False
@@ -406,12 +468,6 @@ def _import(params, file_format, filename, **kwargs):
         fol_rs, _ = execute_import_folder_record(params, folder_add, None)
         _ = fol_rs
         api.sync_down(params)
-
-    if folders:
-        permissions = prepare_folder_permission(params, folders)
-        if permissions:
-            api.execute_batch(params, permissions)
-            api.sync_down(params)
 
     if files:
         pass
@@ -525,9 +581,7 @@ def _import(params, file_format, filename, **kwargs):
                         if folder.type == BaseFolderNode.RootFolderType:
                             folder_uid = ''
 
-                if import_record.type:   # V3
-                    if not v3_enabled:
-                        continue
+                if import_record.type and v3_enabled:   # V3
                     v3_add_rq = record_proto.RecordAdd()
                     v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
                     v3_add_rq.client_modified_time = utils.current_milli_time()
@@ -1064,7 +1118,8 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def parepare_record_audit(params, uids, enterprise_public_key):  # type: (KeeperParams, Iterator[str], any) -> Iterator[record_proto.RecordAddAuditData]
+def parepare_record_audit(params, uids, enterprise_public_key):
+    # type: (KeeperParams, Iterator[str], any) -> Iterator[record_proto.RecordAddAuditData]
     for uid in uids:
         if uid in params.record_cache:
             keeper_record = params.record_cache[uid]
@@ -1158,49 +1213,6 @@ def tokenize_full_import_record(record):   # type: (ImportRecord) -> Iterator[st
         hash_key = field.hash_key()
         if hash_key:
             yield hash_key
-
-
-'''
-def tokenize_partial_preexisting_record(record):   # type: (Record) -> [str]
-    """
-    Turn a preexisting record into an iterable of str's for hashing.
-
-    Examine just the relevant parts of the record.
-
-    For now at least, this is the same as tokenize_partial_import_record().
-    """
-    return tokenize_partial_import_record(record)
-'''
-
-'''
-def tokenize_full_record(record):   # type: (ImportRecord) -> Iterator[str]
-    """Turn a preexisting record into an iterable of str's for hashing."""
-yield record.title or ''
-yield record.login or ''
-yield record.password or ''
-yield record.login_url or ''
-yield record.notes or ''
-
-custom = {}
-if record.custom_fields:
-    for cf in record.custom_fields:
-        if cf.get('name') and cf.get('value'):
-            custom[cf.get('name')] = cf.get('value')
-if record.totp:
-    custom[TWO_FACTOR_CODE] = record.totp
-if len(custom) > 0:
-    keys = list(custom.keys())
-    keys.sort()
-    for key in keys:
-        yield key + ':' + custom[key]
-        
-def build_hash_dict(params, tokenize_gen):
-    """Return a dict of hashes to record uid's with a parameterized tokenizing generator."""
-    preexisting_record_hash = {}
-    for preexisting_r_uid in params.record_cache:
-        preexisting_record_hash[build_record_hash(params.record_cache[preexisting_r_uid], tokenize_gen)] = preexisting_r_uid
-    return preexisting_record_hash
-'''
 
 
 def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord, Optional[dict]) -> (dict, dict)
@@ -1441,47 +1453,6 @@ def prepare_record_add_or_update(update_flag, params, records):
                 ref.uids = [external_lookup[x] for x in ref.uids if x in external_lookup]
 
     return record_to_import
-
-
-'''
-    record_adds = []
-    record_updates = []
-    for rec_to_import_or_update in recs_to_import_or_update:
-        perform_import_or_update = 'neither'
-
-        full_hash_of_cur_rec = build_record_hash(rec_to_import_or_update, tokenize_full_import_record)
-        partial_hash_of_cur_rec = build_record_hash(rec_to_import_or_update, tokenize_partial_import_record)
-        # Decide what kind of operation is needed.
-        if full_hash_of_cur_rec in preexisting_entire_record_hash:
-            # We do not need to do a record update; we already have this record in its entirety.
-            pass
-        elif partial_hash_of_cur_rec in preexisting_partial_record_hash and update_flag:
-            # This is a record to update instead of importing it.
-            rec_to_import_or_update.uid = preexisting_partial_record_hash[partial_hash_of_cur_rec]
-            perform_import_or_update = 'update'
-        else:
-            # Create a new UID for the new record, and signal that we need to do the import.
-            # We do this conditionally for --update, and unconditionally for import without --update.
-            rec_to_import_or_update.uid = api.generate_record_uid()
-            perform_import_or_update = 'import'
-
-        # Act on the selected operation.
-        if perform_import_or_update == 'update':
-            rec_req = construct_update_rec_req(params, preexisting_partial_record_hash, rec_to_import_or_update)
-            # Schedule the record for later batch-update.
-            record_updates.append(rec_req)
-        elif perform_import_or_update == 'import':
-            rec_req = construct_import_rec_req(params, preexisting_entire_record_hash, rec_to_import_or_update)
-            # Schedule the record for later batch-addition.
-            record_adds.append(rec_req)
-        elif perform_import_or_update == 'neither':
-            # Nothing to do.
-            pass
-        else:
-            raise AssertionError('perform_import_or_update has a strange value: {}'.format(perform_import_or_update))
-
-    return record_adds, record_updates
-'''
 
 
 def prepare_record_link(params, records):

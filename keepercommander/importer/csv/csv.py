@@ -12,7 +12,8 @@
 import csv
 import sys
 
-from ..importer import BaseFileImporter, BaseExporter, Record, Folder, RecordField
+from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, RecordField, TWO_FACTOR_CODE,
+                        FIELD_TYPE_ONE_TIME_CODE)
 
 
 '''
@@ -29,7 +30,7 @@ from ..importer import BaseFileImporter, BaseExporter, Record, Folder, RecordFie
 
 class KeeperCsvImporter(BaseFileImporter):
 
-    def do_import(self, filename):
+    def do_import(self, filename, **kwargs):
         with open(filename, "r", encoding='utf-8-sig') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
@@ -69,7 +70,10 @@ class KeeperCsvImporter(BaseFileImporter):
                                         record.uid = value
                                     else:
                                         field = RecordField()
-                                        field.label = key
+                                        if key == TWO_FACTOR_CODE:
+                                            field.type = FIELD_TYPE_ONE_TIME_CODE
+                                        else:
+                                            field.label = key
                                         field.value = value
                                         record.fields.append(field)
                     yield record
@@ -100,7 +104,10 @@ class KeeperCsvExporter(BaseExporter):
                 row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
                 if r.fields:
                     for cf in r.fields:
-                        if cf.label:
+                        if cf.type == FIELD_TYPE_ONE_TIME_CODE:
+                            row.append(TWO_FACTOR_CODE)
+                            row.append(str(cf.value))
+                        elif cf.label:
                             row.append(cf.label)
                             row.append(str(cf.value))
                 row.append('$record_uid')

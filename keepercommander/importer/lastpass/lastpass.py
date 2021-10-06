@@ -15,14 +15,25 @@ import json
 import logging
 from typing import Optional, List
 
-from ..importer import BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission
+from ..importer import (BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission)
 from .account import Account
 from .exceptions import LastPassUnknownError
 from .vault import Vault
 
 
+def replace_email_domain(email, old_domain, new_domain):
+    # type: (str, Optional[str], Optional[str]) -> str
+    if old_domain and new_domain and email.endswith(f'@{old_domain}'):
+        email_user, domain = email.split('@')
+        return f'{email_user}@{new_domain}'
+    else:
+        return email
+
+
 class LastPassImporter(BaseImporter):
     def __init__(self):
+        super(LastPassImporter, self).__init__()
+
         self.addresses = []  # type: List[LastPassAddress]
         self.months = {}
         _months = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
@@ -110,7 +121,7 @@ class LastPassImporter(BaseImporter):
             fields[key] = value
         return fields
 
-    def do_import(self, name):
+    def do_import(self, name, users_only=False, old_domain=None, new_domain=None, **kwargs):
         username = name
         password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
         print('Press <Enter> if account is not protected with Multifactor Authentication')
@@ -119,7 +130,7 @@ class LastPassImporter(BaseImporter):
             twofa_code = None
 
         try:
-            vault = Vault.open_remote(username, password, multifactor_password=twofa_code)
+            vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only)
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
@@ -132,23 +143,26 @@ class LastPassImporter(BaseImporter):
             folder = SharedFolder()
             folder.path = shared_folder.name
             folder.permissions = []
-            for member in shared_folder.members:
-                perm = Permission()
-                perm.name = member['username']
-                perm.manage_records = member['readonly'] == '0'
-                perm.manage_users = member['can_administer'] == '1'
-                folder.permissions.append(perm)
-            for team in shared_folder.teams:
-                perm = Permission()
-                perm.name = team['name']
-                perm.manage_records = team['readonly'] == '0'
-                perm.manage_users = team['can_administer'] == '1'
-                folder.permissions.append(perm)
+            if shared_folder.members:
+                for member in shared_folder.members:
+                    perm = Permission()
+                    perm.name = replace_email_domain(member['username'], old_domain, new_domain)
+                    perm.manage_records = member['readonly'] == '0'
+                    perm.manage_users = member['can_administer'] == '1'
+                    folder.permissions.append(perm)
+            if shared_folder.teams:
+                for team in shared_folder.teams:
+                    perm = Permission()
+                    perm.name = team['name']
+                    perm.manage_records = team['readonly'] == '0'
+                    perm.manage_users = team['can_administer'] == '1'
+                    folder.permissions.append(perm)
 
             yield folder
 
         for account in vault.accounts:  # type: Account
             record = Record()
+            is_secure_note = False
             if account.name:
                 record.title = account.name.decode('utf-8')
             if account.username:
@@ -158,6 +172,7 @@ class LastPassImporter(BaseImporter):
             if account.url:
                 record.login_url = account.url.decode('utf-8')
                 if record.login_url == 'http://sn':
+                    is_secure_note = True
                     record.login_url = None
                 elif record.login_url == 'http://group':
                     continue
@@ -194,8 +209,6 @@ class LastPassImporter(BaseImporter):
                             self.populate_health_insurance(record, typed_values)
                         elif note_type == 'Membership':
                             self.populate_membership(record, typed_values)
-                        elif note_type == 'Email Account' or note_type == 'Instant Messenger':
-                            record.type = 'login'
                         elif note_type == 'Database':
                             self.populate_database(record, typed_values)
                         elif note_type == 'Server':
@@ -204,6 +217,8 @@ class LastPassImporter(BaseImporter):
                             self.populate_ssh_key(record, typed_values)
                         elif note_type == 'Software License':
                             self.populate_software_license(record, typed_values)
+                        else:
+                            record.type = 'login'
 
                     username = typed_values.pop('Username', '')
                     if username:
@@ -246,6 +261,15 @@ class LastPassImporter(BaseImporter):
                             else:
                                 cf = RecordField(label=key, value=str(value))
                             record.fields.append(cf)
+                else:
+                    if is_secure_note and not record.login and not record.password:
+                        record.type = 'encryptedNotes'
+                        cf = RecordField(type='note', value=notes)
+                        record.fields.append(cf)
+                        notes = ''
+                    else:
+                        if record.login_url == 'http://':
+                            record.login_url = ''
 
                 record.notes = notes
 
@@ -430,6 +454,10 @@ class LastPassImporter(BaseImporter):
         record.type = 'healthInsurance'
         number = RecordField(type='accountNumber', value=notes.pop('Policy Number', None))
         record.fields.append(number)
+        dt = self.lastpass_date(notes.pop('Expiration', None))
+        if dt != -1:
+            dtf = RecordField(type='date', label='Expiration', value=dt)
+            record.fields.append(dtf)
 
     def populate_membership(self, record, notes):  # type: (Record, dict) -> None
         record.type = 'membership'

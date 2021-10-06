@@ -7,12 +7,13 @@ from .shared_folder import LastpassSharedFolder
 
 class Vault(object):
     @classmethod
-    def open_remote(cls, username, password, multifactor_password=None, client_id=None):
+    def open_remote(cls, username, password, multifactor_password=None, client_id=None, **kwargs):
         """Fetches a blob from the server and creates a vault"""
         session = fetcher.login(username, password, multifactor_password, client_id)
         blob = fetcher.fetch(session)
         encryption_key = blob.encryption_key(username, password)
-        vault = cls(blob, encryption_key, session)
+        vault = cls(blob, encryption_key, session, kwargs.get('users_only') or False)
+
         fetcher.logout(session)
         return vault
 
@@ -22,7 +23,7 @@ class Vault(object):
         # TODO: read the blob here
         raise NotImplementedError()
 
-    def __init__(self, blob, encryption_key, session):
+    def __init__(self, blob, encryption_key, session, shared_folder_details):
         """This more of an internal method, use one of the static constructors instead"""
         chunks = parser.extract_chunks(blob)
 
@@ -34,7 +35,7 @@ class Vault(object):
         self.accounts = self.parse_accounts(chunks, encryption_key)
 
         try:
-            if self.shared_folders and len(self.shared_folders) < 50:
+            if self.shared_folders and shared_folder_details:
                 for shared_folder in self.shared_folders:
                     members, teams, error = fetcher.fetch_shared_folder_members(session, shared_folder.id)
                     if error:

@@ -19,6 +19,8 @@ from typing import List, Optional, Union
 from ..error import CommandError
 
 PathDelimiter = '\\'
+TWO_FACTOR_CODE = 'TFC:Keeper'
+FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 
 
 def importer_for_format(input_format):
@@ -126,11 +128,11 @@ class Attachment:
 
 class Folder:
     def __init__(self):
-        self.uid = None        # type: str | None
-        self.domain = None     # type: str | None
-        self.path = None       # type: str | None
-        self.can_edit = None   # type: bool | None
-        self.can_share = None  # type: bool | None
+        self.uid = None        # type: Optional[str]
+        self.domain = None     # type: Optional[str]
+        self.path = None       # type: Optional[str]
+        self.can_edit = None   # type: Optional[str]
+        self.can_share = None  # type: Optional[str]
 
     def get_folder_path(self):
         path = self.domain or ''
@@ -237,11 +239,13 @@ class File:
 
 
 class BaseImporter(abc.ABC):
-    def execute(self, name):  # type: (BaseImporter, str) -> collections.Iterable[Union[Record, SharedFolder, File]]
-        yield from self.do_import(name)
+    def execute(self, name, **kwargs):
+        # type: (BaseImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
+        yield from self.do_import(name, **kwargs)
 
     @abc.abstractmethod
-    def do_import(self, filename):  # type: (BaseImporter, str) -> collections.Iterable[Union[Record, SharedFolder, File]]
+    def do_import(self, filename, **kwargs):
+        # type: (BaseImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
         pass
 
     def extension(self):
@@ -249,8 +253,11 @@ class BaseImporter(abc.ABC):
 
 
 class BaseFileImporter(BaseImporter, abc.ABC):
-    def execute(self, name):
-        # type: (BaseFileImporter, str) -> collections.Iterable[Union[Record, SharedFolder, File]]
+    def __init__(self):
+        super(BaseFileImporter, self).__init__()
+
+    def execute(self, name, **kwargs):
+        # type: (BaseFileImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
 
         path = os.path.expanduser(name)
         if not os.path.isfile(path):
@@ -261,7 +268,7 @@ class BaseFileImporter(BaseImporter, abc.ABC):
         if not os.path.isfile(path):
             raise CommandError('import', 'File \'{0}\' does not exist'.format(name))
 
-        yield from self.do_import(path)
+        yield from self.do_import(path, **kwargs)
 
 
 class BaseExporter(abc.ABC):

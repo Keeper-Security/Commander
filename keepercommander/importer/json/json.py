@@ -12,13 +12,14 @@
 import json
 import sys
 
-from typing import Union, List
+from typing import List
 
 from ..importer import BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission
 
 
 class KeeperJsonImporter(BaseFileImporter):
-    def do_import(self, filename):
+    def do_import(self, filename, **kwargs):
+        users_only = kwargs.get('users_only') or False
         with open(filename, "r", encoding='utf-8') as json_file:
             j = json.load(json_file)
             records = None
@@ -38,7 +39,7 @@ class KeeperJsonImporter(BaseFileImporter):
                     fol.manage_users = shf.get('manage_users') or False
                     fol.can_edit = shf.get('can_edit') or False
                     fol.can_share = shf.get('can_share') or False
-                    if 'permissions' in shf:
+                    if users_only and 'permissions' in shf:
                         fol.permissions = []
                         for perm in shf['permissions']:
                             p = Permission()
@@ -50,7 +51,7 @@ class KeeperJsonImporter(BaseFileImporter):
 
                     yield fol
 
-            if records:
+            if not users_only and records:
                 for r in records:
                     record = Record()
                     record.uid = r.get('uid')
