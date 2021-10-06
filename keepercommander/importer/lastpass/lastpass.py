@@ -15,12 +15,10 @@ import json
 import logging
 from typing import Optional, List
 
-from ..importer import (BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission,
-                        FIELD_TYPE_ONE_TIME_CODE)
+from ..importer import (BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission)
 from .account import Account
 from .exceptions import LastPassUnknownError
 from .vault import Vault
-from ...record import get_totp_code
 
 
 def replace_email_domain(email, old_domain, new_domain):
@@ -124,19 +122,12 @@ class LastPassImporter(BaseImporter):
         return fields
 
     def do_import(self, name, users_only=False, old_domain=None, new_domain=None, **kwargs):
-        if self.record:
-            username = self.record.login
-            password = self.record.password
-            totp_field = next((x for x in self.record.fields if x.type == FIELD_TYPE_ONE_TIME_CODE))
-            if totp_field:
-                twofa_code, _, _ = get_totp_code(totp_field.value)
-        else:
-            username = name
-            password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
-            print('Press <Enter> if account is not protected with Multifactor Authentication')
-            twofa_code = getpass.getpass(prompt='...' + 'Multifactor Password'.rjust(30) + ': ', stream=None)
-            if not twofa_code:
-                twofa_code = None
+        username = name
+        password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
+        print('Press <Enter> if account is not protected with Multifactor Authentication')
+        twofa_code = getpass.getpass(prompt='...' + 'Multifactor Password'.rjust(30) + ': ', stream=None)
+        if not twofa_code:
+            twofa_code = None
 
         try:
             vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only)
@@ -218,8 +209,6 @@ class LastPassImporter(BaseImporter):
                             self.populate_health_insurance(record, typed_values)
                         elif note_type == 'Membership':
                             self.populate_membership(record, typed_values)
-                        elif note_type == 'Email Account' or note_type == 'Instant Messenger':
-                            record.type = 'login'
                         elif note_type == 'Database':
                             self.populate_database(record, typed_values)
                         elif note_type == 'Server':
@@ -228,6 +217,8 @@ class LastPassImporter(BaseImporter):
                             self.populate_ssh_key(record, typed_values)
                         elif note_type == 'Software License':
                             self.populate_software_license(record, typed_values)
+                        else:
+                            record.type = 'login'
 
                     username = typed_values.pop('Username', '')
                     if username:

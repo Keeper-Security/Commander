@@ -382,8 +382,6 @@ def _import(params, file_format, filename, **kwargs):
     update_flag = kwargs['update_flag']
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
-    if filename in params.record_cache:
-        importer.record = convert_keeper_record(params.record_cache[filename])
 
     records_before = len(params.record_cache)
 

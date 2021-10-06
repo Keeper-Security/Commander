@@ -128,11 +128,11 @@ class Attachment:
 
 class Folder:
     def __init__(self):
-        self.uid = None        # type: str | None
-        self.domain = None     # type: str | None
-        self.path = None       # type: str | None
-        self.can_edit = None   # type: bool | None
-        self.can_share = None  # type: bool | None
+        self.uid = None        # type: Optional[str]
+        self.domain = None     # type: Optional[str]
+        self.path = None       # type: Optional[str]
+        self.can_edit = None   # type: Optional[str]
+        self.can_share = None  # type: Optional[str]
 
     def get_folder_path(self):
         path = self.domain or ''
@@ -239,9 +239,6 @@ class File:
 
 
 class BaseImporter(abc.ABC):
-    def __init__(self):
-        self.record = None   # type: Optional[Record]
-
     def execute(self, name, **kwargs):
         # type: (BaseImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
         yield from self.do_import(name, **kwargs)
