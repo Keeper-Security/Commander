@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import copy
 import json
 import base64
 import collections
@@ -20,6 +21,7 @@ import hashlib
 import logging
 import urllib.parse
 import binascii
+from urllib.parse import urlparse, urlunparse
 
 from google.protobuf.json_format import MessageToJson
 
@@ -1560,7 +1562,25 @@ def communicate_rest(params, request, endpoint, rs_type=None):
     raise KeeperApiError('Error', endpoint)
 
 
-def communicate_rest_not_authed(params, request, endpoint, rs_type=None):
+def is_us_netloc(netloc):
+    """
+    Return True iff netloc is a US host.
+
+    We return True for, EG:
+        keepersecurity.com
+        dev.keepersecurity.com
+        qa.keepersecurity.com
+
+    We return False for, EG:
+        keepersecurity.eu
+        keepersecurity.com.au
+        govcloud.keepersecurity.us
+    """
+    usa_host = constants.KEEPER_PUBLIC_HOSTS['US']
+    return netloc == usa_host or netloc.endswith('.' + usa_host)
+
+
+def communicate_rest_not_authed(params, request, endpoint, rs_type=None, *, force_usa=False):
     """
     Like communicate_rest, but:
 
@@ -1573,7 +1593,17 @@ def communicate_rest_not_authed(params, request, endpoint, rs_type=None):
     if request:
         api_request_payload.payload = request.SerializeToString()
 
-    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
+    duped_rest_context = copy.deepcopy(params.rest_context)
+    if force_usa:
+        # EG: breachwatch is only available on our USA server, so map non-us hosts to us. We also want to map govcloud, even
+        # though it's in the USA.  And we want to allow things like dev.keepersecurity.com to remain unchanged.
+        up = urlparse(params.rest_context.server_base)
+        if not is_us_netloc(up.netloc):
+            replaced = up._replace(netloc='keepersecurity.com')
+            server_base_url = urlunparse(replaced)
+            duped_rest_context.server_base = server_base_url
+
+    rs = rest_api.execute_rest(duped_rest_context, endpoint, api_request_payload)
     if type(rs) == bytes:
         if rs_type:
             proto_rs = rs_type()
