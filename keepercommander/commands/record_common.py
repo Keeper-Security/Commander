@@ -110,6 +110,7 @@ def send_recv_breach_watch_status(params, password_list):
         request=breach_watch_status_request,
         endpoint='breachwatch/status',
         rs_type=breachwatch_pb2.BreachWatchStatusResponse,
+        force_usa=True,
     )
     if not hasattr(params, 'hash1_to_euid'):
         params.hash1_to_euid = {}
