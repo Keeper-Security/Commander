@@ -158,7 +158,8 @@ class RecordImportCommand(ImporterCommand):
             logging.info('Processing... please wait.')
             imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
                             manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
-                            can_edit=can_edit, can_share=can_share, update_flag=update_flag)
+                            can_edit=can_edit, can_share=can_share, update_flag=update_flag,
+                            old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'))
         else:
             logging.error('Missing argument')
 
