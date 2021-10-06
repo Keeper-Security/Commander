@@ -247,7 +247,7 @@ class FolderTreeCommand(Command):
                 if len(pattern) == 0:
                     display.formatted_tree(params, folder)
                 else:
-                    raise CommandError('tree', 'Folder %s not found'.format(folder_name))
+                    raise CommandError('tree', 'Folder {} not found'.format(folder_name))
 
 
 class FolderMakeCommand(Command):
