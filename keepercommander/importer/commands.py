@@ -39,6 +39,7 @@ import_parser.add_argument('--folder', dest='folder', action='store', help='impo
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update',  action='store_true',  help='Update records with common login, url or title')
+import_parser.add_argument('--users',  dest='users',  action='store_true',  help='Update shared folder user permissions only')
 import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -154,7 +155,7 @@ class RecordImportCommand(ImporterCommand):
 
             logging.info('Processing... please wait.')
             imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
-                            manage_users=manage_users, manage_records=manage_records,
+                            manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
                             can_edit=can_edit, can_share=can_share, update_flag=update_flag)
         else:
             logging.error('Missing argument')

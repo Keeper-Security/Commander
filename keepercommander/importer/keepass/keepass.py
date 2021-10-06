@@ -67,7 +67,7 @@ class KeepassImporter(BaseFileImporter):
             g = g.getparent()
         return path
 
-    def do_import(self, filename):
+    def do_import(self, filename, **kwargs):
         credentials = {}
         password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
         if password:
