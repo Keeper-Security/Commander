@@ -579,8 +579,14 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            import pkg_resources
+            installed_packages = pkg_resources.working_set
+            installed_packages_list = sorted(["%s==%s" % (i.key, i.version) for i in installed_packages])
+            print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
+
         if version_details.get('is_up_to_date') is None:
-            logging.debug(bcolors.WARNING + "It appears that internet connection is offline" + bcolors.ENDC)
+            logging.debug("It appears that Commander is up to date")
         elif not version_details.get('is_up_to_date'):
 
             latest_version = version_details.get('current_github_version')
