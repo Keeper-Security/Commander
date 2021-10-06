@@ -23,6 +23,15 @@ from .vault import Vault
 from ...record import get_totp_code
 
 
+def replace_email_domain(email, old_domain, new_domain):
+    # type: (str, Optional[str], Optional[str]) -> str
+    if old_domain and new_domain and email.endswith(f'@{old_domain}'):
+        email_user, domain = email.split('@')
+        return f'{email_user}@{new_domain}'
+    else:
+        return email
+
+
 class LastPassImporter(BaseImporter):
     def __init__(self):
         super(LastPassImporter, self).__init__()
@@ -114,7 +123,7 @@ class LastPassImporter(BaseImporter):
             fields[key] = value
         return fields
 
-    def do_import(self, name, users_only=False, **kwargs):
+    def do_import(self, name, users_only=False, old_domain=None, new_domain=None, **kwargs):
         if self.record:
             username = self.record.login
             password = self.record.password
@@ -146,7 +155,7 @@ class LastPassImporter(BaseImporter):
             if shared_folder.members:
                 for member in shared_folder.members:
                     perm = Permission()
-                    perm.name = member['username']
+                    perm.name = replace_email_domain(member['username'], old_domain, new_domain)
                     perm.manage_records = member['readonly'] == '0'
                     perm.manage_users = member['can_administer'] == '1'
                     folder.permissions.append(perm)

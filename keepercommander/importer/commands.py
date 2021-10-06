@@ -34,6 +34,8 @@ def register_command_info(aliases, command_info):
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from a local file into Keeper.')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',  help='display Keeper JSON import instructions')
+import_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
+import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass'], required=True, help='file format')
 import_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
@@ -156,7 +158,8 @@ class RecordImportCommand(ImporterCommand):
             logging.info('Processing... please wait.')
             imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
                             manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
-                            can_edit=can_edit, can_share=can_share, update_flag=update_flag)
+                            can_edit=can_edit, can_share=can_share, update_flag=update_flag,
+                            old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'))
         else:
             logging.error('Missing argument')
 

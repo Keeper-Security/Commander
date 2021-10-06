@@ -373,6 +373,8 @@ def _import(params, file_format, filename, **kwargs):
     """Import records from one of a variety of sources."""
     shared = kwargs.get('shared') or False
     import_users = kwargs.get('users_only') or False
+    old_domain = kwargs.get('old_domain')
+    new_domain = kwargs.get('new_domain')
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -389,7 +391,7 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
-    for x in importer.execute(filename, users_only=import_users):
+    for x in importer.execute(filename, users_only=import_users, old_domain=old_domain, new_domain=new_domain):
         if type(x) is ImportRecord:
             if shared or import_into:
                 if not x.folders:
