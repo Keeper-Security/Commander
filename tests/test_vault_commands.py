@@ -85,7 +85,7 @@ class TestConnectedCommands(TestCase):
     def test_commands(self):
         params = TestConnectedCommands.params # type: KeeperParams
         with mock.patch('builtins.input', side_effect = KeyboardInterrupt()), mock.patch('builtins.print'):
-            record_uid = cli.do_command(params, 'add  --login="user@keepersecurity.com" --pass=password --url="https://keepersecurity.com/" --custom="{\\"cmdr:plugin\\":\\"noop\\"}" --title="Record 1"')
+            record_uid = cli.do_command(params, 'add  --login="user@keepersecurity.com" --pass=password192837465 --url="https://keepersecurity.com/" --custom="{\\"cmdr:plugin\\":\\"noop\\"}" --title="Record 1"')
             cli.do_command(params, 'sync-down')
 
             rec = api.get_record(params, record_uid)
