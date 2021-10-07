@@ -28,6 +28,8 @@ from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
+from .proto import breachwatch_pb2
+from . import crypto
 
 warned_on_fido_package = False
 
@@ -254,6 +256,8 @@ class LoginV3Flow:
             raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
 
         params.data_key = decrypted_data_key
+        params.anon_token = get_anon_token(params)
+
         return login_type_message
 
     @staticmethod
@@ -1341,6 +1345,27 @@ class CommonHelperMethods:
                 print('')
             except EOFError:
                 return 0
+
+
+def get_anon_token(params):
+    """Create the anonymized token."""
+    rs = api.communicate_rest(params, None, 'breachwatch/initialize', rs_type=breachwatch_pb2.BreachWatchTokenResponse)
+
+    token = rs.breachWatchToken
+    if rs.clientEncrypted:
+        token = crypto.decrypt_aes_v2(token, params.data_key)
+    else:
+        rq = breachwatch_pb2.BreachWatchTokenRequest()
+        rq.breachWatchToken = crypto.encrypt_aes_v2(token, params.data_key)
+        api.communicate_rest(params, rq, 'breachwatch/save_token')
+
+    rq = breachwatch_pb2.BreachWatchTokenRequest()
+    rq.breachWatchToken = token
+    rs = api.communicate_rest(params, rq, 'breachwatch/anonymize_token', rs_type=breachwatch_pb2.AnonymizedTokenResponse)
+
+    token = rs.passwordToken
+
+    return token
 
 
 class InvalidDeviceToken(Exception):
