@@ -3057,7 +3057,7 @@ Filters                 Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. De
                         where value is UTC date or epoch time in seconds
 --username              Email
 --to-username
---record-uid	        Record UID
+--record-uid            Record UID
 --shared-folder-uid     Shared Folder UID
 --event-type            Audit Event Type.  Value is event type id or event type name
 '''
