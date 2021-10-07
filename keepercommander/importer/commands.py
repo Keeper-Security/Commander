@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2019 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -13,17 +13,27 @@
 import argparse
 import logging
 import requests
+import json
+import os
+import getpass
 
+from typing import Optional, List
 from contextlib import contextmanager
 from .. import api
 from . import imp_exp
+from ..params import KeeperParams
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
-from .importer import Attachment as ImportAttachment
+from .importer import Attachment as ImportAttachment, SharedFolder, Permission
+from .lastpass import fetcher
+from .lastpass.vault import Vault
+from .json.json import KeeperJsonImporter, KeeperJsonExporter
 
 
 def register_commands(commands):
     commands['import'] = RecordImportCommand()
     commands['export'] = RecordExportCommand()
+    commands['unload-membership'] = UnloadMembershipCommand()
+    commands['load-membership'] = LoadMembershipCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -55,6 +65,18 @@ export_parser.add_argument('name', type=str, nargs='?', help='file name or conso
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
 
+
+unload_membership_parser = argparse.ArgumentParser(prog='unload-membership', description='Unload shared folder membership to JSON file.')
+unload_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
+unload_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
+unload_membership_parser.error = raise_parse_exception
+unload_membership_parser.exit = suppress_exit
+
+
+load_membership_parser = argparse.ArgumentParser(prog='unload-membership', description='Unload shared folder membership to JSON file.')
+load_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
+load_membership_parser.error = raise_parse_exception
+load_membership_parser.exit = suppress_exit
 
 csv_instructions = '''CSV Import Instructions
 
@@ -220,3 +242,141 @@ def is_export_restricted(params):
             is_export_restricted = restrict_export_boolean['value']
 
     return is_export_restricted
+
+
+class UnloadMembershipCommand(Command):
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return unload_membership_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+        source = kwargs.get('source') or 'keeper'
+        file_name = kwargs.get('name') or 'shared_folder_membership.json'
+
+        shared_folders = []  # type: List[SharedFolder]
+
+        json_importer = KeeperJsonImporter()
+
+        if os.path.exists(file_name):
+            for sf in json_importer.do_import(file_name, users_only=True):
+                if isinstance(sf, SharedFolder):
+                    shared_folders.append(sf)
+
+        json_shared_folders = set((x.uid for x in shared_folders))
+
+        added_members = []  # type: List[SharedFolder]
+        if source == 'keeper':
+            if params.shared_folder_cache:
+                for shared_folder_uid in params.shared_folder_cache:
+                    if shared_folder_uid in json_shared_folders:
+                        continue
+                    shared_folder = api.get_shared_folder(params, shared_folder_uid)
+                    sf = SharedFolder()
+                    sf.uid = shared_folder.shared_folder_uid
+                    sf.path = imp_exp.get_folder_path(params, shared_folder.shared_folder_uid)
+                    sf.manage_users = shared_folder.default_manage_users
+                    sf.manage_records = shared_folder.default_manage_records
+                    sf.can_edit = shared_folder.default_can_edit
+                    sf.can_share = shared_folder.default_can_share
+                    sf.permissions = []
+                    if shared_folder.teams:
+                        for team in shared_folder.teams:
+                            perm = Permission()
+                            perm.uid = team['team_uid']
+                            perm.name = team['name']
+                            perm.manage_users = team['manage_users']
+                            perm.manage_records = team['manage_records']
+                            sf.permissions.append(perm)
+                    if shared_folder.users:
+                        for user in shared_folder.users:
+                            perm = Permission()
+                            perm.name = user['username']
+                            perm.manage_users = user['manage_users']
+                            perm.manage_records = user['manage_records']
+                            sf.permissions.append(perm)
+                    added_members.append(sf)
+
+        elif source == 'lastpass':
+            username = input('...' + 'LastPass Username'.rjust(30) + ': ')
+            if not username:
+                logging.warning('LastPass username is required')
+                return
+            password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
+            if not password:
+                logging.warning('LastPass password is required')
+                return
+
+            print('Press <Enter> if account is not protected with Multifactor Authentication')
+            twofa_code = getpass.getpass(prompt='...' + 'Multifactor Password'.rjust(30) + ': ', stream=None)
+            if not twofa_code:
+                twofa_code = None
+
+            session = None
+            try:
+                session = fetcher.login(username, password, twofa_code, None)
+                blob = fetcher.fetch(session)
+                encryption_key = blob.encryption_key(username, password)
+                vault = Vault(blob, encryption_key, session, False)
+
+                lastpass_shared_folder = [x for x in vault.shared_folders]
+
+                for lpsf in lastpass_shared_folder:
+                    if lpsf.id in json_shared_folders:
+                        continue
+
+                    logging.info('Loading shared folder membership for "%s"', lpsf.name)
+
+                    members, teams, error = fetcher.fetch_shared_folder_members(session, lpsf.id)
+                    sf = SharedFolder()
+                    sf.uid = lpsf.id
+                    sf.path = lpsf.name
+                    sf.permissions = []
+                    if members:
+                        sf.permissions.extend((self._lastpass_permission(x) for x in members))
+                    if teams:
+                        sf.permissions.extend((self._lastpass_permission(x) for x in teams))
+                    added_members.append(sf)
+            except Exception as e:
+                logging.warning(e)
+            finally:
+                if session:
+                    fetcher.logout(session)
+
+        if added_members:
+            shared_folders.extend(added_members)
+            json_exporter = KeeperJsonExporter()
+            json_exporter.do_export(file_name, shared_folders)
+            logging.info('%d shared folder memberships unloaded.', len(added_members))
+        else:
+            logging.info('No folders unloaded')
+
+    @staticmethod
+    def _lastpass_permission(lp_permission):  # type: (dict) -> Permission
+        permission = Permission()
+        permission.name = lp_permission['username']
+        permission.manage_records = lp_permission['readonly'] == '0'
+        permission.manage_users = lp_permission['can_administer'] == '1'
+        return permission
+
+
+class LoadMembershipCommand(Command):
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return load_membership_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+        file_name = kwargs.get('name') or 'shared_folder_membership.json'
+        if not os.path.exists(file_name):
+            logging.warning('Shared folder membership file "%s" no found', file_name)
+            return
+
+        file_name = kwargs.get('name') or 'shared_folder_membership.json'
+
+        shared_folders = []  # type: List[SharedFolder]
+
+        if os.path.exists(file_name):
+            json_importer = KeeperJsonImporter()
+            for sf in json_importer.do_import(file_name, users_only=True):
+                if isinstance(sf, SharedFolder):
+                    shared_folders.append(sf)
+
+        if len(shared_folders) > 0:
+            imp_exp.import_user_permissions(params, shared_folders)

@@ -169,11 +169,16 @@ class KeeperJsonExporter(BaseExporter):
             sfo = {
                 'uid': sf.uid,
                 'path': sf.path,
-                'manage_users': sf.manage_users,
-                'manage_records': sf.manage_records,
-                'can_edit': sf.can_edit,
-                'can_share': sf.can_share
             }
+            if sf.manage_users is not None:
+                sfo['manage_users'] = sf.manage_users
+            if sf.manage_records is not None:
+                sfo['manage_records'] = sf.manage_records
+            if sf.can_edit is not None:
+                sfo['can_edit'] = sf.can_edit
+            if sf.can_share is not None:
+                sfo['can_share'] = sf.can_share
+
             if sf.permissions:
                 sfo['permissions'] = []
                 for perm in sf.permissions:

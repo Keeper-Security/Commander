@@ -313,7 +313,7 @@ def export(params, file_format, filename, **kwargs):
         logging.info('%d records exported', rec_count)
 
 
-def _import_user_permissions(params, shared_folders):  # type: (KeeperParams, List[ImportSharedFolder]) -> None
+def import_user_permissions(params, shared_folders):  # type: (KeeperParams, List[ImportSharedFolder]) -> None
     if not shared_folders:
         return
 
@@ -426,7 +426,7 @@ def _import(params, file_format, filename, **kwargs):
             folders.append(x)
 
     if import_users:
-        _import_user_permissions(params, folders)
+        import_user_permissions(params, folders)
         return
 
     api.sync_down(params)
