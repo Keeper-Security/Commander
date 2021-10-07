@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2019 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -13,17 +13,25 @@
 import argparse
 import logging
 import requests
+import json
+import os
+import getpass
 
+from typing import Optional, List
 from contextlib import contextmanager
 from .. import api
 from . import imp_exp
+from ..params import KeeperParams
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
 from .importer import Attachment as ImportAttachment
+from .lastpass import fetcher
+from .lastpass.vault import Vault
 
 
 def register_commands(commands):
     commands['import'] = RecordImportCommand()
     commands['export'] = RecordExportCommand()
+    commands['export-membership'] = ExportMembershipCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -55,6 +63,12 @@ export_parser.add_argument('name', type=str, nargs='?', help='file name or conso
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
 
+
+export_membership_parser = argparse.ArgumentParser(prog='export-membership', description='Export shared folder membership to JSON file.')
+export_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
+export_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if ommited.')
+export_membership_parser.error = raise_parse_exception
+export_membership_parser.exit = suppress_exit
 
 csv_instructions = '''CSV Import Instructions
 
@@ -220,3 +234,101 @@ def is_export_restricted(params):
             is_export_restricted = restrict_export_boolean['value']
 
     return is_export_restricted
+
+
+class ExportMembershipCommand(Command):
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return export_membership_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+        source = kwargs.get('source') or 'keeper'
+        file_name = kwargs.get('name') or 'shared_folder_membership.json'
+        json_shared_folders = set()
+        if os.path.exists(file_name):
+            try:
+                with open(file_name, 'r') as f:
+                    js = json.load(f)
+                if 'shared_folders' in js:
+                    json_shared_folders.update((x['id'] for x in js['shared_folders'] if 'id' in x))
+            except:
+                pass
+        added_members = []  # type: List[dict]
+        if source == 'keeper':
+            if params.shared_folder_cache:
+                for shared_folder_uid in params.shared_folder_cache:
+                    if shared_folder_uid in json_shared_folders:
+                        continue
+                    shared_folder = api.get_shared_folder(params, shared_folder_uid)
+                    sf = {
+                        'id': shared_folder_uid,
+                        'name': shared_folder.name,
+                        'default_manage_records': shared_folder.default_manage_records,
+                        'default_manage_users': shared_folder.default_manage_users,
+                        'default_can_edit': shared_folder.default_can_edit,
+                        'default_can_share': shared_folder.default_can_share,
+                        'permissions': []
+                    }
+                    if shared_folder.users:
+                        sf['permissions'].extend(({
+                            'name': x['username'],
+                            'manage_records': x['manage_records'],
+                            'manage_users': x['manage_users']
+                        } for x in shared_folder.users))
+                    if shared_folder.teams:
+                        sf['permissions'].extend(shared_folder.teams)
+                    added_members.append(sf)
+
+        elif source == 'lastpass':
+            username = input('...' + 'LastPass Username'.rjust(30) + ': ')
+            if not username:
+                logging.warning('LastPass username is required')
+                return
+            password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
+            if not password:
+                logging.warning('LastPass password is required')
+                return
+
+            print('Press <Enter> if account is not protected with Multifactor Authentication')
+            twofa_code = getpass.getpass(prompt='...' + 'Multifactor Password'.rjust(30) + ': ', stream=None)
+            if not twofa_code:
+                twofa_code = None
+
+            session = None
+            added_members = []
+            try:
+                session = fetcher.login(username, password, twofa_code, None)
+                blob = fetcher.fetch(session)
+                encryption_key = blob.encryption_key(username, password)
+                vault = Vault(blob, encryption_key, session, False)
+
+                lastpass_shared_folder = [x for x in vault.shared_folders]
+
+                for sf in lastpass_shared_folder:
+                    if sf.id in json_shared_folders:
+                        continue
+
+                    logging.info('Loading shared folder membership for "%s"', sf.name)
+                    members, teams, error = fetcher.fetch_shared_folder_members(session, sf.id)
+                    shared_folder = api.SharedFolder(shared_folder_uid=sf.id, name=sf.name)
+                    if members:
+                        shared_folder.users.extend((Per
+                            'name': x['username'],
+                            'manage_records': x['readonly'] == '0',
+                            'manage_users': x['can_administer'] == '1'
+                        } for x in members))
+
+                    added_members.append({
+                        'id': sf.id,
+                        'name': sf.name,
+                        'permissions': [{
+                            'name': x['username'],
+                            'manage_records': x['readonly'] == '0',
+                            'manage_users': x['can_administer'] == '1'
+                        } for x in itertools.chain(members or (), teams or ())]
+                    })
+
+            except Exception as e:
+                logging.warning(e)
+            finally:
+                if session:
+                    fetcher.logout(session)

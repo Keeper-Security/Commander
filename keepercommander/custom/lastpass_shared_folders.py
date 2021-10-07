@@ -9,9 +9,12 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: commander@keepersecurity.com
 #
-# Example showing how to add a new or existing record 
-# to an existing shared folder. 
-#
+# This script loads LastPass shared folder membership and
+# stores it to Keeper import JSON file.
+# The JSON file can be imported later with the following command
+# > import --format=json --users lastpass_shared_folders.json
+# Users and Team missing in the appropriate Keeper's shared folders
+# will be added.
 
 import itertools
 import json
@@ -23,7 +26,7 @@ import logging
 from keepercommander.importer.lastpass import fetcher
 from keepercommander.importer.lastpass.vault import Vault
 
-JSON_FILE = 'shared_folder.json'
+JSON_FILE = 'lastpass_shared_folders.json'
 
 if __name__ == '__main__':
     username = input('...' + 'LastPass Username'.rjust(30) + ': ')
