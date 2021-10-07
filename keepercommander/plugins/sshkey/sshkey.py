@@ -54,9 +54,20 @@ def rotate(record, newpassword):
 
         if key_file_name:
             oldPublicKey = record.get('cmdr:ssh_public_key')
+
+            optional_port = record.get('cmdr:port')
+            if not optional_port:
+                port = 22
+            else:
+                try:
+                    port = int(optional_port)
+                except ValueError:
+                    print('port {} could not be converted to int'.format(optional_port))
+                    return False
+
             for host in hosts:
                 try:
-                    child = subprocess.Popen(['ssh', '-i', key_file_name, '-o', 'StrictHostKeyChecking=no', '{0}@{1}'.format(record.login, host), 'cat .ssh/authorized_keys'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    child = subprocess.Popen(['ssh', '-i', key_file_name, '-o', 'StrictHostKeyChecking=no', '-p', str(port), '{0}@{1}'.format(record.login, host), 'cat .ssh/authorized_keys'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     (out_child, error_child) = child.communicate(timeout=10)
                     if child.poll() == 0:
                         keys = out_child.decode().splitlines()
