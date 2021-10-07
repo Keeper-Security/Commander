@@ -22,6 +22,7 @@ import abc
 
 from tabulate import tabulate
 from collections import OrderedDict
+from typing import Optional
 
 from ..params import KeeperParams
 
@@ -233,7 +234,7 @@ class Command(CliCommand):
         except ParseError as e:
             logging.error(e)
 
-    def get_parser(self):   # type: () -> argparse.ArgumentParser | None
+    def get_parser(self):   # type: () -> Optional[argparse.ArgumentParser]
         return None
 
     def _ensure_parser(func):
