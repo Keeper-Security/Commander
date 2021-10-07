@@ -73,7 +73,7 @@ unload_membership_parser.error = raise_parse_exception
 unload_membership_parser.exit = suppress_exit
 
 
-load_membership_parser = argparse.ArgumentParser(prog='unload-membership', description='Unload shared folder membership to JSON file.')
+load_membership_parser = argparse.ArgumentParser(prog='load-membership', description='Loads shared folder membership from JSON file into Keeper.')
 load_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
 load_membership_parser.error = raise_parse_exception
 load_membership_parser.exit = suppress_exit
