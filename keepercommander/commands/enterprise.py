@@ -3048,11 +3048,11 @@ Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Defaul
 --created           Predefined ranges: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
                     Range 'BETWEEN <> AND <>'
                     where value is UTC date or epoch time in seconds
---event-type        Audit Event Type.  Value is event id or event name
 --username          Email
 --to-username
 --record-uid	    Record UID
 --shared-folder-uid Shared Folder UID
+--event-type        Audit Event Type.  Value is event type id or event type name
 '''
 
 in_pattern = re.compile(r"\s*in\s*\(\s*(.*)\s*\)", re.IGNORECASE)
@@ -3193,7 +3193,18 @@ class AuditReportCommand(Command):
         loadSyslogTemplates(params)
 
         if kwargs.get('syntax_help'):
+            rq = {
+                'command': 'get_audit_event_dimensions',
+                'report_type': 'dim',
+                'columns': ['audit_event_type'],
+                'scope': 'enterprise' if params is not None else 'user'
+            }
+            rs = api.communicate(params, rq)
+            event_types = [(et['id'], et['name']) for et in rs['dimensions']['audit_event_type']]
             logging.info(audit_report_description)
+            logging.info('The following are possible event type id and event type name values:')
+            for event_id, event_name in event_types:
+                logging.info('{0:>10d}:  {1}'.format(event_id, event_name))
             return
         if not kwargs['report_type']:
             raise CommandError('audit-report', 'report-type parameter is missing')
