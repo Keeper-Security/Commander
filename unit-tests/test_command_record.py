@@ -1,4 +1,3 @@
-import logging
 import json
 import os
 import io
@@ -29,18 +28,40 @@ class TestRecord(TestCase):
         cmd = record.RecordAddCommand()
 
         KeeperApiHelper.communicate_expect(['record_add'])
-        cmd.execute(params, force=True, title='New Record')
+        with mock.patch('keepercommander.commands.record_common.are_all_good_passwords', return_value=True), \
+                mock.patch('keepercommander.commands.record_common.upload_breachwatch_record_v2_ji', return_value=True):
+            cmd.execute(params, force=True, title='New Record')
         self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         KeeperApiHelper.communicate_expect(['record_add'])
-        cmd.execute(params, login='login', password='password', url='url', custom='name1: value 1, name2: value 2', title='New Record')
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.commands.record_common.are_all_good_passwords', return_value=True), \
+                mock.patch('keepercommander.commands.record_common.upload_breachwatch_record_v2_ji', return_value=True):
+            cmd.execute(
+                params,
+                login='login',
+                password='password',
+                url='url',
+                custom='name1: value 1, name2: value 2',
+                title='New Record',
+            )
+            self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         KeeperApiHelper.communicate_expect(['record_add'])
-        cmd.execute(params, login='login', password='password', url='url', custom=[{'name1': 'value 1', 'name2': 'value 2'}], title='New Record')
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.commands.record_common.are_all_good_passwords', return_value=True), \
+                mock.patch('keepercommander.commands.record_common.upload_breachwatch_record_v2_ji', return_value=True):
+            cmd.execute(
+                params,
+                login='login',
+                password='password',
+                url='url',
+                custom=[{'name1': 'value 1', 'name2': 'value 2'}],
+                title='New Record',
+            )
+            self.assertTrue(KeeperApiHelper.is_expect_empty())
 
-        with mock.patch('builtins.input', return_value='Input Data'):
+        with mock.patch('builtins.input', return_value='Input Data'), \
+                mock.patch('keepercommander.commands.record_common.are_all_good_passwords', return_value=True), \
+                mock.patch('keepercommander.commands.record_common.upload_breachwatch_record_v2_ji', return_value=True):
             KeeperApiHelper.communicate_expect(['record_add'])
             cmd.execute(params, force=True, title='New Record')
             self.assertTrue(KeeperApiHelper.is_expect_empty())
@@ -59,7 +80,9 @@ class TestRecord(TestCase):
             self.assertEqual(data['secret1'], data['secret2'])
             self.assertEqual(len(data['custom']), 2)
 
-        with mock.patch('builtins.input', return_value='data'):
+        with mock.patch('builtins.input', return_value='data'), \
+                mock.patch('keepercommander.commands.record_common.are_all_good_passwords', return_value=True), \
+                mock.patch('keepercommander.commands.record_common.upload_breachwatch_record_v2_ji', return_value=True):
             KeeperApiHelper.communicate_expect([check_record])
             cmd.execute(params, custom='name1: value 1, name2: value 2')
             self.assertTrue(KeeperApiHelper.is_expect_empty())
@@ -209,7 +232,9 @@ class TestRecord(TestCase):
         cmd = record.RecordAppendNotesCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
-        with mock.patch('keepercommander.api.update_record'):
+        with mock.patch('keepercommander.api.update_record'), \
+                mock.patch('keepercommander.commands.record_common.are_all_good_passwords', return_value=True), \
+                mock.patch('keepercommander.commands.record_common.upload_breachwatch_record_v2_rec', return_value=True):
             cmd.execute(params, notes='notes', record=record_uid)
 
             with mock.patch('builtins.input', return_value='data'):

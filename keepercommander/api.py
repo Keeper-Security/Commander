@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import copy
 import json
 import base64
 import collections
@@ -19,9 +20,16 @@ import os
 import hashlib
 import logging
 import urllib.parse
+import binascii
+from urllib.parse import urlparse, urlunparse
+
+from google.protobuf.json_format import MessageToJson
+
+from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
+from .proto import client_pb2
 from datetime import datetime
 
-from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils, crypto
+from . import constants, utils, crypto
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -31,6 +39,7 @@ from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
 from keepercommander.recordv3 import RecordV3
 from .ttk import TTK
+import cryptography.exceptions
 
 from Cryptodome import Random
 from Cryptodome.Hash import SHA256
@@ -444,7 +453,6 @@ def merge_lists_on_value(list1, list2, field_name):
 
 def sync_down(params):
     """Sync full or partial data down to the client"""
-
     params.sync_data = False
 
     if params.revision == 0:
@@ -932,8 +940,52 @@ def sync_down(params):
             for rt in record_types_rs.recordTypes:
                 params.record_type_cache[rt.recordTypeId] = rt.content
 
+    if not hasattr(params, 'breach_watch_security_data'):
+        params.breach_watch_records = {}
+    if 'breach_watch_records' in response_json:
+        logging.debug('Processing breach_watch_records')
+        process_breach_watch_records(params, response_json['breach_watch_records'])
+
+    if not hasattr(params, 'breach_watch_security_data'):
+        params.breach_watch_security_data = {}
+    if 'breach_watch_security_data' in response_json:
+        logging.debug('Processing breach_watch_security_data')
+        params.breach_watch_security_data.update(response_json['breach_watch_security_data'])
+
     if 'full_sync' in response_json:
         logging.info('Decrypted [%s] record(s)', len(params.record_cache))
+
+
+def process_breach_watch_records(params, breach_watch_list):
+    """Stash a manipulated form of the breach watch data in params, extracted from response_json."""
+    logging.debug('Processing breach_watch_records')
+    if hasattr(params, 'breach_watch_records'):
+        # We must preserve what we've already seen, because sync_down is incremental after the first.
+        bwr_dict = params.breach_watch_records
+    else:
+        bwr_dict = {}
+    for bwr_elem in breach_watch_list:
+        record_uid = bwr_elem['record_uid']
+        record_data = params.record_cache[record_uid]
+        record_key = record_data['record_key_unencrypted']
+        try:
+            decoded_data = base64.urlsafe_b64decode(bwr_elem['data'] + '==')
+        except binascii.Error:
+            print('Got binascii.Error exception for uid {}'.format(record_uid))
+            continue
+
+        try:
+            decrypted_data = crypto.decrypt_aes_v2(decoded_data, record_key)
+        except cryptography.exceptions.InvalidTag:
+            print('Got cryptography.exceptions.InvalidTag exception for uid {}'.format(record_uid))
+            continue
+
+        bwr_elem['decrypted_data'] = decrypted_data
+        breach_watch_data = client_pb2.BreachWatchData()
+        breach_watch_data.ParseFromString(decrypted_data)
+        json_str = MessageToJson(breach_watch_data)
+        bwr_dict[record_uid] = json.loads(json_str)
+    params.breach_watch_records = bwr_dict
 
 
 def convert_to_folders(params):
@@ -1506,6 +1558,61 @@ def communicate_rest(params, request, endpoint, rs_type=None):
         kae = KeeperApiError(rs['error'], rs['message'])
         if kae.result_code == 'session_token_expired':
             params.session_token = None
+        raise kae
+    raise KeeperApiError('Error', endpoint)
+
+
+def is_us_netloc(netloc):
+    """
+    Return True iff netloc is a US host.
+
+    We return True for, EG:
+        keepersecurity.com
+        dev.keepersecurity.com
+        qa.keepersecurity.com
+
+    We return False for, EG:
+        keepersecurity.eu
+        keepersecurity.com.au
+        govcloud.keepersecurity.us
+    """
+    usa_host = constants.KEEPER_PUBLIC_HOSTS['US']
+    return netloc == usa_host or netloc.endswith('.' + usa_host)
+
+
+def communicate_rest_not_authed(params, request, endpoint, rs_type=None, *, force_usa=False):
+    """
+    Like communicate_rest, but:
+
+    1) do not set api_request_payload.encryptedSessionToken; this is an unathenticated communication.
+    2) do not deal with TTK (time to keepalive) - there's no session to keep alive.
+    3) parse a response as a protobuf (unless no rs_type is passed, in which case we return a string).
+    4) do not worry about session_token_expired - this communication is not part of a session.
+    """
+    api_request_payload = proto.ApiRequestPayload()
+    if request:
+        api_request_payload.payload = request.SerializeToString()
+
+    duped_rest_context = copy.deepcopy(params.rest_context)
+    if force_usa:
+        # EG: breachwatch is only available on our USA server, so map non-us hosts to us. We also want to map govcloud, even
+        # though it's in the USA.  And we want to allow things like dev.keepersecurity.com to remain unchanged.
+        up = urlparse(params.rest_context.server_base)
+        if not is_us_netloc(up.netloc):
+            replaced = up._replace(netloc='keepersecurity.com')
+            server_base_url = urlunparse(replaced)
+            duped_rest_context.server_base = server_base_url
+
+    rs = rest_api.execute_rest(duped_rest_context, endpoint, api_request_payload)
+    if type(rs) == bytes:
+        if rs_type:
+            proto_rs = rs_type()
+            proto_rs.ParseFromString(rs)
+            return proto_rs
+        else:
+            return rs
+    elif type(rs) == dict:
+        kae = KeeperApiError(rs['error'], rs['message'])
         raise kae
     raise KeeperApiError('Error', endpoint)
 
@@ -2354,5 +2461,3 @@ def get_correct_salt(salts):
 def send_keepalive(params):
     """Send a keepalive to the server, using protobufs."""
     communicate_rest(params, None, 'keep_alive')
-
-

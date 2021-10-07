@@ -23,6 +23,7 @@ install_requires = [
 ]
 adpasswd_requires = ['ldap3']
 test_requires = ['pytest', 'testfixtures']
+pylint_requires = ['pylint', 'pylint-protobuf']
 
 setup(
     name='keepercommander',
@@ -53,6 +54,7 @@ setup(
     extras_require={
         'adpasswd': adpasswd_requires,
         'test': test_requires,
-        'all': adpasswd_requires + test_requires
+        'pylint': pylint_requires,
+        'all': adpasswd_requires + test_requires + pylint_requires,
     }
 )
