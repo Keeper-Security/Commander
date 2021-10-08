@@ -866,29 +866,6 @@ class KSMCommand(Command):
         print(f"{bcolors.WARNING}Unknown combination of KSM commands. Type 'secrets-manager' for more details'{bcolors.ENDC}")
 
     @staticmethod
-    def get_master_key_from_record(rec_cache_val):
-
-        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
-        app_record = json.loads(r_unencr_json_data)
-
-        if 'fields' in app_record:
-            # TODO:
-            #  This check can be removed even now. Adding it here just to make sure test apps that were created
-            #  by the team are still working. There are no records with this format were created by any of the customers
-            master_key_str = app_record.get('fields')[0].get('value')[0]
-            logging.warning("\n-----------------------------------------------------------------------------------\n"
-                            "  This App uid=%s uses old format which will not work properly in \n"
-                            "  the Web interface and it is recommended to delete it and create a new one.\n"
-                            "-----------------------------------------------------------------------------------"
-                            % rec_cache_val.get('record_uid'))
-        else:
-            master_key_str = app_record.get('app_key')  # TODO: Search for field = password and get 1st value
-
-        master_key = CommonHelperMethods.url_safe_str_to_bytes(master_key_str)
-
-        return master_key
-
-    @staticmethod
     def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
 
         rec_cache_val = KSMCommand.get_app_record(params, app_name_or_uid)
@@ -897,7 +874,7 @@ class KSMCommand(Command):
             return
 
         app_record_uid = rec_cache_val.get('record_uid')
-        master_key = KSMCommand.get_master_key_from_record(rec_cache_val)
+        master_key = rec_cache_val.get('record_key_unencrypted')
 
         KSMCommand.share_secret(
             params=params,
@@ -1202,19 +1179,16 @@ class KSMCommand(Command):
     @staticmethod
     def add_new_v5_app(params, app_name, force_to_add=False):
 
-        logging.debug("Creatixng new KSM Application named '%s'" % app_name)
+        logging.debug("Creating new KSM Application named '%s'" % app_name)
 
         found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
             logging.warning('Application with the same name "%s" already exists.' % app_name)
             return
 
-        master_key_bytes = os.urandom(32)
-        master_key_str = loginv3.CommonHelperMethods.bytes_to_url_safe_str(master_key_bytes)
-
         app_record_data = {
             'title': app_name,
-            'app_key': master_key_str
+            'type': 'app'
         }
 
         data_json = json.dumps(app_record_data)
@@ -1393,13 +1367,9 @@ class KSMCommand(Command):
         if not rec_cache_val:
             raise Exception("KMS App with name or uid '%s' not found" % app_name_or_uid)
 
-        r_unencr_json_data = rec_cache_val.get('data_unencrypted').decode('utf-8')
-        app_record = json.loads(r_unencr_json_data)
-
-        # master_key = app_record.
         logging.debug("App uid=%s, unlock_ip=%s" % (rec_cache_val.get('record_uid'), unlock_ip))
 
-        master_key = KSMCommand.get_master_key_from_record(rec_cache_val)
+        master_key = rec_cache_val.get('record_key_unencrypted')
 
         keys_str = ""
         otat_str = ""
