@@ -22,7 +22,7 @@ from google.protobuf.json_format import MessageToDict, MessageToJson
 from .commands import enterprise as enterprise_command
 from .plugins import humps as humps
 
-from . import api, utils
+from . import api, utils, crypto
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .display import bcolors
@@ -1008,68 +1008,45 @@ class LoginV3API:
         raise KeeperApiError('Error', endpoint)
 
     @staticmethod
-    def create_user(params: KeeperParams, new_username: str):
-
+    def create_user(params, new_username, user_password, verification_code):    # type: (KeeperParams, str, str, Optional[str]) -> None
         endpoint = 'authentication/request_create_user'
+        data_key = utils.generate_aes_key()
+        auth_verifier = utils.base64_url_decode(utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000))
+        encryption_params = utils.base64_url_decode(utils.create_encryption_params(user_password, crypto.get_random_bytes(16), 100000, data_key))
 
-        auth_verifier = api.create_auth_verifier(params.password, params.salt, params.iterations)
-        encryption_params = api.create_encryption_params(params.password, params.salt, params.iterations, params.data_key)
-        encrypted_device_token_str = params.config['device_token']
+        rsa_pri, rsa_pub = crypto.generate_rsa_key()
+        rsa_private = crypto.unload_rsa_private_key(rsa_pri)
+        rsa_private = crypto.encrypt_aes_v1(rsa_private, data_key)
+        rsa_public = crypto.unload_rsa_public_key(rsa_pub)
 
-        rsa_public_key_bytes, rsa_private_key = CommonHelperMethods.generate_rsa_key_pair()
-
-        rsa_encrypted_private_key = api.encrypt_aes(rsa_private_key, params.data_key)
-
-        # Generating private and public keys
-        ephemeral_key = CommonHelperMethods.generate_new_ecc_key()
-        private_value: int = ephemeral_key.private_numbers().private_value
-
-        ecc_private_key_bytes = int.to_bytes(private_value, length=32, byteorder='big', signed=False)
-        ecc_private_key_encrypted_bytes = rest_api.encrypt_aes(ecc_private_key_bytes, params.data_key)
-        ecc_public_key_bytes = ephemeral_key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-
-        encrypted_client_key = api.encrypt_aes(os.urandom(32), params.data_key)
-
-        try:
-            device_public_key = CommonHelperMethods.get_private_key_ecc(params).public_key()
-            ephemeral_key2 = CommonHelperMethods.generate_new_ecc_key()
-            shared_key = ephemeral_key2.exchange(ec.ECDH(), device_public_key)
-            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-            digest.update(shared_key)
-            enc_key = digest.finalize()
-            encrypted_data_key = rest_api.encrypt_aes(params.data_key, enc_key)
-            eph_public_key = ephemeral_key2.public_key().public_bytes(serialization.Encoding.X962,
-                                                                      serialization.PublicFormat.UncompressedPoint)
-        except Exception as e:
-            logging.warning(e)
-            return
+        ec_pri, ec_pub = crypto.generate_ec_key()
+        ec_private = crypto.unload_ec_private_key(ec_pri)
+        ec_private = crypto.encrypt_aes_v2(ec_private, data_key)
+        ec_public = crypto.unload_ec_public_key(ec_pub)
 
         create_user_rq = proto.CreateUserRequest()
-        create_user_rq.username = new_username
-        create_user_rq.authVerifier = CommonHelperMethods.url_safe_str_to_bytes(auth_verifier)
-        create_user_rq.encryptionParams = CommonHelperMethods.url_safe_str_to_bytes(encryption_params)
-        create_user_rq.rsaPublicKey = rsa_public_key_bytes
-        create_user_rq.rsaEncryptedPrivateKey = CommonHelperMethods.url_safe_str_to_bytes(rsa_encrypted_private_key)
-        create_user_rq.eccPublicKey = ecc_public_key_bytes                                                              # 65 bytes, on curve
-        create_user_rq.eccEncryptedPrivateKey = ecc_private_key_encrypted_bytes                                         # 60 bytes
-        create_user_rq.encryptedDeviceToken = CommonHelperMethods.url_safe_str_to_bytes(encrypted_device_token_str)     # 65 bytes
-        create_user_rq.encryptedClientKey = CommonHelperMethods.url_safe_str_to_bytes(encrypted_client_key)             # 64 bytes
         create_user_rq.clientVersion = rest_api.CLIENT_VERSION
-        create_user_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key
+        create_user_rq.username = new_username
+        create_user_rq.authVerifier = auth_verifier
+        create_user_rq.encryptionParams = encryption_params
+        create_user_rq.rsaPublicKey = rsa_public
+        create_user_rq.rsaEncryptedPrivateKey = rsa_private
+        create_user_rq.eccPublicKey = ec_public
+        create_user_rq.eccEncryptedPrivateKey = ec_private
+        create_user_rq.encryptedClientKey = crypto.encrypt_aes_v1(utils.generate_aes_key(), data_key)
+        create_user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
 
-        try:
-            api_request_payload = proto.ApiRequestPayload()
-            api_request_payload.payload = create_user_rq.SerializeToString()
+        device_private_key = CommonHelperMethods.get_private_key_ecc(params)
+        create_user_rq.encryptedDeviceDataKey = crypto.encrypt_ec(data_key, device_private_key.public_key())
 
-            rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
-        except Exception as e:
-            raise KeeperApiError('Rest API', str(e))
+        if verification_code:
+            create_user_rq.verificationCode = verification_code
 
-        if type(rs) == bytes:
-            return True
-        elif type(rs) == dict:
+        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload.payload = create_user_rq.SerializeToString()
+        rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
+        if isinstance(rs, dict):
             raise KeeperApiError(rs['error'], rs['message'])
-        raise KeeperApiError('Error', endpoint)
 
     @staticmethod
     def register_for_login_v3(params, kwargs):
@@ -1088,59 +1065,35 @@ class LoginV3API:
             raise CommandError('register', '\'name\' parameter is required for enterprise users')
 
         # Provision user to the logged-in admin's enterprise
-        provisioned = LoginV3API().provision_user_in_enterprise(params, email, node, displayname)
+        verification_code = LoginV3API().provision_user_in_enterprise(params, email, node, displayname)
 
-        if provisioned:
-            logging.info("User '%s' create and added to the enterprise" % email)
+        if verification_code:
+            logging.info("User '%s' created and added to the enterprise" % email)
+
+            # Create user (will send email to the user)
+            info = LoginV3API().create_user(params, email, verification_code)
+            print(info)
 
             # Refresh (sync-down) enterprise data only
             api.query_enterprise(params)
-
-        # Create user (will send email to the user)
-        # loginv3.LoginV3API().create_user(params, email)
+            if 'users' in params:
+                pass
 
     @staticmethod
-    def provision_user_in_enterprise(params: KeeperParams,
-                                     email,
-                                     node,
-                                     displayname):
+    def provision_user_in_enterprise(params, email, node_id, displayname=None):   # type: (KeeperParams, str, int, Optional[str]) -> Optional[sttr]
+        data = {'displayname': displayname or email}
 
-        if params.enterprise:
-            node_id = None
-            if node:
-                for enode in params.enterprise['nodes']:
-                    if node in {str(enode['node_id']), enode['data'].get('displayname')}:
-                        node_id = enode['node_id']
-                        break
-                    elif not enode.get('parent_id') and node == params.enterprise['enterprise_name']:
-                        node_id = enode['node_id']
-                        break
-            if node_id is None:
-                for enode in params.enterprise['nodes']:
-                    if not enode.get('parent_id'):
-                        node_id = enode['node_id']
-                        break
-            data = {'displayname': displayname}
+        rq = {
+            'command': 'enterprise_user_add',
+            'enterprise_user_id': enterprise_command.EnterpriseCommand.get_enterprise_id(params),
+            'enterprise_user_username': email,
+            'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+            'node_id': node_id,
+            'suppress_email_invite': True
+        }
 
-            rq = {
-                'command': 'enterprise_user_add',
-                'enterprise_user_id': enterprise_command.EnterpriseCommand.get_enterprise_id(params),
-                'enterprise_user_username': email,
-                'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'),
-                                                  params.enterprise['unencrypted_tree_key']),
-                'node_id': node_id,
-                'suppress_email_invite': False
-            }
-
-            try:
-                rs = api.communicate(params, rq)
-
-                return True
-            except Exception as e:
-                logging.warning(e.message)
-                return False
-
-        return False
+        rs = api.communicate(params, rq)
+        return rs['verification_code']
 
 
 class CommonHelperMethods:

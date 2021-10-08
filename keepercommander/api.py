@@ -1699,47 +1699,35 @@ def update_record_v3(params, rec, **kwargs):
     return True
 
 
-def add_record(params, record):
-    # type: (KeeperParams, Record) -> bool
+def add_record(params, record,  **kwargs):   # type: (KeeperParams, Record) -> bool
 
     new_record = prepare_record(params, record)
     request = {
-        'command': 'record_update',
-        'add_records': [new_record]
+        'command': 'record_add',
+        'record_uid': new_record['record_uid'],
+        'record_type': 'password',
+        'record_key': new_record['record_key'],
+        'folder_type': 'user_folder',
+        'how_long_ago': 0,
+        'data': new_record['data'],
+        'extra': new_record['extra'],
     }
-    response_json = communicate(params, request)
 
-    if response_json['result'] == 'success':
-        new_revision = 0
-        if 'add_records' in response_json:
-            for info in response_json['add_records']:
-                if info['record_uid'] == record.record_uid:
-                    if info['status'] == 'success':
-                        new_revision = response_json['revision']
+    communicate(params, request)
 
-        if new_revision == 0:
-            logging.error('Error: Revision not updated')
-            return False
+    if not kwargs.get('silent'):
+        logging.info('New record successful. record_uid=%s', new_record['record_uid'])
 
-        if new_revision == new_record['revision']:
-            logging.error('Error: Revision did not change')
-            return False
+    # update record UID
+    record.record_uid = new_record['record_uid']
 
-        logging.info('New record successful for record_uid=%s, revision=%d, new_revision=%d',
-                     new_record['record_uid'], new_record['revision'], new_revision)
-
-        new_record['revision'] = new_revision
-
-        # update record UID
-        record.record_uid = new_record['record_uid']
-
-        # sync down the data which updates the caches
-        sync_down(params)
-        params.environment_variables[LAST_RECORD_UID] = record.record_uid
-        return True
+    # sync down the data which updates the caches
+    sync_down(params)
+    params.environment_variables[LAST_RECORD_UID] = record.record_uid
+    return True
 
 
-def ecies_encrypt(message, pub_key, id = b''):
+def ecies_encrypt(message, pub_key, id=b''):
     try:
         from cryptography.hazmat.backends import default_backend
         from cryptography.hazmat.primitives.asymmetric import ec

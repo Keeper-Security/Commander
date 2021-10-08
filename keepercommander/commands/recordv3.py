@@ -24,16 +24,14 @@ from Cryptodome.Cipher import AES
 from pathlib import Path
 from tabulate import tabulate
 
-from ..team import Team
-from .. import api, display, generator
-from .. import record_pb2 as records, recordv3, loginv3, rest_api
+from .. import api, generator
+from .. import record_pb2 as records, recordv3, loginv3
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from ..display import bcolors
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
-from ..proto.enterprise_pb2 import SharedRecordResponse
 from . import record as recordv2
 from .register import FileReportCommand
 from . import record_common

@@ -11,6 +11,7 @@
 import argparse
 import ipaddress
 import itertools
+import collections
 import json
 import base64
 import string
@@ -410,7 +411,7 @@ class EnterpriseCommand(Command):
         return path
 
     @staticmethod
-    def resolve_nodes(params, name):   # type (KeeperParams, str) -> collections.Iterable[dict]
+    def resolve_nodes(params, name):   # type: (KeeperParams, str) -> collections.Iterable[dict]
         node_id = 0
         node_name = ''
         if name:

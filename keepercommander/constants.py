@@ -12,6 +12,8 @@ TIMEOUT_MAX = timedelta(days=30)
 TIMEOUT_DEFAULT_UNIT = 'minutes'
 TIMEOUT_ALLOWED_UNITS = ('days', 'hours', 'minutes')
 
+EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
+
 # Enforcement constants
 
 _ENFORCEMENT_GROUPS = [
