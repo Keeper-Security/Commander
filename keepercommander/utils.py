@@ -71,14 +71,14 @@ def create_encryption_params(password, salt, iterations, data_key):  # type: (st
     key = crypto.derive_key_v1(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     enc_iv = crypto.get_random_bytes(16)
-    enc_data_key = crypto.encrypt_aes_v1(data_key * 2, key, use_padding=False)
-    enc_params = b'\x01' + enc_iter + salt + enc_iv + enc_data_key
+    enc_data_key = crypto.encrypt_aes_v1(data_key * 2, key, iv=enc_iv, use_padding=False)
+    enc_params = b'\x01' + enc_iter + salt + enc_data_key
     return base64_url_encode(enc_params)
 
 
 def create_auth_verifier(password, salt, iterations):   # type: (str, bytes, int) -> str
 
-    derived_key = crypto.derive_keyhash_v1(password, salt, iterations)
+    derived_key = crypto.derive_key_v1(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
     return base64_url_encode(auth_ver)

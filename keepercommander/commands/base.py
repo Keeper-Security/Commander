@@ -25,6 +25,8 @@ from collections import OrderedDict
 from typing import Optional
 
 from ..params import KeeperParams
+from ..subfolder import try_resolve_path
+from .. import api
 
 
 aliases = {}        # type: {str, str}
@@ -71,6 +73,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import automator
     automator.register_commands(commands)
     automator.register_command_info(aliases, command_info)
+    from . import enterprise_create_user
+    enterprise_create_user.register_commands(commands)
+    enterprise_create_user.register_command_info(aliases, command_info)
 
 
 def register_msp_commands(commands, aliases, command_info):
@@ -306,3 +311,24 @@ class GroupCommand(CliCommand):
         if command:
             kwargs['action'] = verb
             command.execute_args(params, args, **kwargs)
+
+
+class RecordMixin:
+    @staticmethod
+    def resolve_records(params, record_name):  # type: (KeeperParams, str) -> collections.Iterator[str]
+        if not record_name:
+            return
+
+        if record_name in params.record_cache:
+            yield record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.casefold() == record_name.casefold():
+                                yield uid

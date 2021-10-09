@@ -5,34 +5,24 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 import argparse
-import getpass
-from ..recordv3 import RecordV3
 import re
-import os
 import base64
-import json
 import logging
 import requests
 import time
 
-from urllib.parse import urlsplit, urlunsplit
-from email.utils import parseaddr
-
 from Cryptodome.PublicKey import RSA
-from Cryptodome.Util.asn1 import DerSequence
-from Cryptodome.Math.Numbers import Integer
 
-from .. import api, generator, loginv3
+from .. import api
 from .base import dump_report_data, user_choice
-from .record import RecordAddCommand
+from ..recordv3 import RecordV3
 from ..params import KeeperParams
-from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders
-from .enterprise import EnterpriseCommand, EnterprisePushCommand
+from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
@@ -46,18 +36,14 @@ def register_commands(commands):
     commands['share-folder'] = ShareFolderCommand()
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
-    commands['create-user'] = RegisterCommand()
     # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
-    aliases['cu'] = 'create-user'
 
-    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
-            #   file_report_parser,
-              register_parser]:
+    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser]:
         command_info[p.prog] = p.description
 
 
@@ -133,276 +119,11 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-register_parser = argparse.ArgumentParser(prog='create-user', description='Send an invitation to the user to join Keeper')
-# register_parser.add_argument('--store-record', dest='store', action='store_true',
-#                              help='store credentials into Keeper record (must be logged in)')
-# register_parser.add_argument('--generate', dest='generate', action='store_true', help='generate password')
-# register_parser.add_argument('--pass', dest='password', action='store', help='user password')
-# register_parser.add_argument('--data-center', dest='data_center', choices=['us', 'eu'], action='store',
-#                              help='data center.')
-# register_parser.add_argument('--expire', dest='expire', action='store_true',
-#                              help='expire master password (enterprise only)')
-# register_parser.add_argument('--records', dest='records', action='store',
-#                              help='populate vault with default records (enterprise only)')
-# register_parser.add_argument('--question', dest='question', action='store', help='security question')
-# register_parser.add_argument('--answer', dest='answer', action='store', help='security answer')
-register_parser.add_argument('--name', dest='name', action='store', help='user name (enterprise only)')
-register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID (enterprise only)')
-register_parser.add_argument('email', action='store', help='email')
-register_parser.error = raise_parse_exception
-register_parser.exit = suppress_exit
-
-
 file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments.')
 file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
                                 help='Try downloading every attachment you have access to.')
 file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
-
-
-class RegisterCommand(Command):
-    def is_authorised(self):
-        return False
-
-    def get_parser(self):
-        return register_parser
-
-    @staticmethod
-    def get_iterations():
-        return 100000
-
-    def execute(self, params, **kwargs):
-
-        if params.login_v3:
-            logging.debug("Registering user using Login V3 flow to add users")
-            loginv3.LoginV3API.register_for_login_v3(params, kwargs)
-            return
-
-        email = kwargs['email'] if 'email' in kwargs else None
-
-        if email:
-            _, email = parseaddr(email)
-        if not email:
-            raise CommandError('register', 'A valid email address is expected.')
-
-        rq = {
-            'command': 'pre_register',
-            'email': email
-        }
-
-        rs = api.run_command(params, rq)
-        if rs['result_code'] != 'Failed_to_find_user':
-            if rs['result'] == 'success':
-                logging.warning('User \'%s\' already exists in Keeper', email)
-            else:
-                logging.error(rs['message'])
-            # return
-        else:
-            password_rules = rs['password_rules']
-
-        # check enterprise
-        verification_code = None
-        if params.enterprise:
-            node_id = None
-            if kwargs.get('node'):
-                for node in params.enterprise['nodes']:
-                    if kwargs['node'] in {str(node['node_id']), node['data'].get('displayname')}:
-                        node_id = node['node_id']
-                        break
-                    elif not node.get('parent_id') and kwargs['node'] == params.enterprise['enterprise_name']:
-                        node_id = node['node_id']
-                        break
-            if node_id is None:
-                for node in params.enterprise['nodes']:
-                    if not node.get('parent_id'):
-                        node_id = node['node_id']
-                        break
-            data = {}
-            name = kwargs.get('name')
-            if name:
-                data['displayname'] = name
-            else:
-                raise CommandError('register', '\'name\' parameter is required for enterprise users')
-
-            rq = {
-                'command': 'enterprise_user_add',
-                'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
-                'enterprise_user_username': email,
-                'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'),
-                                                  params.enterprise['unencrypted_tree_key']),
-                'node_id': node_id,
-                'suppress_email_invite': True
-            }
-            try:
-                rs = api.communicate(params, rq)
-                if rs['result'] == 'success':
-                    verification_code = rs.get('verification_code')
-                    # re-read password rules
-                    rq = {
-                        'command': 'pre_register',
-                        'email': email
-                    }
-                    rs = api.run_command(params, rq)
-                    if 'password_rules' in rs:
-                        password_rules = rs['password_rules']
-            except Exception as e:
-                logging.warning(e["message"])
-
-        password = kwargs['password'] if 'password' in kwargs else None
-        generate = kwargs['generate'] if 'generate' in kwargs else None
-        if generate:
-            password = generator.generate(16)
-        else:
-            while not password:
-                pwd = getpass.getpass(prompt='Password: ', stream=None)
-                failed_rules = []
-                if password_rules:
-                    for r in password_rules:
-                        m = re.match(r['pattern'], pwd)
-                        if r['match']:
-                            if m is None:
-                                failed_rules.append(r['description'])
-                        else:
-                            if m is not None:
-                                failed_rules.append(r['description'])
-                if len(failed_rules) == 0:
-                    password = pwd
-                else:
-                    logging.error(rs['password_rules_intro'])
-                    for fr in failed_rules:
-                        logging.error(fr)
-
-        new_params = KeeperParams()
-        new_params.server = params.server
-        data_center = kwargs.get('data_center')
-        if data_center:
-            parts = list(urlsplit(new_params.server))
-            host = parts[1]
-            port = ''
-            colon_pos = host.rfind(':')
-            if colon_pos > 0:
-                port = host[colon_pos:]
-                host = host[:colon_pos]
-            suffix = '.eu' if data_center == 'eu' else '.com'
-            if not host.endswith(suffix):
-                dot_pos = host.rfind('.')
-                if dot_pos > 0:
-                    host = host[:dot_pos] + suffix
-            parts[1] = host + port
-            new_params.server = urlunsplit(parts)
-
-        data_key = os.urandom(32)
-        iterations = self.get_iterations()
-        auth_salt = os.urandom(16)
-        enc_salt = os.urandom(16)
-        backup_salt = os.urandom(16)
-
-        private_key, public_key = loginv3.CommonHelperMethods.generate_rsa_key_pair()
-
-        rq = {
-            'command': 'register',
-            'version': 1,
-            'email': email,
-            'auth_verifier': api.create_auth_verifier(password, auth_salt, iterations),
-            'encryption_params': api.create_encryption_params(password, enc_salt, iterations, data_key),
-            'encrypted_private_key': api.encrypt_aes(private_key, data_key),
-            'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
-            'client_key': api.encrypt_aes(os.urandom(32), data_key)
-        }
-        if verification_code:
-            rq['verification_code'] = verification_code
-
-        rs = api.run_command(new_params, rq)
-        if rs['result'] == 'success':
-            logging.info("Created account: %s ", email)
-
-            if kwargs.get('question'):
-                if not kwargs.get('answer'):
-                    print('...' + 'Security Question: '.rjust(24) + kwargs['question'])
-                    kwargs['answer'] = input('...' + 'Security Answer: '.rjust(24))
-                if kwargs.get('answer'):
-                    try:
-                        param1 = KeeperParams()
-                        param1.server = new_params.server
-                        param1.user = email
-                        param1.password = password
-                        param1.rest_context.device_id = params.rest_context.device_id
-                        api.login(param1)
-                        answer = kwargs['answer'].lower().replace(' ', '')
-                        rq = {
-                            'command': 'set_data_key_backup',
-                            'version': 2,
-                            'data_key_backup': api.create_encryption_params(answer, backup_salt, iterations, data_key),
-                            'security_question': kwargs['question'],
-                            'security_answer_salt': base64.urlsafe_b64encode(backup_salt).decode().rstrip('='),
-                            'security_answer_iterations': iterations,
-                            'security_answer_hash': base64.urlsafe_b64encode(
-                                api.derive_key(answer, backup_salt, iterations)).decode().rstrip('=')
-                        }
-                        api.communicate(param1, rq)
-                        logging.info('Master password backup is created.')
-                    except Exception as e:
-                        logging.error('Failed to create master password backup. %s', e)
-
-            if params.enterprise:
-                api.query_enterprise(params)
-                file_name = kwargs.get('records')
-                should_accept_share = False
-                if file_name:
-                    try:
-                        push = EnterprisePushCommand()
-                        push.execute(params, user=[email], file=file_name)
-                        should_accept_share = True
-                    except Exception as e:
-                        logging.info('Error accepting shares: %s', e)
-
-                # first accept shares from enterprise admin
-                if should_accept_share:
-                    try:
-                        param1 = KeeperParams()
-                        param1.server = new_params.server
-                        param1.user = email
-                        param1.password = password
-                        param1.rest_context.device_id = params.rest_context.device_id
-                        api.login(param1)
-                        rq = {
-                            'command': 'accept_share',
-                            'from_email': params.user
-                        }
-                        api.communicate(param1, rq)
-                    except Exception as e:
-                        logging.info('Error accepting shares: %s', e)
-
-                # last expire password
-                if kwargs.get('expire'):
-                    try:
-                        rq = {
-                            'command': 'set_master_password_expire',
-                            'email': email
-                        }
-                        api.communicate(params, rq)
-                    except Exception as e:
-                        logging.info('Error expiring master password: %s', e)
-
-            store = kwargs['store'] if 'store' in kwargs else None
-            if store:
-                if params.session_token:
-                    try:
-                        add_command = RecordAddCommand()
-                        add_command.execute(params, title='Keeper credentials for {0}'.format(email), login=email,
-                                            password=password, force=True)
-                    except Exception:
-                        store = False
-                        logging.error('Failed to create record in Keeper')
-                else:
-                    store = False
-            if generate and not store:
-                logging.warning('Generated password: %s', password)
-
-            if params.enterprise:
-                api.query_enterprise(params)
-        else:
-            logging.error(rs['message'])
 
 
 class ShareFolderCommand(Command):
