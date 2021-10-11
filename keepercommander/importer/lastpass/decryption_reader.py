@@ -8,20 +8,6 @@ from io import RawIOBase, BufferedReader, TextIOWrapper
 CHUNK_SIZE = 8 * 1024
 
 
-def find_utf8_split(chunk):
-    """Returns the last break in utf-8 codes as offset from end of chunk"""
-    utf8_mask_code_length = (
-        (0x80, 0x00, 1),
-        (0xE0, 0xC0, 2),
-        (0xF0, 0xE0, 3),
-        (0xF8, 0xF0, 4),
-    )
-    for offset in range(0, -4, -1):
-        for mask, code, length in utf8_mask_code_length:
-            if chunk[offset-length] & mask == code:
-                return offset
-
-
 def decode_aes256_base64_from_stream(stream, encryption_key, chunk_size=CHUNK_SIZE):
     """Decrypts base64 encoded AES-256 from file in chunks
 
@@ -72,24 +58,6 @@ class DecryptionReader(RawIOBase):
             chunk = self.leftover or next(self.decryption_generator)
             output = chunk[:buf_len]
             self.leftover = chunk[buf_len:]
-            ret_len = len(output)
-            b[:ret_len] = output
-            return ret_len
-        except StopIteration:
-            return 0
-
-    def old_readinto(self, b):
-        try:
-            buf_len = len(b)
-            chunk = self.leftover or next(self.decryption_generator)
-            raw_output = chunk[:buf_len]
-            utf8_offset = find_utf8_split(raw_output)
-            if utf8_offset == 0:
-                self.leftover = chunk[buf_len:]
-                output = raw_output.decode('utf-8')
-            else:
-                self.leftover = raw_output[utf8_offset:] + chunk[buf_len:]
-                output = raw_output[:utf8_offset].decode('utf-8')
             ret_len = len(output)
             b[:ret_len] = output
             return ret_len
