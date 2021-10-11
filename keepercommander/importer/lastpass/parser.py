@@ -11,7 +11,7 @@ from Crypto.Util import number
 from Crypto.PublicKey import RSA
 
 from .account import Account
-from .attachment import Attachment
+from .attachment import LastpassAttachment
 from .chunk import Chunk
 
 
@@ -135,7 +135,7 @@ def parse_ATTA(chunk, accounts):
         parent = parents[0]
         if parent.attach_key:
             filename = decode_aes256_base64_auto(filename_encrypted, parent.attach_key).decode('utf-8')
-            attachment = Attachment(id, parent, mimetype, storagekey, size, filename)
+            attachment = LastpassAttachment(id, parent, mimetype, storagekey, size, filename)
             parent.attachments.append(attachment)
 
     return attachment

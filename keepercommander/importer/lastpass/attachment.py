@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from .decryption_reader import DecryptionReader
 
 
-class Attachment:
+class LastpassAttachment:
     def __init__(self, id, parent, mimetype, storagekey, size, filename):
         self.id = id
         self.parent = parent
