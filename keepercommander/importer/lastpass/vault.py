@@ -1,6 +1,11 @@
 # coding: utf-8
+import os
+import shutil
+from tempfile import mkdtemp
+
 from . import fetcher
 from . import parser
+from .decryption_reader import DecryptionReader
 from .exceptions import InvalidResponseError
 from .shared_folder import LastpassSharedFolder
 
@@ -32,7 +37,10 @@ class Vault(object):
 
         self.errors = set()
         self.shared_folders = []
+        self.attachments = []
         self.accounts = self.parse_accounts(chunks, encryption_key)
+
+        self.process_attachments(session, tmpdir)
 
         try:
             if self.shared_folders and shared_folder_details:
@@ -71,5 +79,31 @@ class Vault(object):
                 shareid = share['id'].decode('utf-8')
                 shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'))
                 self.shared_folders.append(shared_folder)
+            elif i.id == b'ATTA':
+                attachment = parser.parse_ATTA(i, accounts)
+                if attachment:
+                    self.attachments.append(attachment)
 
         return accounts
+
+    def process_attachments(self, session, tmpdir=None):
+        attach_cnt = len(self.attachments)
+        if attach_cnt > 0:
+            attach_cnt_digits = len(str(attach_cnt))
+            if tmpdir is None:
+                tmpdir = mkdtemp()
+            else:
+                tmpdir = os.path.abspath(tmpdir)
+                if not os.path.exists(tmpdir):
+                    os.makedirs(tmpdir)
+
+        for i, attachment in enumerate(self.attachments):
+            tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.storagekey}'
+            attachment.tmpfile = os.path.join(tmpdir, tmp_filename)
+            key = attachment.parent.attach_key
+            with fetcher.stream_attachment(session, attachment) as r:
+                with open(attachment.tmpfile, 'wb') as f:
+                    shutil.copyfileobj(r.raw, f)
+            with open(attachment.tmpfile, 'rb') as f:
+                with DecryptionReader.get_text_reader(f, key, encoding='utf-8-sig') as decrypted:
+                    data = decrypted.read()
