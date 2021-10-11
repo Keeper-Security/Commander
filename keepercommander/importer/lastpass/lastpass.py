@@ -121,7 +121,7 @@ class LastPassImporter(BaseImporter):
             fields[key] = value
         return fields
 
-    def do_import(self, name, users_only=False, old_domain=None, new_domain=None, **kwargs):
+    def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
         username = name
         password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
         print('Press <Enter> if account is not protected with Multifactor Authentication')
@@ -130,7 +130,9 @@ class LastPassImporter(BaseImporter):
             twofa_code = None
 
         try:
-            vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only)
+            vault = Vault.open_remote(
+                username, password, multifactor_password=twofa_code, users_only=users_only, tmpdir=tmpdir
+            )
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return

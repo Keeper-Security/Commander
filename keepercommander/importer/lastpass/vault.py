@@ -12,7 +12,7 @@ class Vault(object):
         session = fetcher.login(username, password, multifactor_password, client_id)
         blob = fetcher.fetch(session)
         encryption_key = blob.encryption_key(username, password)
-        vault = cls(blob, encryption_key, session, kwargs.get('users_only') or False)
+        vault = cls(blob, encryption_key, session, kwargs.get('tmpdir'), kwargs.get('users_only') or False)
 
         fetcher.logout(session)
         return vault
@@ -23,7 +23,7 @@ class Vault(object):
         # TODO: read the blob here
         raise NotImplementedError()
 
-    def __init__(self, blob, encryption_key, session, shared_folder_details):
+    def __init__(self, blob, encryption_key, session, tmpdir, shared_folder_details):
         """This more of an internal method, use one of the static constructors instead"""
         chunks = parser.extract_chunks(blob)
 

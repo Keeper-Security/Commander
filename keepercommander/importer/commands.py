@@ -43,14 +43,15 @@ def register_command_info(aliases, command_info):
 import_parser = argparse.ArgumentParser(prog='import', description='Import data from a local file into Keeper.')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',  help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',  help='display Keeper JSON import instructions')
-import_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
-import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass'], required=True, help='file format')
 import_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true', help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update',  action='store_true',  help='Update records with common login, url or title')
 import_parser.add_argument('--users',  dest='users',  action='store_true',  help='Update shared folder user permissions only')
+import_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
+import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
+import_parser.add_argument('--tmpdir', dest='tmpdir', action='store', help='Temp directory used to cache encrypted attachment imports')
 import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
@@ -184,7 +185,7 @@ class RecordImportCommand(ImporterCommand):
             logging.info('Processing... please wait.')
             imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
                             manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
-                            can_edit=can_edit, can_share=can_share, update_flag=update_flag,
+                            can_edit=can_edit, can_share=can_share, update_flag=update_flag, tmpdir=kwargs.get('tmpdir'),
                             old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'))
         else:
             logging.error('Missing argument')
