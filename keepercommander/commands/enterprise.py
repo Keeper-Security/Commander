@@ -247,7 +247,7 @@ audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table', help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], required=True, action='store', help='report type')
+audit_report_parser.add_argument('--report-type', dest='report_type', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'], action='store', help='report type')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'], help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append', help='Can be repeated. (ignored for raw reports)')
 audit_report_parser.add_argument('--aggregate', dest='aggregate', action='append', choices=['occurrences', 'first_created', 'last_created'], help='aggregated value. Can be repeated. (ignored for raw reports)')
@@ -3004,55 +3004,62 @@ audit_report_description = '''
 Audit Report Command Syntax Description:
 
 Event properties
-  id                event ID
-  created           event time
-  username          user that created audit event
-  to_username       user that is audit event target 
-  from_username     user that is audit event source 
-  ip_address        IP address 
-  geo_location      location
-  audit_event_type  audit event type
-  keeper_version    Keeper application
-  channel           2FA channel
-  status            Keeper API result_code
-  record_uid        Record UID 
-  shared_folder_uid Shared Folder UID
-  node              Node ID (enterprise events only)
-  team_uid          Team UID (enterprise events only)
+  id                    event ID
+  created               event time
+  username              user that created audit event
+  to_username           user that is audit event target
+  from_username         user that is audit event source
+  ip_address            IP address
+  geo_location          location
+  audit_event_type      audit event type
+  keeper_version        Keeper application
+  channel               2FA channel
+  status                Keeper API result_code
+  record_uid            Record UID
+  record_title          Record title
+  record_url            Record URL
+  shared_folder_uid     Shared Folder UID
+  shared_folder_title   Shared Folder title
+  node                  Node ID (enterprise events only)
+  node_title            Node title (enterprise events only)
+  team_uid              Team UID (enterprise events only)
+  team_title            Team title (enterprise events only)
+  role_id               Role ID (enterprise events only)
+  role_title            Role title (enterprise events only)
 
---report-type: 
-            raw     Returns individual events. All event properties are returned.
-                    Valid parameters: filters. Ignored parameters: columns, aggregates
+--report-type:
+            raw         Returns individual events. All event properties are returned.
+                        Valid parameters: filters. Ignored parameters: columns, aggregates
 
-  span hour day	    Aggregates audit event by created date. Span drops date aggregation
-     week month     Valid parameters: filters, columns, aggregates
+  span hour day	        Aggregates audit event by created date. Span drops date aggregation
+     week month         Valid parameters: filters, columns, aggregates
 
-            dim     Returns event property description (audit_event_type, keeper_version) or distinct values. 
-                    Valid parameters: columns. Ignored parameters: filters, aggregates
+            dim         Returns event property description (audit_event_type, keeper_version) or distinct values.
+                        Valid parameters: columns. Ignored parameters: filters, aggregates
 
---columns:          Defines break down report properties.
-                    can be any event property except: id, created
+--columns:              Defines break down report properties.
+                        can be any event property except: id, created
 
---aggregates:       Defines the aggregate value: 
-     occurrences    number of events. COUNT(*)
-   first_created    starting date. MIN(created)
-    last_created    ending date. MAX(created)
+--aggregates:           Defines the aggregate value:
+     occurrences        number of events. COUNT(*)
+   first_created        starting date. MIN(created)
+    last_created        ending date. MAX(created)
 
---limit:            Limits the number of returned records
+--limit:                Limits the number of returned records
 
---order:            "desc" or "asc"
-                    raw report type: created
-                    aggregate reports: first aggregate
+--order:                "desc" or "asc"
+                        raw report type: created
+                        aggregate reports: first aggregate
 
-Filters             Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Default '='
---created           Predefined ranges: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
-                    Range 'BETWEEN <> AND <>'
-                    where value is UTC date or epoch time in seconds
---event-type        Audit Event Type.  Value is event id or event name
---username          Email
+Filters                 Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. Default '='
+--created               Predefined ranges: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
+                        Range 'BETWEEN <> AND <>'
+                        where value is UTC date or epoch time in seconds
+--username              Email
 --to-username
---record-uid	    Record UID
---shared-folder-uid Shared Folder UID
+--record-uid            Record UID
+--shared-folder-uid     Shared Folder UID
+--event-type            Audit Event Type.  Value is event type id or event type name
 '''
 
 in_pattern = re.compile(r"\s*in\s*\(\s*(.*)\s*\)", re.IGNORECASE)
@@ -3193,7 +3200,18 @@ class AuditReportCommand(Command):
         loadSyslogTemplates(params)
 
         if kwargs.get('syntax_help'):
+            rq = {
+                'command': 'get_audit_event_dimensions',
+                'report_type': 'dim',
+                'columns': ['audit_event_type'],
+                'scope': 'enterprise' if params is not None else 'user'
+            }
+            rs = api.communicate(params, rq)
+            event_types = [(et['id'], et['name']) for et in rs['dimensions']['audit_event_type']]
             logging.info(audit_report_description)
+            logging.info('The following are possible event type id and event type name values:')
+            for event_id, event_name in event_types:
+                logging.info('{0:>10d}:  {1}'.format(event_id, event_name))
             return
         if not kwargs['report_type']:
             raise CommandError('audit-report', 'report-type parameter is missing')
