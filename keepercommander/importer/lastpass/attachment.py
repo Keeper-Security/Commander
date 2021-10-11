@@ -5,12 +5,12 @@ from .decryption_reader import DecryptionReader
 
 class LastpassAttachment:
     def __init__(self, id, parent, mimetype, storagekey, size, filename):
-        self.id = id
+        self.file_id = id
         self.parent = parent
-        self.mimetype = mimetype
+        self.mime = mimetype
         self.storagekey = storagekey
         self.size = size
-        self.filename = filename
+        self.name = filename
         self.tmpfile = None
 
     @contextmanager
