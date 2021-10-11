@@ -5,7 +5,6 @@ from tempfile import mkdtemp
 
 from . import fetcher
 from . import parser
-from .decryption_reader import DecryptionReader
 from .exceptions import InvalidResponseError
 from .shared_folder import LastpassSharedFolder
 
@@ -98,12 +97,8 @@ class Vault(object):
                     os.makedirs(tmpdir)
 
         for i, attachment in enumerate(self.attachments):
-            tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.storagekey}'
+            tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
             attachment.tmpfile = os.path.join(tmpdir, tmp_filename)
-            key = attachment.parent.attach_key
             with fetcher.stream_attachment(session, attachment) as r:
                 with open(attachment.tmpfile, 'wb') as f:
                     shutil.copyfileobj(r.raw, f)
-            with open(attachment.tmpfile, 'rb') as f:
-                with DecryptionReader.get_text_reader(f, key, encoding='utf-8-sig') as decrypted:
-                    data = decrypted.read()
