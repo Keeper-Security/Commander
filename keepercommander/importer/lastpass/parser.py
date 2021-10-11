@@ -141,10 +141,6 @@ def parse_ATTA(chunk, accounts):
     return attachment
 
 
-def parse_attachment(encrypted_response, key):
-    return b64decode(decode_aes256_base64_auto(encrypted_response, key)).decode('utf-8-sig')
-
-
 def parse_secure_note_server(notes):
     info = {}
 
