@@ -12,6 +12,7 @@ class LastpassAttachment:
         self.size = size
         self.name = filename
         self.tmpfile = None
+        self.key = None  # This lets the importer know to re-encrypt with a new Keeper key
 
     @contextmanager
     def open(self):
