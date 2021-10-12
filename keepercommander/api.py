@@ -593,6 +593,7 @@ def sync_down(params):
                 if r_uid in rs:
                     rs.remove(r_uid)
 
+    shared_folder_records_removed = set()
     if 'shared_folder_folder_records_removed' in response_json:
         for sfrrr in response_json['shared_folder_folder_records_removed']:
             f_uid = sfrrr['folder_uid'] if 'folder_uid' in sfrrr else sfrrr['shared_folder_uid']
@@ -601,6 +602,7 @@ def sync_down(params):
                 r_uid = sfrrr['record_uid']
                 if r_uid in rs:
                     rs.remove(r_uid)
+                    shared_folder_records_removed.add(r_uid)
 
     if 'non_shared_data' in response_json:
         for non_shared_data in response_json['non_shared_data']:
@@ -809,7 +811,7 @@ def sync_down(params):
                 del params.subfolder_cache[shared_folder_uid]
 
     # process record keys
-    records_to_delete = []
+    records_to_delete = set()
     for record_uid in params.record_cache:
         record = params.record_cache[record_uid]
         record_key = record.get('record_key_unencrypted')
@@ -825,7 +827,11 @@ def sync_down(params):
                 for shared_folder_uid in params.shared_folder_cache:
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     if 'records' in shared_folder:
-                        recs = [x['record_key_unencrypted'] for x in shared_folder['records'] if x['record_uid'] == record_uid and 'record_key_unencrypted' in x]
+                        recs = [
+                            x['record_key_unencrypted']
+                            for x in shared_folder['records']
+                            if x['record_uid'] == record_uid and 'record_key_unencrypted' in x
+                        ]
                         if len(recs) > 0:
                             record_key = recs[0]
                             record['record_key_unencrypted'] = record_key
@@ -842,10 +848,11 @@ def sync_down(params):
                 except Exception as e:
                     logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
             else:
-                records_to_delete.append(record_uid)
+                records_to_delete.add(record_uid)
 
-    for record_uid in records_to_delete:
-        params.record_cache.pop(record_uid)
+    for record_uid in records_to_delete | shared_folder_records_removed:
+        if record_uid in params.record_cache:
+            del params.record_cache[record_uid]
 
     # decrypt user folders
     if 'user_folders' in response_json:
