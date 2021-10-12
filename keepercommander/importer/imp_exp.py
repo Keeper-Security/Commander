@@ -51,7 +51,7 @@ RECORD_MAX_DATA_LEN = 32000
 def exceed_max_data_len(data, title):
     data_size = len(data)
     if data_size > RECORD_MAX_DATA_LEN:
-        logging.warning(f'Skipping record {title}: Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}')
+        logging.warning(f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}')
         return True
     else:
         return False
