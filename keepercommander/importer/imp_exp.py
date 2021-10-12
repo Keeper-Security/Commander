@@ -45,6 +45,16 @@ from ..recordv3 import RecordV3
 from ..commands.base import user_choice
 
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
+RECORD_MAX_DATA_LEN = 32000
+
+
+def exceed_max_data_len(data, title):
+    data_size = len(data)
+    if data_size > RECORD_MAX_DATA_LEN:
+        logging.warning(f'Skipping record {title}: Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}')
+        return True
+    else:
+        return False
 
 
 def get_import_folder(params, folder_uid, record_uid):
@@ -524,6 +534,8 @@ def _import(params, file_format, filename, **kwargs):
                     if padding:
                         data_str = data_str.ljust(padding)
                     v3_upd_rq.data = crypto.encrypt_aes_v2(data_str.encode('utf-8'), record_key)
+                    if exceed_max_data_len(v3_upd_rq.data, import_record.title):
+                        continue
 
                     orig_refs = set()
                     if 'fields' in orig_data:
@@ -591,6 +603,9 @@ def _import(params, file_format, filename, **kwargs):
                     if padding:
                         data_str = data_str.ljust(padding)
                     v3_add_rq.data = crypto.encrypt_aes_v2(data_str.encode('utf-8'), record_key)
+                    if exceed_max_data_len(v3_add_rq.data, import_record.title):
+                        continue
+
                     v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
                     v3_add_rq.folder_type = \
                         record_proto.user_folder if folder_type == BaseFolderNode.UserFolderType else \
