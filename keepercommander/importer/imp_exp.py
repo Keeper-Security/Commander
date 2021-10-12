@@ -482,6 +482,7 @@ def _import(params, file_format, filename, **kwargs):
         records_v2_to_update = []   # type: List[dict]
         records_v3_to_add = []      # type: List[record_proto.RecordAdd]
         records_v3_to_update = []   # type: List[record_proto.RecordUpdate]
+        import_uids = {}
 
         records_to_import = prepare_record_add_or_update(update_flag, params, records)
 
@@ -516,6 +517,7 @@ def _import(params, file_format, filename, **kwargs):
                     orig_data = json.loads(existing_record['data_unencrypted'])
                     v3_upd_rq = record_proto.RecordUpdate()
                     v3_upd_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                    import_uids[import_record.uid] = {'ver': 'v3', 'op': 'update'}
                     v3_upd_rq.client_modified_time = utils.current_milli_time()
                     v3_upd_rq.revision = existing_record.get('revision') or 0
                     data = _construct_record_v3_data(import_record, orig_data)
@@ -560,6 +562,7 @@ def _import(params, file_format, filename, **kwargs):
                         'client_modified_time': api.current_milli_time(),
                         'revision': existing_record.get('revision') or 0,
                     }
+                    import_uids[import_record.uid] = {'ver': 'v2', 'op': 'update'}
                     if extra:
                         encrypted_extra = crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), record_key)
                         v2_upd_rq['extra'] = utils.base64_url_encode(encrypted_extra)
@@ -586,6 +589,7 @@ def _import(params, file_format, filename, **kwargs):
                 if import_record.type and v3_enabled:   # V3
                     v3_add_rq = record_proto.RecordAdd()
                     v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                    import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
                     v3_add_rq.client_modified_time = utils.current_milli_time()
                     data = _construct_record_v3_data(import_record)
                     data_str = json.dumps(data)
@@ -625,6 +629,7 @@ def _import(params, file_format, filename, **kwargs):
                 else:
                     v2_add_rq = folder_pb2.RecordRequest()
                     v2_add_rq.recordUid = utils.base64_url_decode(import_record.uid)
+                    import_uids[import_record.uid] = {'ver': 'v2', 'op': 'add'}
                     v2_add_rq.recordType = 0
                     v2_add_rq.howLongAgo = 0
                     data, extra = _construct_record_v2(import_record)
@@ -704,8 +709,10 @@ def _import(params, file_format, filename, **kwargs):
         for r in records:
             if r.attachments:
                 r_uid = r.uid
-                for a in r.attachments:
-                    atts.append((r_uid, a))
+                if r_uid in import_uids:
+                    ver = import_uids[r_uid]['ver']
+                    for a in r.attachments:
+                        atts.append((r_uid, ver, a))
         if len(atts) > 0:
             upload_attachment(params, atts)
 
@@ -850,7 +857,7 @@ def upload_attachment(params, attachments):
 
         file_no = 0
         file_size = 0
-        for _, att in chunk:
+        for _, _, att in chunk:
             file_no += 1
             file_size += att.size or 0
 
@@ -868,7 +875,7 @@ def upload_attachment(params, attachments):
             return
 
         uploaded = {}
-        for record_id, atta in chunk:
+        for record_id, ver, atta in chunk:
             if not uploads:
                 break
 
