@@ -356,7 +356,11 @@ class RecordAddCommand(Command, RecordUtils):
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)
-        params.sync_data = True
+        if params.enterprise_ec_key:
+            api.sync_down(params)
+            api.add_record_audit_data(params, [record_uid])
+        else:
+            params.sync_data = True
         params.environment_variables[LAST_RECORD_UID] = record_uid
         record_common.upload_breachwatch_record_v2_ji(params, data, record_uid, record_key)
         return record_uid

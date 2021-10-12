@@ -25,6 +25,7 @@ from .plugins import humps as humps
 from . import api, utils, crypto
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
+from .proto import breachwatch_pb2 as breachwatch_proto
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
@@ -227,6 +228,16 @@ class LoginV3Flow:
                     raise Exception('Account transfer logout')
             else:
                 raise Exception('Please log into the web Vault to update your account settings.')
+
+        if params.license and 'account_type' in params.license:
+            if params.license['account_type'] == 2:
+                try:
+                    rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
+                    if rs.enterpriseECCPublicKey:
+                        params.enterprise_ec_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
+                except Exception as e:
+                    logging.debug('Get enterprise public key: %s', e)
+
 
         logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
         return True
