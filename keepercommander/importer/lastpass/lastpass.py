@@ -178,6 +178,10 @@ class LastPassImporter(BaseImporter):
                     record.login_url = None
                 elif record.login_url == 'http://group':
                     continue
+            if len(account.attachments) > 0:
+                if record.attachments is None:
+                    record.attachments = []
+                record.attachments = account.attachments
             if account.notes:
                 notes = account.notes.decode('utf-8')
                 if notes.startswith('NoteType:'):
