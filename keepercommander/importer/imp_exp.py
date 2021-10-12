@@ -40,7 +40,6 @@ from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
 from .. import folder_pb2
 from .. import utils, crypto
 from .. import record_pb2 as record_proto
-from ..proto import breachwatch_pb2 as breachwatch_proto
 from ..recordv3 import RecordV3
 from ..commands.base import user_choice
 
@@ -441,17 +440,6 @@ def _import(params, file_format, filename, **kwargs):
 
     api.sync_down(params)
 
-    enterprise_public_key = None
-    # check if enterprise account
-    if params.license and 'account_type' in params.license:
-        if params.license['account_type'] == 2:
-            try:
-                rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
-                if rs.enterpriseECCPublicKey:
-                    enterprise_public_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
-            except Exception as e:
-                logging.debug('Get enterprise public key: %s', e)
-
     if shared:
         manage_users = kwargs.get('manage_users') or False
         manage_records = kwargs.get('manage_records') or False
@@ -621,7 +609,7 @@ def _import(params, file_format, filename, **kwargs):
                         link.record_uid = utils.base64_url_decode(uid)
                         v3_add_rq.record_links.append(link)
 
-                    if enterprise_public_key:
+                    if params.enterprise_ec_key:
                         audit_data = {
                             'title': import_record.title,
                             'record_type': import_record.type
@@ -629,7 +617,7 @@ def _import(params, file_format, filename, **kwargs):
                         if import_record.login_url:
                             audit_data['url'] = utils.url_strip(import_record.login_url)
                         v3_add_rq.audit.version = 0
-                        v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), enterprise_public_key)
+                        v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
 
                     records_v3_to_add.append(v3_add_rq)
                 else:
@@ -652,7 +640,7 @@ def _import(params, file_format, filename, **kwargs):
                             v2_add_rq.encryptedRecordFolderKey = crypto.encrypt_aes_v1(record_key, shared_folder_key)
 
                     records_v2_to_add.append(v2_add_rq)
-                    if enterprise_public_key:
+                    if params.enterprise_ec_key:
                         audit_uids.append(import_record.uid)
 
         for v3_add_rq in records_v3_to_add:
@@ -685,8 +673,8 @@ def _import(params, file_format, filename, **kwargs):
         api.sync_down(params)
 
         # update audit data
-        if audit_uids and enterprise_public_key:
-            audit_records = list(prepare_record_audit(params, audit_uids, enterprise_public_key))
+        if audit_uids and params.enterprise_ec_key:
+            audit_records = list(prepare_record_audit(params, audit_uids))
             while audit_records:
                 try:
                     rq = record_proto.AddAuditDataRequest()
@@ -1133,8 +1121,10 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def prepare_record_audit(params, uids, enterprise_public_key):
-    # type: (KeeperParams, Iterator[str], any) -> Iterator[record_proto.RecordAddAuditData]
+def prepare_record_audit(params, uids):
+    # type: (KeeperParams, Iterator[str]) -> Iterator[record_proto.RecordAddAuditData]
+    if not params.enterprise_ec_key:
+        return
     for uid in uids:
         if uid in params.record_cache:
             keeper_record = params.record_cache[uid]
@@ -1149,7 +1139,7 @@ def prepare_record_audit(params, uids, enterprise_public_key):
                 record_audit_rq = record_proto.RecordAddAuditData()
                 record_audit_rq.record_uid = utils.base64_url_decode(uid)
                 record_audit_rq.revision = 0
-                record_audit_rq.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), enterprise_public_key)
+                record_audit_rq.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
                 yield record_audit_rq
 
 
