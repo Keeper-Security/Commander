@@ -1,7 +1,6 @@
 import tempfile
 import json
 import os
-import shutil
 import warnings
 from unittest import TestCase, mock
 
@@ -197,3 +196,18 @@ class TestConnectedCommands(TestCase):
                 cli.do_command(params, 'mkdir --user-folder {}'.format(subdir))
                 cli.do_command(params, 'cd {}'.format(subdir))
                 cli.do_command(params, 'cd /quoting')
+
+    def test_list_after_rm_from_shared_folder(self):
+        """Create a shared folder.  cd to it.  Add a record to it.  rm that record.  Make sure it is not in `list`."""
+        params = TestConnectedCommands.params
+        cli.do_command(params, 'mkdir --shared-folder --all "Shared Folder 1"')
+        cli.do_command(params, 'cd "Shared Folder 1"')
+        uid = cli.do_command(params, 'add --login blurfl --pass foo --url https://www.gmail.com/ -t Title')
+        cli.do_command(params, 'rm --force Title')
+        cli.do_command(params, 'list')
+        (out, err) = self.capsys.readouterr()
+        assert uid not in out
+
+    @pytest.fixture(autouse=True)
+    def capsys(self, capsys):
+        self.capsys = capsys
