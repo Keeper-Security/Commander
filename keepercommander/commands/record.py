@@ -350,7 +350,11 @@ class RecordAddCommand(Command, RecordUtils):
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)
-        params.sync_data = True
+        if params.enterprise_ec_key:
+            api.sync_down(params)
+            api.add_record_audit_data(params, [record_uid])
+        else:
+            params.sync_data = True
         params.environment_variables[LAST_RECORD_UID] = record_uid
         return record_uid
 

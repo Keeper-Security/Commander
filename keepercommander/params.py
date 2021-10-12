@@ -79,6 +79,7 @@ class KeeperParams:
         self.data_key = None
         self.rsa_key = None
         self.ecc_key = None
+        self.enterprise_ec_key = None
         self.revision = 0
         self.record_cache = {}
         self.meta_data_cache = {}
@@ -116,7 +117,7 @@ class KeeperParams:
         self.device_private_key = None
         self.account_uid_bytes = None
         self.session_token_bytes = None
-        self.record_type_cache = {} # RT definitions only
+        self.record_type_cache = {}  # RT definitions only
 
     def clear_session(self):
         self.auth_verifier = None
@@ -131,6 +132,7 @@ class KeeperParams:
         self.data_key = None
         self.rsa_key = None
         self.ecc_key = None
+        self.enterprise_ec_key = None
         self.revision = 0
         self.record_cache.clear()
         self.meta_data_cache.clear()
@@ -180,7 +182,7 @@ class KeeperParams:
         self.__rest_context.server_base = value
 
     def queue_audit_event(self, name, **kwargs):
-        # type: (str, dict) -> None
+        # type: (str, ...) -> None
         if self.license and 'account_type' in self.license:
             if self.license['account_type'] == 2:
                 self.event_queue.append({

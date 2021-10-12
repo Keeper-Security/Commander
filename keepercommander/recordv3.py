@@ -1720,29 +1720,6 @@ class RecordV3:
             raise TypeError('Record ' + ruid + ' not found. You don\'t have Record Types enabled.')
 
   @staticmethod
-  def get_audit_url(url: str) -> str:
-    # aduit URLs should be stripped of '<scheme>://' and '?<query>' components
-    clean_url = ''
-    if url:
-        try:
-            # validate URL
-            purl = url
-            try:
-                PreparedRequest().prepare_url(purl, None)
-            except requests.exceptions.MissingSchema:
-                purl = 'http://' + url # NB! makes ~90% of random texts valid URLs
-                PreparedRequest().prepare_url(purl, None)
-            # valid URL - strip scheme and query only
-            url_parts = urllib.parse.urlparse(purl)
-            stripped = ('', *url_parts[1:4], '', url_parts[5])
-            clean_url = urllib.parse.urlunparse(stripped).replace('//', '', 1)
-        except:
-            clean_url = ''
-        if not clean_url:
-            clean_url = url[0:80] if url else ''
-    return clean_url
-
-  @staticmethod
   def custom_options_to_list(options_list: str) -> list:
     custom = []
     if options_list:

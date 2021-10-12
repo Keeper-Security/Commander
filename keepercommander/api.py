@@ -9,6 +9,8 @@
 # Contact: ops@keepersecurity.com
 #
 
+import copy
+import itertools
 import json
 import base64
 import collections
@@ -19,6 +21,15 @@ import os
 import hashlib
 import logging
 import urllib.parse
+import binascii
+from urllib.parse import urlparse, urlunparse
+from typing import Optional, Tuple, Iterable, List
+
+from google.protobuf.json_format import MessageToJson
+
+from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
+from .proto import client_pb2
+from . import record_pb2 as record_proto
 from datetime import datetime
 
 from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils, crypto
@@ -1413,7 +1424,7 @@ def prepare_record(params, record):
     return record_object
 
 
-def prepare_record_v3(params, record):
+def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optional[Tuple[dict, Optional[bytes]]]
     """ Prepares the Record() object to be sent to the Keeper Cloud API
         by serializing and encrypting it in the proper JSON format used for
         transmission.  If the record has no UID, one is generated and the
@@ -1431,6 +1442,7 @@ def prepare_record_v3(params, record):
         'client_modified_time': current_milli_time()
     }
 
+    audit_data = None
     data = ''
     unencrypted_key = None
     if record.record_uid in params.record_cache:
@@ -1452,6 +1464,20 @@ def prepare_record_v3(params, record):
             if not res.get('is_valid'):
                 logging.error('Error validating record type - ' + res.get('error'))
                 return None
+
+            if params.enterprise_ec_key:
+                fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
+                url = next((u.get('value')[0] for u in fields if u.get('type') == 'url' and u.get('value')), '')
+                if url:
+                    url = utils.url_strip(url)
+
+                adata = {
+                    'title': d.get('title', ''),
+                    'record_type': rt_name,
+                }
+                if url: adata['url'] = url  # url will only be supplied if there is one on the record
+                audit_data = crypto.encrypt_ec(json.dumps(adata).encode('utf-8'), params.enterprise_ec_key)
+
         except Exception as e:
             logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
             return None
@@ -1483,7 +1509,7 @@ def prepare_record_v3(params, record):
     except:
         pass
 
-    return record_object
+    return record_object, audit_data
 
 
 def communicate_rest(params, request, endpoint, rs_type=None):
@@ -1619,17 +1645,17 @@ def update_record(params, record, **kwargs):
 
     # sync down the data which updates the caches
     sync_down(params)
-
+    add_record_audit_data(params, [record.record_uid])
     return True
 
 
-def update_record_v3(params, rec, **kwargs):
+def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ...) -> Optional[bool]
     """ Push a record update to the cloud.
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
 
-    record_rq = prepare_record_v3(params, rec)
+    record_rq, audit = prepare_record_v3(params, rec)
     if record_rq is None:
         return
 
@@ -1659,7 +1685,8 @@ def update_record_v3(params, rec, **kwargs):
         ru.record_links_add.extend(record_links_add)
     if record_links_remove:
         ru.record_links_remove.extend(record_links_remove)
-    # audit = RecordAudit()
+    if audit:
+        ru.audit.data = audit
 
     rq = records.RecordsUpdateRequest()
     rq.records.append(ru)
@@ -1727,6 +1754,36 @@ def add_record(params, record,  **kwargs):   # type: (KeeperParams, Record) -> b
     return True
 
 
+def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterable[str]) -> None
+    if not params.enterprise_ec_key:
+        return
+
+    uids = set((x for x in record_uids if x in params.record_cache))
+    audit_data = []   # type: List[record_proto.RecordAddAuditData]
+    for record_uid in uids:
+        record = get_record(params, record_uid)
+        if record:
+            audit = record_proto.RecordAddAuditData()
+            audit.record_uid = utils.base64_url_decode(record_uid)
+            audit.revision = record.revision
+            data = {
+                'title': record.title or '',
+                'record_type': record.record_type,
+            }
+            if record.login_url:
+                data['url'] = utils.url_strip(record.login_url)
+            audit.data = crypto.encrypt_ec(json.dumps(data).encode('utf-8'), params.enterprise_ec_key)
+            audit_data.append(audit)
+
+    if audit_data:
+        rq = record_proto.AddAuditDataRequest()
+        rq.records.extend(audit_data)
+        try:
+            communicate_rest(params, rq, 'vault/record_add_audit_data')
+        except Exception as e:
+            logging.info('Failed to store audit data: %s', str(e))
+
+
 def ecies_encrypt(message, pub_key, id=b''):
     try:
         from cryptography.hazmat.backends import default_backend
@@ -1788,7 +1845,7 @@ def ecies_decrypt(ciphertext, priv_key_data, id = b''):
     return result
 
 
-def add_record_v3(params, record, **kwargs):
+def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...) -> Optional[bool]
     """ Push a record update to the cloud.
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
@@ -1829,6 +1886,23 @@ def add_record_v3(params, record, **kwargs):
         logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
         return None
 
+    # Audit - if the title or url has changed and the user is an enterprise user
+    audit = None
+    if params.enterprise_ec_key:
+        fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
+        url = next((u.get('value')[0] for u in fields if u.get('type') == 'url' and u.get('value')), '')
+        if url:
+            url = utils.url_strip(url)
+
+        adata = {
+            'title': d.get('title', ''),
+            'record_type': rt_name,
+        }
+        if url: adata['url'] = url  # url will only be supplied if there is one on the record
+        audit = records.RecordAudit()
+        audit.version = 0
+        audit.data = crypto.encrypt_ec(json.dumps(adata).encode('utf-8'), params.enterprise_ec_key)
+
     data = pad_aes_gcm(data)
 
     rdata = bytes(data, 'utf-8')
@@ -1848,36 +1922,6 @@ def add_record_v3(params, record, **kwargs):
             BaseFolderNode.SharedFolderFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder_folder'].number
         }
         folder_type = folder_type_enum.get(folder_type)
-
-    # Audit - if the title or url has changed and the user is an enterprise user
-    audit = None
-    try:
-        keys = (params.enterprise.get('keys') or {}) if params.enterprise else {}
-        ekey = keys.get('ecc_public_key')
-        ekey = base64.urlsafe_b64decode(ekey + '==') if ekey else ''
-
-        if ekey:
-            ddict = json.loads(data or '{}')
-            title = ddict.get('title') or ''
-            fields = (ddict.get('fields') or []) + (ddict.get('custom') or [])
-            url = next((u.get('value')[0] for u in fields if u.get('type') == 'url' and u.get('value')), '')
-            url = RecordV3.get_audit_url(url)
-
-            adata = { 'title' : title }
-            if url: adata['url'] = url # url will only be supplied if there is one on the record
-            edata = json.dumps(adata)
-            edata = ecies_encrypt(edata, ekey)
-            # pkey = keys.get('ecc_encrypted_private_key')
-            # ecc_private_key_data = base64.urlsafe_b64decode(pkey + '==')
-            # ecc_private_key_data = rest_api.decrypt_aes(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
-            # ddata = ecies_decrypt(edata, ecc_private_key_data).decode('utf-8')
-
-            audit = records.RecordAudit()
-            audit.version = 0
-            audit.data = edata
-    except Exception as e:
-        audit = None
-        logging.error(bcolors.FAIL +'Error processing RecordAudit data: ' + e + bcolors.ENDC)
 
     ra = records.RecordAdd()
     ra.record_uid = uid
