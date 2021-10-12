@@ -1009,24 +1009,35 @@ class KSMCommand(Command):
 
                     recs = params.record_cache
 
-                    shares_table_fields = ['Share Type', 'UID', 'Title']
+                    shares_table_fields = ['Share Type', 'UID', 'Title', 'Permissions']
                     shares_table = []
 
                     for s in ai.shares:
 
                         uid_str = CommonHelperMethods.bytes_to_url_safe_str(s.secretUid)
+                        uid_str_c = bcolors.OKBLUE + uid_str + bcolors.ENDC
+
                         sht = ApplicationShareType.Name(s.shareType)
+                        editable_status_color = bcolors.OKGREEN if s.editable else bcolors.WARNING
+                        editable_status = editable_status_color + ("Editable" if s.editable else "Read-Only") + bcolors.ENDC
 
                         if sht == 'SHARE_TYPE_RECORD':
                             record = recs.get(uid_str)
                             record_data_dict = KSMCommand.record_data_as_dict(record)
-                            row = ['RECORD', uid_str, record_data_dict.get('title')]
+                            row = [
+                                'RECORD',
+                                uid_str_c,
+                                record_data_dict.get('title'),
+                                editable_status]
                         elif sht == 'SHARE_TYPE_FOLDER':
                             cached_sf = params.shared_folder_cache[uid_str]
                             shf_name = cached_sf.get('name_unencrypted')
                             # shf_num_of_records = len(cached_sf.get('records'))
-
-                            row = ['FOLDER', uid_str, shf_name]
+                            row = [
+                                'FOLDER',
+                                uid_str_c,
+                                shf_name,
+                                editable_status]
                         else:
                             logging.warning("Unknown Share Type %s" % sht)
                             continue
