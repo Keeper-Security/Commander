@@ -5,12 +5,13 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2019 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 import base64
 import time
+from urllib.parse import urlparse
 
 from . import crypto
 
@@ -82,6 +83,14 @@ def create_auth_verifier(password, salt, iterations):   # type: (str, bytes, int
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
     return base64_url_encode(auth_ver)
+
+
+def url_strip(url):   # type: (str) -> str
+    try:
+        result = urlparse(url)
+        return result.netloc + result.path
+    except Exception:
+        return ''
 
 
 def confirm(msg):

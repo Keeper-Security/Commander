@@ -627,7 +627,7 @@ def _import(params, file_format, filename, **kwargs):
                             'record_type': import_record.type
                         }
                         if import_record.login_url:
-                            audit_data['url'] = import_record.login_url
+                            audit_data['url'] = utils.url_strip(import_record.login_url)
                         v3_add_rq.audit.version = 0
                         v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), enterprise_public_key)
 
@@ -686,7 +686,7 @@ def _import(params, file_format, filename, **kwargs):
 
         # update audit data
         if audit_uids and enterprise_public_key:
-            audit_records = list(parepare_record_audit(params, audit_uids, enterprise_public_key))
+            audit_records = list(prepare_record_audit(params, audit_uids, enterprise_public_key))
             while audit_records:
                 try:
                     rq = record_proto.AddAuditDataRequest()
@@ -1133,7 +1133,7 @@ def prepare_folder_add(params, folders, records):
     return folder_add
 
 
-def parepare_record_audit(params, uids, enterprise_public_key):
+def prepare_record_audit(params, uids, enterprise_public_key):
     # type: (KeeperParams, Iterator[str], any) -> Iterator[record_proto.RecordAddAuditData]
     for uid in uids:
         if uid in params.record_cache:
@@ -1145,7 +1145,7 @@ def parepare_record_audit(params, uids, enterprise_public_key):
                     'record_type': import_record.type
                 }
                 if import_record.login_url:
-                    audit_data['url'] = import_record.login_url
+                    audit_data['url'] = utils.url_strip(import_record.login_url)
                 record_audit_rq = record_proto.RecordAddAuditData()
                 record_audit_rq.record_uid = utils.base64_url_decode(uid)
                 record_audit_rq.revision = 0
