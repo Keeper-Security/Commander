@@ -441,7 +441,7 @@ class FolderRemoveCommand(Command):
                         for x in summary:
                             print(x)
                     if not force:
-                        np = user_choice('Do you like to proceed with deletion?', 'yn', default='n')
+                        np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
                     if np.lower() == 'y':
                         rq = {
                             'command': 'delete',
