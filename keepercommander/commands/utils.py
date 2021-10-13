@@ -129,7 +129,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
       --access-expire-in-min [MIN] : Client access expiration (Default: no expiration)
       --unlock-ip : Does not lock IP address to first requesting device
       --count [NUM] : Number of tokens to generate (Default: 1)
-      --config-init [json or b64] : Initialize configuration string from a one-time token
+      --config-init [json, b64 or k8s] : Initialize configuration string from a one-time token
 
   {bcolors.BOLD}Remove Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client remove --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--client {bcolors.OKBLUE}[NAME OR ID]{bcolors.ENDC}
@@ -826,7 +826,9 @@ class KSMCommand(Command):
                       f"{bcolors.OKGREEN}--app {bcolors.OKBLUE}[APP NAME or APP UID] "
                       f"{bcolors.OKGREEN}--secret {bcolors.OKBLUE}[SECRET UID or SHARED FOLDER UID] "
                       f"{bcolors.OKGREEN}--name {bcolors.OKBLUE}[CLIENT NAME] "
-                      f"{bcolors.OKGREEN}--config-init [{bcolors.OKBLUE}json{bcolors.OKGREEN} or {bcolors.OKBLUE}b64{bcolors.OKGREEN}]")
+                      f"{bcolors.OKGREEN}--config-init [{bcolors.OKBLUE}json{bcolors.OKGREEN}, "
+                      f"{bcolors.OKBLUE}b64{bcolors.OKGREEN} or "
+                      f"{bcolors.OKBLUE}k8s{bcolors.OKGREEN}]")
                 return
 
             count = kwargs.get('count')
@@ -1441,7 +1443,7 @@ class KSMCommand(Command):
                 else:
                     config_str = KSMCommand.init_ksm_config(params,
                                                             one_time_token=token,
-                                                            is_base64=config_init == 'b64')
+                                                            config_init=config_init)
                     otat_str += f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
 
                 if client_name:
@@ -1467,13 +1469,13 @@ class KSMCommand(Command):
         return tokens
 
     @staticmethod
-    def init_ksm_config(params, one_time_token, is_base64=False):
+    def init_ksm_config(params, one_time_token, config_init):
 
         try:
             from keeper_secrets_manager_core import SecretsManager
             from keeper_secrets_manager_core.configkeys import ConfigKeys
             from keeper_secrets_manager_core.storage import InMemoryKeyValueStorage
-        except:
+        except Exception:
             raise Exception("Keeper Secrets Manager is not installed.\n"
                             "Install it using pip `pip3 install keeper-secrets-manager-core`")
 
@@ -1488,7 +1490,7 @@ class KSMCommand(Command):
 
         secrets_manager.get_secrets("NON-EXISTING-RECORD-UID")
 
-        json_str = '{' \
+        config_str = '{' \
                    '"hostname": "%s",' \
                    '"clientId": "%s",' \
                    '"privateKey": "%s",' \
@@ -1502,11 +1504,20 @@ class KSMCommand(Command):
                        ksm_conf_storage.config.get(ConfigKeys.KEY_APP_KEY)
                    )
 
-        if is_base64:
-            json_b64 = json_to_base64(json_str)
-            return json_b64
-        else:
-            return json_str
+        if config_init in ['b64', 'k8s']:
+            config_str = json_to_base64(config_str)
+        if config_init == 'k8s':
+            config_str = "\n" \
+                         + "apiVersion: v1\n" \
+                         + "data:\n" \
+                         + "  config: " + config_str + "\n" \
+                         + "kind: Secret\n" \
+                         + "metadata:\n" \
+                         + "  name: ksm-config\n" \
+                         + "  namespace: default\n" \
+                         + "type: Opaque"
+
+        return config_str
 
 
 class LogoutCommand(Command):
