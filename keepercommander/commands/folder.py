@@ -69,7 +69,7 @@ tree_parser.exit = suppress_exit
 
 rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove a folder and its contents.')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
-rmdir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
+rmdir_parser.add_argument('folder', nargs='*', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
@@ -368,18 +368,16 @@ class FolderRemoveCommand(Command):
         return rmdir_parser
 
     def execute(self, params, **kwargs):
-        folder = None
-        name = kwargs['folder'] if 'folder' in kwargs else ''
-        if name:
+        folders = []
+        name_list = kwargs['folder'] if 'folder' in kwargs else []
+        for name in name_list:
             if name in params.folder_cache:
-                folder = params.folder_cache[name]
+                folders.append(params.folder_cache[name])
             else:
                 rs = try_resolve_path(params, name)
                 if rs is not None:
                     folder, name = rs
-                    if len(name or '') > 0:
-                        folder = None
-                    elif folder.type == BaseFolderNode.RootFolderType:
+                    if name or folder.type == BaseFolderNode.RootFolderType:
                         folder = None
 
         if folder is None:
