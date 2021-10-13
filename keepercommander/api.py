@@ -1105,6 +1105,7 @@ def get_record(params,record_uid):
         if cached_rec.get('version') == 3:
             rec.record_type = RecordV3.get_record_type_name(data)
             rec.login = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'login')
+            rec.password = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'password')
             rec.login_url = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'url')
         # if 'version' in cached_rec and cached_rec['version'] in (3, 4):
         #     if 'data_unencrypted' in cached_rec:
