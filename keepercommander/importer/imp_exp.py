@@ -13,21 +13,24 @@
 
 from contextlib import contextmanager
 from typing import Iterator, List, Optional, Union
-import collections, itertools
-import math
 import base64
+import collections
+import copy
 import hashlib
 import io
+import itertools
 import json
 import logging
+import math
 import os
 import re
-import copy
+import tempfile
 
 from Cryptodome.Cipher import AES
 import requests
 
-from keepercommander import api
+from keepercommander import api, loginv3, record_pb2
+from keepercommander.display import bcolors
 from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..params import KeeperParams
 
@@ -43,7 +46,11 @@ from .. import record_pb2 as record_proto
 from ..recordv3 import RecordV3
 from ..commands.base import user_choice
 
+
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
+IV_LEN = 12
+GCM_TAG_LEN = 16
+UPLOAD_BUFFER_SIZE = 10240
 RECORD_MAX_DATA_LEN = 32000
 
 
