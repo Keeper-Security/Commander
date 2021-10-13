@@ -959,7 +959,7 @@ def upload_v3_attachments(params, records_with_attachments):
             params.record_cache[parent_uid]['data_unencrypted'] = new_data
             params.sync_data = True
             rec = api.get_record(params, parent_uid)
-            api.update_record_v3(params, rec, record_links={'record_links_add': record_links_add})
+            api.update_record_v3(params, rec, record_links={'record_links_add': record_links_add}, silent=True)
 
 
 def upload_attachment(params, attachments):
