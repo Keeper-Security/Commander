@@ -712,16 +712,22 @@ def _import(params, file_format, filename, **kwargs):
             api.sync_down(params)
 
         # upload attachments
-        atts = []
+        v2_atts = []
+        v3_atts = []
         for r in records:
             if r.attachments:
                 r_uid = r.uid
                 if r_uid in import_uids:
                     ver = import_uids[r_uid]['ver']
-                    for a in r.attachments:
-                        atts.append((r_uid, ver, a))
-        if len(atts) > 0:
-            upload_attachment(params, atts)
+                    if ver == 'v3':
+                        v3_atts.append(r)
+                    else:
+                        for a in r.attachments:
+                            v2_atts.append((r_uid, a))
+        if len(v2_atts) > 0:
+            upload_attachment(params, v2_atts)
+        if len(v3_atts) > 0:
+            upload_v3_attachments(params, v3_atts)
 
     records_after = len(params.record_cache)
     if records_after > records_before:
@@ -848,6 +854,114 @@ def execute_records_update(params, records):  # type: (KeeperParams, List[record
     return rs_record
 
 
+def upload_v3_attachments(params, records_with_attachments):
+    """Interact with the API to upload v3 attachments"""
+    print('Uploading v3 attachments:')
+
+    for parent_record in records_with_attachments:
+        parent_uid = parent_record.uid
+        rq = record_pb2.FilesAddRequest()
+        uid_to_attachment = {}
+        for atta in parent_record.attachments:
+            if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
+                logging.warning(f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.')
+                continue
+
+            file_data = {
+                'name': atta.name,
+                'size': atta.size,
+                'title': atta.name,
+                'lastModified': api.current_milli_time(),
+                'type': 'application/octet-stream'
+            }
+            rdata = json.dumps(file_data).encode('utf-8')
+
+            if not atta.key:
+                atta.key = os.urandom(32)
+
+            uid = api.generate_record_uid()
+            atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
+            atta.encrypted_key = api.encrypt_aes_plain(atta.key, params.data_key)
+
+            rf = record_pb2.File()
+            rf.record_uid = atta.record_uid
+            rf.record_key = atta.encrypted_key
+            rf.data = api.encrypt_aes_plain(rdata, atta.key)
+            rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
+            rq.files.append(rf)
+            uid_to_attachment[atta.record_uid] = atta
+
+        rq.client_time = api.current_milli_time()
+        rs = api.communicate_rest(params, rq, 'vault/files_add')
+        files_add_rs = record_pb2.FilesAddResponse()
+        files_add_rs.ParseFromString(rs)
+
+        new_attachment_uids = []
+        record_links_add = []
+        for f in files_add_rs.files:
+            atta = uid_to_attachment[f.record_uid]
+            status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
+            success = (f.status == record_pb2.FileAddResult.DESCRIPTOR.values_by_name['FA_SUCCESS'].number)
+
+            if not success:
+                logging.warning(f'{bcolors.FAIL}Upload of {atta.name} failed with status: {status}{bcolors.ENDC}')
+                continue
+
+            with tempfile.TemporaryFile(mode='w+b') as dst:
+                with atta.open() as src:
+                    iv = os.urandom(12)
+                    dst.write(iv)
+                    cipher = AES.new(key=atta.key, mode=AES.MODE_GCM, nonce=iv)
+                    byte_data = src.read(UPLOAD_BUFFER_SIZE)
+                    while len(byte_data) != 0:
+                        encrypted_data = cipher.encrypt(byte_data)
+                        dst.write(encrypted_data)
+                        byte_data = src.read(UPLOAD_BUFFER_SIZE)
+
+                    dst.write(cipher.digest())
+                dst.seek(0)
+
+                form_files = {'file': (atta.name, dst, 'application/octet-stream')}
+                form_params = json.loads(f.parameters)
+                logging.info(f'Uploading {atta.name} ... ')
+                response = requests.post(f.url, data=form_params, files=form_files)
+
+            if str(response.status_code) == form_params.get('success_action_status'):
+                logging.info(f'Upload of {atta.name} succeeded')
+                # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
+                rl = {'record_uid': atta.record_uid, 'record_key': atta.encrypted_key}
+                record_links_add.append(rl)
+                new_attachment_uids.append(atta.record_uid)
+            else:
+                logging.info(f'Upload of {atta.name} failed: {response.status_code}')
+
+        if new_attachment_uids:
+            new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a) for a in new_attachment_uids]
+
+            record_data = params.record_cache[parent_uid].get('data_unencrypted')
+            if record_data:
+                if isinstance(record_data, bytes):
+                    record_data = record_data.decode('utf-8')
+                data = json.loads(record_data.strip())
+            else:
+                data = {}
+            if 'fields' not in data:
+                data['fields'] = []
+
+            # find first fileRef or create new fileRef if missing
+            file_ref = next((ft for ft in data['fields'] if ft['type'] == 'fileRef'), None)
+            if file_ref:
+                file_ref['value'] = file_ref.get('value', []) + new_attachments
+            else:
+                data['fields'].append({'type': 'fileRef', 'value': new_attachments})
+
+            new_data = json.dumps(data)
+            params.record_cache[parent_uid]['data_unencrypted'] = new_data
+            params.sync_data = True
+            rec = api.get_record(params, parent_uid)
+            api.update_record_v3(params, rec, record_links={'record_links_add': record_links_add})
+
+
 def upload_attachment(params, attachments):
     """
     Interact with the API to upload attachments.
@@ -864,7 +978,7 @@ def upload_attachment(params, attachments):
 
         file_no = 0
         file_size = 0
-        for _, _, att in chunk:
+        for _, att in chunk:
             file_no += 1
             file_size += att.size or 0
 
@@ -882,7 +996,7 @@ def upload_attachment(params, attachments):
             return
 
         uploaded = {}
-        for record_id, ver, atta in chunk:
+        for record_id, atta in chunk:
             if not uploads:
                 break
 
