@@ -378,68 +378,71 @@ class FolderRemoveCommand(Command):
                 if rs is not None:
                     folder, name = rs
                     if name or folder.type == BaseFolderNode.RootFolderType:
-                        folder = None
+                        logging.warning(f'Folder "{name}" was not found.')
+                    else:
+                        folders.append(folder)
 
-        if folder is None:
-            raise CommandError('rmdir', 'Enter name of the existing folder. ({0})'.format(name))
+        if len(folders) == 0:
+            raise CommandError('rmdir', 'Enter name of the existing folder.')
 
         force = kwargs['force'] if 'force' in kwargs else None
-        parent = params.folder_cache[folder.uid] if folder.uid is not None else None
-        if folder.type == BaseFolderNode.SharedFolderType:
-            if folder.uid in params.shared_folder_cache:
-                sf = params.shared_folder_cache[folder.uid]
+        for folder in folders:
+            parent = params.folder_cache[folder.uid] if folder.uid is not None else None
+            if folder.type == BaseFolderNode.SharedFolderType:
+                if folder.uid in params.shared_folder_cache:
+                    sf = params.shared_folder_cache[folder.uid]
+
+                    rq = {
+                        'command': 'shared_folder_update',
+                        'operation': 'delete',
+                        'shared_folder_uid': sf['shared_folder_uid']
+                    }
+                    if 'shared_folder_key' not in sf:
+                        if 'teams' in sf:
+                            for team in sf['teams']:
+                                rq['from_team_uid'] = team['team_uid']
+                                break
+
+                    np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                    if np.lower() == 'y':
+                        api.communicate(params, rq)
+                        params.sync_data = True
+            else:
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': folder.uid,
+                    'object_type': 'user_folder' if folder.type == BaseFolderNode.UserFolderType else 'shared_folder_folder'
+                }
+                if parent is None:
+                    del_obj['from_type'] = 'user_folder'
+                else:
+                    del_obj['from_uid'] = parent.uid
+                    del_obj['from_type'] = parent.type
+                    if parent.type == BaseFolderNode.SharedFolderType:
+                        del_obj['from_type'] = 'shared_folder_folder'
 
                 rq = {
-                    'command': 'shared_folder_update',
-                    'operation': 'delete',
-                    'shared_folder_uid': sf['shared_folder_uid']
+                    'command': 'pre_delete',
+                    'objects': [del_obj]
                 }
-                if 'shared_folder_key' not in sf:
-                    if 'teams' in sf:
-                        for team in sf['teams']:
-                            rq['from_team_uid'] = team['team_uid']
-                            break
 
-                np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    api.communicate(params, rq)
-                    params.sync_data = True
-        else:
-            del_obj = {
-                'delete_resolution': 'unlink',
-                'object_uid': folder.uid,
-                'object_type': 'user_folder' if folder.type == BaseFolderNode.UserFolderType else 'shared_folder_folder'
-            }
-            if parent is None:
-                del_obj['from_type'] = 'user_folder'
-            else:
-                del_obj['from_uid'] = parent.uid
-                del_obj['from_type'] = parent.type
-                if parent.type == BaseFolderNode.SharedFolderType:
-                    del_obj['from_type'] = 'shared_folder_folder'
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    pdr = rs['pre_delete_response']
 
-            rq = {
-                'command': 'pre_delete',
-                'objects': [del_obj]
-            }
-
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                pdr = rs['pre_delete_response']
-
-                np = 'y'
-                if not force:
-                    summary = pdr['would_delete']['deletion_summary']
-                    for x in summary:
-                        print(x)
-                    np = user_choice('Do you like to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    rq = {
-                        'command': 'delete',
-                        'pre_delete_token': pdr['pre_delete_token']
-                    }
-                    api.communicate(params, rq)
-                    params.sync_data = True
+                    np = 'y'
+                    if not force:
+                        summary = pdr['would_delete']['deletion_summary']
+                        for x in summary:
+                            print(x)
+                        np = user_choice('Do you like to proceed with deletion?', 'yn', default='n')
+                    if np.lower() == 'y':
+                        rq = {
+                            'command': 'delete',
+                            'pre_delete_token': pdr['pre_delete_token']
+                        }
+                        api.communicate(params, rq)
+                        params.sync_data = True
 
 
 class FolderMoveCommand(Command):
