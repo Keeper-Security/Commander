@@ -69,6 +69,7 @@ tree_parser.exit = suppress_exit
 
 rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove a folder and its contents.')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
+rmdir_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='remove folder without folder info')
 rmdir_parser.add_argument('folder', nargs='*', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
@@ -386,7 +387,11 @@ class FolderRemoveCommand(Command):
             raise CommandError('rmdir', 'Enter name of the existing folder.')
 
         force = kwargs['force'] if 'force' in kwargs else None
+        quiet = kwargs['quiet'] if 'quiet' in kwargs else None
         for folder in folders:
+            if not quiet or not force:
+                # This message should also appear if not forced for the sake of user input
+                print(f'Removing folder {folder.name}...')
             parent = params.folder_cache[folder.uid] if folder.uid is not None else None
             if folder.type == BaseFolderNode.SharedFolderType:
                 if folder.uid in params.shared_folder_cache:
@@ -431,10 +436,11 @@ class FolderRemoveCommand(Command):
                     pdr = rs['pre_delete_response']
 
                     np = 'y'
-                    if not force:
+                    if not force and not quiet:
                         summary = pdr['would_delete']['deletion_summary']
                         for x in summary:
                             print(x)
+                    if not force:
                         np = user_choice('Do you like to proceed with deletion?', 'yn', default='n')
                     if np.lower() == 'y':
                         rq = {
