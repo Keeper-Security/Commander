@@ -188,7 +188,8 @@ def do_command(params, command_line):
                     params.server = region[1]
                     logging.info('Keeper region is set to %s', region[0])
                 else:
-                    logging.warning('Invalid Keeper region: %s', server)
+                    params.server = server
+                    logging.info('Keeper server is set to %s',  params.server)
             else:
                 logging.warning('Cannot change Keeper region while logged in')
         else:

@@ -553,8 +553,6 @@ def sync_down(params):
         for sf_uid in response_json['removed_shared_folders']:
             if sf_uid in params.shared_folder_cache:
                 delete_shared_folder_key(sf_uid)
-                if sf_uid in params.subfolder_record_cache:
-                    del params.subfolder_record_cache[sf_uid]
                 shared_folder = params.shared_folder_cache[sf_uid]
                 if 'shared_folder_key' in shared_folder:
                     del shared_folder['shared_folder_key']
@@ -562,6 +560,10 @@ def sync_down(params):
                     del shared_folder['key_type']
                 if 'users' in shared_folder:
                     shared_folder['users'] = [x for x in shared_folder['users'] if x['username'] != params.user]
+                if 'records' in shared_folder:
+                    for r in shared_folder['records']:
+                        if 'record_uid' in r:
+                            delete_record_key(r['record_uid'])
 
     if 'user_folders_removed' in response_json:
         for ufr in response_json['user_folders_removed']:
@@ -698,6 +700,8 @@ def sync_down(params):
 
                 if ('records_removed' in shared_folder) and ('records' in existing_sf):
                     rrs = set(shared_folder['records_removed'])
+                    for record_uid in rrs:
+                        delete_record_key(record_uid)
                     existing_sf['records'] = [record for record in existing_sf['records'] if record['record_uid'] not in rrs]
 
                 if ('users_removed' in shared_folder) and ('users' in existing_sf):
@@ -909,6 +913,18 @@ def sync_down(params):
             del record['shares']
 
     prepare_folder_tree(params)
+
+    # remove records that are not referenced by any folder
+    all_records = set(params.record_cache.keys())
+    record_links = set()
+    for uids in params.subfolder_record_cache.values():
+        if isinstance(uids, set):
+            record_links.update(uids)
+    for record_uid in all_records.difference(record_links):
+        if record_uid in params.record_cache:
+            del params.record_cache[record_uid]
+        if record_uid in params.meta_data_cache:
+            del params.meta_data_cache[record_uid]
 
     if 'pending_shares_from' in response_json:
         params.pending_share_requests.update(response_json['pending_shares_from'])
