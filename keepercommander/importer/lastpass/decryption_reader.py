@@ -1,7 +1,8 @@
 from base64 import b64decode
-from Crypto.Cipher import AES
 from io import RawIOBase, BufferedReader, TextIOWrapper, IOBase, BytesIO
 from os.path import isfile
+
+from Crypto.Cipher import AES
 
 
 # Chunk size must be a multiple of 256
@@ -52,7 +53,7 @@ class DecryptionReader(RawIOBase):
         elif isfile(filename_or_stream):
             self.encrypted_stream = open(filename_or_stream, 'rb')
         else:
-            # File silently with empty stream
+            # Fail silently with empty stream
             self.encrypted_stream = BytesIO()
 
         self.decryption_generator = decode_aes256_base64_from_stream(self.encrypted_stream, key)
