@@ -225,7 +225,7 @@ help_parser.exit = suppress_exit
 ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands',
                                      add_help=False)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*",
-                        help='One of: "app list", "app get", "app create", "client add", "client remove", "share add" or "share remove"')
+                        help='One of: "app list", "app get", "app create", "app remove", "client add", "client remove", "share add" or "share remove"')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
                                            help='Record UID')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
