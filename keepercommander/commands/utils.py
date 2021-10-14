@@ -315,9 +315,7 @@ class ThisDeviceCommand(Command):
     def execute(self, params, **kwargs):
 
         ops = kwargs.get('ops')
-
         if len(ops) == 0:
-
             ThisDeviceCommand.print_device_info(params)
             return
 
@@ -348,8 +346,11 @@ class ThisDeviceCommand(Command):
         elif action == 'register':
             register_device()
 
-
         elif action == 'persistent_login' or action == 'persistent-login' or action == 'pl':
+            if ThisDeviceCommand.is_persistent_login_disabled(params):
+                logging.warning('"Stay Logged In" feature is restricted by Keeper Administrator')
+                return
+
             value = ops[1]
 
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('persistent_login', value)
@@ -387,6 +388,13 @@ class ThisDeviceCommand(Command):
 
         else:
             raise Exception("Unknown sub-command " + action + ". Available sub-commands: ", ", ".join(this_device_available_command_verbs))
+
+    @staticmethod
+    def is_persistent_login_disabled(params):  # type: (KeeperParams) -> bool
+        if params.enforcements and 'booleans' in params.enforcements:
+            return next((x['value'] for x in params.enforcements['booleans'] if x['key'] == 'restrict_persistent_login'), False)
+        else:
+            return False
 
     @staticmethod
     def get_setting_str_to_value(name: str, value: str):
@@ -436,7 +444,6 @@ class ThisDeviceCommand(Command):
 
     @staticmethod
     def print_device_info(params: KeeperParams):
-
         acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
         print('{:>20}: {}'.format('Device Name', this_device['deviceName']))
@@ -460,15 +467,11 @@ class ThisDeviceCommand(Command):
             print("{:>20}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
             # ip_disable_auto_approve = 0 / disabled (default) <==> IP Auto Approve :ON
 
-        if 'persistentLogin' in acct_summary_dict['settings']:
-            persistentLogin = acct_summary_dict['settings']['persistentLogin']
-            print("{:>20}: {}".format('Persistent Login',
-                                      (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
-                                      if persistentLogin else
-                                      (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
-
-        else:
-            print("{:>20}: {}".format('Persistent Login', (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+        persistentLogin = acct_summary_dict['settings'].get('persistentLogin', False)
+        print("{:>20}: {}".format('Persistent Login',
+                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
+                                  if persistentLogin and not ThisDeviceCommand.is_persistent_login_disabled(params) else
+                                  (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
 
         if 'logoutTimer' in acct_summary_dict['settings']:
             timeout_delta = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
