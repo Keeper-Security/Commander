@@ -98,9 +98,9 @@ class Vault(object):
             if tmpdir is None:
                 self.tmpdir = mkdtemp()
             else:
+                if not os.path.exists(tmpdir):
+                    os.makedirs(tmpdir)
                 self.tmpdir = os.path.abspath(tmpdir)
-                if not os.path.exists(self.tmpdir):
-                    os.makedirs(self.tmpdir)
 
         for i, attachment in enumerate(self.attachments):
             tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
