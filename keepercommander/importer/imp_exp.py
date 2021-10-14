@@ -13,24 +13,28 @@
 
 from contextlib import contextmanager
 from typing import Iterator, List, Optional, Union
-import collections, itertools
-import math
 import base64
+import collections
+import copy
 import hashlib
 import io
+import itertools
 import json
 import logging
+import math
 import os
 import re
-import copy
+import tempfile
 
 from Cryptodome.Cipher import AES
 import requests
 
-from keepercommander import api
+from keepercommander import api, loginv3, record_pb2
+from keepercommander.display import bcolors
 from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..params import KeeperParams
 
+from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission,
@@ -43,7 +47,10 @@ from .. import record_pb2 as record_proto
 from ..recordv3 import RecordV3
 from ..commands.base import user_choice
 
+
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
+IV_LEN = 12
+GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
 
 
@@ -384,6 +391,7 @@ def _import(params, file_format, filename, **kwargs):
     import_users = kwargs.get('users_only') or False
     old_domain = kwargs.get('old_domain')
     new_domain = kwargs.get('new_domain')
+    tmpdir = kwargs.get('tmpdir')
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -398,7 +406,8 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
-    for x in importer.execute(filename, users_only=import_users, old_domain=old_domain, new_domain=new_domain):
+    for x in importer.execute(filename, users_only=import_users, old_domain=old_domain, new_domain=new_domain,
+                              tmpdir=tmpdir):
         if type(x) is ImportRecord:
             if shared or import_into:
                 if not x.folders:
@@ -480,6 +489,7 @@ def _import(params, file_format, filename, **kwargs):
         records_v2_to_update = []   # type: List[dict]
         records_v3_to_add = []      # type: List[record_proto.RecordAdd]
         records_v3_to_update = []   # type: List[record_proto.RecordUpdate]
+        import_uids = {}
 
         records_to_import = prepare_record_add_or_update(update_flag, params, records)
 
@@ -514,6 +524,7 @@ def _import(params, file_format, filename, **kwargs):
                     orig_data = json.loads(existing_record['data_unencrypted'])
                     v3_upd_rq = record_proto.RecordUpdate()
                     v3_upd_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                    import_uids[import_record.uid] = {'ver': 'v3', 'op': 'update'}
                     v3_upd_rq.client_modified_time = utils.current_milli_time()
                     v3_upd_rq.revision = existing_record.get('revision') or 0
                     data = _construct_record_v3_data(import_record, orig_data)
@@ -558,6 +569,7 @@ def _import(params, file_format, filename, **kwargs):
                         'client_modified_time': api.current_milli_time(),
                         'revision': existing_record.get('revision') or 0,
                     }
+                    import_uids[import_record.uid] = {'ver': 'v2', 'op': 'update'}
                     if extra:
                         encrypted_extra = crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), record_key)
                         v2_upd_rq['extra'] = utils.base64_url_encode(encrypted_extra)
@@ -584,6 +596,7 @@ def _import(params, file_format, filename, **kwargs):
                 if import_record.type and v3_enabled:   # V3
                     v3_add_rq = record_proto.RecordAdd()
                     v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                    import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
                     v3_add_rq.client_modified_time = utils.current_milli_time()
                     data = _construct_record_v3_data(import_record)
                     data_str = json.dumps(data)
@@ -623,6 +636,7 @@ def _import(params, file_format, filename, **kwargs):
                 else:
                     v2_add_rq = folder_pb2.RecordRequest()
                     v2_add_rq.recordUid = utils.base64_url_decode(import_record.uid)
+                    import_uids[import_record.uid] = {'ver': 'v2', 'op': 'add'}
                     v2_add_rq.recordType = 0
                     v2_add_rq.howLongAgo = 0
                     data, extra = _construct_record_v2(import_record)
@@ -698,14 +712,25 @@ def _import(params, file_format, filename, **kwargs):
             api.sync_down(params)
 
         # upload attachments
-        atts = []
+        v2_atts = []
+        v3_atts = []
         for r in records:
             if r.attachments:
                 r_uid = r.uid
-                for a in r.attachments:
-                    atts.append((r_uid, a))
-        if len(atts) > 0:
-            upload_attachment(params, atts)
+                if r_uid in import_uids:
+                    ver = import_uids[r_uid]['ver']
+                    if ver == 'v3':
+                        v3_atts.append(r)
+                    else:
+                        for a in r.attachments:
+                            v2_atts.append((r_uid, a))
+        if len(v2_atts) > 0:
+            upload_attachment(params, v2_atts)
+        if len(v3_atts) > 0:
+            upload_v3_attachments(params, v3_atts)
+
+    if hasattr(importer, 'cleanup') and callable(importer.cleanup):
+        importer.cleanup()
 
     records_after = len(params.record_cache)
     if records_after > records_before:
@@ -830,6 +855,101 @@ def execute_records_update(params, records):  # type: (KeeperParams, List[record
     report_statuses('record', (x.status for x in rs_record))
 
     return rs_record
+
+
+def upload_v3_attachments(params, records_with_attachments):
+    """Interact with the API to upload v3 attachments"""
+    print('Uploading v3 attachments:')
+
+    for parent_record in records_with_attachments:
+        parent_uid = parent_record.uid
+        rq = record_pb2.FilesAddRequest()
+        uid_to_attachment = {}
+        for atta in parent_record.attachments:
+            if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
+                logging.warning(f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.')
+                continue
+
+            file_data = {
+                'name': atta.name,
+                'size': atta.size,
+                'title': atta.name,
+                'lastModified': api.current_milli_time(),
+                'type': 'application/octet-stream'
+            }
+            rdata = json.dumps(file_data).encode('utf-8')
+
+            if not atta.key:
+                atta.key = os.urandom(32)
+
+            uid = api.generate_record_uid()
+            atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
+            atta.encrypted_key = api.encrypt_aes_plain(atta.key, params.data_key)
+
+            rf = record_pb2.File()
+            rf.record_uid = atta.record_uid
+            rf.record_key = atta.encrypted_key
+            rf.data = api.encrypt_aes_plain(rdata, atta.key)
+            rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
+            rq.files.append(rf)
+            uid_to_attachment[atta.record_uid] = atta
+
+        rq.client_time = api.current_milli_time()
+        rs = api.communicate_rest(params, rq, 'vault/files_add')
+        files_add_rs = record_pb2.FilesAddResponse()
+        files_add_rs.ParseFromString(rs)
+
+        new_attachment_uids = []
+        record_links_add = []
+        for f in files_add_rs.files:
+            atta = uid_to_attachment[f.record_uid]
+            status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
+            success = (f.status == record_pb2.FileAddResult.DESCRIPTOR.values_by_name['FA_SUCCESS'].number)
+
+            if not success:
+                logging.warning(f'{bcolors.FAIL}Upload of {atta.name} failed with status: {status}{bcolors.ENDC}')
+                continue
+
+            with atta.open() as src:
+                with EncryptionReader.get_buffered_reader(src, atta.key) as encrypted_src:
+                    form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
+                    form_params = json.loads(f.parameters)
+                    print(f'{atta.name} ... ', end='', flush=True)
+                    response = requests.post(f.url, data=form_params, files=form_files)
+
+            if str(response.status_code) == form_params.get('success_action_status'):
+                print('Done')
+                rl = {'record_uid': atta.record_uid, 'record_key': atta.encrypted_key}
+                record_links_add.append(rl)
+                new_attachment_uids.append(atta.record_uid)
+            else:
+                print('Failed')
+
+        if new_attachment_uids:
+            new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a) for a in new_attachment_uids]
+
+            record_data = params.record_cache[parent_uid].get('data_unencrypted')
+            if record_data:
+                if isinstance(record_data, bytes):
+                    record_data = record_data.decode('utf-8')
+                data = json.loads(record_data.strip())
+            else:
+                data = {}
+            if 'fields' not in data:
+                data['fields'] = []
+
+            # find first fileRef or create new fileRef if missing
+            file_ref = next((ft for ft in data['fields'] if ft['type'] == 'fileRef'), None)
+            if file_ref:
+                file_ref['value'] = file_ref.get('value', []) + new_attachments
+            else:
+                data['fields'].append({'type': 'fileRef', 'value': new_attachments})
+
+            new_data = json.dumps(data)
+            params.record_cache[parent_uid]['data_unencrypted'] = new_data
+            params.sync_data = True
+            rec = api.get_record(params, parent_uid)
+            api.update_record_v3(params, rec, record_links={'record_links_add': record_links_add}, silent=True)
 
 
 def upload_attachment(params, attachments):

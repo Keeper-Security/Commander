@@ -11,6 +11,7 @@ from Crypto.Util import number
 from Crypto.PublicKey import RSA
 
 from .account import Account
+from .attachment import LastpassAttachment
 from .chunk import Chunk
 
 
@@ -47,7 +48,7 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     # TODO: Make a test case that covers secure note account
 
     io = BytesIO(chunk.payload)
-    id = read_item(io)
+    id = read_item(io).decode('utf-8')
     name = decode_aes256_plain_auto(read_item(io), encryption_key)
     group = decode_aes256_plain_auto(read_item(io), encryption_key)
     url = decode_hex(read_item(io))
@@ -57,6 +58,14 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     password = decode_aes256_plain_auto(read_item(io), encryption_key)
     skip_item(io, 2)
     secure_note = read_item(io)
+    skip_item(io, 14)
+
+    attach_key_encrypted = read_item(io)
+    attach_present = read_item(io)
+    if attach_present == b'1' and len(attach_key_encrypted) > 0:
+        attach_key = decode_hex(decode_aes256_base64_auto(attach_key_encrypted, encryption_key))
+    else:
+        attach_key = None
 
     # Parse secure note
     if secure_note == b'1':
@@ -67,7 +76,7 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
             username = parsed.get('username', username)
             password = parsed.get('password', password)
 
-    return Account(id, name, username, password, url, group, notes, shared_folder)
+    return Account(id, name, username, password, url, group, notes, shared_folder, attach_key)
 
 
 def parse_PRIK(chunk, encryption_key):
@@ -109,6 +118,27 @@ def parse_SHAR(chunk, encryption_key, rsa_key):
 
     # TODO: Return an object, not a dict
     return {'id': id, 'name': name, 'encryption_key': key}
+
+
+def parse_ATTA(chunk, accounts):
+    attachment = None
+    io = BytesIO(chunk.payload)
+    id = read_item(io).decode('utf-8')
+    parent_id = read_item(io).decode('utf-8')
+    mimetype = read_item(io).decode('utf-8')
+    storagekey = read_item(io).decode('utf-8')
+    size = int(read_item(io))
+    filename_encrypted = read_item(io)
+
+    parents = [a for a in accounts if a.id == parent_id]
+    if len(parents) > 0:
+        parent = parents[0]
+        if parent.attach_key:
+            filename = decode_aes256_base64_auto(filename_encrypted, parent.attach_key).decode('utf-8')
+            attachment = LastpassAttachment(id, parent, mimetype, storagekey, size, filename)
+            parent.attachments.append(attachment)
+
+    return attachment
 
 
 def parse_secure_note_server(notes):

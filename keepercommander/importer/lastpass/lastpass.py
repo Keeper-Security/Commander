@@ -34,6 +34,7 @@ class LastPassImporter(BaseImporter):
     def __init__(self):
         super(LastPassImporter, self).__init__()
 
+        self.vault = None
         self.addresses = []  # type: List[LastPassAddress]
         self.months = {}
         _months = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
@@ -121,7 +122,11 @@ class LastPassImporter(BaseImporter):
             fields[key] = value
         return fields
 
-    def do_import(self, name, users_only=False, old_domain=None, new_domain=None, **kwargs):
+    def cleanup(self):
+        """Cleanup should be performed when finished with encrypted attachment files"""
+        self.vault.cleanup()
+
+    def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
         username = name
         password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
         print('Press <Enter> if account is not protected with Multifactor Authentication')
@@ -130,11 +135,14 @@ class LastPassImporter(BaseImporter):
             twofa_code = None
 
         try:
-            vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only)
+            vault = Vault.open_remote(
+                username, password, multifactor_password=twofa_code, users_only=users_only, tmpdir=tmpdir
+            )
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
         else:
+            self.vault = vault
             if len(vault.errors) > 0:
                 err_list = '\n'.join(vault.errors)
                 logging.warning(f'The following errors occurred retrieving Lastpass shared folder members:\n{err_list}')
@@ -176,6 +184,10 @@ class LastPassImporter(BaseImporter):
                     record.login_url = None
                 elif record.login_url == 'http://group':
                     continue
+            if len(account.attachments) > 0:
+                if record.attachments is None:
+                    record.attachments = []
+                record.attachments = account.attachments
             if account.notes:
                 notes = account.notes.decode('utf-8')
                 if notes.startswith('NoteType:'):

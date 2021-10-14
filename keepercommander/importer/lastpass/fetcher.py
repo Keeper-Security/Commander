@@ -22,7 +22,8 @@ from .session import Session
 
 http = requests
 headers = {'user-agent': 'lastpass-python/{}'.format(__version__)}
-query_string = '?mobile=1&b64=1&hash=0.0&hasplugin=3.0.23&requestsrc=android'
+https_host = 'https://lastpass.com'
+query_string = 'mobile=1&b64=1&hash=0.0&hasplugin=3.0.23&requestsrc=android'
 
 
 def login(username, password, multifactor_password=None, client_id=None):
@@ -42,7 +43,7 @@ def logout(session, web_client=http):
 
 
 def fetch(session, web_client=http):
-    url = 'https://lastpass.com/getaccts.php' + query_string
+    url = f'{https_host}/getaccts.php?{query_string}'
     response = web_client.get(url, cookies={'PHPSESSID': session.id})
 
     if response.status_code != requests.codes.ok:
@@ -51,8 +52,19 @@ def fetch(session, web_client=http):
     return blob.Blob(decode_blob(response.content), session.key_iteration_count)
 
 
+def stream_attachment(session, attach_info, web_client=http):
+    url = f'{https_host}/getattach.php'
+    data = {'getattach': attach_info.storagekey, 'sharedfolderid': attach_info.parent.shared_folder.id}
+    response = web_client.post(url, data=data, cookies={'PHPSESSID': session.id}, stream=True)
+
+    if response.status_code != requests.codes.ok:
+        raise NetworkError()
+
+    return response
+
+
 def fetch_shared_folder_members(session, shareid, web_client=http):
-    url = 'https://lastpass.com/getSharedFolderMembers.php' + query_string + f'&shareid={shareid}'
+    url = f'{https_host}/getSharedFolderMembers.php?{query_string}&shareid={shareid}'
     response = web_client.get(url, cookies={'PHPSESSID': session.id})
 
     if response.status_code != requests.codes.ok:

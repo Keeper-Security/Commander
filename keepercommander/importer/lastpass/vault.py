@@ -1,4 +1,8 @@
 # coding: utf-8
+import os
+import shutil
+from tempfile import mkdtemp
+
 from . import fetcher
 from . import parser
 from .exceptions import InvalidResponseError
@@ -12,7 +16,7 @@ class Vault(object):
         session = fetcher.login(username, password, multifactor_password, client_id)
         blob = fetcher.fetch(session)
         encryption_key = blob.encryption_key(username, password)
-        vault = cls(blob, encryption_key, session, kwargs.get('users_only') or False)
+        vault = cls(blob, encryption_key, session, kwargs.get('tmpdir'), kwargs.get('users_only') or False)
 
         fetcher.logout(session)
         return vault
@@ -23,7 +27,7 @@ class Vault(object):
         # TODO: read the blob here
         raise NotImplementedError()
 
-    def __init__(self, blob, encryption_key, session, shared_folder_details):
+    def __init__(self, blob, encryption_key, session, tmpdir=None, shared_folder_details=False):
         """This more of an internal method, use one of the static constructors instead"""
         chunks = parser.extract_chunks(blob)
 
@@ -32,7 +36,11 @@ class Vault(object):
 
         self.errors = set()
         self.shared_folders = []
+        self.attachments = []
         self.accounts = self.parse_accounts(chunks, encryption_key)
+        self.tmpdir = None
+
+        self.process_attachments(session, tmpdir)
 
         try:
             if self.shared_folders and shared_folder_details:
@@ -71,5 +79,32 @@ class Vault(object):
                 shareid = share['id'].decode('utf-8')
                 shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'))
                 self.shared_folders.append(shared_folder)
+            elif i.id == b'ATTA':
+                attachment = parser.parse_ATTA(i, accounts)
+                if attachment:
+                    self.attachments.append(attachment)
 
         return accounts
+
+    def cleanup(self):
+        """Cleanup should be performed when finished with encrypted attachment files"""
+        if self.tmpdir:
+            shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def process_attachments(self, session, tmpdir=None):
+        attach_cnt = len(self.attachments)
+        if attach_cnt > 0:
+            attach_cnt_digits = len(str(attach_cnt))
+            if tmpdir is None:
+                self.tmpdir = mkdtemp()
+            else:
+                self.tmpdir = os.path.abspath(tmpdir)
+                if not os.path.exists(self.tmpdir):
+                    os.makedirs(self.tmpdir)
+
+        for i, attachment in enumerate(self.attachments):
+            tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
+            attachment.tmpfile = os.path.join(self.tmpdir, tmp_filename)
+            with fetcher.stream_attachment(session, attachment) as r:
+                with open(attachment.tmpfile, 'wb') as f:
+                    shutil.copyfileobj(r.raw, f)
