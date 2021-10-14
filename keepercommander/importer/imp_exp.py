@@ -34,6 +34,7 @@ from keepercommander.display import bcolors
 from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..params import KeeperParams
 
+from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission,
@@ -50,7 +51,6 @@ from ..commands.base import user_choice
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
 GCM_TAG_LEN = 16
-UPLOAD_BUFFER_SIZE = 10240
 RECORD_MAX_DATA_LEN = 32000
 
 
@@ -910,28 +910,15 @@ def upload_v3_attachments(params, records_with_attachments):
                 logging.warning(f'{bcolors.FAIL}Upload of {atta.name} failed with status: {status}{bcolors.ENDC}')
                 continue
 
-            with tempfile.TemporaryFile(mode='w+b') as dst:
-                with atta.open() as src:
-                    iv = os.urandom(12)
-                    dst.write(iv)
-                    cipher = AES.new(key=atta.key, mode=AES.MODE_GCM, nonce=iv)
-                    byte_data = src.read(UPLOAD_BUFFER_SIZE)
-                    while len(byte_data) != 0:
-                        encrypted_data = cipher.encrypt(byte_data)
-                        dst.write(encrypted_data)
-                        byte_data = src.read(UPLOAD_BUFFER_SIZE)
-
-                    dst.write(cipher.digest())
-                dst.seek(0)
-
-                form_files = {'file': (atta.name, dst, 'application/octet-stream')}
-                form_params = json.loads(f.parameters)
-                print(f'{atta.name} ... ', end='', flush=True)
-                response = requests.post(f.url, data=form_params, files=form_files)
+            with atta.open() as src:
+                with EncryptionReader.get_buffered_reader(src, atta.key) as encrypted_src:
+                    form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
+                    form_params = json.loads(f.parameters)
+                    print(f'{atta.name} ... ', end='', flush=True)
+                    response = requests.post(f.url, data=form_params, files=form_files)
 
             if str(response.status_code) == form_params.get('success_action_status'):
                 print('Done')
-                # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
                 rl = {'record_uid': atta.record_uid, 'record_key': atta.encrypted_key}
                 record_links_add.append(rl)
                 new_attachment_uids.append(atta.record_uid)
