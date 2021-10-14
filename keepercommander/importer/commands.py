@@ -13,7 +13,6 @@
 import argparse
 import logging
 import requests
-import json
 import os
 import getpass
 
@@ -147,6 +146,11 @@ class RecordImportCommand(ImporterCommand):
         return import_parser
 
     def execute(self, params, **kwargs):
+        if params.enforcements and 'booleans' in params.enforcements:
+            restricted = next((x['value'] for x in params.enforcements['booleans'] if x['key'] == 'restrict_import'), False)
+            if restricted:
+                logging.warning('"import" is restricted by Keeper Administrator')
+                return
         update_flag = kwargs['update'] if 'update' in kwargs else False
         import_format = kwargs['format'] if 'format' in kwargs else None
         import_name = kwargs['name'] if 'name' in kwargs else None
