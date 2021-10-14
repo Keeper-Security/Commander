@@ -910,7 +910,7 @@ class RecordRemoveCommand(Command):
             raise CommandError('rm', 'Enter name of existing record')
 
         rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
-        if rv in (3, 4):
+        if rv in (3, 4, 5):
             recordv3.RecordV3.validate_access(params, record_uid)
         else:
             recordv2.RecordRemoveCommand().execute(params, **kwargs)
@@ -978,7 +978,8 @@ class RecordRemoveCommand(Command):
                         'pre_delete_token': pdr['pre_delete_token']
                     }
                     api.communicate(params, rq)
-                    params.sync_data = True
+
+        params.sync_data = True
 
 
 class SearchCommand(Command):
