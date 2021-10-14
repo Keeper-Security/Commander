@@ -923,17 +923,17 @@ def upload_v3_attachments(params, records_with_attachments):
 
                 form_files = {'file': (atta.name, dst, 'application/octet-stream')}
                 form_params = json.loads(f.parameters)
-                logging.info(f'Uploading {atta.name} ... ')
+                print(f'{atta.name} ... ', end='', flush=True)
                 response = requests.post(f.url, data=form_params, files=form_files)
 
             if str(response.status_code) == form_params.get('success_action_status'):
-                logging.info(f'Upload of {atta.name} succeeded')
+                print('Done')
                 # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
                 rl = {'record_uid': atta.record_uid, 'record_key': atta.encrypted_key}
                 record_links_add.append(rl)
                 new_attachment_uids.append(atta.record_uid)
             else:
-                logging.info(f'Upload of {atta.name} failed: {response.status_code}')
+                print('Failed')
 
         if new_attachment_uids:
             new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a) for a in new_attachment_uids]
