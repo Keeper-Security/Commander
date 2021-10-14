@@ -729,6 +729,9 @@ def _import(params, file_format, filename, **kwargs):
         if len(v3_atts) > 0:
             upload_v3_attachments(params, v3_atts)
 
+    if hasattr(importer, 'cleanup') and callable(importer.cleanup):
+        importer.cleanup()
+
     records_after = len(params.record_cache)
     if records_after > records_before:
         params.queue_audit_event('imported_records', file_format=file_format.upper())

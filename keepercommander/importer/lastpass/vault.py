@@ -38,6 +38,7 @@ class Vault(object):
         self.shared_folders = []
         self.attachments = []
         self.accounts = self.parse_accounts(chunks, encryption_key)
+        self.tmpdir = None
 
         self.process_attachments(session, tmpdir)
 
@@ -85,20 +86,25 @@ class Vault(object):
 
         return accounts
 
+    def cleanup(self):
+        """Cleanup should be performed when finished with encrypted attachment files"""
+        if self.tmpdir:
+            shutil.rmtree(self.tmpdir, ignore_errors=True)
+
     def process_attachments(self, session, tmpdir=None):
         attach_cnt = len(self.attachments)
         if attach_cnt > 0:
             attach_cnt_digits = len(str(attach_cnt))
             if tmpdir is None:
-                tmpdir = mkdtemp()
+                self.tmpdir = mkdtemp()
             else:
-                tmpdir = os.path.abspath(tmpdir)
-                if not os.path.exists(tmpdir):
-                    os.makedirs(tmpdir)
+                self.tmpdir = os.path.abspath(tmpdir)
+                if not os.path.exists(self.tmpdir):
+                    os.makedirs(self.tmpdir)
 
         for i, attachment in enumerate(self.attachments):
             tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
-            attachment.tmpfile = os.path.join(tmpdir, tmp_filename)
+            attachment.tmpfile = os.path.join(self.tmpdir, tmp_filename)
             with fetcher.stream_attachment(session, attachment) as r:
                 with open(attachment.tmpfile, 'wb') as f:
                     shutil.copyfileobj(r.raw, f)
