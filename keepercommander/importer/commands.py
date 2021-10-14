@@ -320,7 +320,7 @@ class UnloadMembershipCommand(Command):
                 session = fetcher.login(username, password, twofa_code, None)
                 blob = fetcher.fetch(session)
                 encryption_key = blob.encryption_key(username, password)
-                vault = Vault(blob, encryption_key, session, False)
+                vault = Vault(blob, encryption_key, session, shared_folder_details=False)
 
                 lastpass_shared_folder = [x for x in vault.shared_folders]
 
@@ -357,7 +357,7 @@ class UnloadMembershipCommand(Command):
     @staticmethod
     def _lastpass_permission(lp_permission):  # type: (dict) -> Permission
         permission = Permission()
-        permission.name = lp_permission['username']
+        permission.name = lp_permission['username'] or lp_permission['name']
         permission.manage_records = lp_permission['readonly'] == '0'
         permission.manage_users = lp_permission['can_administer'] == '1'
         return permission

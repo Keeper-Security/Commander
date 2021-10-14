@@ -27,7 +27,7 @@ class Vault(object):
         # TODO: read the blob here
         raise NotImplementedError()
 
-    def __init__(self, blob, encryption_key, session, tmpdir, shared_folder_details):
+    def __init__(self, blob, encryption_key, session, tmpdir=None, shared_folder_details=False):
         """This more of an internal method, use one of the static constructors instead"""
         chunks = parser.extract_chunks(blob)
 
