@@ -119,7 +119,8 @@ class LastPassImporter(BaseImporter):
 
     def cleanup(self):
         """Cleanup should be performed when finished with encrypted attachment files"""
-        if self.vault:
+        # Don't remove custom specified tmpdir
+        if self.vault and self.tmpdir is None:
             self.vault.cleanup()
 
         old_tmpdir = glob(f'{tempfile.gettempdir()}/{TMPDIR_PREFIX}*')
@@ -129,6 +130,7 @@ class LastPassImporter(BaseImporter):
             logging.warning(warn_msg)
 
     def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
+        self.tmpdir = tmpdir
         username = name
         password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
         print('Press <Enter> if account is not protected with Multifactor Authentication')
