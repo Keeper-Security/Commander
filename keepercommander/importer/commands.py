@@ -22,7 +22,7 @@ from .. import api
 from . import imp_exp
 from ..params import KeeperParams
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
-from .importer import Attachment as ImportAttachment, SharedFolder, Permission
+from .importer import Attachment as ImportAttachment, SharedFolder, Permission, PathDelimiter
 from .lastpass import fetcher
 from .lastpass.vault import Vault
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
@@ -68,6 +68,7 @@ export_parser.exit = suppress_exit
 
 unload_membership_parser = argparse.ArgumentParser(prog='unload-membership', description='Unload shared folder membership to JSON file.')
 unload_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
+unload_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 unload_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
 unload_membership_parser.error = raise_parse_exception
 unload_membership_parser.exit = suppress_exit
@@ -256,6 +257,9 @@ class UnloadMembershipCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         source = kwargs.get('source') or 'keeper'
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
+        import_into = kwargs.get('folder')
+        if import_into:
+            import_into = import_into.replace(PathDelimiter, 2 * PathDelimiter)
 
         shared_folders = []  # type: List[SharedFolder]
 
@@ -320,7 +324,7 @@ class UnloadMembershipCommand(Command):
                 session = fetcher.login(username, password, twofa_code, None)
                 blob = fetcher.fetch(session)
                 encryption_key = blob.encryption_key(username, password)
-                vault = Vault(blob, encryption_key, session, shared_folder_details=False)
+                vault = Vault(blob, encryption_key, session, shared_folder_details=False, get_attachments=False)
 
                 lastpass_shared_folder = [x for x in vault.shared_folders]
 
@@ -333,7 +337,10 @@ class UnloadMembershipCommand(Command):
                     members, teams, error = fetcher.fetch_shared_folder_members(session, lpsf.id)
                     sf = SharedFolder()
                     sf.uid = lpsf.id
-                    sf.path = lpsf.name
+                    if import_into:
+                        sf.path = f'{import_into}{PathDelimiter}{lpsf.name}'
+                    else:
+                        sf.path = lpsf.name
                     sf.permissions = []
                     if members:
                         sf.permissions.extend((self._lastpass_permission(x) for x in members))
