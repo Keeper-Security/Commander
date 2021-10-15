@@ -31,8 +31,8 @@ from .json.json import KeeperJsonImporter, KeeperJsonExporter
 def register_commands(commands):
     commands['import'] = RecordImportCommand()
     commands['export'] = RecordExportCommand()
-    commands['unload-membership'] = UnloadMembershipCommand()
-    commands['load-membership'] = LoadMembershipCommand()
+    commands['download-membership'] = DownloadMembershipCommand()
+    commands['apply-membership'] = ApplyMembershipCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -66,20 +66,20 @@ export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
 
 
-unload_membership_parser = argparse.ArgumentParser(prog='unload-membership', description='Unload shared folder membership to JSON file.')
-unload_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
-unload_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
-unload_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
-unload_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
-unload_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
-unload_membership_parser.error = raise_parse_exception
-unload_membership_parser.exit = suppress_exit
+download_membership_parser = argparse.ArgumentParser(prog='download-membership', description='Unload shared folder membership to JSON file.')
+download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
+download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
+download_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
+download_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
+download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
+download_membership_parser.error = raise_parse_exception
+download_membership_parser.exit = suppress_exit
 
 
-load_membership_parser = argparse.ArgumentParser(prog='load-membership', description='Loads shared folder membership from JSON file into Keeper.')
-load_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
-load_membership_parser.error = raise_parse_exception
-load_membership_parser.exit = suppress_exit
+apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', description='Loads shared folder membership from JSON file into Keeper.')
+apply_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
+apply_membership_parser.error = raise_parse_exception
+apply_membership_parser.exit = suppress_exit
 
 csv_instructions = '''CSV Import Instructions
 
@@ -252,9 +252,9 @@ def is_export_restricted(params):
     return is_export_restricted
 
 
-class UnloadMembershipCommand(Command):
+class DownloadMembershipCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
-        return unload_membership_parser
+        return download_membership_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         source = kwargs.get('source') or 'keeper'
@@ -363,9 +363,9 @@ class UnloadMembershipCommand(Command):
             shared_folders.extend(added_members)
             json_exporter = KeeperJsonExporter()
             json_exporter.do_export(file_name, shared_folders)
-            logging.info('%d shared folder memberships unloaded.', len(added_members))
+            logging.info('%d shared folder memberships downloaded.', len(added_members))
         else:
-            logging.info('No folders unloaded')
+            logging.info('No folder memberships downloaded.')
 
     @staticmethod
     def _lastpass_permission(lp_permission, team=False, old_host=None, new_host=None):  # type: (dict) -> Permission
@@ -379,14 +379,14 @@ class UnloadMembershipCommand(Command):
         return permission
 
 
-class LoadMembershipCommand(Command):
+class ApplyMembershipCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
-        return load_membership_parser
+        return apply_membership_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
         if not os.path.exists(file_name):
-            logging.warning('Shared folder membership file "%s" no found', file_name)
+            logging.warning('Shared folder membership file "%s" not found', file_name)
             return
 
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
