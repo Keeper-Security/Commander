@@ -54,7 +54,9 @@ def fetch(session, web_client=http):
 
 def stream_attachment(session, attach_info, web_client=http):
     url = f'{https_host}/getattach.php'
-    data = {'getattach': attach_info.storagekey, 'sharedfolderid': attach_info.parent.shared_folder.id}
+    data = {'getattach': attach_info.storagekey}
+    if attach_info.parent.shared_folder:
+        data['sharedfolderid'] = attach_info.parent.shared_folder.id
     response = web_client.post(url, data=data, cookies={'PHPSESSID': session.id}, stream=True)
 
     if response.status_code != requests.codes.ok:

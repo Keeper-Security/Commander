@@ -124,7 +124,8 @@ class LastPassImporter(BaseImporter):
 
     def cleanup(self):
         """Cleanup should be performed when finished with encrypted attachment files"""
-        self.vault.cleanup()
+        if self.vault:
+            self.vault.cleanup()
 
     def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
         username = name
