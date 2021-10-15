@@ -17,19 +17,12 @@ import tempfile
 from glob import glob
 from typing import Optional, List
 
-from ..importer import (BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission)
+from ..importer import (
+    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, replace_email_domain
+)
 from .account import Account
 from .exceptions import LastPassUnknownError
 from .vault import Vault, TMPDIR_PREFIX
-
-
-def replace_email_domain(email, old_domain, new_domain):
-    # type: (str, Optional[str], Optional[str]) -> str
-    if old_domain and new_domain and email.endswith(f'@{old_domain}'):
-        email_user, domain = email.split('@')
-        return f'{email_user}@{new_domain}'
-    else:
-        return email
 
 
 class LastPassImporter(BaseImporter):

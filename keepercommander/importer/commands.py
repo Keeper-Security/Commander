@@ -22,7 +22,7 @@ from .. import api
 from . import imp_exp
 from ..params import KeeperParams
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
-from .importer import Attachment as ImportAttachment, SharedFolder, Permission, PathDelimiter
+from .importer import Attachment as ImportAttachment, SharedFolder, Permission, PathDelimiter, replace_email_domain
 from .lastpass import fetcher
 from .lastpass.vault import Vault
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
@@ -69,6 +69,8 @@ export_parser.exit = suppress_exit
 unload_membership_parser = argparse.ArgumentParser(prog='unload-membership', description='Unload shared folder membership to JSON file.')
 unload_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
 unload_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
+unload_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
+unload_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 unload_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
 unload_membership_parser.error = raise_parse_exception
 unload_membership_parser.exit = suppress_exit
@@ -257,6 +259,8 @@ class UnloadMembershipCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         source = kwargs.get('source') or 'keeper'
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
+        old_domain = kwargs.get('old_domain')
+        new_domain = kwargs.get('new_domain')
         import_into = kwargs.get('folder')
         if import_into:
             import_into = import_into.replace(PathDelimiter, 2 * PathDelimiter)
@@ -343,9 +347,11 @@ class UnloadMembershipCommand(Command):
                         sf.path = lpsf.name
                     sf.permissions = []
                     if members:
-                        sf.permissions.extend((self._lastpass_permission(x) for x in members))
+                        sf.permissions.extend(
+                            (self._lastpass_permission(x, old_host=old_domain, new_host=new_domain) for x in members)
+                        )
                     if teams:
-                        sf.permissions.extend((self._lastpass_permission(x) for x in teams))
+                        sf.permissions.extend((self._lastpass_permission(x, team=True) for x in teams))
                     added_members.append(sf)
             except Exception as e:
                 logging.warning(e)
@@ -362,9 +368,12 @@ class UnloadMembershipCommand(Command):
             logging.info('No folders unloaded')
 
     @staticmethod
-    def _lastpass_permission(lp_permission):  # type: (dict) -> Permission
+    def _lastpass_permission(lp_permission, team=False, old_host=None, new_host=None):  # type: (dict) -> Permission
         permission = Permission()
-        permission.name = lp_permission['username'] or lp_permission['name']
+        if team:
+            permission.name = lp_permission['name']
+        else:
+            permission.name = replace_email_domain(lp_permission['username'], old_host, new_host)
         permission.manage_records = lp_permission['readonly'] == '0'
         permission.manage_users = lp_permission['can_administer'] == '1'
         return permission
