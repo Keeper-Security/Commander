@@ -23,6 +23,15 @@ TWO_FACTOR_CODE = 'TFC:Keeper'
 FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 
 
+def replace_email_domain(email, old_domain, new_domain):
+    # type: (str, Optional[str], Optional[str]) -> str
+    if old_domain and new_domain and email.endswith(f'@{old_domain}'):
+        email_user, domain = email.split('@')
+        return f'{email_user}@{new_domain}'
+    else:
+        return email
+
+
 def importer_for_format(input_format):
     full_name = 'keepercommander.importer.' + input_format
     module = importlib.import_module(full_name)

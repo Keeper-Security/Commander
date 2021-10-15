@@ -9,6 +9,9 @@ from .exceptions import InvalidResponseError
 from .shared_folder import LastpassSharedFolder
 
 
+TMPDIR_PREFIX = 'keepercommander_lastpass_import_'
+
+
 class Vault(object):
     @classmethod
     def open_remote(cls, username, password, multifactor_password=None, client_id=None, **kwargs):
@@ -16,7 +19,10 @@ class Vault(object):
         session = fetcher.login(username, password, multifactor_password, client_id)
         blob = fetcher.fetch(session)
         encryption_key = blob.encryption_key(username, password)
-        vault = cls(blob, encryption_key, session, kwargs.get('tmpdir'), kwargs.get('users_only') or False)
+        vault = cls(
+            blob, encryption_key, session, tmpdir=kwargs.get('tmpdir'),
+            shared_folder_details=kwargs.get('users_only') or False
+        )
 
         fetcher.logout(session)
         return vault
@@ -27,7 +33,7 @@ class Vault(object):
         # TODO: read the blob here
         raise NotImplementedError()
 
-    def __init__(self, blob, encryption_key, session, tmpdir=None, shared_folder_details=False):
+    def __init__(self, blob, encryption_key, session, tmpdir=None, shared_folder_details=False, get_attachments=True):
         """This more of an internal method, use one of the static constructors instead"""
         chunks = parser.extract_chunks(blob)
 
@@ -40,7 +46,8 @@ class Vault(object):
         self.accounts = self.parse_accounts(chunks, encryption_key)
         self.tmpdir = None
 
-        self.process_attachments(session, tmpdir)
+        if get_attachments:
+            self.process_attachments(session, tmpdir)
 
         try:
             if self.shared_folders and shared_folder_details:
@@ -96,7 +103,7 @@ class Vault(object):
         if attach_cnt > 0:
             attach_cnt_digits = len(str(attach_cnt))
             if tmpdir is None:
-                self.tmpdir = mkdtemp()
+                self.tmpdir = mkdtemp(prefix=TMPDIR_PREFIX)
             else:
                 if not os.path.exists(tmpdir):
                     os.makedirs(tmpdir)
