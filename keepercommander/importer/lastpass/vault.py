@@ -96,7 +96,7 @@ class Vault(object):
         if attach_cnt > 0:
             attach_cnt_digits = len(str(attach_cnt))
             if tmpdir is None:
-                self.tmpdir = mkdtemp()
+                self.tmpdir = mkdtemp(prefix='keepercommander_lastpass_import_')
             else:
                 if not os.path.exists(tmpdir):
                     os.makedirs(tmpdir)
