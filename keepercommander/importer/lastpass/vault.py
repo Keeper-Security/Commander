@@ -102,9 +102,12 @@ class Vault(object):
                     os.makedirs(tmpdir)
                 self.tmpdir = os.path.abspath(tmpdir)
 
+        print('Downloading attachments:')
         for i, attachment in enumerate(self.attachments):
             tmp_filename = f'{str(i).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
             attachment.tmpfile = os.path.join(self.tmpdir, tmp_filename)
             with fetcher.stream_attachment(session, attachment) as r:
                 with open(attachment.tmpfile, 'wb') as f:
+                    print(f'{attachment.name} ... ', end='', flush=True)
                     shutil.copyfileobj(r.raw, f)
+                    print('Done')
