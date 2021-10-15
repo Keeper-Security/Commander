@@ -13,12 +13,14 @@ import datetime
 import getpass
 import json
 import logging
+import tempfile
+from glob import glob
 from typing import Optional, List
 
 from ..importer import (BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission)
 from .account import Account
 from .exceptions import LastPassUnknownError
-from .vault import Vault
+from .vault import Vault, TMPDIR_PREFIX
 
 
 def replace_email_domain(email, old_domain, new_domain):
@@ -126,6 +128,12 @@ class LastPassImporter(BaseImporter):
         """Cleanup should be performed when finished with encrypted attachment files"""
         if self.vault:
             self.vault.cleanup()
+
+        old_tmpdir = glob(f'{tempfile.gettempdir()}/{TMPDIR_PREFIX}*')
+        if len(old_tmpdir) > 0:
+            old_tmpdirs_str = '\n'.join(old_tmpdir)
+            warn_msg = f'Previous temporary directories from interrupted imports detected:\n{old_tmpdirs_str}'
+            logging.warning(warn_msg)
 
     def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
         username = name

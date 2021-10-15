@@ -9,6 +9,9 @@ from .exceptions import InvalidResponseError
 from .shared_folder import LastpassSharedFolder
 
 
+TMPDIR_PREFIX = 'keepercommander_lastpass_import_'
+
+
 class Vault(object):
     @classmethod
     def open_remote(cls, username, password, multifactor_password=None, client_id=None, **kwargs):
@@ -96,7 +99,7 @@ class Vault(object):
         if attach_cnt > 0:
             attach_cnt_digits = len(str(attach_cnt))
             if tmpdir is None:
-                self.tmpdir = mkdtemp(prefix='keepercommander_lastpass_import_')
+                self.tmpdir = mkdtemp(prefix=TMPDIR_PREFIX)
             else:
                 if not os.path.exists(tmpdir):
                     os.makedirs(tmpdir)
