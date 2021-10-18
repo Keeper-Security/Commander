@@ -51,7 +51,7 @@ import_parser.add_argument('--update',  dest='update',  action='store_true',  he
 import_parser.add_argument('--users',  dest='users',  action='store_true',  help='Update shared folder user permissions only')
 import_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
 import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
-import_parser.add_argument('--tmpdir', dest='tmpdir', action='store', help='Temp directory used to cache encrypted attachment imports')
+import_parser.add_argument('--file-cache', dest='tmpdir', action='store', help='Temp directory used to cache encrypted attachment imports')
 import_parser.add_argument('name', type=str, help='file name (json, csv, keepass) or account name (lastpass)')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
