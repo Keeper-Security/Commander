@@ -1440,7 +1440,6 @@ class KSMCommand(Command):
                     app_expire_on_str = bcolors.WARNING + "Never" + bcolors.ENDC
 
                 token = CommonHelperMethods.bytes_to_url_safe_str(secret_bytes)
-                tokens.append(token)
 
                 if not config_init:
                     abbrev = get_abbrev_by_host(params.server.lower())
@@ -1451,11 +1450,14 @@ class KSMCommand(Command):
                         token_w_prefix = f'{urlparse(params.server).netloc.lower()}:{token}'
 
                     otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token_w_prefix}{bcolors.ENDC}\n'
+                    tokens.append(token_w_prefix)
+
                 else:
                     config_str = KSMCommand.init_ksm_config(params,
                                                             one_time_token=token,
                                                             config_init=config_init)
                     otat_str += f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
+                    tokens.append(config_str)
 
                 if client_name:
                     otat_str += f'Name: {client_name}\n'
