@@ -65,8 +65,8 @@ def get_record_data_json_bytes(data):
 def exceed_max_data_len(data, rq, import_record, record_key):
     data_size = len(rq.data)
     if data_size > RECORD_MAX_DATA_LEN:
-        field_sizes = [len(f['value']) for f in data['fields']]
-        custom_sizes = [len(f['value']) for f in data['custom']]
+        field_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['fields']]
+        custom_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['custom']]
         note_size = len(data['notes'])
         attachment_filenames = [a.name for a in import_record.attachments or []]
         while data_size > RECORD_MAX_DATA_LEN:
