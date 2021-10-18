@@ -53,13 +53,74 @@ GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
 
 
-def exceed_max_data_len(data, title):
-    data_size = len(data)
+def get_record_data_json_bytes(data):
+    """Get serialized and utf-8 encoded record data with padding"""
+    data_str = json.dumps(data)
+    padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
+    if padding:
+        data_str = data_str.ljust(padding)
+    return data_str.encode('utf-8')
+
+
+def exceed_max_data_len(data, rq, import_record, record_key):
+    data_size = len(rq.data)
     if data_size > RECORD_MAX_DATA_LEN:
-        logging.warning(f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}')
-        return True
-    else:
-        return False
+        field_sizes = [len(f['value']) for f in data['fields']]
+        custom_sizes = [len(f['value']) for f in data['custom']]
+        note_size = len(data['notes'])
+        attachment_filenames = [a.name for a in import_record.attachments or []]
+        while data_size > RECORD_MAX_DATA_LEN:
+            max_field_size = max(field_sizes) if field_sizes else 0
+            max_custom_size = max(custom_sizes) if custom_sizes else 0
+            max_size = max(note_size, max_field_size, max_custom_size)
+            if max_size == 0:
+                title = data['title']
+                logging.warning(
+                    f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}'
+                )
+                return True
+
+            atta = ImportAttachment()
+            if max_field_size == max_size:
+                field_index = field_sizes.index(max_size)
+                field = data['fields'][field_index]
+                atta.name = field.get('label', field.get('type', 'unnamed_field')) + '.txt'
+                atta_data = field['value'][0].encode('utf-8')
+                field['value'][0] = f'This field is stored as attachment "{atta.name}" to avoid 32k record limit'
+                field_sizes[field_index] = 0
+            elif max_custom_size == max_size:
+                custom_index = custom_sizes.index(max_size)
+                field = data['custom'][custom_index]
+                atta.name = field.get('label', field.get('type', 'custom_field')) + '.txt'
+                atta_data = field['value'][0].encode('utf-8')
+                field['value'][0] = f'This field is stored as attachment "{atta.name}" to avoid 32k record limit'
+                custom_sizes[custom_index] = 0
+            else:  # note_size == max_size
+                atta.name = 'notes.txt'
+                atta_data = data['notes'].encode('utf-8')
+                data['notes'] = 'The notes field is stored as attachment "notes.txt" to avoid 32k record limit'
+                note_size = 0
+
+            def atta_open():
+                return io.BytesIO(atta_data)
+
+            atta.open = atta_open
+            atta.size = len(atta_data)
+
+            i = 1
+            while atta.name in attachment_filenames:
+                atta.name = f'{atta.name[:-4]}({i}).txt'
+                i += 1
+            attachment_filenames.append(atta.name)
+
+            if import_record.attachments:
+                import_record.attachments.append(atta)
+            else:
+                import_record.attachments = [atta]
+            data_json = get_record_data_json_bytes(data)
+            data_size = len(data_json) + 28
+        rq.data = crypto.encrypt_aes_v2(data_json, record_key)
+    return False
 
 
 def get_import_folder(params, folder_uid, record_uid):
@@ -527,12 +588,8 @@ def _import(params, file_format, filename, **kwargs):
                     v3_upd_rq.client_modified_time = utils.current_milli_time()
                     v3_upd_rq.revision = existing_record.get('revision') or 0
                     data = _construct_record_v3_data(import_record, orig_data)
-                    data_str = json.dumps(data)
-                    padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
-                    if padding:
-                        data_str = data_str.ljust(padding)
-                    v3_upd_rq.data = crypto.encrypt_aes_v2(data_str.encode('utf-8'), record_key)
-                    if exceed_max_data_len(v3_upd_rq.data, import_record.title):
+                    v3_upd_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
+                    if exceed_max_data_len(data, v3_upd_rq, import_record, record_key):
                         continue
 
                     orig_refs = set()
@@ -598,12 +655,8 @@ def _import(params, file_format, filename, **kwargs):
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
                     v3_add_rq.client_modified_time = utils.current_milli_time()
                     data = _construct_record_v3_data(import_record)
-                    data_str = json.dumps(data)
-                    padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
-                    if padding:
-                        data_str = data_str.ljust(padding)
-                    v3_add_rq.data = crypto.encrypt_aes_v2(data_str.encode('utf-8'), record_key)
-                    if exceed_max_data_len(v3_add_rq.data, import_record.title):
+                    v3_add_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
+                    if exceed_max_data_len(data, v3_add_rq, import_record, record_key):
                         continue
 
                     v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
