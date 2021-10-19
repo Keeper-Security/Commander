@@ -32,6 +32,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Math.Numbers import Integer
 
+import keepercommander
 from .recordv3 import get_record, RecordRemoveCommand
 from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
@@ -579,6 +580,7 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
             print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
             print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
+            print('{0:>20s}: {1}'.format('Package directory', os.path.dirname(keepercommander.__file__)))
             print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
