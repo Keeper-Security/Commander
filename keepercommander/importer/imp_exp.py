@@ -51,6 +51,7 @@ EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
 GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
+LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record limit'
 
 
 def get_record_data_json_bytes(data):
@@ -73,8 +74,8 @@ def exceed_max_data_len(data, rq, import_record, record_key):
             max_field_size = max(field_sizes) if field_sizes else 0
             max_custom_size = max(custom_sizes) if custom_sizes else 0
             max_size = max(note_size, max_field_size, max_custom_size)
+            title = data['title']
             if max_size == 0:
-                title = data['title']
                 logging.warning(
                     f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}'
                 )
@@ -84,21 +85,23 @@ def exceed_max_data_len(data, rq, import_record, record_key):
             if max_field_size == max_size:
                 field_index = field_sizes.index(max_size)
                 field = data['fields'][field_index]
-                atta.name = field.get('label', field.get('type', 'unnamed_field')) + '.txt'
+                field_name = field.get('label', field.get('type', 'unnamed'))
+                atta.name = f'{title}_{field_name}_field.txt'
                 atta_data = field['value'][0].encode('utf-8')
-                field['value'][0] = f'This field is stored as attachment "{atta.name}" to avoid 32k record limit'
+                field['value'][0] = LARGE_FIELD_MSG.format(atta.name)
                 field_sizes[field_index] = 0
             elif max_custom_size == max_size:
                 custom_index = custom_sizes.index(max_size)
                 field = data['custom'][custom_index]
-                atta.name = field.get('label', field.get('type', 'custom_field')) + '.txt'
+                field_name = field.get('label', field.get('type', 'custom'))
+                atta.name = f'{title}_{field_name}_field.txt'
                 atta_data = field['value'][0].encode('utf-8')
-                field['value'][0] = f'This field is stored as attachment "{atta.name}" to avoid 32k record limit'
+                field['value'][0] = LARGE_FIELD_MSG.format(atta.name)
                 custom_sizes[custom_index] = 0
             else:  # note_size == max_size
-                atta.name = 'notes.txt'
+                atta.name = f'{title}_notes_field.txt'
                 atta_data = data['notes'].encode('utf-8')
-                data['notes'] = 'The notes field is stored as attachment "notes.txt" to avoid 32k record limit'
+                data['notes'] = LARGE_FIELD_MSG.format(atta.name)
                 note_size = 0
 
             def atta_open():
@@ -108,8 +111,9 @@ def exceed_max_data_len(data, rq, import_record, record_key):
             atta.size = len(atta_data)
 
             i = 1
+            original_name = atta.name[:-4]
             while atta.name in attachment_filenames:
-                atta.name = f'{atta.name[:-4]}({i}).txt'
+                atta.name = f'{original_name}({i}).txt'
                 i += 1
             attachment_filenames.append(atta.name)
 
