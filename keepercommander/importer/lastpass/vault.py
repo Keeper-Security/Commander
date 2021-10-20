@@ -116,8 +116,10 @@ class Vault(object):
             if os.path.isfile(attachment.tmpfile) and os.path.getsize(attachment.tmpfile) == attachment.size:
                 print(f'{i + 1}. Found {attachment.name}')
             else:
-                with fetcher.stream_attachment(session, attachment) as r:
-                    with open(attachment.tmpfile, 'wb') as f:
-                        print(f'{i + 1}. Downloading {attachment.name} ... ', end='', flush=True)
-                        shutil.copyfileobj(r.raw, f)
-                        print('Done')
+                attachment_stream = fetcher.stream_attachment(session, attachment)
+                if attachment_stream:
+                    with attachment_stream as r:
+                        with open(attachment.tmpfile, 'wb') as f:
+                            print(f'{i + 1}. Downloading {attachment.name} ... ', end='', flush=True)
+                            shutil.copyfileobj(r.raw, f)
+                            print('Done')
