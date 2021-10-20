@@ -247,10 +247,8 @@ ksm_parser.add_argument('--count', '-c', type=int, dest='count', action='store',
 ksm_parser.add_argument('--help', '-h', dest='helpflag', action="store_true", help='Display help')
 ksm_parser.add_argument('--editable', '-e', action='store_true', required=False,
                         help='Is this share going to be editable or not.')
-ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true',
-                        help='Unlock IP Address.')
-ksm_parser.add_argument('--return-tokens', type=str, dest='returnTokens', action='store',
-                        help='Return Tokens', default='false')
+ksm_parser.add_argument('--unlock-ip', '-l', dest='unlockIp', action='store_true', help='Unlock IP Address.')
+ksm_parser.add_argument('--return-tokens', dest='returnTokens', action='store_true', help='Return Tokens')
 ksm_parser.add_argument('--name', '-n', type=str, dest='name', action='store', help='client name')
 ksm_parser.add_argument('--purge', dest='purge', action='store_true', help='remove the record from all folders and purge it from the trash')
 ksm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
@@ -844,7 +842,7 @@ class KSMCommand(Command):
             first_access_expire_on = kwargs.get('firstAccessExpiresIn')
             access_expire_in_min = kwargs.get('accessExpireInMin')
 
-            is_return_tokens = bool(strtobool(kwargs.get('returnTokens')))
+            is_return_tokens = kwargs.get('returnTokens')
 
             tokens = KSMCommand.add_client(params,
                                            app_name_or_uid,
@@ -853,7 +851,7 @@ class KSMCommand(Command):
                                            access_expire_in_min,
                                            client_name,
                                            config_init)
-            return tokens if is_return_tokens else None
+            return ', '.join(tokens) if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
 
@@ -1419,7 +1417,10 @@ class KSMCommand(Command):
             rq.clientId = mac
 
             if client_name:
-                rq.id = client_name
+                if count == 1:
+                    rq.id = client_name
+                else:
+                    rq.id = client_name + " " + str((i+1))
 
             api_request_payload = ApiRequestPayload()
             api_request_payload.payload = rq.SerializeToString()
