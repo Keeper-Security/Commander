@@ -276,6 +276,8 @@ class GroupCommand(CliCommand):
             self._command_info[verb] = description
 
     def execute_args(self, params, args, **kwargs):  # type: (KeeperParams, str, dict) -> any
+        if args.startswith('-- '):
+            args = args[3:].strip()
         pos = args.find(' ')
         if pos > 0:
             verb = args[:pos].strip()
