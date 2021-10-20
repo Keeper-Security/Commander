@@ -1,9 +1,10 @@
 # coding: utf-8
 import hashlib
 import json
+import logging
+import requests
 from base64 import b64decode
 from binascii import hexlify
-import requests
 from xml.etree import ElementTree as etree
 from . import blob
 from .version import __version__
@@ -55,12 +56,19 @@ def fetch(session, web_client=http):
 def stream_attachment(session, attach_info, web_client=http):
     url = f'{https_host}/getattach.php'
     data = {'getattach': attach_info.storagekey}
-    if attach_info.parent.shared_folder:
-        data['sharedfolderid'] = attach_info.parent.shared_folder.id
+    shared_folder = attach_info.parent.shared_folder
+    if shared_folder:
+        data['sharedfolderid'] = shared_folder.id
     response = web_client.post(url, data=data, cookies={'PHPSESSID': session.id}, stream=True)
 
     if response.status_code != requests.codes.ok:
-        raise NetworkError()
+        shared_folder_msg = '' if shared_folder is None else f' in shared folder {shared_folder.name}'
+        record_name = attach_info.parent.name.decode('utf-8')
+        logging.warning(
+            f'''Attachment {attach_info.name} in record {record_name}{shared_folder_msg} failed to download:
+            HTTP {response.status_code}, {response.reason}'''
+        )
+        return None
 
     return response
 
