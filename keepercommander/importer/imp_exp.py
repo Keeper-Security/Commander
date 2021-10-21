@@ -51,6 +51,7 @@ EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
 GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
+RECORD_MAX_DATA_WARN = 'Skipping record "{}": Data size of {} exceeds limit of {}'
 LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record limit'
 
 
@@ -77,9 +78,7 @@ def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
             max_size = max(note_size, max_field_size, max_custom_size)
             title = data['title']
             if max_size == 0:
-                logging.warning(
-                    f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}'
-                )
+                logging.warning(RECORD_MAX_DATA_WARN.format(title, data_size, RECORD_MAX_DATA_LEN))
                 return True
 
             atta = ImportAttachment()
@@ -100,9 +99,7 @@ def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
                 import_record_field.value = field['value'][0]
                 custom_sizes[custom_index] = 0
             else:
-                logging.warning(
-                    f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}'
-                )
+                logging.warning(RECORD_MAX_DATA_WARN.format(title, data_size, RECORD_MAX_DATA_LEN))
                 return True
 
             def atta_open():
@@ -593,6 +590,10 @@ def _import(params, file_format, filename, **kwargs):
                     v3_upd_rq.revision = existing_record.get('revision') or 0
                     data = _construct_record_v3_data(import_record, orig_data)
                     v3_upd_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
+                    data_size = len(v3_upd_rq.data)
+                    if data_size > RECORD_MAX_DATA_LEN:
+                        logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
+                        continue
 
                     orig_refs = set()
                     if 'fields' in orig_data:
@@ -658,6 +659,10 @@ def _import(params, file_format, filename, **kwargs):
                     v3_add_rq.client_modified_time = utils.current_milli_time()
                     data = _construct_record_v3_data(import_record)
                     v3_add_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
+                    data_size = len(v3_add_rq.data)
+                    if data_size > RECORD_MAX_DATA_LEN:
+                        logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
+                        continue
 
                     v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
                     v3_add_rq.folder_type = \
