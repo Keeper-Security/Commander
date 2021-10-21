@@ -552,7 +552,7 @@ def _import(params, file_format, filename, **kwargs):
         records_v3_to_update = []   # type: List[record_proto.RecordUpdate]
         import_uids = {}
 
-        records_to_import = prepare_record_add_or_update(update_flag, params, records, v3_enabled)
+        records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records, v3_enabled)
 
         reference_uids = set()
         for import_record in records_to_import:
@@ -773,14 +773,48 @@ def _import(params, file_format, filename, **kwargs):
         v3_atts = []
         for r in records:
             if r.attachments:
-                r_uid = r.uid
-                if r_uid in import_uids:
-                    ver = import_uids[r_uid]['ver']
+                if r.uid in import_uids:
+                    ver = import_uids[r.uid]['ver']
                     if ver == 'v3':
                         v3_atts.append(r)
                     else:
                         for a in r.attachments:
-                            v2_atts.append((r_uid, a))
+                            v2_atts.append((r.uid, a))
+                elif r.uid in external_lookup:
+                    existing_record = params.record_cache[external_lookup[r.uid]]
+                    existing_data = json.loads(existing_record['data_unencrypted'])
+                    filerefs = [f for f in existing_data.get('fields', []) if f['type'] == 'fileRef']
+                    if len(filerefs) > 0:
+                        existing_attachments = [params.record_cache[uid] for uid in filerefs[0].get('value') or []]
+                        attachment_data = [json.loads(a['data_unencrypted']) for a in existing_attachments]
+                    else:
+                        attachment_data = []
+
+                    found_attachments = []
+                    missing_attachments = []
+                    for a in r.attachments:
+                        data = [
+                            d for d in attachment_data if d.get('title') == a.name and d.get('size') == a.size
+                        ]
+                        if len(data) > 0:
+                            found_attachments.append(a)
+                        else:
+                            missing_attachments.append(a)
+
+                    if found_attachments:
+                        # found_names = ', '.join((a.name for a in found_attachments))
+                        found = len(found_attachments)
+                        total = len(r.attachments)
+                        print(f'Found {found} of {total} attachments in record {r.title}.')
+                        if missing_attachments:
+                            for a in found_attachments:
+                                r.attachments.remove(a)
+
+                    if missing_attachments:
+                        r.uid = external_lookup[r.uid]
+                        if v3_enabled and r.type:
+                            v3_atts.append(r)
+
         if len(v2_atts) > 0:
             upload_attachment(params, v2_atts)
         if len(v3_atts) > 0:
@@ -1647,7 +1681,7 @@ def prepare_record_add_or_update(update_flag, params, records, v3_enabled):
             for ref in import_record.references:
                 ref.uids = [external_lookup[x] for x in ref.uids if x in external_lookup]
 
-    return record_to_import
+    return record_to_import, external_lookup
 
 
 def prepare_record_link(params, records):
