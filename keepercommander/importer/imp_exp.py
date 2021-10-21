@@ -51,6 +51,8 @@ EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
 GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
+RECORD_MAX_DATA_WARN = 'Skipping record "{}": Data size of {} exceeds limit of {}'
+LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record limit'
 
 
 def get_record_data_json_bytes(data):
@@ -62,8 +64,9 @@ def get_record_data_json_bytes(data):
     return data_str.encode('utf-8')
 
 
-def exceed_max_data_len(data, rq, import_record, record_key):
-    data_size = len(rq.data)
+def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
+    data_json = get_record_data_json_bytes(data)
+    data_size = len(data_json) + 28
     if data_size > RECORD_MAX_DATA_LEN:
         field_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['fields']]
         custom_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['custom']]
@@ -73,33 +76,31 @@ def exceed_max_data_len(data, rq, import_record, record_key):
             max_field_size = max(field_sizes) if field_sizes else 0
             max_custom_size = max(custom_sizes) if custom_sizes else 0
             max_size = max(note_size, max_field_size, max_custom_size)
+            title = data['title']
             if max_size == 0:
-                title = data['title']
-                logging.warning(
-                    f'Skipping record "{title}": Data size of {data_size} exceeds limit of {RECORD_MAX_DATA_LEN}'
-                )
+                logging.warning(RECORD_MAX_DATA_WARN.format(title, data_size, RECORD_MAX_DATA_LEN))
                 return True
 
             atta = ImportAttachment()
-            if max_field_size == max_size:
-                field_index = field_sizes.index(max_size)
-                field = data['fields'][field_index]
-                atta.name = field.get('label', field.get('type', 'unnamed_field')) + '.txt'
-                atta_data = field['value'][0].encode('utf-8')
-                field['value'][0] = f'This field is stored as attachment "{atta.name}" to avoid 32k record limit'
-                field_sizes[field_index] = 0
+            if note_size == max_size:
+                atta.name = f'{title}_notes_field.txt'
+                atta_data = data['notes'].encode('utf-8')
+                data['notes'] = LARGE_FIELD_MSG.format(atta.name)
+                import_record.notes = data['notes']
+                note_size = 0
             elif max_custom_size == max_size:
                 custom_index = custom_sizes.index(max_size)
                 field = data['custom'][custom_index]
-                atta.name = field.get('label', field.get('type', 'custom_field')) + '.txt'
+                field_name = field.get('label', field.get('type', 'custom'))
+                atta.name = f'{title}_{field_name}_field.txt'
                 atta_data = field['value'][0].encode('utf-8')
-                field['value'][0] = f'This field is stored as attachment "{atta.name}" to avoid 32k record limit'
+                field['value'][0] = LARGE_FIELD_MSG.format(atta.name)
+                import_record_field = import_record.fields[map_data_custom_to_rec_fields[custom_index]]
+                import_record_field.value = field['value'][0]
                 custom_sizes[custom_index] = 0
-            else:  # note_size == max_size
-                atta.name = 'notes.txt'
-                atta_data = data['notes'].encode('utf-8')
-                data['notes'] = 'The notes field is stored as attachment "notes.txt" to avoid 32k record limit'
-                note_size = 0
+            else:
+                logging.warning(RECORD_MAX_DATA_WARN.format(title, data_size, RECORD_MAX_DATA_LEN))
+                return True
 
             def atta_open():
                 return io.BytesIO(atta_data)
@@ -108,8 +109,9 @@ def exceed_max_data_len(data, rq, import_record, record_key):
             atta.size = len(atta_data)
 
             i = 1
+            original_name = atta.name[:-4]
             while atta.name in attachment_filenames:
-                atta.name = f'{atta.name[:-4]}({i}).txt'
+                atta.name = f'{original_name}({i}).txt'
                 i += 1
             attachment_filenames.append(atta.name)
 
@@ -119,7 +121,6 @@ def exceed_max_data_len(data, rq, import_record, record_key):
                 import_record.attachments = [atta]
             data_json = get_record_data_json_bytes(data)
             data_size = len(data_json) + 28
-        rq.data = crypto.encrypt_aes_v2(data_json, record_key)
     return False
 
 
@@ -551,7 +552,7 @@ def _import(params, file_format, filename, **kwargs):
         records_v3_to_update = []   # type: List[record_proto.RecordUpdate]
         import_uids = {}
 
-        records_to_import = prepare_record_add_or_update(update_flag, params, records)
+        records_to_import = prepare_record_add_or_update(update_flag, params, records, v3_enabled)
 
         reference_uids = set()
         for import_record in records_to_import:
@@ -589,7 +590,9 @@ def _import(params, file_format, filename, **kwargs):
                     v3_upd_rq.revision = existing_record.get('revision') or 0
                     data = _construct_record_v3_data(import_record, orig_data)
                     v3_upd_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
-                    if exceed_max_data_len(data, v3_upd_rq, import_record, record_key):
+                    data_size = len(v3_upd_rq.data)
+                    if data_size > RECORD_MAX_DATA_LEN:
+                        logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
                         continue
 
                     orig_refs = set()
@@ -656,7 +659,9 @@ def _import(params, file_format, filename, **kwargs):
                     v3_add_rq.client_modified_time = utils.current_milli_time()
                     data = _construct_record_v3_data(import_record)
                     v3_add_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
-                    if exceed_max_data_len(data, v3_add_rq, import_record, record_key):
+                    data_size = len(v3_add_rq.data)
+                    if data_size > RECORD_MAX_DATA_LEN:
+                        logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
                         continue
 
                     v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
@@ -1460,7 +1465,8 @@ def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
     return field
 
 
-def _construct_record_v3_data(rec_to_import, orig_data=None):    # type: (ImportRecord, Optional[dict]) -> dict
+def _construct_record_v3_data(rec_to_import, orig_data=None, map_data_custom_to_rec_fields=None):
+    # type: (ImportRecord, Optional[dict], Optional[dict]) -> dict
     data = {}
     if orig_data:
         data.update(orig_data)
@@ -1516,12 +1522,14 @@ def _construct_record_v3_data(rec_to_import, orig_data=None):    # type: (Import
         data['custom'].append(_create_field_v3(field, rec_to_import.login_url))
         rec_to_import.login_url = ''
 
-    for field_value in record_fields:
+    for i, field_value in enumerate(record_fields):
         field = RecordSchemaField()
         field.ref = field_value.type or 'text'
         if field_value.label:
             field.label = field_value.label
         data['custom'].append(_create_field_v3(field, field_value.value))
+        if map_data_custom_to_rec_fields is not None:
+            map_data_custom_to_rec_fields[len(data['custom']) - 1] = i
 
     for reference in record_refs:
         field = RecordSchemaField()
@@ -1540,8 +1548,8 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
     return hasher.hexdigest()
 
 
-def prepare_record_add_or_update(update_flag, params, records):
-    # type: (bool, KeeperParams, Iterator[ImportRecord]) -> List[ImportRecord]
+def prepare_record_add_or_update(update_flag, params, records, v3_enabled):
+    # type: (bool, KeeperParams, Iterator[ImportRecord], bool) -> List[ImportRecord]
     """
     Find what records to import or update.
 
@@ -1569,6 +1577,16 @@ def prepare_record_add_or_update(update_flag, params, records):
     external_lookup = {}
 
     for import_record in records:
+        if v3_enabled and import_record.type:
+            existing_record = params.record_cache.get(import_record.uid)
+            orig_data = None if existing_record is None else json.loads(existing_record['data_unencrypted'])
+            map_data_custom_to_rec_fields = {}
+            data = _construct_record_v3_data(
+                import_record, orig_data, map_data_custom_to_rec_fields=map_data_custom_to_rec_fields
+            )
+            if exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
+                continue
+
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:
             if import_record.uid:
