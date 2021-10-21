@@ -175,6 +175,8 @@ class LastPassImporter(BaseImporter):
         for account in vault.accounts:  # type: Account
             record = Record()
             is_secure_note = False
+            if account.id:
+                record.uid = account.id
             if account.name:
                 record.title = account.name.decode('utf-8')
             if account.username:
