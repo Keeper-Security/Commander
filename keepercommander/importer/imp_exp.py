@@ -510,12 +510,12 @@ def _import(params, file_format, filename, **kwargs):
 
     api.sync_down(params)
 
-    if shared:
-        manage_users = kwargs.get('manage_users') or False
-        manage_records = kwargs.get('manage_records') or False
-        can_edit = kwargs.get('can_edit') or False
-        can_share = kwargs.get('can_share') or False
+    manage_users = kwargs.get('manage_users') or False
+    manage_records = kwargs.get('manage_records') or False
+    can_edit = kwargs.get('can_edit') or False
+    can_share = kwargs.get('can_share') or False
 
+    if shared:
         sfol = set()
         for r in records:
             if r.folders:
@@ -531,7 +531,7 @@ def _import(params, file_format, filename, **kwargs):
             sf.can_share = can_share
             folders.append(sf)
 
-    folder_add = prepare_folder_add(params, folders, records)
+    folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
     if folder_add:
         fol_rs, _ = execute_import_folder_record(params, folder_add, None)
         _ = fol_rs
@@ -1176,7 +1176,7 @@ def upload_attachment(params, attachments):
                 logging.debug(e)
 
 
-def prepare_folder_add(params, folders, records):
+def prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share):
     """Find what folders to import (?)."""
     folder_hash = {}
     for f_uid in params.folder_cache:
@@ -1229,10 +1229,10 @@ def prepare_folder_add(params, folders, records):
                     if folder_type == 'shared_folder':
                         string2 = api.encrypt_aes(comp.encode('utf-8'), folder_key)
                         fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(string2 + '==')
-                        fol_req.sharedFolderFields.manageUsers = fol.manage_users or False
-                        fol_req.sharedFolderFields.manageRecords = fol.manage_records or False
-                        fol_req.sharedFolderFields.canEdit = fol.can_edit or False
-                        fol_req.sharedFolderFields.canShare = fol.can_share or False
+                        fol_req.sharedFolderFields.manageUsers = fol.manage_users or manage_users
+                        fol_req.sharedFolderFields.manageRecords = fol.manage_records or manage_records
+                        fol_req.sharedFolderFields.canEdit = fol.can_edit or can_edit
+                        fol_req.sharedFolderFields.canShare = fol.can_share or can_share
 
                     folder_add.append(fol_req)
                     folder_hash[digest] = folder_uid, folder_type, folder_key if folder_type == 'shared_folder' else None
