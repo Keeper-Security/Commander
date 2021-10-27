@@ -238,7 +238,7 @@ class Record:
                                                                              fol.name))
                                             no = no + 1
 
-        if params.breach_watch:
+        if params and params.breach_watch:
             bw_status = params.breach_watch.get_record_status(params, self.record_uid)
             if bw_status and 'status' in bw_status:
                 status = bw_status['status']

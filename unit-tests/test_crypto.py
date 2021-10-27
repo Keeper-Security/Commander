@@ -64,7 +64,7 @@ class TestCrypto(TestCase):
         self.assertEqual(key_hash, expected_key)
 
     def test_password_score(self):
-        self.assertEqual(utils.password_score('!@#$%^&*()'), 95)
+        self.assertEqual(utils.password_score('!@#$%^&*()'), 92)
         self.assertEqual(utils.password_score('aZkljfzsnmp4w9058dsqln5yf(&*))(*)(345'), 100)
         self.assertEqual(utils.password_score('c3>^sxuKZ[Ndyo(OBE14'), 100)
         self.assertEqual(utils.password_score('AAAbbbCCC11'), 38)
