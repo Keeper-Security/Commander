@@ -1664,6 +1664,17 @@ class RecordV3:
         print('{0:>20s}: {1:<20s}'.format('Last Modified', dt.strftime('%Y-%m-%d %H:%M:%S')))
       if 'revision' in r: print('{0:>20s}: {1:<20s}'.format('Revision', str(r['revision'])))
 
+    if params.breach_watch:
+      bw_status = params.breach_watch.get_record_status(params, record_uid)
+      if bw_status and 'status' in bw_status:
+        status = bw_status['status']
+        if status:
+          if status in {'WEAK', 'BREACHED'}:
+            status = 'High-Risk Password'
+          elif status == 'IGNORE':
+            status = 'Ignored'
+          print('{0:>20s}: {1:<20s}'.format('Breach Watch', status))
+
     print('')
 
   @staticmethod

@@ -10,6 +10,7 @@
 
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime
+from typing import Optional
 
 
 LAST_RECORD_UID = 'last_record_uid'
@@ -118,6 +119,8 @@ class KeeperParams:
         self.account_uid_bytes = None
         self.session_token_bytes = None
         self.record_type_cache = {}  # RT definitions only
+        self.breach_watch = None
+        self.breach_watch_records = None
 
     def clear_session(self):
         self.auth_verifier = None
@@ -170,6 +173,8 @@ class KeeperParams:
         self.account_uid_bytes = None
         self.session_token_bytes = None
         self.record_type_cache = {}
+        self.breach_watch = None
+        self.breach_watch_records = None
 
     def __get_rest_context(self):
         return self.__rest_context

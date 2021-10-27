@@ -10,6 +10,8 @@
 #
 
 import base64
+import itertools
+import math
 import time
 from urllib.parse import urlparse
 
@@ -91,6 +93,153 @@ def url_strip(url):   # type: (str) -> str
         return result.netloc + result.path
     except Exception:
         return ''
+
+
+_breach_watch_key = base64_url_decode('phl9kdMA_gkJkSfeOYWpX-FOyvfh-APhdSFecIDMyfI')
+
+
+def breach_watch_hash(password):  # type: (str) -> bytes
+    return crypto.hmac_sha512(_breach_watch_key, f'password:{password}'.encode('utf-8'))
+
+
+def chunk_text(text, func):  # type (str, Callable[[str], bool]) -> Iterable[str]
+    acc = ''
+    for x in text:
+        if func(x):
+            acc += x
+        else:
+            if acc:
+                yield acc
+                acc = ''
+    if acc:
+        yield acc
+
+
+def offset_char(text, func):  # type (str, Callable[[str, str], int]) -> Iterable[int]
+    if not text:
+        return
+    prev = text[0]
+    for ch in text[1:]:
+        yield func(prev, ch)
+        prev = ch
+
+
+def password_score(password):  # type: (str) -> int
+    score = 0
+    if not password:
+        return score
+    if not isinstance(password, str):
+        return score
+
+    total = len(password)
+    uppers = 0
+    lowers = 0
+    digits = 0
+    symbols = 0
+    for x in password:
+        if x.isupper():
+            uppers += 1
+        elif x.islower():
+            lowers += 1
+        elif x.isdecimal():
+            digits += 1
+        else:
+            symbols += 1
+
+    ds = digits + symbols
+    if not password[0].isalpha():
+        ds -= 1
+    if not password[-1].isalpha():
+        ds -= 1
+    if ds < 0:
+        ds = 0
+
+    score += total * 4
+    if uppers > 0:
+        score += (total-uppers) * 2
+    if lowers > 0:
+        score += (total-lowers) * 2
+    if digits > 0:
+        score += digits * 4
+    score += symbols * 6
+    score += ds * 2
+
+    variance = 0
+    if uppers > 0:
+        variance += 1
+    if lowers > 0:
+        variance += 1
+    if digits > 0:
+        variance += 1
+    if symbols > 0:
+        variance += 1
+    if total >= 8 and variance >= 3:
+        score += (variance + 1) * 2
+
+    if digits + symbols == 0:
+        score -= total
+
+    if uppers + lowers + symbols == 0:
+        score -= total
+
+    rep_inc = 0
+    pwd_len = len(password)
+    rep_count = 0
+    for i in range(pwd_len):
+        char_exists = False
+        for j in range(pwd_len):
+            if i != j and password[i] == password[j]:
+                char_exists = True
+                rep_inc += pwd_len / abs(i - j)
+        if char_exists:
+            rep_count += 1
+            unq_count = pwd_len - rep_count
+            rep_inc = math.ceil(rep_inc if unq_count == 0 else rep_inc / unq_count)
+
+    if rep_count > 0:
+        score -= rep_inc
+
+    count = 0
+    for consec in [str.isupper, str.islower, str.isdecimal]:
+        for chunk in chunk_text(password, consec):
+            l = len(chunk)
+            if l >= 2:
+                count += l - 1
+    if count > 0:
+        score -= 2 * count
+
+    count = 0
+    for cnt, seq in [(26, str.isalpha), (10, str.isdecimal)]:
+        cnt = 0
+        for chunk in chunk_text(password.lower(), seq):
+            if len(chunk) >= 3:
+                offsets = [x if x >= 0 else x + cnt for x in offset_char(chunk, lambda x, y: ord(x) - ord(y))]
+                op = offsets[0]
+                for oc in offsets[1:]:
+                    if oc == op:
+                        if op != 0:
+                            count += 1
+                    else:
+                        op = oc
+
+    symbols = {x[1]: x[0] for x in enumerate('!@#$%^&*()_+[]\\{}|;\':\",./<>?')}
+    cnt = len(symbols)
+    cnt = 0
+    for chunk in chunk_text(password, symbols.__contains__):
+        if len(chunk) >= 3:
+            offsets = [x if x >= 0 else x + cnt for x in offset_char(chunk, lambda x, y: symbols[x] - symbols[y])]
+            op = offsets[0]
+            for oc in offsets[1:]:
+                if oc == op:
+                    if op != 0:
+                        count += 1
+                else:
+                    op = oc
+
+    if count > 0:
+        score -= 3 * count
+
+    return score if 0 <= score <= 100 else 0 if score < 0 else 100
 
 
 def confirm(msg):

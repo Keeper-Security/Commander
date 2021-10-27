@@ -29,6 +29,7 @@ from .proto import breachwatch_pb2 as breachwatch_proto
 from .display import bcolors
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
+from .breachwatch import BreachWatch
 
 warned_on_fido_package = False
 
@@ -236,6 +237,13 @@ class LoginV3Flow:
                 except Exception as e:
                     logging.debug('Get enterprise public key: %s', e)
 
+        try:
+            if params.license and \
+                    params.license.get('breach_watch_enabled', False) and \
+                    not params.license.get('breach_watch_feature_disable', False):
+                params.breach_watch = BreachWatch()
+        except Exception as e:
+            logging.warning('Breach Watch module is not initialized: %s', e)
 
         logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
         return True

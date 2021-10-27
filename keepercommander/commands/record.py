@@ -350,11 +350,13 @@ class RecordAddCommand(Command, RecordUtils):
         rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
 
         api.communicate(params, rq)
+        api.sync_down(params)
         if params.enterprise_ec_key:
-            api.sync_down(params)
             api.add_record_audit_data(params, [record_uid])
-        else:
-            params.sync_data = True
+        if params.breach_watch:
+            params.breach_watch.scan_and_store_record_status(params, record_uid)
+
+        params.sync_data = True
         params.environment_variables[LAST_RECORD_UID] = record_uid
         return record_uid
 
@@ -466,8 +468,11 @@ class RecordEditCommand(Command, RecordUtils):
                             changed = True
 
         if changed:
-            params.sync_data = True
             api.update_record(params, record)
+            if params.breach_watch:
+                api.sync_down(params)
+                params.breach_watch.scan_and_store_record_status(params, record_uid)
+            params.sync_data = True
 
 
 class RecordAppendNotesCommand(Command):
