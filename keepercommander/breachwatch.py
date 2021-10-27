@@ -85,7 +85,7 @@ class BreachWatch(object):
         if not record:
             return
 
-        bw_record = params.breach_watch_records.get(record_uid)
+        bw_record = params.breach_watch_records.get(record_uid) if params.breach_watch_records else None
         if record.password:
             euid = None
             if bw_record:
@@ -97,6 +97,11 @@ class BreachWatch(object):
                     euid = next((base64.b64decode(x['euid']) for x in data_obj['passwords'] if 'euid' in x), None)
 
             hash_status = self.scan_password(params, record.password, euid)
+            if hash_status.breachDetected:
+                logging.info('High-Risk password detected')
+                if self.send_audit_events:
+                    params.queue_audit_event('bw_record_high_risk')
+
             bwrq = breachwatch_proto.BreachWatchRecordRequest()
             bwrq.recordUid = utils.base64_url_decode(record_uid)
             bwrq.breachWatchInfoType = breachwatch_proto.RECORD
@@ -120,9 +125,6 @@ class BreachWatch(object):
                     raise Exception(status.reason)
             except Exception as e:
                 logging.warning('Breach Watch: %s', str(e))
-        elif bw_record:
-            # TODO delete bw record
-            pass
 
     def delete_euids(self, params, euids):
         self._ensure_init(params)
