@@ -63,6 +63,13 @@ class TestCrypto(TestCase):
         key_hash = crypto.derive_keyhash_v2(domain, password, salt, iterations)
         self.assertEqual(key_hash, expected_key)
 
+    def test_password_score(self):
+        self.assertEqual(utils.password_score('!@#$%^&*()'), 95)
+        self.assertEqual(utils.password_score('aZkljfzsnmp4w9058dsqln5yf(&*))(*)(345'), 100)
+        self.assertEqual(utils.password_score('c3>^sxuKZ[Ndyo(OBE14'), 100)
+        self.assertEqual(utils.password_score('AAAbbbCCC11'), 38)
+        self.assertEqual(utils.password_score('password'), 8)
+
 
 _test_random_data = \
     'cKGoVph_X0NKjk8jQgxyQWRElUY7IsbbIJaRcJVlnOb7AchFiY-izmTTOlgArwIqAxKDKSRAWx2Q1pX' \

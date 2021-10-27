@@ -53,6 +53,10 @@ def register_commands(commands, aliases, command_info):
     register_commands(commands)
     register_command_info(aliases, command_info)
 
+    from . import breachwatch
+    breachwatch.register_commands(commands)
+    breachwatch.register_command_info(aliases, command_info)
+
     from .utils import register_commands as misc_commands, register_command_info as misc_command_info
     misc_commands(commands)
     misc_command_info(aliases, command_info)
@@ -205,7 +209,7 @@ class CliCommand(abc.ABC):
 
 
 class Command(CliCommand):
-    def execute(self, params, **kwargs):     # type: (KeeperParams, **any) -> any
+    def execute(self, params, **kwargs):     # type: (KeeperParams, any) -> any
         raise NotImplemented()
 
     def execute_args(self, params, args, **kwargs):
@@ -278,6 +282,7 @@ class GroupCommand(CliCommand):
     def execute_args(self, params, args, **kwargs):  # type: (KeeperParams, str, dict) -> any
         if args.startswith('-- '):
             args = args[3:].strip()
+        self.validate(params)
         pos = args.find(' ')
         if pos > 0:
             verb = args[:pos].strip()
@@ -313,6 +318,9 @@ class GroupCommand(CliCommand):
         if command:
             kwargs['action'] = verb
             command.execute_args(params, args, **kwargs)
+
+    def validate(self, params):  # type: (KeeperParams) -> None
+        pass
 
 
 class RecordMixin:

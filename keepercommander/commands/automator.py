@@ -14,7 +14,7 @@ import logging
 import os
 import re
 
-from typing import Optional, Union
+from typing import Optional
 from .. import api, crypto, utils
 from ..params import KeeperParams
 
