@@ -180,6 +180,10 @@ class BreachWatchIgnoreCommand(Command):
         return breachwatch_ignore_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        if not params.record_cache:
+            return
+        if not params.breach_watch_records:
+            return
         records = kwargs.get('records')
         if not records:
             return
@@ -230,14 +234,17 @@ class BreachWatchIgnoreCommand(Command):
         for record_uid in record_uids:
             logging.warning(f'Record UID "{record_uid}" cannot ignore. Skipping.')
 
-        params.sync_data = True
-        while bw_requests:
-            chunk = bw_requests[0:999]
-            bw_requests = bw_requests[999:]
-            rq = breachwatch_proto.BreachWatchUpdateRequest()
-            rq.breachWatchRecordRequest.extend(chunk)
-            rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
-                                      rs_type=breachwatch_proto.BreachWatchUpdateResponse)
-            for status in rs.breachWatchRecordStatus:
-                logging.info(f'{utils.base64_url_encode(status.recordUid)}: {status.status} {status.reason}')
+        if bw_requests:
+            params.sync_data = True
+            if params.breach_watch.send_audit_events:
+                params.queue_audit_event('bw_record_ignored')
 
+            while bw_requests:
+                chunk = bw_requests[0:999]
+                bw_requests = bw_requests[999:]
+                rq = breachwatch_proto.BreachWatchUpdateRequest()
+                rq.breachWatchRecordRequest.extend(chunk)
+                rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
+                                          rs_type=breachwatch_proto.BreachWatchUpdateResponse)
+                for status in rs.breachWatchRecordStatus:
+                    logging.info(f'{utils.base64_url_encode(status.recordUid)}: {status.status} {status.reason}')

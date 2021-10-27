@@ -237,13 +237,12 @@ class LoginV3Flow:
                 except Exception as e:
                     logging.debug('Get enterprise public key: %s', e)
 
-        try:
-            if params.license and \
-                    params.license.get('breach_watch_enabled', False) and \
-                    not params.license.get('breach_watch_feature_disable', False):
-                params.breach_watch = BreachWatch()
-        except Exception as e:
-            logging.warning('Breach Watch module is not initialized: %s', e)
+        if params.license and params.license.get('breach_watch_enabled', False) and not params.license.get('breach_watch_feature_disable', False):
+            params.breach_watch = BreachWatch()
+            if params.enforcements and 'booleans' in params.enforcements:
+                bw_audit = next((x.get('value') for x in params.enforcements['booleans'] if x.get('key') == 'send_breach_watch_events'), None)
+                if bw_audit:
+                    params.breach_watch.send_audit_events = True
 
         logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
         return True
