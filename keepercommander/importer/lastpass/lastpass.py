@@ -176,6 +176,14 @@ class LastPassImporter(BaseImporter):
         for account in vault.accounts:  # type: Account
             record = Record()
             is_secure_note = False
+            if account.url:
+                record.login_url = account.url.decode('utf-8')
+                if record.login_url == 'http://sn':
+                    is_secure_note = True
+                    record.login_url = None
+                elif record.login_url == 'http://group':
+                    continue
+
             if account.id:
                 record.uid = account.id
             if account.name:
@@ -192,13 +200,6 @@ class LastPassImporter(BaseImporter):
                 record.login = account.username.decode('utf-8')
             if account.password:
                 record.password = account.password.decode('utf-8')
-            if account.url:
-                record.login_url = account.url.decode('utf-8')
-                if record.login_url == 'http://sn':
-                    is_secure_note = True
-                    record.login_url = None
-                elif record.login_url == 'http://group':
-                    continue
             if len(account.attachments) > 0:
                 if record.attachments is None:
                     record.attachments = []
