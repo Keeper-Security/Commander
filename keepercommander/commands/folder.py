@@ -70,7 +70,7 @@ tree_parser.exit = suppress_exit
 rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove a folder and its contents.')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
 rmdir_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='remove folder without folder info')
-rmdir_parser.add_argument('folder', nargs='*', type=str, action='store', help='folder path or UID')
+rmdir_parser.add_argument('pattern', nargs='*', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
@@ -369,22 +369,32 @@ class FolderRemoveCommand(Command):
         return rmdir_parser
 
     def execute(self, params, **kwargs):
+        folder = params.folder_cache.get(params.current_folder, params.root_folder)
         folders = []
-        name_list = kwargs['folder'] if 'folder' in kwargs else []
-        for name in name_list:
-            if name in params.folder_cache:
-                folders.append(params.folder_cache[name])
+        pattern_list = kwargs.get('pattern', [])
+        for pattern in pattern_list:
+            rs = try_resolve_path(params, pattern)
+            if rs is None:
+                regex_pattern = pattern
             else:
-                rs = try_resolve_path(params, name)
-                if rs is not None:
-                    folder, name = rs
-                    if name or folder.type == BaseFolderNode.RootFolderType:
-                        logging.warning(f'Folder "{name}" was not found.')
-                    else:
-                        folders.append(folder)
+                folder, regex_pattern = rs
+                if regex_pattern == '':
+                    folders.append(folder)
+                    continue
+
+            regex = re.compile(fnmatch.translate(regex_pattern)).match
+            subfolders = []
+            for uid in folder.subfolders:
+                f = params.folder_cache[uid]
+                if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))):
+                    subfolders.append(f)
+            if len(subfolders) == 0:
+                logging.warning(f'Folder "{pattern}" was not found.')
+            else:
+                folders.extend(subfolders)
 
         if len(folders) == 0:
-            raise CommandError('rmdir', 'Enter name of the existing folder.')
+            raise CommandError('rmdir', 'Enter name of an existing folder.')
 
         force = kwargs['force'] if 'force' in kwargs else None
         quiet = kwargs['quiet'] if 'quiet' in kwargs else None
