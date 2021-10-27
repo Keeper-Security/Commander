@@ -116,12 +116,12 @@ class TestFolder(TestCase):
         with mock.patch('builtins.print'), mock.patch('keepercommander.commands.folder.user_choice') as mock_choice:
             mock_choice.return_value = 'n'
             KeeperApiHelper.communicate_expect([pre_delete])
-            cmd.execute(params, folder=[user_folder.name])
+            cmd.execute(params, pattern=[user_folder.name])
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
             mock_choice.return_value = 'y'
             KeeperApiHelper.communicate_expect([pre_delete, 'delete'])
-            cmd.execute(params, folder=[user_folder.name])
+            cmd.execute(params, pattern=[user_folder.name])
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
     def test_delete_shared_folder(self):
@@ -135,18 +135,18 @@ class TestFolder(TestCase):
             self.assertEqual(rq['shared_folder_uid'], shared_folder.uid)
 
         KeeperApiHelper.communicate_expect([shared_folder_update])
-        cmd.execute(params, force=True, folder=[shared_folder.name])
+        cmd.execute(params, force=True, pattern=[shared_folder.name])
         self.assertTrue(KeeperApiHelper.is_expect_empty())
 
         with mock.patch('keepercommander.commands.folder.user_choice') as mock_choice:
             mock_choice.return_value = 'y'
 
             KeeperApiHelper.communicate_expect([shared_folder_update])
-            cmd.execute(params, folder=[shared_folder.name])
+            cmd.execute(params, pattern=[shared_folder.name])
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
             mock_choice.return_value = 'n'
-            cmd.execute(params, folder=[shared_folder.name])
+            cmd.execute(params, pattern=[shared_folder.name])
 
     def test_move_success(self):
         params = get_synced_params()
