@@ -69,7 +69,8 @@ tree_parser.exit = suppress_exit
 
 rmdir_parser = argparse.ArgumentParser(prog='rmdir', description='Remove a folder and its contents.')
 rmdir_parser.add_argument('-f', '--force', dest='force', action='store_true', help='remove folder without prompting')
-rmdir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
+rmdir_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='remove folder without folder info')
+rmdir_parser.add_argument('pattern', nargs='*', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
@@ -368,61 +369,86 @@ class FolderRemoveCommand(Command):
         return rmdir_parser
 
     def execute(self, params, **kwargs):
-        folder = None
-        name = kwargs['folder'] if 'folder' in kwargs else ''
-        if name:
-            if name in params.folder_cache:
-                folder = params.folder_cache[name]
+        folder = params.folder_cache.get(params.current_folder, params.root_folder)
+        folders = []
+        pattern_list = kwargs.get('pattern', [])
+        for pattern in pattern_list:
+            rs = try_resolve_path(params, pattern)
+            if rs is None:
+                regex_pattern = pattern
             else:
-                rs = try_resolve_path(params, name)
-                if rs is not None:
-                    folder, name = rs
-                    if len(name or '') > 0:
-                        folder = None
-                    elif folder.type == BaseFolderNode.RootFolderType:
-                        folder = None
+                folder, regex_pattern = rs
+                if regex_pattern == '':
+                    folders.append(folder)
+                    continue
 
-        if folder is None:
-            raise CommandError('rmdir', 'Enter name of the existing folder. ({0})'.format(name))
+            regex = re.compile(fnmatch.translate(regex_pattern)).match
+            subfolders = []
+            for uid in folder.subfolders:
+                f = params.folder_cache[uid]
+                if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))):
+                    subfolders.append(f)
+            if len(subfolders) == 0:
+                logging.warning(f'Folder "{pattern}" was not found.')
+            else:
+                folders.extend(subfolders)
+
+        if len(folders) == 0:
+            raise CommandError('rmdir', 'Enter name of an existing folder.')
 
         force = kwargs['force'] if 'force' in kwargs else None
-        parent = params.folder_cache[folder.uid] if folder.uid is not None else None
-        if folder.type == BaseFolderNode.SharedFolderType:
-            if folder.uid in params.shared_folder_cache:
-                sf = params.shared_folder_cache[folder.uid]
+        quiet = kwargs['quiet'] if 'quiet' in kwargs else None
+        del_objects = []
+        del_folder_names = []
+        for folder in folders:
+            parent = params.folder_cache[folder.uid] if folder.uid is not None else None
+            if folder.type == BaseFolderNode.SharedFolderType:
+                if not quiet or not force:
+                    # This message should also appear if not forced for the sake of user input
+                    print(f'Removing shared folder {folder.name}...')
+                if folder.uid in params.shared_folder_cache:
+                    sf = params.shared_folder_cache[folder.uid]
 
-                rq = {
-                    'command': 'shared_folder_update',
-                    'operation': 'delete',
-                    'shared_folder_uid': sf['shared_folder_uid']
-                }
-                if 'shared_folder_key' not in sf:
-                    if 'teams' in sf:
-                        for team in sf['teams']:
-                            rq['from_team_uid'] = team['team_uid']
-                            break
+                    rq = {
+                        'command': 'shared_folder_update',
+                        'operation': 'delete',
+                        'shared_folder_uid': sf['shared_folder_uid']
+                    }
+                    if 'shared_folder_key' not in sf:
+                        if 'teams' in sf:
+                            for team in sf['teams']:
+                                rq['from_team_uid'] = team['team_uid']
+                                break
 
-                np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    api.communicate(params, rq)
-                    params.sync_data = True
-        else:
-            del_obj = {
-                'delete_resolution': 'unlink',
-                'object_uid': folder.uid,
-                'object_type': 'user_folder' if folder.type == BaseFolderNode.UserFolderType else 'shared_folder_folder'
-            }
-            if parent is None:
-                del_obj['from_type'] = 'user_folder'
+                    np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                    if np.lower() == 'y':
+                        api.communicate(params, rq)
+                        params.sync_data = True
             else:
-                del_obj['from_uid'] = parent.uid
-                del_obj['from_type'] = parent.type
-                if parent.type == BaseFolderNode.SharedFolderType:
-                    del_obj['from_type'] = 'shared_folder_folder'
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': folder.uid,
+                    'object_type': 'user_folder' if folder.type == BaseFolderNode.UserFolderType else 'shared_folder_folder'
+                }
+                if parent is None:
+                    del_obj['from_type'] = 'user_folder'
+                else:
+                    del_obj['from_uid'] = parent.uid
+                    del_obj['from_type'] = parent.type
+                    if parent.type == BaseFolderNode.SharedFolderType:
+                        del_obj['from_type'] = 'shared_folder_folder'
+
+                del_objects.append(del_obj)
+                del_folder_names.append(folder.name)
+
+        if len(del_objects) > 0:
+            if not quiet or not force:
+                # This message should also appear if not forced for the sake of user input
+                print(f'\nRemoving the following folder(s):\n{", ".join(del_folder_names)}\n')
 
             rq = {
                 'command': 'pre_delete',
-                'objects': [del_obj]
+                'objects': del_objects
             }
 
             rs = api.communicate(params, rq)
@@ -430,11 +456,12 @@ class FolderRemoveCommand(Command):
                 pdr = rs['pre_delete_response']
 
                 np = 'y'
-                if not force:
+                if not force and not quiet:
                     summary = pdr['would_delete']['deletion_summary']
                     for x in summary:
                         print(x)
-                    np = user_choice('Do you like to proceed with deletion?', 'yn', default='n')
+                if not force:
+                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
                 if np.lower() == 'y':
                     rq = {
                         'command': 'delete',
