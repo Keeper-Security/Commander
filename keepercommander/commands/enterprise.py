@@ -214,8 +214,8 @@ device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit
 
 scim_parser = argparse.ArgumentParser(prog='scim', description='Manage SCIM endpoints.')
-scim_parser.add_argument('command', type=str, nargs='?', help='Automator Command. list, view, create, edit, delete')
-scim_parser.add_argument('target', type=str, nargs='?', help='Automator ID or Name. Command: view, edit, delete')
+scim_parser.add_argument('command', type=str, nargs='?', help='SCIM Command. list, view, create, edit, delete')
+scim_parser.add_argument('target', type=str, nargs='?', help='SCIM ID or Name. Command: view, edit, delete')
 scim_parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='Reload list of scim endpoints')
 scim_parser.add_argument('--force', '-f', dest='force', action='store_true', help='Delete with no confirmation')
 scim_parser.add_argument('--node', dest='node', help='Node Name or ID. Command: create')

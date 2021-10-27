@@ -1,4 +1,3 @@
-import logging
 import json
 import os
 import io
@@ -28,22 +27,23 @@ class TestRecord(TestCase):
         params = get_synced_params()
         cmd = record.RecordAddCommand()
 
-        KeeperApiHelper.communicate_expect(['record_add'])
-        cmd.execute(params, force=True, title='New Record')
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
-
-        KeeperApiHelper.communicate_expect(['record_add'])
-        cmd.execute(params, login='login', password='password', url='url', custom='name1: value 1, name2: value 2', title='New Record')
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
-
-        KeeperApiHelper.communicate_expect(['record_add'])
-        cmd.execute(params, login='login', password='password', url='url', custom=[{'name1': 'value 1', 'name2': 'value 2'}], title='New Record')
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
-
-        with mock.patch('builtins.input', return_value='Input Data'):
+        with mock.patch('keepercommander.api.sync_down'):
             KeeperApiHelper.communicate_expect(['record_add'])
             cmd.execute(params, force=True, title='New Record')
             self.assertTrue(KeeperApiHelper.is_expect_empty())
+
+            KeeperApiHelper.communicate_expect(['record_add'])
+            cmd.execute(params, login='login', password='password', url='url', custom='name1: value 1, name2: value 2', title='New Record')
+            self.assertTrue(KeeperApiHelper.is_expect_empty())
+
+            KeeperApiHelper.communicate_expect(['record_add'])
+            cmd.execute(params, login='login', password='password', url='url', custom=[{'name1': 'value 1', 'name2': 'value 2'}], title='New Record')
+            self.assertTrue(KeeperApiHelper.is_expect_empty())
+
+            with mock.patch('builtins.input', return_value='Input Data'):
+                KeeperApiHelper.communicate_expect(['record_add'])
+                cmd.execute(params, force=True, title='New Record')
+                self.assertTrue(KeeperApiHelper.is_expect_empty())
 
     def test_add_command_check_request(self):
         params = get_synced_params()
@@ -59,7 +59,7 @@ class TestRecord(TestCase):
             self.assertEqual(data['secret1'], data['secret2'])
             self.assertEqual(len(data['custom']), 2)
 
-        with mock.patch('builtins.input', return_value='data'):
+        with mock.patch('builtins.input', return_value='data'), mock.patch('keepercommander.api.sync_down'):
             KeeperApiHelper.communicate_expect([check_record])
             cmd.execute(params, custom='name1: value 1, name2: value 2')
             self.assertTrue(KeeperApiHelper.is_expect_empty())
