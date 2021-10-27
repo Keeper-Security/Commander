@@ -578,10 +578,14 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             if folder.type != BaseFolderNode.RootFolderType:
                 rq['folder_uid'] = folder.uid
 
-        params.sync_data = True
         res = api.add_record_v3(params, record, **{'record_links': record_links, 'rq': rq})
         if res:
             params.environment_variables[LAST_RECORD_UID] = record_uid
+            if params.breach_watch:
+                api.sync_down(params)
+                params.breach_watch.scan_and_store_record_status(params, record_uid)
+            params.sync_data = True
+
             return record_uid
 
 
@@ -798,13 +802,17 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
         if changed:
             params.record_cache[record_uid]['data_unencrypted'] = json.dumps(data_dict)
-            params.sync_data = True
             api.update_record_v3(params, record, **kwargs)
+
+            if params.breach_watch:
+                api.sync_down(params)
+                params.breach_watch.scan_and_store_record_status(params, record_uid)
 
             newpass = recordv3.RecordV3.get_record_password(data) or ''
             oldpass = recordv3.RecordV3.get_record_password(record_data) or ''
             if newpass != oldpass:
                 params.queue_audit_event('record_password_change', record_uid=record.record_uid)
+            params.sync_data = True
 
     def convert_legacy_options(self, kwargs):
         options = kwargs.get('option') or []

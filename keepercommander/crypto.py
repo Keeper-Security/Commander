@@ -166,6 +166,12 @@ def derive_keyhash_v2(domain, password, salt, iterations):
     return hf.finalize()
 
 
+def hmac_sha512(key, data):
+    hf = HMAC(key, SHA512(), backend=_CRYPTO_BACKEND)
+    hf.update(data)
+    return hf.finalize()
+
+
 class AesStreamCryptor(abc.ABC):
     def __init__(self, is_encrypt, block_size):
         self.is_encrypt = is_encrypt

@@ -41,13 +41,18 @@ class KeeperJsonImporter(BaseFileImporter):
                     fol.can_share = shf.get('can_share') or False
                     if users_only and 'permissions' in shf:
                         fol.permissions = []
-                        for perm in shf['permissions']:
-                            p = Permission()
-                            p.uid = perm.get('uid')
-                            p.name = perm.get('name')
-                            p.manage_records = perm.get('manage_records') or False
-                            p.manage_users = perm.get('manage_users') or False
-                            fol.permissions.append(p)
+                        permissions = shf['permissions']
+                        if not isinstance(permissions, list):
+                            permissions = [permissions]
+                        for perm in permissions:
+                            if isinstance(perm, dict):
+                                p = Permission()
+                                p.uid = perm.get('uid')
+                                p.name = perm.get('name')
+                                if p.uid or p.name:
+                                    p.manage_records = perm.get('manage_records') or False
+                                    p.manage_users = perm.get('manage_users') or False
+                                    fol.permissions.append(p)
 
                     yield fol
 

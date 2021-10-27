@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import copy
 import itertools
 import json
 import base64
@@ -21,18 +20,14 @@ import os
 import hashlib
 import logging
 import urllib.parse
-import binascii
-from urllib.parse import urlparse, urlunparse
 from typing import Optional, Tuple, Iterable, List
 
-from google.protobuf.json_format import MessageToJson
-
-from . import rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3
-from .proto import client_pb2
+from google.protobuf.json_format import MessageToDict
 from . import record_pb2 as record_proto
 from datetime import datetime
 
 from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils, crypto
+from .proto import client_pb2 as client_proto
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -40,7 +35,7 @@ from .team import Team
 from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .display import bcolors
-from keepercommander.recordv3 import RecordV3
+from .recordv3 import RecordV3
 from .ttk import TTK
 
 from Cryptodome import Random
@@ -945,22 +940,59 @@ def sync_down(params):
     except:
         pass
 
-    # Record V3 types cache population
-    v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-    if v3_enabled:
-        rq = records.RecordTypesRequest()
-        rq.standard = True
-        rq.user = True
-        rq.enterprise = True
-        record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
-
-        if len(record_types_rs.recordTypes) > 0:
-            params.record_type_cache = {}
-            for rt in record_types_rs.recordTypes:
-                params.record_type_cache[rt.recordTypeId] = rt.content
+    if params.breach_watch and 'breach_watch_records' in response_json:
+        if not params.breach_watch_records:
+            params.breach_watch_records = {}
+        for bwr in response_json['breach_watch_records']:
+            record_uid = bwr['record_uid']
+            record = params.record_cache.get(record_uid)
+            if not record:
+                continue
+            if 'record_key_unencrypted' not in record:
+                continue
+            try:
+                if 'data' in bwr :
+                    data = utils.base64_url_decode(bwr['data'])
+                    data = crypto.decrypt_aes_v2(data, record['record_key_unencrypted'])
+                    data_obj = client_proto.BreachWatchData()
+                    data_obj.ParseFromString(data)
+                    bwr['data_unencrypted'] = MessageToDict(data_obj)
+                params.breach_watch_records[record_uid] = bwr
+            except Exception as e:
+                logging.debug('Decrypt bw data: %s', e)
 
     if 'full_sync' in response_json:
-        logging.info('Decrypted [%s] record(s)', len(params.record_cache))
+        if params.breach_watch:
+            weak_count = 0
+            for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
+                weak_count += 1
+            if weak_count > 0:
+                logging.info(bcolors.WARNING +
+                             f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
+                             '\nUse \"breachwatch list\" command to get more details' +
+                             bcolors.ENDC)
+
+        # Record V3 types cache population
+        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        if v3_enabled:
+            rq = records.RecordTypesRequest()
+            rq.standard = True
+            rq.user = True
+            rq.enterprise = True
+            record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
+
+            if len(record_types_rs.recordTypes) > 0:
+                params.record_type_cache = {}
+                for rt in record_types_rs.recordTypes:
+                    params.record_type_cache[rt.recordTypeId] = rt.content
+
+        record_count = 0
+        valid_versions = {2, 3}
+        for r in params.record_cache.values():
+            if r.get('version', 0) in valid_versions:
+                record_count += 1
+        if record_count:
+            logging.info('Decrypted [%d] record(s)', record_count)
 
 
 def convert_to_folders(params):
@@ -1987,8 +2019,6 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
 
         record_rq['revision'] = new_revision
 
-    sync_down(params)
-    params.environment_variables[LAST_RECORD_UID] = record['record_uid']
     return True
 
 
