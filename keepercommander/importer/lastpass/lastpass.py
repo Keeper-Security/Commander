@@ -180,14 +180,10 @@ class LastPassImporter(BaseImporter):
                 record.uid = account.id
             if account.name:
                 record.title = account.name.decode('utf-8')
-                if not record.title:
-                    missing_titles += 1
-                    new_title = f'Missing Title {missing_titles}'
-                    logging.warning(
-                        f'Missing title {record.title}({account.name}) in record from LastPass. '
-                        f'Assigning title "{new_title}"'
-                    )
-                    record.title = new_title
+            else:
+                missing_titles += 1
+                record.title = f'Missing Title {missing_titles}'
+                logging.warning(f'Missing title in record from LastPass. Assigning title "{record.title}"')
             if account.username:
                 record.login = account.username.decode('utf-8')
             if account.password:
