@@ -421,10 +421,6 @@ class FolderRemoveCommand(Command):
 
                     requests.append(rq)
                     del_shared_folder_names.append(folder.name)
-                    # np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                    # if np.lower() == 'y':
-                    #     api.communicate(params, rq)
-                    #     params.sync_data = True
             else:
                 del_obj = {
                     'delete_resolution': 'unlink',
@@ -470,10 +466,7 @@ class FolderRemoveCommand(Command):
                 for x in summary:
                     print(x)
 
-        np = 'y'
-        if not force:
-            np = user_choice('\nDo you want to proceed with deletion?', 'yn', default='n')
-
+        np = 'y' if force else user_choice('\nDo you want to proceed with the deletion?', 'yn', default='n')
         if np.lower() == 'y':
             rq = {
                 'command': 'execute',
