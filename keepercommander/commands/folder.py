@@ -443,7 +443,7 @@ class FolderRemoveCommand(Command):
             shared_folder_count = len(del_shared_folder_names)
             if shared_folder_count > 0:
                 print(f'\nRemoving the following shared folder(s):\n{", ".join(del_shared_folder_names)}')
-                print(f'{shared_folder_count} Shared Folder(s) will be deleted with their contents.')
+                print(f'{shared_folder_count} Shared Folder(s) will be deleted with contents.')
             if user_folder_count > 0:
                 print(f'\nRemoving the following user folder(s):\n{", ".join(del_user_folder_names)}')
 
