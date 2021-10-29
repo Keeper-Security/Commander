@@ -107,14 +107,13 @@ class TestEnterprise(TestCase):
                 mock_choice.return_value = 'n'
                 cmd.execute(params, expire=True, email=[ent_env.user2_email])
 
-    @pytest.mark.xfail(reason="TODO: This test needs investigation")
     def test_enterprise_user_update(self):
         params = get_connected_params()
         api.query_enterprise(params)
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['enterprise_user_update']
-        cmd.execute(params, node='Root node', email=[ent_env.user2_email])
+        cmd.execute(params, node='Enterprise 1', email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['enterprise_user_update']

@@ -7,7 +7,7 @@ from unittest import mock
 
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
-from keepercommander import rest_api, api, params, record, shared_folder, team
+from keepercommander import rest_api, api, params, record, shared_folder, team, crypto, utils
 
 _USER_NAME = 'unit.test@keepersecurity.com'
 _USER_PASSWORD = base64.b64encode(os.urandom(8)).decode('utf-8').strip('=')
@@ -46,16 +46,13 @@ RJfJH63edAQLxl+rayIqsTuUntmMNgE3olQWexCChX9b8xW6OzVgw8jU6WX0OGOB
 -----END RSA PRIVATE KEY-----
 '''
 _PRIVATE_KEY_PASSWORD = 'E,{-qhsm;<cq]3D(3H5K/'
-_USER_PUBLIC_KEY = '''-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqR0AjmBXo371pYmvS1NM
+_USER_PUBLIC_KEY = '''MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqR0AjmBXo371pYmvS1NM
 8nXlbAv5qUbPYuV6KVwKjN3T8WX5K6HDGl3+ylAbI02vIzKue+gDbjo1wUGp2qhA
 Nc1VxllLSWnkJmwbuGUTEWp4ANjusoMhPvEwna1XPdlrSMdsKokjbP9xbguPdvXx
 5oBaqArrrGEg+36Vi7miA/g/UT4DKcryglD4Xx0H9t5Hav+frz2qcEsyh9FC0fNy
 on/uveEdP2ac+kax8vO5EeVfBzOdw+WPaBtUO1h7rSZ6xKOm6x1OahNTUFy7Cgm0
 38JuMwHChTK29H9EOlqbOOuzYA1ENzL88hELpe+kl4RmpNS94BJDssikFFbjoiAV
-fwIDAQAB
------END PUBLIC KEY-----
-'''
+fwIDAQAB'''
 
 _SESSION_TOKEN = base64.urlsafe_b64encode(os.urandom(64)).decode('utf-8').strip('=')
 _DEVICE_ID = os.urandom(64)
@@ -67,8 +64,8 @@ _IMPORTED_PRIVATE_KEY = RSA.importKey(_USER_PRIVATE_KEY, _PRIVATE_KEY_PASSWORD)
 _DER_PRIVATE_KEY = _IMPORTED_PRIVATE_KEY.export_key(format='DER')
 _ENCRYPTED_PRIVATE_KEY = api.encrypt_aes(_DER_PRIVATE_KEY, _USER_DATA_KEY)
 
-_IMPORTED_PUBLIC_KEY = RSA.importKey(_USER_PUBLIC_KEY)
-_ENCODED_PUBLIC_KEY = base64.urlsafe_b64encode(_IMPORTED_PUBLIC_KEY.export_key(format='DER')).decode('utf-8').strip('=')
+_IMPORTED_PUBLIC_KEY = crypto.load_rsa_public_key(base64.b64decode(_USER_PUBLIC_KEY))
+_ENCODED_PUBLIC_KEY = utils.base64_url_encode(crypto.unload_rsa_public_key(_IMPORTED_PUBLIC_KEY))
 
 _V2_DERIVED_KEY = rest_api.derive_key_v2('data_key', _USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
 _dk = rest_api.encrypt_aes(_USER_DATA_KEY, _V2_DERIVED_KEY)
@@ -203,10 +200,10 @@ def register_record(record, key_type=None):
     if key_type == 0:
         _RECORD_METADATA.append(meta_data)
     if key_type == 1:
-        meta_data['record_key'] = api.encrypt_aes(record_key, _USER_DATA_KEY)
+        meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, _USER_DATA_KEY))
         _RECORD_METADATA.append(meta_data)
     elif key_type == 2:
-        meta_data['record_key'] = api.encrypt_rsa(record_key, _IMPORTED_PUBLIC_KEY)
+        meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_rsa(record_key, _IMPORTED_PUBLIC_KEY))
         _RECORD_METADATA.append(meta_data)
 
     return record_key

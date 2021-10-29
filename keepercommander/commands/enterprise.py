@@ -11,7 +11,6 @@
 import argparse
 import ipaddress
 import itertools
-import collections
 import json
 import base64
 import string
@@ -39,9 +38,11 @@ from collections import OrderedDict as OD
 from argparse import RawTextHelpFormatter
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .enterprise_common import EnterpriseCommand
 from .helpers import audit_report
 from .record import RecordAddCommand
-from .. import api, rest_api, APIRequest_pb2 as proto, constants
+from .. import api, rest_api, crypto, utils, constants
+from .. import APIRequest_pb2 as proto
 from ..display import bcolors
 from ..record import Record
 from ..params import KeeperParams
@@ -51,6 +52,8 @@ from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest,
                              ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
 from .. import record_pb2 as record_proto
+from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
+
 
 def register_commands(commands):
     commands['enterprise-down'] = GetEnterpriseDataCommand()
@@ -63,6 +66,7 @@ def register_commands(commands):
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
     commands['scim'] = EnterpriseScimCommand()
+    commands['transfer-user'] = EnterpriseTransferUserCommand()
 
     commands['audit-log'] = AuditLogCommand()
     commands['audit-report'] = AuditReportCommand()
@@ -79,9 +83,10 @@ def register_command_info(aliases, command_info):
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
     aliases['sar'] = 'security-audit-report'
+    aliases['tu'] = 'transfer-user'
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
-              enterprise_role_parser, enterprise_team_parser,
+              enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser,
               team_approve_parser, device_approve_parser, scim_parser,
               audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
@@ -311,139 +316,6 @@ class GetEnterpriseDataCommand(Command):
 
     def execute(self, params, **kwargs):
         api.query_enterprise(params)
-
-
-class EnterpriseCommand(Command):
-    def __init__(self):
-        super(EnterpriseCommand, self).__init__()
-        self.public_keys = {}
-        self.team_keys = {}
-
-    def execute_args(self, params, args, **kwargs):
-        if params.enterprise:
-            Command.execute_args(self, params, args, **kwargs)
-        else:
-            raise CommandError('', 'This command  is only available for Administrators of Keeper.')
-
-    def get_public_keys(self, params, emails):
-        # type: (EnterpriseCommand, KeeperParams, dict) -> None
-
-        for email in emails:
-            emails[email] = self.public_keys.get(email.lower())
-
-        email_list = [x[0] for x in emails.items() if x[1] is None]
-        if len(email_list) == 0:
-            return
-
-        rq = {
-            'command': 'public_keys',
-            'key_owners': email_list
-        }
-        rs = api.communicate(params, rq)
-        for pko in rs['public_keys']:
-            if 'public_key' in pko:
-                public_key = RSA.importKey(base64.urlsafe_b64decode(pko['public_key'] + '=='))
-                self.public_keys[pko['key_owner'].lower()] = public_key
-                emails[pko['key_owner']] = public_key
-
-    def get_public_key(self, params, email):
-        # type: (EnterpriseCommand, KeeperParams, str) -> any
-
-        public_key = self.public_keys.get(email.lower())
-        if public_key is None:
-            emails = {
-                email: None
-            }
-            self.get_public_keys(params, emails)
-            public_key = emails[email]
-
-        return public_key
-
-    def get_team_key(self, params, team_uid):
-        team_key = self.team_keys.get(team_uid)
-        if team_key is None:
-            if 'teams' in params.enterprise:
-                for team in params.enterprise['teams']:
-                    if team['team_uid'] == team_uid:
-                        if 'encrypted_team_key' in team:
-                            enc_team_key = team['encrypted_team_key']  # type: str
-                            team_key = rest_api.decrypt_aes(base64.urlsafe_b64decode(enc_team_key + '=='), params.enterprise['unencrypted_tree_key'])
-                        break
-
-        if team_key is None:
-            rq = {
-                'command': 'team_get_keys',
-                'teams': [team_uid]
-            }
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                ko = rs['keys'][0]
-                if 'key' in ko:
-                    if ko['type'] == 1:
-                        team_key = api.decrypt_data(ko['key'], params.data_key)
-                    elif ko['type'] == 2:
-                        team_key = api.decrypt_rsa(ko['key'], params.rsa_key)
-
-        if team_key is not None:
-            self.team_keys[team_uid] = team_key
-        return team_key
-
-    @staticmethod
-    def get_enterprise_id(params):
-        rq = {
-            'command': 'enterprise_allocate_ids',
-            'number_requested': 1
-        }
-        rs = api.communicate(params, rq)
-        if rs['result'] == 'success':
-            return rs['base_id']
-
-    @staticmethod
-    def get_node_path(params, node_id):
-        nodes = {}
-        for node in params.enterprise['nodes']:
-            nodes[node['node_id']] = (node['data'].get('displayname') or params.enterprise['enterprise_name'], node.get('parent_id') or 0)
-        path = ''
-        node = nodes.get(node_id)
-        while node:
-            path = '{0}{1}{2}'.format(node[0], '\\' if path else '', path)
-            node = nodes.get(node[1])
-        return path
-
-    @staticmethod
-    def resolve_nodes(params, name):   # type: (KeeperParams, str) -> collections.Iterable[dict]
-        node_id = 0
-        node_name = ''
-        if name:
-            node_name = str(name).lower()
-            try:
-                node_id = int(name)
-            except ValueError:
-                pass
-
-        for node in params.enterprise['nodes']:
-            if node_id > 0:
-                if node['node_id'] == node_id:
-                    yield node
-                    continue
-            if node_name:
-                if 'parent_id' in node:
-                    display_name = node['data'].get('displayname') or ''
-                else:
-                    display_name = params.enterprise['enterprise_name'] or ''
-                if display_name and display_name.lower() == node_name:
-                    yield node
-            else:
-                if 'parent_id' not in node:
-                    yield node
-
-    @staticmethod
-    def get_root_nodes(params):  # type: (KeeperParams) -> [dict]
-        node_set = {x['node_id'] for x in params.enterprise['nodes']}
-        for node in params.enterprise['nodes']:
-            parent_id = node.get('parent_id') or ''
-            if parent_id not in node_set:
-                yield node
 
 
 class EnterpriseInfoCommand(EnterpriseCommand):
@@ -1372,9 +1244,11 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                                 logging.warning('Cannot get public key for user %s', user['username'])
                                         user_pkeys[user_id] = public_key
                                     if user_pkeys[user_id]:
-                                        rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
+                                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
+                                        rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
                                         if role_key:
-                                            rq['role_admin_key'] = api.encrypt_rsa(role_key, user_pkeys[user_id])
+                                            encrypted_role_key = crypto.encrypt_rsa(role_key, user_pkeys[user_id])
+                                            rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
                                         request_batch.append(rq)
                                 else:
                                     request_batch.append(rq)
@@ -1410,8 +1284,9 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                         }
                                         team_key = self.get_team_key(params, team_uid)
                                         public_key = self.get_public_key(params, user['username'])
+                                        encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
                                         if team_key and public_key:
-                                            rq['team_key'] = api.encrypt_rsa(team_key, public_key)
+                                            rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
                                             rq['user_type'] = 0
                                             request_batch.append(rq)
                                     else:
@@ -1741,9 +1616,11 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                         logging.warning('Cannot get public key for user %s', email)
                                 user_pkeys[user_id] = public_key
                             if user_pkeys[user_id]:
-                                rq['tree_key'] = api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
+                                encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
+                                rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
                                 if role_key:
-                                    rq['role_admin_key'] = api.encrypt_rsa(role_key, user_pkeys[user_id])
+                                    encrypted_role_key = crypto.encrypt_rsa(role_key, user_pkeys[user_id])
+                                    rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
                                 request_batch.append(rq)
                         else:
                             request_batch.append(rq)
@@ -1963,10 +1840,11 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                     emails = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id]
                                     if emails:
                                         public_key = self.get_public_key(params, emails[0])
+                                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
                                         if public_key:
                                             rq['tree_keys'].append({
                                                 "enterprise_user_id": user_id,
-                                                "tree_key": api.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
+                                                "tree_key": utils.base64_url_encode(encrypted_tree_key)
                                             })
                         request_batch.append(rq)
             elif node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name'):
@@ -2211,22 +2089,9 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 team_uid = api.generate_record_uid() if is_new_team else item['team_uid']
                 team_key = api.generate_aes_key()
                 encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
-                rsa_key = RSA.generate(2048)
-                private_key = DerSequence([0,
-                                           rsa_key.n,
-                                           rsa_key.e,
-                                           rsa_key.d,
-                                           rsa_key.p,
-                                           rsa_key.q,
-                                           rsa_key.d % (rsa_key.p-1),
-                                           rsa_key.d % (rsa_key.q-1),
-                                           Integer(rsa_key.q).inverse(rsa_key.p)
-                                           ]).encode()
-                pub_key = rsa_key.publickey()
-                public_key = DerSequence([pub_key.n,
-                                          pub_key.e
-                                          ]).encode()
 
+                private_key, public_key = crypto.generate_rsa_key()
+                encrypted_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(private_key), team_key)
                 rq = {
                     'command': 'team_add',
                     'team_uid': team_uid,
@@ -2234,11 +2099,11 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     'restrict_edit': kwargs.get('restrict_edit') == 'on',
                     'restrict_share': kwargs.get('restrict_share') == 'on',
                     'restrict_view': kwargs.get('restrict_view') == 'on',
-                    'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
-                    'private_key': api.encrypt_aes(private_key, team_key),
+                    'public_key': utils.base64_url_encode(crypto.unload_rsa_public_key(public_key)),
+                    'private_key': utils.base64_url_encode(encrypted_private_key),
                     'node_id': team_node_id,
-                    'team_key': api.encrypt_aes(team_key, params.data_key),
-                    'encrypted_team_key': base64.urlsafe_b64encode(encrypted_team_key).decode().rstrip('='),
+                    'team_key': utils.base64_url_encode(crypto.encrypt_aes_v1(team_key, params.data_key)),
+                    'encrypted_team_key': utils.base64_url_encode(encrypted_team_key),
                     'manage_only': True
                 }
                 request_batch.append(rq)
@@ -2291,13 +2156,14 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                 if is_real_team and is_active_user:
                                     public_key = self.get_public_key(params, user['username'])
                                     team_key = self.get_team_key(params, team['team_uid'])
+                                    encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
                                     if public_key and team_key:
                                         rq = {
                                             'command': 'team_enterprise_user_add',
                                             'team_uid': team['team_uid'],
                                             'enterprise_user_id': user_id,
                                             'user_type': 0,
-                                            'team_key': api.encrypt_rsa(team_key, public_key)
+                                            'team_key': utils.base64_url_encode(encrypted_team_key)
                                         }
                                 else:
                                     rq = {
@@ -3648,7 +3514,7 @@ class EnterprisePushCommand(EnterpriseCommand):
         else:
             raise CommandError('enterprise-push', 'File {0} does not exists'.format(name))
 
-        emails = EnterprisePushCommand.collect_emails(params, kwargs)
+        emails = EnterprisePushCommand.collect_emails(params, kwargs)   # type: dict[str, any]
 
         if len(emails) == 0:
             raise CommandError('enterprise-push', 'No users')
@@ -3689,7 +3555,8 @@ class EnterprisePushCommand(EnterpriseCommand):
                         record_add_command['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
                         commands.append(record_add_command)
 
-                        record_keys[email][record_uid] = api.encrypt_rsa(record_key, emails[email])
+                        encrypted_record_key = crypto.encrypt_rsa(record_key, emails[email])
+                        record_keys[email][record_uid] = utils.base64_url_encode(encrypted_record_key)
             else:
                 logging.warning('User %s is not created yet', email)
 
@@ -3750,9 +3617,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                         users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
 
             if 'teams' in params.enterprise:
-
                 for team in teams:
-
                     team_uid = None
                     if team in params.enterprise['teams']:
                         team_uid = team_uid
@@ -4030,8 +3895,9 @@ class TeamApproveCommand(EnterpriseCommand):
                             }
                             team_key = self.get_team_key(params, team_uid)
                             public_key = self.get_public_key(params, active_users[u_id])
+                            encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
                             if team_key and public_key:
-                                rq['team_key'] = api.encrypt_rsa(team_key, public_key)
+                                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
                                 rq['user_type'] = 0
                                 request_batch.append(rq)
             if request_batch:
