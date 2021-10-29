@@ -18,7 +18,7 @@ import shutil
 import functools
 import os
 import json
-
+from collections import OrderedDict
 
 from .. import api, display
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
@@ -364,6 +364,47 @@ class FolderMakeCommand(Command):
             params.environment_variables[LAST_SHARED_FOLDER_UID] = folder_uid
 
 
+def get_folder_path(params, uid):
+    path = ''
+    folder = params.folder_cache.get(uid)
+    while folder:
+        path = f'{folder.name}/{path}'
+        folder = params.folder_cache.get(folder.parent_uid)
+    return path
+
+
+def get_shared_folder_delete_rq(params, sf_requests, uid):
+    """Adds a delete request to given dictionary for specified shared folder uid"""
+    if uid in params.shared_folder_cache and uid not in sf_requests:
+        sf = params.shared_folder_cache[uid]
+
+        rq = {
+            'command': 'shared_folder_update',
+            'operation': 'delete',
+            'shared_folder_uid': sf['shared_folder_uid']
+        }
+        if 'shared_folder_key' not in sf:
+            if 'teams' in sf:
+                for team in sf['teams']:
+                    rq['from_team_uid'] = team['team_uid']
+                    break
+        sf_requests[uid] = rq
+
+
+def get_shared_subfolder_delete_rq(params, sf_requests, user_folder, user_folder_ids):
+    """Recursively searches a user folder for shared folders to delete"""
+    delete_rq_added = False
+    user_folder_ids.add(user_folder.uid)
+    for uid in user_folder.subfolders:
+        subfolder = params.folder_cache[uid]
+        if subfolder.type == BaseFolderNode.SharedFolderType:
+            delete_rq_added = True
+            get_shared_folder_delete_rq(params, sf_requests, uid)
+        elif uid not in user_folder_ids:
+            delete_rq_added = get_shared_subfolder_delete_rq(params, sf_requests, subfolder, user_folder_ids)
+    return delete_rq_added
+
+
 class FolderRemoveCommand(Command):
     def get_parser(self):
         return rmdir_parser
@@ -398,38 +439,23 @@ class FolderRemoveCommand(Command):
 
         force = kwargs['force'] if 'force' in kwargs else None
         quiet = kwargs['quiet'] if 'quiet' in kwargs else None
-        del_objects = []
-        del_folder_names = []
+        shared_folder_requests = OrderedDict()
+        user_folder_objects = OrderedDict()
+        search_user_folder_ids = set()
+        shared_subfolder_delete_rq_added = False
         for folder in folders:
-            parent = params.folder_cache[folder.uid] if folder.uid is not None else None
             if folder.type == BaseFolderNode.SharedFolderType:
-                if not quiet or not force:
-                    # This message should also appear if not forced for the sake of user input
-                    print(f'Removing shared folder {folder.name}...')
-                if folder.uid in params.shared_folder_cache:
-                    sf = params.shared_folder_cache[folder.uid]
-
-                    rq = {
-                        'command': 'shared_folder_update',
-                        'operation': 'delete',
-                        'shared_folder_uid': sf['shared_folder_uid']
-                    }
-                    if 'shared_folder_key' not in sf:
-                        if 'teams' in sf:
-                            for team in sf['teams']:
-                                rq['from_team_uid'] = team['team_uid']
-                                break
-
-                    np = 'y' if force else user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                    if np.lower() == 'y':
-                        api.communicate(params, rq)
-                        params.sync_data = True
-            else:
+                get_shared_folder_delete_rq(params, shared_folder_requests, folder.uid)
+            elif folder.uid not in user_folder_objects:
+                shared_subfolder_delete_rq_added = get_shared_subfolder_delete_rq(
+                    params, shared_folder_requests, folder, search_user_folder_ids
+                )
                 del_obj = {
                     'delete_resolution': 'unlink',
                     'object_uid': folder.uid,
-                    'object_type': 'user_folder' if folder.type == BaseFolderNode.UserFolderType else 'shared_folder_folder'
+                    'object_type': folder.type
                 }
+                parent = params.folder_cache.get(folder.parent_uid)
                 if parent is None:
                     del_obj['from_type'] = 'user_folder'
                 else:
@@ -438,37 +464,52 @@ class FolderRemoveCommand(Command):
                     if parent.type == BaseFolderNode.SharedFolderType:
                         del_obj['from_type'] = 'shared_folder_folder'
 
-                del_objects.append(del_obj)
-                del_folder_names.append(folder.name)
+                user_folder_objects[folder.uid] = del_obj
 
-        if len(del_objects) > 0:
+        shared_folder_count = len(shared_folder_requests)
+        user_folder_count = len(user_folder_objects)
+        if shared_folder_count > 0:
             if not quiet or not force:
-                # This message should also appear if not forced for the sake of user input
-                print(f'\nRemoving the following folder(s):\n{", ".join(del_folder_names)}\n')
+                user_folder_msg = f' and {user_folder_count} user folder(s)' if user_folder_count > 0 else ''
+                print(f'Removing {shared_folder_count} shared folder(s){user_folder_msg}.')
+                shared_folder_names = [get_folder_path(params, uid) for uid in shared_folder_requests]
+                print(f'\nThe following shared folder(s) will be removed:\n{", ".join(shared_folder_names)}')
 
-            rq = {
-                'command': 'pre_delete',
-                'objects': del_objects
-            }
+            prompt_msg = 'Do you want to proceed with the shared folder deletion?'
+            np = 'y' if force else user_choice(f'\n{prompt_msg}', 'yn', default='n')
+            if np.lower() == 'y':
+                api.execute_batch(params, list(shared_folder_requests.values()))
+                params.sync_data = True
 
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                pdr = rs['pre_delete_response']
+        if user_folder_count > 0:
+            if shared_subfolder_delete_rq_added and np.lower() == 'n':
+                print(f'Cannot remove {user_folder_count} user folder(s) without the removal of shared subfolders.')
+            else:
+                if not quiet or not force:
+                    user_folder_names = [get_folder_path(params, uid) for uid in user_folder_objects]
+                    print(f'\nThe following user folder(s) will be removed:\n{", ".join(user_folder_names)}')
+                rq = {
+                    'command': 'pre_delete',
+                    'objects': list(user_folder_objects.values())
+                }
+                rs = api.communicate(params, rq)
+                if rs['result'] == 'success':
+                    pdr = rs['pre_delete_response']
 
-                np = 'y'
-                if not force and not quiet:
-                    summary = pdr['would_delete']['deletion_summary']
-                    for x in summary:
-                        print(x)
-                if not force:
-                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
-                if np.lower() == 'y':
-                    rq = {
-                        'command': 'delete',
-                        'pre_delete_token': pdr['pre_delete_token']
-                    }
-                    api.communicate(params, rq)
-                    params.sync_data = True
+                    if not force or not quiet:
+                        summary = pdr['would_delete']['deletion_summary']
+                        for x in summary:
+                            print(x)
+
+                    prompt_msg = 'Do you want to proceed with the user folder deletion?'
+                    np = 'y' if force else user_choice(f'\n{prompt_msg}', 'yn', default='n')
+                    if np.lower() == 'y':
+                        rq = {
+                            'command': 'delete',
+                            'pre_delete_token': pdr['pre_delete_token']
+                        }
+                        api.communicate(params, rq)
+                        params.sync_data = True
 
 
 class FolderMoveCommand(Command):

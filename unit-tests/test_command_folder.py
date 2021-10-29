@@ -130,9 +130,13 @@ class TestFolder(TestCase):
         shared_folder = next(iter([x for x in params.folder_cache.values() if x.type == 'shared_folder']))
 
         def shared_folder_update(rq):
-            self.assertEqual(rq['command'], 'shared_folder_update')
-            self.assertEqual(rq['operation'], 'delete')
-            self.assertEqual(rq['shared_folder_uid'], shared_folder.uid)
+            requests = [{
+                'command': 'shared_folder_update',
+                'operation': 'delete',
+                'shared_folder_uid': shared_folder.uid
+            }]
+            self.assertEqual(rq['command'], 'execute')
+            self.assertEqual(rq['requests'], requests)
 
         KeeperApiHelper.communicate_expect([shared_folder_update])
         cmd.execute(params, force=True, pattern=[shared_folder.name])
