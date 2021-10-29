@@ -802,7 +802,6 @@ def _import(params, file_format, filename, **kwargs):
                             missing_attachments.append(a)
 
                     if found_attachments:
-                        # found_names = ', '.join((a.name for a in found_attachments))
                         found = len(found_attachments)
                         total = len(r.attachments)
                         print(f'Found {found} of {total} attachments in record {r.title}.')
