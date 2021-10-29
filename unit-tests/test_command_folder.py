@@ -120,7 +120,7 @@ class TestFolder(TestCase):
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
             mock_choice.return_value = 'y'
-            KeeperApiHelper.communicate_expect([pre_delete, 'execute'])
+            KeeperApiHelper.communicate_expect([pre_delete, 'delete'])
             cmd.execute(params, pattern=[user_folder.name])
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
