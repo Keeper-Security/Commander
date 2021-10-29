@@ -1441,7 +1441,7 @@ def prepare_record(params, record):
     return record_object
 
 
-def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optional[Tuple[dict, Optional[bytes]]]
+def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Tuple[Optional[dict], Optional[bytes]]
     """ Prepares the Record() object to be sent to the Keeper Cloud API
         by serializing and encrypting it in the proper JSON format used for
         transmission.  If the record has no UID, one is generated and the
@@ -1468,7 +1468,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
             record_object.update(path)
         else:
             logging.error('You do not have edit permissions on this record')
-            return None
+            return (None,None)
 
         rec = params.record_cache[record.record_uid]
 
@@ -1480,7 +1480,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
             res = RecordV3.is_valid_record_type(data, rt_def)
             if not res.get('is_valid'):
                 logging.error('Error validating record type - ' + res.get('error'))
-                return None
+                return (None,None)
 
             if params.enterprise_ec_key:
                 fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
@@ -1497,7 +1497,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
 
         except Exception as e:
             logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
-            return None
+            return (None,None)
 
         data = pad_aes_gcm(data)
 
@@ -1674,7 +1674,7 @@ def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ..
 
     record_rq, audit = prepare_record_v3(params, rec)
     if record_rq is None:
-        return
+        return False
 
     links = kwargs.get('record_links') or {}
     links_add = links.get('record_links_add') or []

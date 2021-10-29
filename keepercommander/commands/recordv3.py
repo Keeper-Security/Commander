@@ -619,15 +619,16 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         options = [] if options == [None] else options
         rv = params.record_cache[record_uid].get('version') if params.record_cache and record_uid in params.record_cache else None
         if rv > 2:
-            # convert any v2 options into corresponding v3 options for v3 type=login|general
+            # convert any v2 options into corresponding v3 options
             rt_data = params.record_cache[record_uid].get('data_unencrypted')
             rt_name = recordv3.RecordV3.get_record_type_name(rt_data)
-            if rt_name in ("login", "general"):
-                errors = self.convert_legacy_options(kwargs=kwargs)
-                if errors:
-                    logging.error(bcolors.FAIL + 'Conflict between record type and legacy options: ' + errors + bcolors.ENDC)
-                    return
-                options = kwargs.get('option') or options
+            rt_definition = RecordTypeInfo().resolve_record_type_by_name(params, rt_name) or ''
+            errors = self.convert_legacy_options(rt_definition, rt_data, kwargs=kwargs)
+            if errors:
+                logging.error(bcolors.FAIL + 'Conflict between record type and legacy options: ' + errors + bcolors.ENDC)
+                return
+            # reload options on sucess - convert_legacy_options does in place replacement in kwargs
+            options = kwargs.get('option') or options
 
         has_v3_options = bool(kwargs.get('data') or kwargs.get('data_file') or options)
         has_v2_options = bool(kwargs.get('legacy') or kwargs.get('title') or kwargs.get('login') or kwargs.get('password') or kwargs.get('url') or kwargs.get('notes') or kwargs.get('custom'))
@@ -799,14 +800,17 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         if changed:
             params.record_cache[record_uid]['data_unencrypted'] = json.dumps(data_dict)
             params.sync_data = True
-            api.update_record_v3(params, record, **kwargs)
+            res = api.update_record_v3(params, record, **kwargs)
+            if res:
+                newpass = recordv3.RecordV3.get_record_password(data) or ''
+                oldpass = recordv3.RecordV3.get_record_password(record_data) or ''
+                if newpass != oldpass:
+                    params.queue_audit_event('record_password_change', record_uid=record.record_uid)
 
-            newpass = recordv3.RecordV3.get_record_password(data) or ''
-            oldpass = recordv3.RecordV3.get_record_password(record_data) or ''
-            if newpass != oldpass:
-                params.queue_audit_event('record_password_change', record_uid=record.record_uid)
-
-    def convert_legacy_options(self, kwargs):
+    def convert_legacy_options(self, rt_def, rt_data, kwargs):
+        # edit v3 record with legacy/v2 options - attempt to convert v2 to v3 options
+        # on success apply changes directly to kwargs
+        # return any errors encountered or empty string on success
         options = kwargs.get('option') or []
         options = [] if options == [None] else options
         errors = ''
@@ -821,19 +825,61 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         for x in lopt:
             option = x.get('option')
             dest = x.get('dest')
-            oval = kwargs.get(dest)
+            oval = kwargs.get(dest, None)
             if oval:
-                pattern = '(f|fields)\\.{0}='.format(dest) if x.get('is_field') else '{}='.format(dest)
+                # check for duplicate v2 and v3 conflicts - ex. --login user1 f.login=user2
+                pattern = '^(f|fields|c|custom)\\.{0}='.format(dest) if x.get('is_field') else '^{}='.format(dest)
                 dupes = [x for x in options if re.match(pattern, str(x), re.IGNORECASE)]
                 if dupes:
                     errors += '\n  option {} conflicts with {}={}'.format(dupes[0], option, str(oval))
                 else:
-                    kvp = '{}{}={}'.format('f.' if x.get('is_field') else '', dest, str(oval))
-                    options.append(kvp)
-                    kwargs[dest] = None
+                    kvp= ''
+                    if x.get('is_field'):
+                        # 1. check if single destination field already present in record data
+                        rt_data = rt_data.decode('utf-8') if isinstance(rt_data, bytes) else rt_data
+                        rt = recordv3.RecordV3.record_type_to_dict(rt_data) if isinstance(rt_data, str) else rt_data
+                        field_prefix = '' # fields or custom
+                        num_fields = 0
+                        if rt:
+                            flds = (rt.get('fields') or []) + (rt.get('custom') or [])
+                            values = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == dest]
+                            num_fields = len(values) if values else 0
+                            if num_fields == 1:
+                                # single destination field found - get prefix
+                                flds = rt.get('fields') or []
+                                if [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == dest]:
+                                    field_prefix = 'fields'
+                                else:
+                                    field_prefix = 'custom'
+                            elif num_fields > 1:
+                                errors += f'\n  destination field conflict - {num_fields} fields of type "{dest}" already in record data'
 
+                        # 2. if no single field present in record data check RT definition
+                        if num_fields < 1:
+                            rtd = rt_def if isinstance(rt_def, dict) else recordv3.RecordV3.record_type_to_dict(rt_def)
+                            rtdt = rtd.get('fields') or []
+                            rtdf = [x for x in rtdt if isinstance(x, dict) and x.get('$ref') == dest]
+                            if len(rtdf) < 1:
+                                #errors += f'\n  field not found - no fields of type "{dest}" exist in record data or record definition'
+                                logging.warning(f'Adding field "{dest}" as custom field - "{dest}" not found in record definition nor in data')
+                                field_prefix = 'custom'
+                            elif len(rtdf) == 1:
+                                field_prefix = 'fields'
+                            else:
+                                errors += f'\n  destination field conflict - cannot map single "{dest}" option to {len(rtdf)} fields of type "{dest}" in record type definition'
+
+                        if field_prefix:
+                            kvp = '{}.{}={}'.format(field_prefix, dest, str(oval))
+                    else:
+                        kvp = '{}={}'.format(dest, str(oval))
+
+                    if kvp:
+                        options.append(kvp)
+                        kwargs[dest] = None
+
+        clst = None
         copt = kwargs.get('custom')
-        if copt:
+        if copt and not errors:
             clst = recordv3.RecordV3.custom_options_to_list(copt)
             for c in clst:
                 if 'value' in c:
@@ -846,11 +892,11 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             if ctxt:
                 errors += 'Conflicting legacy/v2 and v3 options: --custom {} and {}'.format(copt, ctxt)
 
-            kwargs['custom_list'] = clst
-            kwargs['custom'] = None
-
         if not errors:
             kwargs['option'] = options
+            if clst:
+                kwargs['custom_list'] = clst
+                kwargs['custom'] = None
 
         return errors
 
