@@ -5,7 +5,7 @@ import pytest
 
 from keepercommander.params import KeeperParams
 from keepercommander.error import KeeperApiError
-from keepercommander import api
+from keepercommander import api, crypto
 from keepercommander.commands.enterprise import EnterpriseTeamCommand, EnterpriseUserCommand, EnterpriseRoleCommand
 
 from unittest import TestCase
@@ -70,7 +70,7 @@ class TestCrossEnterpriseCommands(TestCase):
             "team_uid": ent1_team_uid,
             "enterprise_user_id": ent2_user_id,
             "user_type": 0,
-            "team_key": api.encrypt_rsa(team_key, pk)
+            "team_key": crypto.encrypt_rsa(team_key, pk)
         }
         failed = False
         try:

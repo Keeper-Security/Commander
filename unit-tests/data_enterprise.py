@@ -1,7 +1,7 @@
 import json
 
 from data_vault import VaultEnvironment
-from keepercommander import api
+from keepercommander import api, crypto, utils
 from keepercommander.params import KeeperParams
 
 _TREE_KEY = api.generate_aes_key()
@@ -65,14 +65,15 @@ def enterprise_allocate_ids(params, request):
 def get_enterprise_data(params, rq):
     # type: (KeeperParams, dict) -> dict
 
-    encrypted_tree_key = api.encrypt_aes(_TREE_KEY, params.data_key) if _USE_DATA_KEY else api.encrypt_rsa(_TREE_KEY, _VAULT_ENV.public_key)
+    encrypted_tree_key = crypto.encrypt_aes_v1(_TREE_KEY, params.data_key) \
+        if _USE_DATA_KEY else crypto.encrypt_rsa(_TREE_KEY, _VAULT_ENV.public_key)
     tree_key_type = 1 if _USE_DATA_KEY else 2
     rs = {
         'result': 'success',
         'result_code': '',
         'message': '',
         'enterprise_name': 'Enterprise 1',
-        'tree_key': encrypted_tree_key,
+        'tree_key': utils.base64_url_encode(encrypted_tree_key),
         'key_type_id': tree_key_type
     }
     includes = set(rq.get('include') or [])
@@ -81,7 +82,7 @@ def get_enterprise_data(params, rq):
         rs['nodes'] = [
             {
                 'node_id':  _NODE1_ID,
-                'encrypted_data': api.encrypt_aes(json.dumps({'displayname': 'Root node'}).encode('utf-8'), _TREE_KEY)
+                'encrypted_data': api.encrypt_aes(json.dumps({}).encode('utf-8'), _TREE_KEY)
             },
             {
                 'node_id': _NODE2_ID,
