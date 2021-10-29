@@ -469,11 +469,7 @@ class FolderRemoveCommand(Command):
 
             np = 'y' if force else user_choice('\nDo you want to proceed with the deletion?', 'yn', default='n')
             if np.lower() == 'y':
-                rq = {
-                    'command': 'execute',
-                    'requests': list(shared_folder_requests.values())
-                }
-                api.communicate(params, rq)
+                api.execute_batch(params, list(shared_folder_requests.values()))
                 params.sync_data = True
 
         if len(user_folder_objects) > 0:
