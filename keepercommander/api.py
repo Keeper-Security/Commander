@@ -1708,9 +1708,16 @@ def get_pb2_record_update(params, rec, **kwargs):
     if record_rq is None:
         return
 
-    links = kwargs.get('record_links') or {}
-    links_add = links.get('record_links_add') or []
-    links_remove = links.get('record_links_remove') or []
+    links_by_uid = kwargs.get('record_links_by_uid')
+    if links_by_uid:
+        links_add_by_uid = links_by_uid.get('record_links_add') or {}
+        links_add = links_add_by_uid.get(rec.record_uid) or []
+        links_del_by_uid = links_by_uid.get('record_links_remove') or {}
+        links_remove = links_del_by_uid.get(rec.record_uid) or []
+    else:
+        links = kwargs.get('record_links') or {}
+        links_add = links.get('record_links_add') or []
+        links_remove = links.get('record_links_remove') or []
 
     record_links_add = []
     for link in links_add:
