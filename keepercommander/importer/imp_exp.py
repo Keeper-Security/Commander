@@ -53,6 +53,7 @@ GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
 RECORD_MAX_DATA_WARN = 'Skipping record "{}": Data size of {} exceeds limit of {}'
 LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record limit'
+FILE_ATTACHMENT_CHUNK = 100
 
 
 def get_record_data_json_bytes(data):
@@ -951,106 +952,117 @@ def upload_v3_attachments(params, records_with_attachments):
     """Interact with the API to upload v3 attachments"""
     print('Uploading v3 attachments:')
 
-    rq = record_pb2.FilesAddRequest()
-    uid_to_attachment = {}
-    for parent_record in records_with_attachments:
-        parent_uid = parent_record.uid
-        for atta in parent_record.attachments:
-            if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
-                logging.warning(f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.')
+    while len(records_with_attachments) > 0:
+        file_attachment_chunk = 0
+        rq = record_pb2.FilesAddRequest()
+        uid_to_attachment = {}
+        for i, parent_record in enumerate(records_with_attachments):
+            file_attachment_chunk += len(parent_record.attachments)
+            if file_attachment_chunk > FILE_ATTACHMENT_CHUNK and i > 0:
+                records_with_attachments = records_with_attachments[i:]
+                break
+            parent_uid = parent_record.uid
+            for atta in parent_record.attachments:
+                if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
+                    logging.warning(
+                        f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.'
+                    )
+                    continue
+
+                file_data = {
+                    'name': atta.name,
+                    'size': atta.size,
+                    'title': atta.name,
+                    'lastModified': api.current_milli_time(),
+                    'type': 'application/octet-stream'
+                }
+                rdata = json.dumps(file_data).encode('utf-8')
+
+                if not atta.key:
+                    atta.key = os.urandom(32)
+
+                uid = api.generate_record_uid()
+                atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
+                atta.encrypted_key = api.encrypt_aes_plain(atta.key, params.data_key)
+                atta.parent_uid = parent_uid
+
+                rf = record_pb2.File()
+                rf.record_uid = atta.record_uid
+                rf.record_key = atta.encrypted_key
+                rf.data = api.encrypt_aes_plain(rdata, atta.key)
+                rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
+                rq.files.append(rf)
+                uid_to_attachment[atta.record_uid] = atta
+
+        else:  # for i, parent_record in enumerate(records_with_attachments)
+            records_with_attachments = []
+
+        rq.client_time = api.current_milli_time()
+        rs = api.communicate_rest(params, rq, 'vault/files_add')
+        files_add_rs = record_pb2.FilesAddResponse()
+        files_add_rs.ParseFromString(rs)
+
+        new_attachments_by_parent_uid = {}
+        for f in files_add_rs.files:
+            atta = uid_to_attachment[f.record_uid]
+            status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
+            success = (f.status == record_pb2.FileAddResult.DESCRIPTOR.values_by_name['FA_SUCCESS'].number)
+
+            if not success:
+                logging.warning(f'{bcolors.FAIL}Upload of {atta.name} failed with status: {status}{bcolors.ENDC}')
                 continue
 
-            file_data = {
-                'name': atta.name,
-                'size': atta.size,
-                'title': atta.name,
-                'lastModified': api.current_milli_time(),
-                'type': 'application/octet-stream'
-            }
-            rdata = json.dumps(file_data).encode('utf-8')
+            with atta.open() as src:
+                with EncryptionReader.get_buffered_reader(src, atta.key) as encrypted_src:
+                    form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
+                    form_params = json.loads(f.parameters)
+                    print(f'{atta.name} ... ', end='', flush=True)
+                    response = requests.post(f.url, data=form_params, files=form_files)
 
-            if not atta.key:
-                atta.key = os.urandom(32)
-
-            uid = api.generate_record_uid()
-            atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
-            atta.encrypted_key = api.encrypt_aes_plain(atta.key, params.data_key)
-            atta.parent_uid = parent_uid
-
-            rf = record_pb2.File()
-            rf.record_uid = atta.record_uid
-            rf.record_key = atta.encrypted_key
-            rf.data = api.encrypt_aes_plain(rdata, atta.key)
-            rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
-            rq.files.append(rf)
-            uid_to_attachment[atta.record_uid] = atta
-
-    rq.client_time = api.current_milli_time()
-    rs = api.communicate_rest(params, rq, 'vault/files_add')
-    files_add_rs = record_pb2.FilesAddResponse()
-    files_add_rs.ParseFromString(rs)
-
-    new_attachments_by_parent_uid = {}
-    for f in files_add_rs.files:
-        atta = uid_to_attachment[f.record_uid]
-        status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
-        success = (f.status == record_pb2.FileAddResult.DESCRIPTOR.values_by_name['FA_SUCCESS'].number)
-
-        if not success:
-            logging.warning(f'{bcolors.FAIL}Upload of {atta.name} failed with status: {status}{bcolors.ENDC}')
-            continue
-
-        with atta.open() as src:
-            with EncryptionReader.get_buffered_reader(src, atta.key) as encrypted_src:
-                form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
-                form_params = json.loads(f.parameters)
-                print(f'{atta.name} ... ', end='', flush=True)
-                response = requests.post(f.url, data=form_params, files=form_files)
-
-        if str(response.status_code) == form_params.get('success_action_status'):
-            print('Done')
-            new_attachments = new_attachments_by_parent_uid.get(atta.parent_uid)
-            if new_attachments:
-                new_attachments.append(atta)
+            if str(response.status_code) == form_params.get('success_action_status'):
+                print('Done')
+                new_attachments = new_attachments_by_parent_uid.get(atta.parent_uid)
+                if new_attachments:
+                    new_attachments.append(atta)
+                else:
+                    new_attachments_by_parent_uid[atta.parent_uid] = [atta]
             else:
-                new_attachments_by_parent_uid[atta.parent_uid] = [atta]
-        else:
-            print('Failed')
+                print('Failed')
 
-    rec_list = []
-    record_links_add = {}
-    for parent_uid, attachments in new_attachments_by_parent_uid.items():
-        new_attachments_uids = [
-            loginv3.CommonHelperMethods.bytes_to_url_safe_str(a.record_uid) for a in attachments
-        ]
+        rec_list = []
+        record_links_add = {}
+        for parent_uid, attachments in new_attachments_by_parent_uid.items():
+            new_attachments_uids = [
+                loginv3.CommonHelperMethods.bytes_to_url_safe_str(a.record_uid) for a in attachments
+            ]
 
-        record_data = params.record_cache[parent_uid].get('data_unencrypted')
-        if record_data:
-            if isinstance(record_data, bytes):
-                record_data = record_data.decode('utf-8')
-            data = json.loads(record_data.strip())
-        else:
-            data = {}
-        if 'fields' not in data:
-            data['fields'] = []
+            record_data = params.record_cache[parent_uid].get('data_unencrypted')
+            if record_data:
+                if isinstance(record_data, bytes):
+                    record_data = record_data.decode('utf-8')
+                data = json.loads(record_data.strip())
+            else:
+                data = {}
+            if 'fields' not in data:
+                data['fields'] = []
 
-        # find first fileRef or create new fileRef if missing
-        file_ref = next((ft for ft in data['fields'] if ft['type'] == 'fileRef'), None)
-        if file_ref:
-            file_ref['value'] = file_ref.get('value', []) + new_attachments_uids
-        else:
-            data['fields'].append({'type': 'fileRef', 'value': new_attachments_uids})
+            # find first fileRef or create new fileRef if missing
+            file_ref = next((ft for ft in data['fields'] if ft['type'] == 'fileRef'), None)
+            if file_ref:
+                file_ref['value'] = file_ref.get('value', []) + new_attachments_uids
+            else:
+                data['fields'].append({'type': 'fileRef', 'value': new_attachments_uids})
 
-        new_data = json.dumps(data)
-        params.record_cache[parent_uid]['data_unencrypted'] = new_data
-        params.sync_data = True
-        rec = api.get_record(params, parent_uid)
-        rec_list.append(rec)
-        record_links_add[parent_uid] = [
-            {'record_uid': a.record_uid, 'record_key': a.encrypted_key} for a in attachments
-        ]
+            new_data = json.dumps(data)
+            params.record_cache[parent_uid]['data_unencrypted'] = new_data
+            params.sync_data = True
+            rec = api.get_record(params, parent_uid)
+            rec_list.append(rec)
+            record_links_add[parent_uid] = [
+                {'record_uid': a.record_uid, 'record_key': a.encrypted_key} for a in attachments
+            ]
 
-    api.update_records_v3(params, rec_list, record_links_by_uid={'record_links_add': record_links_add}, silent=True)
+        api.update_records_v3(params, rec_list, record_links_by_uid={'record_links_add': record_links_add}, silent=True)
 
 
 def upload_attachment(params, attachments):
