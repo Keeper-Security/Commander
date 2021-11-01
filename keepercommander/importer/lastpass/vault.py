@@ -111,7 +111,7 @@ class Vault(object):
 
         print(f'Processing {attach_cnt} LastPass attachments:')
         for i, attachment in enumerate(self.attachments):
-            tmp_filename = f'{str(i + 1).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
+            tmp_filename = attachment.file_id
             attachment.tmpfile = os.path.join(self.tmpdir, tmp_filename)
             if os.path.isfile(attachment.tmpfile) and os.path.getsize(attachment.tmpfile) == attachment.size:
                 print(f'{i + 1}. Found {attachment.name}')
