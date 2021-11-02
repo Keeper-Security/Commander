@@ -979,16 +979,18 @@ def upload_v3_attachments(params, records_with_attachments):
                 rdata = json.dumps(file_data).encode('utf-8')
 
                 if not atta.key:
-                    atta.key = os.urandom(32)
+                    atta.key = utils.generate_aes_key()
 
                 uid = api.generate_record_uid()
                 atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
-                atta.encrypted_key = api.encrypt_aes_plain(atta.key, params.data_key)
+                atta.encrypted_key = crypto.encrypt_aes_v2(
+                    atta.key, params.record_cache[parent_uid]['record_key_unencrypted']
+                )
                 atta.parent_uid = parent_uid
 
                 rf = record_pb2.File()
                 rf.record_uid = atta.record_uid
-                rf.record_key = atta.encrypted_key
+                rf.record_key = api.encrypt_aes_plain(atta.key, params.data_key)
                 rf.data = api.encrypt_aes_plain(rdata, atta.key)
                 rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
                 rq.files.append(rf)
