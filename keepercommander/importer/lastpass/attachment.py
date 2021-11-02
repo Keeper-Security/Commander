@@ -1,25 +1,26 @@
 from contextlib import contextmanager
 
-from .decryption_reader import DecryptionReader
+from .attachment_reader import LastpassAttachmentReader
 
 
 class LastpassAttachment:
-    def __init__(self, id, parent, mimetype, storagekey, size, filename):
+    def __init__(self, id, parent, mimetype, storagekey, lastpass_size, filename):
         self.file_id = id
         self.parent = parent
         self.mime = mimetype
         self.storagekey = storagekey
-        self.size = size
+        self.lastpass_size = lastpass_size
         self.name = filename
         self.tmpfile = None
+        self.size = None  # Decrypted size to pass to importer
         self.key = None  # This lets the importer know to re-encrypt with a new Keeper key
 
     @contextmanager
     def open(self):
-        with DecryptionReader.get_buffered_reader(self.tmpfile, self.parent.attach_key) as reader:
+        with LastpassAttachmentReader.get_buffered_reader(self) as reader:
             yield reader
 
     @contextmanager
     def open_text(self):
-        with DecryptionReader.get_text_reader(self.tmpfile, self.parent.attach_key, encoding='utf-8-sig') as reader:
+        with LastpassAttachmentReader.get_text_reader(self, encoding='utf-8-sig') as reader:
             yield reader
