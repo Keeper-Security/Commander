@@ -69,6 +69,8 @@ export_parser.exit = suppress_exit
 download_membership_parser = argparse.ArgumentParser(prog='download-membership', description='Unload shared folder membership to JSON file.')
 download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
 download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
+download_membership_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='force shared folder permissions: manage (U)sers, manage (R)ecords')
+download_membership_parser.add_argument('-r', '--restrictions', dest='restrictions', action='store', help='force shared folder restrictions: manage (U)sers, manage (R)ecords')
 download_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
 download_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
@@ -252,6 +254,11 @@ def is_export_restricted(params):
     return is_export_restricted
 
 
+def set_permission(perm, user, permit, restrict, perm_name):
+    p = (user[perm_name] or permit[perm_name]) and not restrict[perm_name]
+    setattr(perm, perm_name, p)
+
+
 class DownloadMembershipCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return download_membership_parser
@@ -264,6 +271,22 @@ class DownloadMembershipCommand(Command):
         import_into = kwargs.get('folder')
         if import_into:
             import_into = import_into.replace(PathDelimiter, 2 * PathDelimiter)
+
+        permissions = kwargs.get('permissions')
+        permit = {'manage_users': False, 'manage_records': False}
+        if permissions:
+            if 'u' in permissions.lower():
+                permit['manage_users'] = True
+            if 'r' in permissions.lower():
+                permit['manage_records'] = True
+
+        restrictions = kwargs.get('restrictions')
+        restrict = {'manage_users': False, 'manage_records': False}
+        if restrictions:
+            if 'u' in restrictions.lower():
+                restrict['manage_users'] = True
+            if 'r' in restrictions.lower():
+                restrict['manage_records'] = True
 
         shared_folders = []  # type: List[SharedFolder]
 
@@ -296,15 +319,15 @@ class DownloadMembershipCommand(Command):
                             perm = Permission()
                             perm.uid = team['team_uid']
                             perm.name = team['name']
-                            perm.manage_users = team['manage_users']
-                            perm.manage_records = team['manage_records']
+                            set_permission(perm, team, permit, restrict, 'manage_users')
+                            set_permission(perm, team, permit, restrict, 'manage_records')
                             sf.permissions.append(perm)
                     if shared_folder.users:
                         for user in shared_folder.users:
                             perm = Permission()
                             perm.name = user['username']
-                            perm.manage_users = user['manage_users']
-                            perm.manage_records = user['manage_records']
+                            set_permission(perm, user, permit, restrict, 'manage_users')
+                            set_permission(perm, user, permit, restrict, 'manage_records')
                             sf.permissions.append(perm)
                     added_members.append(sf)
 
@@ -347,11 +370,14 @@ class DownloadMembershipCommand(Command):
                         sf.path = lpsf.name
                     sf.permissions = []
                     if members:
-                        sf.permissions.extend(
-                            (self._lastpass_permission(x, old_host=old_domain, new_host=new_domain) for x in members)
-                        )
+                        sf.permissions.extend((
+                            self._lastpass_permission(x, permit, restrict, old_host=old_domain, new_host=new_domain)
+                            for x in members
+                        ))
                     if teams:
-                        sf.permissions.extend((self._lastpass_permission(x, team=True) for x in teams))
+                        sf.permissions.extend((
+                            self._lastpass_permission(x, permit, restrict, team=True) for x in teams
+                        ))
                     added_members.append(sf)
             except Exception as e:
                 logging.warning(e)
@@ -368,14 +394,17 @@ class DownloadMembershipCommand(Command):
             logging.info('No folder memberships downloaded.')
 
     @staticmethod
-    def _lastpass_permission(lp_permission, team=False, old_host=None, new_host=None):  # type: (dict) -> Permission
+    def _lastpass_permission(lp_permission, permit, restrict, team=False, old_host=None, new_host=None):
+        # type: (dict, dict, dict, Optional[bool], Optional[str], Optional[str]) -> Permission
         permission = Permission()
         if team:
             permission.name = lp_permission['name']
         else:
             permission.name = replace_email_domain(lp_permission['username'], old_host, new_host)
-        permission.manage_records = lp_permission['readonly'] == '0'
-        permission.manage_users = lp_permission['can_administer'] == '1'
+        manage_records = lp_permission['readonly'] == '0'
+        permission.manage_records = (manage_records or permit['manage_records']) and not restrict['manage_records']
+        manage_users = lp_permission['can_administer'] == '1'
+        permission.manage_users = (manage_users or permit['manage_users']) and not restrict['manage_users']
         return permission
 
 
