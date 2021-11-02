@@ -1698,19 +1698,26 @@ def update_record(params, record, **kwargs):
     return True
 
 
-def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ...) -> Optional[bool]
-    """ Push a record update to the cloud.
-        Takes a Record() object, converts to record JSON
-        and pushes to the Keeper cloud API
-    """
+def get_pb2_record_update(params, rec, **kwargs):
+    # type: (KeeperParams, Record, ...) -> Optional[dict]
+    """Get an instance Protobuf RecordUpdate from an instance of Record (rec)
 
+    Return a dictionary of necessary record items including the Protobuf RecordUpdate instance
+    """
     record_rq, audit = prepare_record_v3(params, rec)
     if record_rq is None:
         return
 
-    links = kwargs.get('record_links') or {}
-    links_add = links.get('record_links_add') or []
-    links_remove = links.get('record_links_remove') or []
+    links_by_uid = kwargs.get('record_links_by_uid')
+    if links_by_uid:
+        links_add_by_uid = links_by_uid.get('record_links_add') or {}
+        links_add = links_add_by_uid.get(rec.record_uid) or []
+        links_del_by_uid = links_by_uid.get('record_links_remove') or {}
+        links_remove = links_del_by_uid.get(rec.record_uid) or []
+    else:
+        links = kwargs.get('record_links') or {}
+        links_add = links.get('record_links_add') or []
+        links_remove = links.get('record_links_remove') or []
 
     record_links_add = []
     for link in links_add:
@@ -1737,6 +1744,17 @@ def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ..
     if audit:
         ru.audit.data = audit
 
+    record_rq['pb2_record_update'] = ru
+    return record_rq
+
+
+def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ...) -> Optional[bool]
+    """ Push a record update to the cloud.
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    record_rq = get_pb2_record_update(params, rec, **kwargs)
+    ru = record_rq['pb2_record_update']
     rq = records.RecordsUpdateRequest()
     rq.records.append(ru)
     #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
@@ -1755,6 +1773,54 @@ def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ..
 
         new_revision = 0
         if success and ruid == rec.record_uid:
+            new_revision = records_modify_rs.revision
+
+        if new_revision == 0:
+            logging.error('Error: Revision not updated')
+            return False
+
+        if new_revision == record_rq['revision']:
+            logging.error('Error: Revision did not change')
+            return False
+
+        if not kwargs.get('silent'):
+            logging.info('Update record successful for record_uid=%s, revision=%d, new_revision=%s',
+                         record_rq['record_uid'], record_rq['revision'], new_revision)
+
+        record_rq['revision'] = new_revision
+
+    sync_down(params)
+    return True
+
+
+def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List[Record], ...) -> Optional[bool]
+    """ Push a record update to the cloud.
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    rq = records.RecordsUpdateRequest()
+    record_rq_by_uid = {}
+    for rec in rec_list:
+        record_rq = get_pb2_record_update(params, rec, **kwargs)
+        record_rq_by_uid[rec.record_uid] = record_rq
+        rq.records.append(record_rq['pb2_record_update'])
+    #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
+    rs = communicate_rest(params, rq, 'vault/records_update')
+    records_modify_rs = records.RecordsModifyResponse()
+    records_modify_rs.ParseFromString(rs)
+
+    for r in records_modify_rs.records:
+        ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+        record_rq = record_rq_by_uid[ruid]
+        success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
+
+        if not success:
+            logging.error(bcolors.FAIL + 'Error: Record update failed with status - %s' + bcolors.ENDC, status)
+            return False
+
+        new_revision = 0
+        if success:
             new_revision = records_modify_rs.revision
 
         if new_revision == 0:

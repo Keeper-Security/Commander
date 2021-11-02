@@ -1,6 +1,5 @@
 from base64 import b64decode
-from io import RawIOBase, BufferedReader, TextIOWrapper, IOBase, BytesIO
-from os.path import isfile
+from io import RawIOBase, BufferedReader, TextIOWrapper
 
 from Crypto.Cipher import AES
 
@@ -44,20 +43,17 @@ def decode_aes256_base64_from_stream(stream, encryption_key, chunk_size=CHUNK_SI
     yield b64decode(d[:-d[-1]])
 
 
-class DecryptionReader(RawIOBase):
-    """A RawIOBase reader that decrypts and decodes the input stream"""
+class LastpassAttachmentReader(RawIOBase):
+    """A RawIOBase reader that decrypts and decodes the input stream of a Lastpass attachment"""
 
-    def __init__(self, filename_or_stream, key):
-        if isinstance(filename_or_stream, IOBase):
-            self.encrypted_stream = filename_or_stream
-        elif isfile(filename_or_stream):
-            self.encrypted_stream = open(filename_or_stream, 'rb')
-        else:
-            # Fail silently with empty stream
-            self.encrypted_stream = BytesIO()
+    def __init__(self, attachment):
+        self.attachment = attachment
+        self.encrypted_stream = open(attachment.tmpfile, 'rb')
 
+        key = attachment.parent.attach_key
         self.decryption_generator = decode_aes256_base64_from_stream(self.encrypted_stream, key)
         self.leftover = None
+        self.size = 0
 
     def readable(self):
         return True
@@ -70,18 +66,20 @@ class DecryptionReader(RawIOBase):
             self.leftover = chunk[buf_len:]
             ret_len = len(output)
             b[:ret_len] = output
+            self.size += ret_len
             return ret_len
         except StopIteration:
             return 0
 
     def close(self):
         self.encrypted_stream.close()
+        self.attachment.size = self.size
 
     @classmethod
-    def get_buffered_reader(cls, encrypted_stream, key):
-        return BufferedReader(cls(encrypted_stream, key))
+    def get_buffered_reader(cls, attachment):
+        return BufferedReader(cls(attachment))
 
     @classmethod
-    def get_text_reader(cls, encrypted_stream, key, **kwargs):
-        buffered_reader = cls.get_buffered_reader(encrypted_stream, key)
+    def get_text_reader(cls, attachment, **kwargs):
+        buffered_reader = cls.get_buffered_reader(attachment)
         return TextIOWrapper(buffered_reader, **kwargs)

@@ -53,6 +53,7 @@ GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
 RECORD_MAX_DATA_WARN = 'Skipping record "{}": Data size of {} exceeds limit of {}'
 LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record limit'
+FILE_ATTACHMENT_CHUNK = 100
 
 
 def get_record_data_json_bytes(data):
@@ -802,7 +803,6 @@ def _import(params, file_format, filename, **kwargs):
                             missing_attachments.append(a)
 
                     if found_attachments:
-                        # found_names = ', '.join((a.name for a in found_attachments))
                         found = len(found_attachments)
                         total = len(r.attachments)
                         print(f'Found {found} of {total} attachments in record {r.title}.')
@@ -952,46 +952,59 @@ def upload_v3_attachments(params, records_with_attachments):
     """Interact with the API to upload v3 attachments"""
     print('Uploading v3 attachments:')
 
-    for parent_record in records_with_attachments:
-        parent_uid = parent_record.uid
+    while len(records_with_attachments) > 0:
+        file_attachment_chunk = 0
         rq = record_pb2.FilesAddRequest()
         uid_to_attachment = {}
-        for atta in parent_record.attachments:
-            if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
-                logging.warning(f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.')
-                continue
+        for i, parent_record in enumerate(records_with_attachments):
+            file_attachment_chunk += len(parent_record.attachments)
+            if file_attachment_chunk > FILE_ATTACHMENT_CHUNK and i > 0:
+                records_with_attachments = records_with_attachments[i:]
+                break
+            parent_uid = parent_record.uid
+            for atta in parent_record.attachments:
+                if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
+                    logging.warning(
+                        f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.'
+                    )
+                    continue
 
-            file_data = {
-                'name': atta.name,
-                'size': atta.size,
-                'title': atta.name,
-                'lastModified': api.current_milli_time(),
-                'type': 'application/octet-stream'
-            }
-            rdata = json.dumps(file_data).encode('utf-8')
+                file_data = {
+                    'name': atta.name,
+                    'size': atta.size,
+                    'title': atta.name,
+                    'lastModified': api.current_milli_time(),
+                    'type': 'application/octet-stream'
+                }
+                rdata = json.dumps(file_data).encode('utf-8')
 
-            if not atta.key:
-                atta.key = os.urandom(32)
+                if not atta.key:
+                    atta.key = utils.generate_aes_key()
 
-            uid = api.generate_record_uid()
-            atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
-            atta.encrypted_key = api.encrypt_aes_plain(atta.key, params.data_key)
+                uid = api.generate_record_uid()
+                atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
+                atta.encrypted_key = crypto.encrypt_aes_v2(
+                    atta.key, params.record_cache[parent_uid]['record_key_unencrypted']
+                )
+                atta.parent_uid = parent_uid
 
-            rf = record_pb2.File()
-            rf.record_uid = atta.record_uid
-            rf.record_key = atta.encrypted_key
-            rf.data = api.encrypt_aes_plain(rdata, atta.key)
-            rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
-            rq.files.append(rf)
-            uid_to_attachment[atta.record_uid] = atta
+                rf = record_pb2.File()
+                rf.record_uid = atta.record_uid
+                rf.record_key = api.encrypt_aes_plain(atta.key, params.data_key)
+                rf.data = api.encrypt_aes_plain(rdata, atta.key)
+                rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
+                rq.files.append(rf)
+                uid_to_attachment[atta.record_uid] = atta
+
+        else:  # for i, parent_record in enumerate(records_with_attachments)
+            records_with_attachments = []
 
         rq.client_time = api.current_milli_time()
         rs = api.communicate_rest(params, rq, 'vault/files_add')
         files_add_rs = record_pb2.FilesAddResponse()
         files_add_rs.ParseFromString(rs)
 
-        new_attachment_uids = []
-        record_links_add = []
+        new_attachments_by_parent_uid = {}
         for f in files_add_rs.files:
             atta = uid_to_attachment[f.record_uid]
             status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
@@ -1010,14 +1023,20 @@ def upload_v3_attachments(params, records_with_attachments):
 
             if str(response.status_code) == form_params.get('success_action_status'):
                 print('Done')
-                rl = {'record_uid': atta.record_uid, 'record_key': atta.encrypted_key}
-                record_links_add.append(rl)
-                new_attachment_uids.append(atta.record_uid)
+                new_attachments = new_attachments_by_parent_uid.get(atta.parent_uid)
+                if new_attachments:
+                    new_attachments.append(atta)
+                else:
+                    new_attachments_by_parent_uid[atta.parent_uid] = [atta]
             else:
                 print('Failed')
 
-        if new_attachment_uids:
-            new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a) for a in new_attachment_uids]
+        rec_list = []
+        record_links_add = {}
+        for parent_uid, attachments in new_attachments_by_parent_uid.items():
+            new_attachments_uids = [
+                loginv3.CommonHelperMethods.bytes_to_url_safe_str(a.record_uid) for a in attachments
+            ]
 
             record_data = params.record_cache[parent_uid].get('data_unencrypted')
             if record_data:
@@ -1032,15 +1051,20 @@ def upload_v3_attachments(params, records_with_attachments):
             # find first fileRef or create new fileRef if missing
             file_ref = next((ft for ft in data['fields'] if ft['type'] == 'fileRef'), None)
             if file_ref:
-                file_ref['value'] = file_ref.get('value', []) + new_attachments
+                file_ref['value'] = file_ref.get('value', []) + new_attachments_uids
             else:
-                data['fields'].append({'type': 'fileRef', 'value': new_attachments})
+                data['fields'].append({'type': 'fileRef', 'value': new_attachments_uids})
 
             new_data = json.dumps(data)
             params.record_cache[parent_uid]['data_unencrypted'] = new_data
             params.sync_data = True
             rec = api.get_record(params, parent_uid)
-            api.update_record_v3(params, rec, record_links={'record_links_add': record_links_add}, silent=True)
+            rec_list.append(rec)
+            record_links_add[parent_uid] = [
+                {'record_uid': a.record_uid, 'record_key': a.encrypted_key} for a in attachments
+            ]
+
+        api.update_records_v3(params, rec_list, record_links_by_uid={'record_links_add': record_links_add}, silent=True)
 
 
 def upload_attachment(params, attachments):

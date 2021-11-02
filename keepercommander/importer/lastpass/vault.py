@@ -1,4 +1,5 @@
 # coding: utf-8
+import json
 import os
 import shutil
 from tempfile import mkdtemp
@@ -10,6 +11,7 @@ from .shared_folder import LastpassSharedFolder
 
 
 TMPDIR_PREFIX = 'keepercommander_lastpass_import_'
+DECRYPTED_SIZE_FILENAME = 'decrypted_file_sizes.json'
 
 
 class Vault(object):
@@ -101,7 +103,6 @@ class Vault(object):
     def process_attachments(self, session, tmpdir=None):
         attach_cnt = len(self.attachments)
         if attach_cnt > 0:
-            attach_cnt_digits = len(str(attach_cnt))
             if tmpdir is None:
                 self.tmpdir = mkdtemp(prefix=TMPDIR_PREFIX)
             else:
@@ -110,10 +111,19 @@ class Vault(object):
                 self.tmpdir = os.path.abspath(tmpdir)
 
         print(f'Processing {attach_cnt} LastPass attachments:')
+
+        decrypted_size_file = os.path.join(self.tmpdir, DECRYPTED_SIZE_FILENAME)
+        if os.path.exists(decrypted_size_file):
+            with open(decrypted_size_file) as f:
+                decrypted_file_sizes = json.loads(f.read())
+        else:
+            decrypted_file_sizes = {}
+        update_decrypted_file_sizes = False
+
         for i, attachment in enumerate(self.attachments):
-            tmp_filename = f'{str(i + 1).zfill(attach_cnt_digits)}of{attach_cnt}_{attachment.file_id}'
+            tmp_filename = attachment.file_id
             attachment.tmpfile = os.path.join(self.tmpdir, tmp_filename)
-            if os.path.isfile(attachment.tmpfile) and os.path.getsize(attachment.tmpfile) == attachment.size:
+            if os.path.isfile(attachment.tmpfile) and os.path.getsize(attachment.tmpfile) == attachment.lastpass_size:
                 print(f'{i + 1}. Found {attachment.name}')
             else:
                 attachment_stream = fetcher.stream_attachment(session, attachment)
@@ -123,3 +133,16 @@ class Vault(object):
                             print(f'{i + 1}. Downloading {attachment.name} ... ', end='', flush=True)
                             shutil.copyfileobj(r.raw, f)
                             print('Done')
+
+            if attachment.file_id in decrypted_file_sizes:
+                attachment.size = decrypted_file_sizes[attachment.file_id]
+            else:
+                with attachment.open() as atta:
+                    with open(os.devnull, 'wb') as devnull:
+                        shutil.copyfileobj(atta.raw, devnull)
+                update_decrypted_file_sizes = True
+                decrypted_file_sizes[attachment.file_id] = attachment.size
+
+        if update_decrypted_file_sizes:
+            with open(decrypted_size_file, 'w') as f:
+                f.write(json.dumps(decrypted_file_sizes))
