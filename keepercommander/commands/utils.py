@@ -901,7 +901,7 @@ class KSMCommand(Command):
         print(f"\n{bcolors.BOLD}List all Secrets Manager Applications{bcolors.ENDC}\n")
         recs = params.record_cache
 
-        apps_table_fields = [f'{bcolors.OKGREEN}Title{bcolors.ENDC}', f'{bcolors.OKBLUE}UID{bcolors.ENDC}']
+        apps_table_fields = [f'{bcolors.OKGREEN}App Name{bcolors.ENDC}', f'{bcolors.OKBLUE}App UID{bcolors.ENDC}']
         apps_table = []
         for uid in recs:
 
@@ -994,7 +994,7 @@ class KSMCommand(Command):
 
                         client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n"\
                                              f"=============================\n"\
-                                             f'  Name: {id}\n' \
+                                             f'  Device Name: {id}\n' \
                                              f'  Short ID: {short_client_id}\n' \
                                              f'  Created On: {created_on}\n' \
                                              f'  First Access: {first_access}\n' \
