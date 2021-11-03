@@ -24,7 +24,7 @@ from Cryptodome.Cipher import AES
 from pathlib import Path
 from tabulate import tabulate
 
-from .. import api, generator
+from .. import api, crypto, generator
 from .. import record_pb2 as records, recordv3, loginv3
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
@@ -1253,6 +1253,9 @@ class RecordUploadAttachmentCommand(Command):
             def GCM_TAG_LEN(): return 16
             encrypted_file_size = IV_LEN() + file['size'] + GCM_TAG_LEN() # size of the encrypted file, not original file
             record_key = api.encrypt_aes_plain(file['record_key'], params.data_key)
+            record_link_key = crypto.encrypt_aes_v2(
+                file['record_key'], params.record_cache[record_uid]['record_key_unencrypted']
+            )
 
             rf = records.File()
             rf.record_uid = file['record_uid']
@@ -1304,7 +1307,7 @@ class RecordUploadAttachmentCommand(Command):
                     if 'success_action_status' in form_params and str(response.status_code) == form_params['success_action_status']:
                         attachments.append(file)
                         # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
-                        rl = {'record_uid': file['record_uid'], 'record_key': record_key}
+                        rl = {'record_uid': file['record_uid'], 'record_key': record_link_key}
                         record_links['record_links_add'].append(rl)
 
         new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a['record_uid']) for a in attachments]
