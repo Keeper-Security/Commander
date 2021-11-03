@@ -865,7 +865,7 @@ class ShareReportCommand(Command):
                 return 'Can Share'
             return 'Can Edit'
         else:
-            return 'View Only' if can_view else 'Launch Only'
+            return 'Read Only' if can_view else 'Launch Only'
 
     @staticmethod
     def get_record_share_activities(params: KeeperParams, record_uid: str, is_an_enterprise_user_by_ref):
