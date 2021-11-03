@@ -413,6 +413,9 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
 
         # add any attachments
         files = []
+
+        # Create parent record key which is needed by attachment
+        record_key = os.urandom(32)
         for name in kwargs.get('attach') or []:
             file_name = os.path.abspath(os.path.expanduser(name))
             if os.path.isfile(name):
@@ -451,11 +454,12 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             def IV_LEN(): return 12
             def GCM_TAG_LEN(): return 16
             encrypted_file_size = IV_LEN() + file['size'] + GCM_TAG_LEN() # size of the encrypted file, not original file
-            record_key = api.encrypt_aes_plain(file['record_key'], params.data_key)
+            attachment_record_key = api.encrypt_aes_plain(file['record_key'], params.data_key)
+            record_link_key = crypto.encrypt_aes_v2(file['record_key'], record_key)
 
             rf = records.File()
             rf.record_uid = file['record_uid']
-            rf.record_key = record_key
+            rf.record_key = attachment_record_key
             rf.data = file['data']
             rf.fileSize = encrypted_file_size
 
@@ -503,7 +507,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                     if 'success_action_status' in form_params and str(response.status_code) == form_params['success_action_status']:
                         attachments.append(file)
                         # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
-                        rl = {'record_uid': file['record_uid'], 'record_key': record_key}
+                        rl = {'record_uid': file['record_uid'], 'record_key': record_link_key}
                         record_links['record_links'].append(rl)
 
         new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a['record_uid']) for a in attachments]
@@ -549,7 +553,6 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
-        record_key = os.urandom(32)
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
         record = {
