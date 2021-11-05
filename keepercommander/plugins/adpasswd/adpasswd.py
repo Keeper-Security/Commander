@@ -14,7 +14,7 @@ from ldap3 import Server, Connection, ALL
 from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
 
 
-# Unable to test the adpasswd plugin successfully without SSL on port 636
+# These are the only known working values
 PORT_DEFAULT = '636'
 USE_SSL_DEFAULT = 'True'
 
