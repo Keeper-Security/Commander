@@ -1,5 +1,6 @@
 # coding: utf-8
 import json
+import logging
 import os
 import shutil
 from tempfile import mkdtemp
@@ -101,6 +102,7 @@ class Vault(object):
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def process_attachments(self, session, tmpdir=None):
+        skip_bad_attachments = []
         attach_cnt = len(self.attachments)
         if attach_cnt > 0:
             if tmpdir is None:
@@ -128,20 +130,37 @@ class Vault(object):
             else:
                 attachment_stream = fetcher.stream_attachment(session, attachment)
                 if attachment_stream:
-                    with attachment_stream as r:
-                        with open(attachment.tmpfile, 'wb') as f:
-                            print(f'{i + 1}. Downloading {attachment.name} ... ', end='', flush=True)
-                            shutil.copyfileobj(r.raw, f)
-                            print('Done')
+                    try:
+                        with attachment_stream as r:
+                            with open(attachment.tmpfile, 'wb') as f:
+                                print(f'{i + 1}. Downloading {attachment.name} ... ', end='', flush=True)
+                                shutil.copyfileobj(r.raw, f)
+                                print('Done')
+                    except Exception as e:
+                        logging.warning(f'Attachment {attachment.name} failed to download: {e}')
+                        skip_bad_attachments.append(i)
+                        continue
 
             if attachment.file_id in decrypted_file_sizes:
                 attachment.size = decrypted_file_sizes[attachment.file_id]
             else:
-                with attachment.open() as atta:
-                    with open(os.devnull, 'wb') as devnull:
-                        shutil.copyfileobj(atta.raw, devnull)
+                try:
+                    with attachment.open() as atta:
+                        with open(os.devnull, 'wb') as devnull:
+                            shutil.copyfileobj(atta.raw, devnull)
+                except Exception as e:
+                    logging.warning(f'Attachment {attachment.name} is corrupted and failed to decrypt: {e}')
+                    skip_bad_attachments.append(i)
+                    continue
+
                 update_decrypted_file_sizes = True
                 decrypted_file_sizes[attachment.file_id] = attachment.size
+
+        if skip_bad_attachments:
+            for i in sorted(skip_bad_attachments, reverse=True):
+                attachment = self.attachments[i]
+                attachment.parent.attachments.remove(attachment)
+                del self.attachments[i]
 
         if update_decrypted_file_sizes:
             with open(decrypted_size_file, 'w') as f:
