@@ -1124,7 +1124,7 @@ def decrypt_data_key(params: KeeperParams, encrypted_data_key):
     return rest_api.decrypt_aes(encrypted_data_key, decryption_key)
 
 
-def get_record(params,record_uid):
+def get_record(params, record_uid):
     """Return the referenced record cache"""
     record_uid = record_uid.strip()
 
