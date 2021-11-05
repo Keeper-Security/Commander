@@ -14,6 +14,11 @@ from ldap3 import Server, Connection, ALL
 from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
 
 
+# Unable to test the adpasswd plugin successfully without SSL on port 636
+PORT_DEFAULT = '636'
+USE_SSL_DEFAULT = 'True'
+
+
 """Commander Plugin for Active Directory
    Dependencies: 
        pip3 install ldap3
@@ -24,9 +29,9 @@ def rotate(record, newpassword):
 
     old_password = record.password
     host = get_v2_or_v3_custom_field_value(record, 'cmdr:host')
-    port = get_v2_or_v3_custom_field_value(record, 'cmdr:port') or '389'
+    port = get_v2_or_v3_custom_field_value(record, 'cmdr:port') or PORT_DEFAULT
     user_dn = get_v2_or_v3_custom_field_value(record, 'cmdr:userdn')
-    use_ssl = get_v2_or_v3_custom_field_value(record, 'cmdr:use_ssl')
+    use_ssl = get_v2_or_v3_custom_field_value(record, 'cmdr:use_ssl') or USE_SSL_DEFAULT
 
     try:
         # print('Connecting to ' + host)
