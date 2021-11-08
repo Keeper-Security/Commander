@@ -2,7 +2,7 @@ import os
 from contextlib import contextmanager
 from io import RawIOBase, BufferedReader, IOBase, BytesIO
 
-from Crypto.Cipher import AES
+from Cryptodome.Cipher import AES
 
 
 CHUNK_SIZE = 8 * 1024
