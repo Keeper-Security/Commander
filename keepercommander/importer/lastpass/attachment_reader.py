@@ -1,7 +1,7 @@
 from base64 import b64decode
 from io import RawIOBase, BufferedReader, TextIOWrapper
 
-from Crypto.Cipher import AES
+from Cryptodome.Cipher import AES
 
 
 # Chunk size must be a multiple of 256

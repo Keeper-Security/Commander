@@ -6,7 +6,7 @@ from io import BytesIO
 import struct
 import re
 
-from Crypto.Cipher import AES, PKCS1_OAEP
+from Cryptodome.Cipher import AES, PKCS1_OAEP
 from Crypto.Util import number
 from Crypto.PublicKey import RSA
 
