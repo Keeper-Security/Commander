@@ -982,10 +982,19 @@ class KSMCommand(Command):
                     for c in ai.clients:
                         id = c.id
                         client_id = CommonHelperMethods.bytes_to_url_safe_str(c.clientId)
-                        created_on = ms_to_str(c.createdOn)
-                        first_access = '--' if c.firstAccess == 0 else ms_to_str(c.firstAccess)
-                        last_access = '--' if c.lastAccess == 0 else ms_to_str(c.lastAccess)
-                        lock_ip = f'Enabled' if c.lockIp else f'Disabled'
+                        created_on = f'{bcolors.OKGREEN}{ms_to_str(c.createdOn)}{bcolors.ENDC}'
+                        first_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.firstAccess == 0 else f'{bcolors.OKGREEN}{ms_to_str(c.firstAccess)}{bcolors.ENDC}'
+                        last_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.lastAccess == 0 else f'{bcolors.OKGREEN}{ms_to_str(c.lastAccess)}{bcolors.ENDC}'
+                        lock_ip = f'{bcolors.OKGREEN}Enabled{bcolors.ENDC}' if c.lockIp else f'{bcolors.WARNING}Disabled{bcolors.ENDC}'
+
+                        current_milli_time = round(time() * 1000)
+
+                        if c.accessExpireOn == 0:
+                            expire_access = f'{bcolors.OKGREEN}Never{bcolors.ENDC}'
+                        elif c.accessExpireOn <= current_milli_time:
+                            expire_access = f'{bcolors.FAIL}{ms_to_str(c.accessExpireOn)}{bcolors.ENDC}'
+                        else:
+                            expire_access = f'{bcolors.WARNING}{ms_to_str(c.accessExpireOn)}{bcolors.ENDC}'
 
                         ip_address = c.ipAddress
                         # public_key = c.publicKey
@@ -994,9 +1003,10 @@ class KSMCommand(Command):
 
                         client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n"\
                                              f"=============================\n"\
-                                             f'  Device Name: {id}\n' \
-                                             f'  Short ID: {short_client_id}\n' \
+                                             f'  Device Name: {bcolors.OKGREEN}{id}{bcolors.ENDC}\n' \
+                                             f'  Short ID: {bcolors.OKGREEN}{short_client_id}{bcolors.ENDC}\n' \
                                              f'  Created On: {created_on}\n' \
+                                             f'  Expires On: {expire_access}\n' \
                                              f'  First Access: {first_access}\n' \
                                              f'  Last Access: {last_access}\n' \
                                              f'  IP Lock: {lock_ip}\n' \
@@ -1035,6 +1045,9 @@ class KSMCommand(Command):
                                 record_data_dict.get('title'),
                                 editable_status]
                         elif sht == 'SHARE_TYPE_FOLDER':
+                            if uid_str not in params.shared_folder_cache:
+                                logging.warning("Shared folder '%s' is not in the cache. Try to perform the `sync-down` "
+                                                "to download latest data to local cache." % sht)
                             cached_sf = params.shared_folder_cache[uid_str]
                             shf_name = cached_sf.get('name_unencrypted')
                             # shf_num_of_records = len(cached_sf.get('records'))
