@@ -567,14 +567,18 @@ class VersionCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        this_app_version = __version__
         version_details = is_up_to_date_version()
         is_verbose = kwargs.get('verbose') or False
+
+        this_app_version = __version__
+
+        if version_details.get('is_up_to_date') is None:
+            this_app_version = f'{this_app_version} (Current version)'
 
         if not is_verbose:
             print('{0}: {1}'.format('Commander Version', this_app_version))
         else:
-            print('{0:>20s}: {1}'.format('Commander Version', __version__))
+            print('{0:>20s}: {1}'.format('Commander Version', this_app_version))
             print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
             print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
             print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
