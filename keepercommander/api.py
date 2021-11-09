@@ -944,7 +944,9 @@ def sync_down(params):
         if not params.breach_watch_records:
             params.breach_watch_records = {}
         for bwr in response_json['breach_watch_records']:
-            record_uid = bwr['record_uid']
+            record_uid = bwr.get('record_uid')
+            if not record_uid:
+                continue
             record = params.record_cache.get(record_uid)
             if not record:
                 continue
