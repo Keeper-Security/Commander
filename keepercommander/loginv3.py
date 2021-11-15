@@ -7,7 +7,6 @@ import os
 import re
 from urllib.parse import urlparse
 from collections import OrderedDict
-from email.utils import parseaddr
 from sys import platform as _platform
 
 from Cryptodome.Math.Numbers import Integer
@@ -19,15 +18,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from google.protobuf.json_format import MessageToDict, MessageToJson
 
-from .commands import enterprise as enterprise_command
-from .plugins import humps as humps
+from .humps import decamelize
 
 from . import api, utils, crypto
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .proto import breachwatch_pb2 as breachwatch_proto
 from .display import bcolors
-from .error import KeeperApiError, CommandError
+from .error import KeeperApiError
 from .params import KeeperParams
 from .breachwatch import BreachWatch
 
@@ -320,7 +318,7 @@ class LoginV3Flow:
         # Loading summary as dictionary for backwards compatibility
         acct_summary_json = MessageToJson(acct_summary, preserving_proto_field_name=False)
         acct_summary_dict = json.loads(acct_summary_json)
-        acct_summary_dict_snake_case = humps.humps.decamelize(acct_summary_dict)
+        acct_summary_dict_snake_case = decamelize(acct_summary_dict)
 
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
@@ -1065,53 +1063,6 @@ class LoginV3API:
         rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
         if isinstance(rs, dict):
             raise KeeperApiError(rs['error'], rs['message'])
-
-    @staticmethod
-    def register_for_login_v3(params, kwargs):
-        email = kwargs['email'] if 'email' in kwargs else None
-
-        if email:
-            _, email = parseaddr(email)
-        if not email:
-            raise CommandError('register', 'A valid email address is expected.')
-
-        node = kwargs.get('node')
-
-        displayname = kwargs.get('name')
-
-        if not displayname:
-            raise CommandError('register', '\'name\' parameter is required for enterprise users')
-
-        # Provision user to the logged-in admin's enterprise
-        verification_code = LoginV3API().provision_user_in_enterprise(params, email, node, displayname)
-
-        if verification_code:
-            logging.info("User '%s' created and added to the enterprise" % email)
-
-            # Create user (will send email to the user)
-            info = LoginV3API().create_user(params, email, verification_code)
-            print(info)
-
-            # Refresh (sync-down) enterprise data only
-            api.query_enterprise(params)
-            if 'users' in params:
-                pass
-
-    @staticmethod
-    def provision_user_in_enterprise(params, email, node_id, displayname=None):   # type: (KeeperParams, str, int, Optional[str]) -> Optional[sttr]
-        data = {'displayname': displayname or email}
-
-        rq = {
-            'command': 'enterprise_user_add',
-            'enterprise_user_id': enterprise_command.EnterpriseCommand.get_enterprise_id(params),
-            'enterprise_user_username': email,
-            'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
-            'node_id': node_id,
-            'suppress_email_invite': True
-        }
-
-        rs = api.communicate(params, rq)
-        return rs['verification_code']
 
 
 class CommonHelperMethods:

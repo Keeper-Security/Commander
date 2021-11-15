@@ -10,6 +10,7 @@
 #
 
 import argparse
+import json
 import logging
 import re
 
@@ -68,7 +69,18 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
 
             verification_code = ''
             try:
-                verification_code = LoginV3API.provision_user_in_enterprise(params, email, node_id)
+                data = {'displayname': email}
+                rq = {
+                    'command': 'enterprise_user_add',
+                    'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
+                    'enterprise_user_username': email,
+                    'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    'node_id': node_id,
+                    'suppress_email_invite': True
+                }
+
+                rs = api.communicate(params, rq)
+                verification_code = rs['verification_code']
             except Exception as e:
                 logging.error(e)
             if not verification_code:
@@ -79,7 +91,8 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
             try:
                 LoginV3API.create_user(params, email, password, verification_code)
                 added_accounts[email] = password
-
+                logging.info(f"User \"{email}\" successfully provisioned.\n" +
+                             "The user must reset their Master Password upon first login.")
             except Exception as e:
                 logging.error(e)
                 logging.warning('Failed to create account "%s". Skipping.', email)
@@ -119,8 +132,10 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                 rq = enterprise_proto.EnterpriseUserDataKey()
                 rq.userEncryptedDataKey = crypto.encrypt_ec(param1.data_key, params.enterprise_ec_key)
                 api.communicate_rest(param1, rq, 'enterprise/set_enterprise_user_data_key')
+                logging.info(f'{email} is logged out')
             except Exception as e:
                 logging.warning(e)
+
             try:
                 rq = {
                     'command': 'set_master_password_expire',

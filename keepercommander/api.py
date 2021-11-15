@@ -1510,7 +1510,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
         try:
             d = json.loads(data)
             rt_name = d.get('type') or ''
-            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
+            rt_def = RecordV3.resolve_record_type_by_name(params, rt_name)
             res = RecordV3.is_valid_record_type(data, rt_def)
             if not res.get('is_valid'):
                 logging.error('Error validating record type - ' + res.get('error'))
@@ -1994,7 +1994,7 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
     try:
         d = json.loads(data)
         rt_name = d.get('type') or ''
-        rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
+        rt_def = RecordV3.resolve_record_type_by_name(params, rt_name)
         res = RecordV3.is_valid_record_type(data, rt_def)
         if not res.get('is_valid'):
             logging.error('Error validating record type - ' + res.get('error'))

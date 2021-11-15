@@ -1,6 +1,6 @@
 import base64
 
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skip
 
 from keepercommander.api import login, auth_verifier
 from keepercommander.APIRequest_pb2 import PreLoginResponse, DeviceStatus
@@ -10,7 +10,7 @@ from data_vault import get_user_params, VaultEnvironment, get_connected_params
 
 vault_env = VaultEnvironment()
 
-
+@skip("old tests")
 class TestLogin(TestCase):
     has2fa = False
     dataKeyAsEncParam = False

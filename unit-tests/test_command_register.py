@@ -51,51 +51,6 @@ class TestRegister(TestCase):
         cmd.execute(params, action='revoke', user=['user2@keepersecurity.com'], folder=shared_folder_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
-    def test_register(self):
-        params = get_user_params()
-
-        cmd = register.RegisterCommand()
-
-        with mock.patch('keepercommander.commands.register.RegisterCommand.get_iterations', return_value=1000):
-            TestRegister.expected_commands.extend(['register'])
-            cmd.execute(params, email='user3@keepersecurity.com', password='123456')
-            self.assertEqual(len(TestRegister.expected_commands), 0)
-
-            with mock.patch('keepercommander.api.login'):
-                TestRegister.expected_commands.extend(['register', 'set_data_key_backup'])
-                cmd.execute(params, email='user3@keepersecurity.com', password='123456', question='What?', answer='Nothing')
-                self.assertEqual(len(TestRegister.expected_commands), 0)
-
-            with mock.patch('getpass.getpass') as getpass_mock:
-                getpass_mock.side_effect = ['123456', KeyboardInterrupt()]
-                TestRegister.expected_commands.extend(['register'])
-                cmd.execute(params, email='user3@keepersecurity.com')
-                self.assertEqual(len(TestRegister.expected_commands), 0)
-
-    @pytest.mark.xfail(reason="TODO: This test needs investigation")
-    def test_register(self):
-        params = get_user_params()
-
-        cmd = register.RegisterCommandV3()
-
-        with mock.patch('keepercommander.commands.register.RegisterCommand.get_iterations', return_value=1000):
-            TestRegister.expected_commands.extend(['register'])
-            cmd.execute(params, email='user3@keepersecurity.com', password='123456')
-            self.assertEqual(len(TestRegister.expected_commands), 0)
-
-            with mock.patch('keepercommander.api.login'):
-                TestRegister.expected_commands.extend(['register', 'set_data_key_backup'])
-                cmd.execute(params, email='user3@keepersecurity.com', password='123456', question='What?', answer='Nothing')
-                self.assertEqual(len(TestRegister.expected_commands), 0)
-
-            with mock.patch('getpass.getpass') as getpass_mock:
-                getpass_mock.side_effect = ['123456', KeyboardInterrupt()]
-                TestRegister.expected_commands.extend(['register'])
-                cmd.execute(params, email='user3@keepersecurity.com')
-                self.assertEqual(len(TestRegister.expected_commands), 0)
-
-
-
     @staticmethod
     def communicate_success(params, request):
         rs = {

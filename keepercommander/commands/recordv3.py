@@ -269,7 +269,24 @@ file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
 
-class RecordAddCommand(Command, recordv2.RecordUtils):
+class RecordV3Mixin:
+    @staticmethod
+    def get_record_type_definition(params, rt_data):
+        result = None
+
+        rt_type = recordv3.RecordV3.get_record_type_name(rt_data)
+        if rt_type:
+            rt_def = recordv3.RecordV3.resolve_record_type_by_name(params, rt_type)
+            if rt_def:
+                result = rt_def
+            else:
+                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
+                              ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
+
+        return result
+
+
+class RecordAddCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
     def get_parser(self):
         return add_parser
 
@@ -347,7 +364,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 return
 
             rt = types[0].split('=', 1)[1].strip()
-            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
+            rt_def = recordv3.RecordV3.resolve_record_type_by_name(params, rt)
             if not rt_def:
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
                     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
@@ -551,7 +568,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         if not password and kwargs.get('generate'):
             password = generator.generate(16)
         if password:
-            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+            data = recordv3.RecordV3.update_password(password, data, self.get_record_type_definition(params, data))
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -592,7 +609,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             return record_uid
 
 
-class RecordEditCommand(Command, recordv2.RecordUtils):
+class RecordEditCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
     def get_parser(self):
         return edit_parser
 
@@ -729,7 +746,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         record_data = record_data.strip() if record_data else ''
         rdata_dict = json.loads(record_data or '{}')
 
-        rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name) or ''
+        rt_def = recordv3.RecordV3.resolve_record_type_by_name(params, rt_name) or ''
         if options:
             # invalid options - no '=' NB! edit allows empty value(s) to be able to delete
             # inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
@@ -755,7 +772,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
                 return
 
             rt = types[0].split('=', 1)[1].strip()
-            rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt)
+            rt_def = recordv3.RecordV3.resolve_record_type_by_name(params, rt)
             if not rt_def:
                 logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
                     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
@@ -798,7 +815,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             password = generator.generate(16)
         if password:
             record.password = password
-            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
+            data = recordv3.RecordV3.update_password(password, data, self.get_record_type_definition(params, data))
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict
@@ -1953,19 +1970,6 @@ class RecordTypeInfo(Command):
         record_type_info = {}
         if params.record_type_cache and record_type_id in params.record_type_cache:
             record_type_info = { record_type_id: params.record_type_cache.get(record_type_id) }
-
-        return record_type_info
-
-    def resolve_record_type_by_name(self, params, record_type_name):
-        record_type_info = None
-        if record_type_name:
-            if params.record_type_cache:
-                for v in params.record_type_cache.values():
-                    dict = json.loads(v)
-                    # TODO: Is 'type' case sensitive
-                    if dict and dict.get('$id').lower() == record_type_name.lower():
-                        record_type_info = v
-                        break
 
         return record_type_info
 
