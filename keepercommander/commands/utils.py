@@ -38,7 +38,7 @@ from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClie
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
-from ..cli import init_recordv3_commands
+from ..recordv3 import init_recordv3_commands
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
@@ -691,9 +691,8 @@ class CheckEnforcementsCommand(Command):
 
         share_account_by = params.get_share_account_timestamp()
         if share_account_by is not None:
-            warn_msg = constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y'))
-            warn_msg += 'Use the command accept-transfer to accept.'
-            logging.warning(warn_msg)
+            account_transfer_command = AcceptTransferCommand()
+            account_transfer_command.execute(params, **kwargs)
 
 
 class AcceptTransferCommand(Command):
@@ -707,6 +706,10 @@ class AcceptTransferCommand(Command):
         share_account_by = params.get_share_account_timestamp()
         if share_account_by is not None:
             if api.accept_account_transfer_consent(params):
+                if 'must_perform_account_share_by' in params.settings:
+                    del params.settings['must_perform_account_share_by']
+                if 'share_account_to' in params.settings:
+                    del params.settings['share_account_to']
                 logging.info('Account transfer accepted.')
             else:
                 logging.info('Account transfer canceled.')
