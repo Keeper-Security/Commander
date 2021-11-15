@@ -15,12 +15,7 @@ import json
 from .params import KeeperParams
 import logging
 import re
-import requests.exceptions
-import urllib.parse
 
-from requests.models import PreparedRequest
-
-from .commands import commands, command_info, aliases
 from . import api
 from .display import bcolors
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
@@ -893,23 +888,6 @@ class RecordV3:
 
 
   @staticmethod
-  def get_record_type_definition(params, rt_data):
-    from keepercommander.commands.recordv3 import RecordTypeInfo
-    result = None
-
-    rt_type = RecordV3.get_record_type_name(rt_data)
-    if rt_type:
-      rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_type)
-      if rt_def:
-        result = rt_def
-      else:
-        logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
-                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
-
-    return result
-
-
-  @staticmethod
   def get_record_type_name(rt_data):
     result = None
 
@@ -946,10 +924,22 @@ class RecordV3:
 
     return result
 
+  @staticmethod
+  def resolve_record_type_by_name(params, record_type_name):
+    record_type_info = None
+    if record_type_name:
+      if params.record_type_cache:
+        for v in params.record_type_cache.values():
+          dict = json.loads(v)
+          # TODO: Is 'type' case sensitive
+          if dict and dict.get('$id').lower() == record_type_name.lower():
+            record_type_info = v
+            break
+
+    return record_type_info
 
   @staticmethod
   def change_record_type(params, rt_data, new_rt_name):
-    from keepercommander.commands.recordv3 import RecordTypeInfo
     # Converts rt_data (dict or JSON) from one valid record type to another
     # by moving required fields between fields[] and custom[]
 
@@ -965,7 +955,7 @@ class RecordV3:
       except: result['errors'].append('Unable to parse record type data JSON: ' + str(rt_data))
 
     newrtd = {}
-    rt_def = RecordTypeInfo().resolve_record_type_by_name(params, new_rt_name)
+    rt_def = RecordV3.resolve_record_type_by_name(params, new_rt_name)
     if rt_def:
       try: newrtd = json.loads(rt_def)
       except: result['errors'].append('Unable to parse record type definition JSON: ' + str(rt_def))
@@ -1490,12 +1480,11 @@ class RecordV3:
 
   @staticmethod
   def get_record_type_example(params, rt_name: str) -> str:
-    from keepercommander.commands.recordv3 import RecordTypeInfo
     STR_VALUE = 'text'
 
     result = ''
     rte = {}
-    rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
+    rt_def = RecordV3.resolve_record_type_by_name(params, rt_name)
     if rt_def:
       rtdd = RecordV3.record_type_to_dict(rt_def)
       rtdf = rtdd.get('fields') or []
@@ -1798,6 +1787,7 @@ class HumanBytes:
 
 
 def init_recordv3_commands(params):
+  from .commands import commands, command_info, aliases
   v3_commands = {}
 
   def init_v3_commands():
