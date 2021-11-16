@@ -92,10 +92,10 @@ def rotate_password(params, record_uid, name=None, new_password=None):
 
     # execute rotation plugin associated with this record
     plugin_name = None
-    plugins = [x for x in record.custom_fields if x.get('name', x['label']).startswith('cmdr:plugin')]
+    plugins = [x for x in record.custom_fields if x.get('name', x.get('label', '')).startswith('cmdr:plugin')]
     if plugins:
         if name:
-            plugins = [x for x in plugins if x.get('name', x['label']) == 'cmdr:plugin:' + name]
+            plugins = [x for x in plugins if x.get('name', x.get('label')) == 'cmdr:plugin:' + name]
     if plugins:
         plugin_name = plugins[0]['value']
     if isinstance(plugin_name, list):
