@@ -15,6 +15,7 @@ import re
 
 from tabulate import tabulate
 
+from keepercommander.commands import recordv3
 from ..params import KeeperParams
 from .. import api
 from ..commands.base import raise_parse_exception, suppress_exit, Command
@@ -55,6 +56,35 @@ def adjust_password(password):   # type: (str) -> str
     return 'a' + password
 
 
+def get_v2_or_v3_custom_field_value(record, custom_field_name, default_value=None):
+    if record.record_type:  # V3 record
+        matches = [x for x in record.custom_fields if x['label'] == custom_field_name]
+        if len(matches) > 0:
+            value_list = matches[0].get('value') or []
+            ret_val = value_list[0] if len(value_list) > 0 else default_value
+        else:
+            ret_val = default_value
+
+    else:  # V2 record
+        matches = [x for x in record.custom_fields if x['name'] == custom_field_name]
+        ret_val = matches[0]['value'] if len(matches) > 0 else default_value
+
+    return ret_val
+
+
+def update_v2_or_v3_password(params, record, new_password):
+    if record.record_type:  # V3 record
+        return_result = {}
+        recordv3.RecordEditCommand().execute(
+            params, command='edit', password=new_password, record=record.record_uid, return_result=return_result
+        )
+        return return_result.get('update_record_v3', False)
+
+    else:  # V2 record
+        record.password = new_password
+        return api.update_record(params, record)
+
+
 def rotate_password(params, record_uid, name=None, new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
@@ -62,12 +92,14 @@ def rotate_password(params, record_uid, name=None, new_password=None):
 
     # execute rotation plugin associated with this record
     plugin_name = None
-    plugins = [x for x in record.custom_fields if x['name'].startswith('cmdr:plugin')]
+    plugins = [x for x in record.custom_fields if x.get('name', x.get('label', '')).startswith('cmdr:plugin')]
     if plugins:
         if name:
-            plugins = [x for x in plugins if x['name'] == 'cmdr:plugin:' + name]
+            plugins = [x for x in plugins if x.get('name', x.get('label')) == 'cmdr:plugin:' + name]
     if plugins:
         plugin_name = plugins[0]['value']
+    if isinstance(plugin_name, list):
+        plugin_name = plugin_name[0]
     if not plugin_name:
         logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
                       'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
@@ -79,7 +111,7 @@ def rotate_password(params, record_uid, name=None, new_password=None):
 
     if not new_password:
         # generate a new password with any specified rules
-        rules = record.get("cmdr:rules")
+        rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
         if rules:
             logging.debug("Rules found for record")
             new_password = generator.generateFromRules(rules)
@@ -115,7 +147,7 @@ def rotate_password(params, record_uid, name=None, new_password=None):
         logging.warning("Password rotation failed for record uid=[%s], plugin \"%s\"." % (record.record_uid, plugin_name))
         return False
 
-    if api.update_record(params, record):
+    if update_v2_or_v3_password(params, record, new_password):
         new_record = api.get_record(params, record_uid)
         logging.info('Rotation successful for record_uid=%s, revision=%d', new_record.record_uid, new_record.revision)
         return True
@@ -153,7 +185,10 @@ class RecordRotateCommand(Command):
                 record_uid = name
             else:
                 RecordRotateCommand.find_endpoints(params)
-                endpoints = [x for x in RecordRotateCommand.Endpoints if x.name.lower() == name.lower()]
+                nl = name.lower()
+                endpoints = [
+                    x for x in RecordRotateCommand.Endpoints if x.record_title.lower() == nl or x.name.lower() == nl
+                ]
                 if len(endpoints) > 0:
                     if len(endpoints) == 1:
                         record_uid = endpoints[0].record_uid
@@ -208,8 +243,8 @@ class RecordRotateCommand(Command):
                     endpoints = {}    # type: {str, str}
                     endpoints_desc = {}
                     for field in record.custom_fields:
-                        if 'name' in field:
-                            field_name = field['name']
+                        field_name = field.get('name', field.get('label'))
+                        if field_name:
                             m = rotate_pattern.match(field_name)
                             if m and 'value' in field:
                                 endpoints[field_name] = field['value']

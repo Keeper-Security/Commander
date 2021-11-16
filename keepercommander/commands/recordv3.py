@@ -822,7 +822,9 @@ class RecordEditCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
         # changed = json.dumps(rdata_dict, sort_keys=True) != json.dumps(data_dict, sort_keys=True)
         if changed:
             params.record_cache[record_uid]['data_unencrypted'] = json.dumps(data_dict)
-            api.update_record_v3(params, record, **kwargs)
+            result = api.update_record_v3(params, record, **kwargs)
+            if 'return_result' in kwargs:
+                kwargs['return_result']['update_record_v3'] = result
 
             if params.breach_watch:
                 api.sync_down(params)

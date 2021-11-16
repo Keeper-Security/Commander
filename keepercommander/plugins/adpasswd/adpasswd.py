@@ -9,8 +9,10 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
 from ldap3 import Server, Connection, ALL
+
+from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
+
 
 """Commander Plugin for Active Directory
    Dependencies: 
@@ -21,17 +23,18 @@ def rotate(record, newpassword):
     result = False
 
     old_password = record.password
-    host = record.get('cmdr:host')
-    port = record.get('cmdr:port') or '389'
-    user_dn = record.get('cmdr:userdn')
-    use_ssl = record.get('cmdr:use_ssl')
+    host = get_v2_or_v3_custom_field_value(record, 'cmdr:host')
+    port = get_v2_or_v3_custom_field_value(record, 'cmdr:port')
+    port = int(port) if port else None
+    user_dn = get_v2_or_v3_custom_field_value(record, 'cmdr:userdn')
+    use_ssl = get_v2_or_v3_custom_field_value(record, 'cmdr:use_ssl')
 
     try:
         # print('Connecting to ' + host)
 
         server = Server(
             host=host,
-            port=int(port),
+            port=port,
             use_ssl=(use_ssl in ['True','true','yes','Yes','y','Y','T','t']),
             get_info=ALL)
 
