@@ -185,7 +185,10 @@ class RecordRotateCommand(Command):
                 record_uid = name
             else:
                 RecordRotateCommand.find_endpoints(params)
-                endpoints = [x for x in RecordRotateCommand.Endpoints if x.name.lower() == name.lower()]
+                nl = name.lower()
+                endpoints = [
+                    x for x in RecordRotateCommand.Endpoints if x.record_title.lower() == nl or x.name.lower() == nl
+                ]
                 if len(endpoints) > 0:
                     if len(endpoints) == 1:
                         record_uid = endpoints[0].record_uid
@@ -240,8 +243,8 @@ class RecordRotateCommand(Command):
                     endpoints = {}    # type: {str, str}
                     endpoints_desc = {}
                     for field in record.custom_fields:
-                        if 'name' in field:
-                            field_name = field['name']
+                        field_name = field.get('name', field.get('label'))
+                        if field_name:
                             m = rotate_pattern.match(field_name)
                             if m and 'value' in field:
                                 endpoints[field_name] = field['value']
