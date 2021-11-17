@@ -1513,8 +1513,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
             rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
             res = RecordV3.is_valid_record_type(data, rt_def)
             if not res.get('is_valid'):
-                logging.error('Error validating record type - ' + res.get('error'))
-                return None
+                logging.info(res.get('error'))
 
             if params.enterprise_ec_key:
                 fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
@@ -1997,8 +1996,7 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
         rt_def = RecordTypeInfo().resolve_record_type_by_name(params, rt_name)
         res = RecordV3.is_valid_record_type(data, rt_def)
         if not res.get('is_valid'):
-            logging.error('Error validating record type - ' + res.get('error'))
-            return None
+            logging.info(res.get('error'))
     except Exception as e:
         logging.error(bcolors.FAIL + 'Invalid record type! Error: ' + str(e) + bcolors.ENDC)
         return None
