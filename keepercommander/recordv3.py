@@ -131,7 +131,7 @@ class RecordV3:
                     'error': 'This record type doesn\'t allow these in fields[] (move to custom): ' + str(badf)}
 
         # fileRef use upload-attachment/delete-attachment commands
-        # remove from validation to allow for cros referencing same fileRef from multiple records v3
+    # remove from validation to allow for cross referencing same fileRef from multiple records v3
         # refs = [x for x in rt_fields + rt_custom if x.get('type') == 'fileRef' and x.get('value')]
         # if refs:
         #   return { 'is_valid': False, 'error': 'File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead. ' + str(refs) }
@@ -915,6 +915,44 @@ class RecordV3:
                 logging.error(bcolors.FAIL + 'Unable to find record type type - JSON: ' + str(rt_data) + bcolors.ENDC)
 
         return result
+
+
+  @staticmethod
+  def get_fileref_location(params, rt_data):
+    # lookup for fileRef presence in following order:
+    # 1) non-empty fileRef in fields[] 2) in custom 3) RT definition 4) if not found anywhere return 'custom'
+    result = ''
+
+    # first search for non-empty fileRef in record data
+    rt = rt_data if isinstance(rt_data, dict) else RecordV3.record_type_to_dict(rt_data)
+    flds = rt.get('fields') or []
+    fref = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'fileRef']
+    if fref:
+      result = 'fields'
+    else:
+      flds = rt.get('custom') or []
+      fref = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'fileRef']
+      if fref:
+        result = 'custom'
+
+    # next lookup fileRef in RT definition if needed
+    if not result:
+      rt_def = RecordV3.get_record_type_definition(params, rt_data)
+      rtdef = {}
+      if rt_def:
+        try: rtdef = json.loads(rt_def)
+        except: logging.error(bcolors.FAIL + 'Unable to parse record type definition JSON: ' + str(rt_def) + bcolors.ENDC)
+      if rtdef:
+        has_fref = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'fileRef'), False)
+        if has_fref:
+          result = 'fields'
+
+    # if not found anywhere - use custom
+    if not result:
+      result = 'custom'
+
+    return result
+
 
     @staticmethod
     def get_record_type_title(rt_data):
