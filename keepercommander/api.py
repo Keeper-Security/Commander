@@ -1525,7 +1525,8 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
                     'title': d.get('title', ''),
                     'record_type': rt_name,
                 }
-                if url: adata['url'] = url  # url will only be supplied if there is one on the record
+                if url:
+                    adata['url'] = url  # url will only be supplied if there is one on the record
                 audit_data = crypto.encrypt_ec(json.dumps(adata).encode('utf-8'), params.enterprise_ec_key)
 
         except Exception as e:
