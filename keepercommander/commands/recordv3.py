@@ -528,38 +528,18 @@ class RecordAddCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
                         record_links['record_links'].append(rl)
 
         new_attachments = [loginv3.CommonHelperMethods.bytes_to_url_safe_str(a['record_uid']) for a in attachments]
-        fields = data_dict['fields'] if 'fields' in data_dict else []
+        fref_loc = recordv3.RecordV3.get_fileref_location(params, data_dict) or 'custom'
+        fields = data_dict[fref_loc] if fref_loc in data_dict else []
 
-        # find first fileRef or create new fileRef if missing
-        file_ref = next((ft for ft in fields if ft['type'] == 'fileRef'), None)
-        if file_ref:
-            to_remove = []
-            old_atachments = file_ref.get('value') or []
-            if old_atachments:
-                for atta in old_atachments:
-                    if atta in params.record_cache:
-                        uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(params.record_cache[atta]['record_uid']) if 'record_uid' in params.record_cache[atta] else b''
-                        rku = params.record_cache[atta]['record_key_unencrypted'] if 'record_key_unencrypted' in params.record_cache[atta] else b''
-                        key = api.encrypt_aes_plain(rku, params.data_key)
-                        if uid and rku:
-                            rl = {'record_uid': uid, 'record_key': key}
-                            record_links['record_links'].append(rl)
-                        else:
-                            to_remove.append(atta)
-                    else:
-                        to_remove.append(atta)
-                if to_remove:
-                    logging.warning('Following file references were skipped - not in record cache: %s', to_remove)
-                    old_atachments = [item for item in old_atachments if item not in to_remove]
+        file_ref = {
+            'type': 'fileRef',
+            'value': new_attachments
+        }
+        fields.append(file_ref)
 
-            file_ref['value'] = [*old_atachments, *new_attachments]
-        else:
-            file_ref = {
-                'type': 'fileRef',
-                'value': new_attachments
-            }
-            fields.append(file_ref)
-            if not 'fields' in data_dict: data_dict['fields'] = fields
+        if not fref_loc in data_dict:
+            data_dict[fref_loc] = fields
+
         data = json.dumps(data_dict)
 
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
@@ -1337,7 +1317,8 @@ class RecordUploadAttachmentCommand(Command):
             changed = False
             record = params.record_cache[record_uid]
             data = json.loads(record['data_unencrypted']) if 'data_unencrypted' in record else {}
-            fields = data['fields'] if 'fields' in data else []
+            fref_loc = recordv3.RecordV3.get_fileref_location(params, data) or 'custom'
+            fields = data[fref_loc] if fref_loc in data else []
 
             # find first fileRef or create new fileRef if missing
             file_ref = next((ft for ft in fields if ft['type'] == 'fileRef'), None)
@@ -1350,7 +1331,8 @@ class RecordUploadAttachmentCommand(Command):
                     'value': new_attachments
                 }
                 fields.append(file_ref)
-                if not 'fields' in data: data['fields'] = fields
+                if not fref_loc in data:
+                    data[fref_loc] = fields
 
             record_data = record['data_unencrypted'] if 'data_unencrypted' in record else ''
             record_data = record_data.decode('utf-8') if record_data and isinstance(record_data, bytes) else record_data
@@ -2293,6 +2275,7 @@ class RecordFileReportCommand(Command):
                 data = json.loads(data)
 
                 fields = data.get('fields') or []
+                fields.extend(data.get('custom') or [])
                 for fr in (ft for ft in fields if ft['type'] == 'fileRef'):
                     if fr and 'value' in fr:
                         fuid = fr.get('value')
