@@ -34,16 +34,16 @@ def register_command_info(aliases, command_info):
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
 convert_parser.add_argument('-t', '--type', dest='type', action='store', help='Convert to record type')
 convert_parser.add_argument(
-    '-u', '--url', dest='url', action='store', help='Convert records with URL pattern (* for any with URL)'
+    '-u', '--url', dest='url', action='store', help='Convert records with URL pattern (* for record with any URL)'
 )
 convert_parser.add_argument(
-    '-n', '--dry-run', dest='dry_run', action='store_true', help='Display the record conversions without updating'
+    '-n', '--dry-run', dest='dry_run', action='store_true', help='Preview the record conversions without updating'
 )
 convert_parser.add_argument(
     '-r', '--recursive', dest='recursive', action='store_true', help='Convert recursively through subfolders'
 )
 convert_parser.add_argument(
-    'pattern', nargs='*', type=str, action='store', help='One or more record title/ID search patterns'
+    'record-uid-name-patterns', nargs='*', type=str, action='store', help='One or more record title/UID search patterns'
 )
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
@@ -108,7 +108,7 @@ class ConvertCommand(Command):
             )
             return
 
-        pattern_list = kwargs.get('pattern', [])
+        pattern_list = kwargs.get('record-uid-name-patterns', [])
         if len(pattern_list) == 0:
             logging.warning(f'Please specify a record to convert')
             return
