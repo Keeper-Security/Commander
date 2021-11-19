@@ -20,6 +20,9 @@ from .folder import get_folder_path
 from .base import raise_parse_exception, suppress_exit, Command
 
 
+DEFAULT_CONVERT_TO_V3_RECORD_TYPE = 'login'
+
+
 def register_commands(commands):
     commands['convert'] = ConvertCommand()
 
@@ -96,7 +99,7 @@ class ConvertCommand(Command):
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
-        record_type = kwargs.get('type') or 'general'
+        record_type = kwargs.get('type') or DEFAULT_CONVERT_TO_V3_RECORD_TYPE
         available_types = [json.loads(params.record_type_cache.get(rti)).get('$id') for rti in params.record_type_cache]
         if record_type not in available_types:
             logging.warning(
