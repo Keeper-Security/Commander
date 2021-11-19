@@ -191,7 +191,7 @@ class RecordV3:
         rt_attributes = ('$id', 'categories', 'description', 'fields')
         bada = [r for r in rt if r not in rt_attributes and r not in implicit_field_names]
         if bada:
-            return {'is_valid': False, 'error': 'Unknown attributes in record type definition: ' + str(bada)}
+            logging.debug(f'Unknown attributes in record type definition: {bada}')
 
         # Allow only valid/known field types - field types are case sensitive?
         flds = rt.get('fields') or []
