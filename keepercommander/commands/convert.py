@@ -38,7 +38,9 @@ convert_parser.add_argument(
 convert_parser.add_argument(
     '-r', '--recursive', dest='recursive', action='store_true', help='Convert recursively through subfolders'
 )
-convert_parser.add_argument('pattern', nargs='?', type=str, action='store', help='Record title/ID search pattern')
+convert_parser.add_argument(
+    'pattern', nargs='*', type=str, action='store', help='One or more record title/ID search patterns'
+)
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
 
@@ -65,8 +67,10 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
 def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse):
     folder_records = get_matching_records_from_folder(params, folder_uid, regex, url_regex)
     if len(folder_records) > 0:
-        folder_path[folder_uid] = get_folder_path(params, folder_uid)
-        records_by_folder[folder_uid] = sorted(folder_records, key=lambda x: getattr(x, 'title'))
+        if folder_uid not in folder_path:
+            folder_path[folder_uid] = get_folder_path(params, folder_uid)
+            records_by_folder[folder_uid] = set()
+        records_by_folder[folder_uid].update(folder_records)
 
     if recurse:
         folder = params.folder_cache[folder_uid] if folder_uid else params.root_folder
@@ -87,25 +91,25 @@ class ConvertCommand(Command):
             logging.warning(f'Cannot convert record(s) if record types is not enabled')
             return
 
-        folder = params.folder_cache.get(params.current_folder, params.root_folder)
-        pattern = kwargs.get('pattern')
-        if not pattern:
+        recurse = kwargs.get('recursive', False)
+        url_pattern = kwargs.get('url')
+        url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
+        pattern_list = kwargs.get('pattern', [])
+        if len(pattern_list) == 0:
             logging.warning(f'Please specify a record to convert')
             return
 
-        rs = try_resolve_path(params, pattern)
-        if rs is not None:
-            folder, pattern = rs
-
-        regex = re.compile(fnmatch.translate(pattern)).match if pattern else None
-        url_pattern = kwargs.get('url')
-        url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
-
+        folder = params.folder_cache.get(params.current_folder, params.root_folder)
         records_by_folder = {}
         folder_path = {}
-        folder_uid = folder.uid or ''
-        recurse = kwargs.get('recursive', False)
-        recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
+        for pattern in pattern_list:
+            rs = try_resolve_path(params, pattern)
+            if rs is not None:
+                folder, pattern = rs
+            regex = re.compile(fnmatch.translate(pattern)).match if pattern else None
+
+            folder_uid = folder.uid or ''
+            recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
 
         if len(records_by_folder) == 0:
             msg = f'No records that can be converted to record types can be found found for pattern "{pattern}"'
@@ -118,11 +122,11 @@ class ConvertCommand(Command):
         if dry_run:
             print('The following records would be updated:')
 
-        # Sort records and print if dry run
+        # Sort records and if dry run print
         records = []
         for folder_uid in sorted(folder_path, key=lambda x: folder_path[x]):
             path = folder_path[folder_uid]
-            for record in records_by_folder[folder_uid]:
+            for record in sorted(records_by_folder[folder_uid], key=lambda x: getattr(x, 'title')):
                 records.append(record)
                 if dry_run:
                     print(f'{path}{record.title} ({record.record_uid})')
