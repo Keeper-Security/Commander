@@ -1473,7 +1473,12 @@ class KSMCommand(Command):
                     if abbrev:
                         token_w_prefix = f'{abbrev}:{token}'
                     else:
-                        token_w_prefix = f'{urlparse(params.server).netloc.lower()}:{token}'
+                        if not params.server.startswith('http'):
+                            tmp_server = "https://" + params.server
+                        else:
+                            tmp_server = params.server
+
+                        token_w_prefix = f'{urlparse(tmp_server).netloc.lower()}:{token}'
 
                     otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token_w_prefix}{bcolors.ENDC}\n'
                     tokens.append(token_w_prefix)
