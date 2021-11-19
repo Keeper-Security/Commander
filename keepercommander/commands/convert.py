@@ -15,6 +15,7 @@ import re
 
 from keepercommander import api, loginv3, record_pb2, recordv3
 from keepercommander.subfolder import try_resolve_path
+from .folder import get_folder_path
 from .base import raise_parse_exception, suppress_exit, Command
 
 
@@ -33,6 +34,9 @@ convert_parser.add_argument(
 )
 convert_parser.add_argument(
     '-n', '--dry-run', dest='dry_run', action='store_true', help='Display the record conversions without updating'
+)
+convert_parser.add_argument(
+    '-r', '--recursive', dest='recursive', action='store_true', help='Convert recursively through subfolders'
 )
 convert_parser.add_argument('pattern', nargs='?', type=str, action='store', help='Record title/ID search pattern')
 convert_parser.error = raise_parse_exception
@@ -56,6 +60,18 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
                 if url_match:
                     records.append(r)
     return records
+
+
+def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse):
+    folder_records = get_matching_records_from_folder(params, folder_uid, regex, url_regex)
+    if len(folder_records) > 0:
+        folder_path[folder_uid] = get_folder_path(params, folder_uid)
+        records_by_folder[folder_uid] = sorted(folder_records, key=lambda x: getattr(x, 'title'))
+
+    if recurse:
+        folder = params.folder_cache[folder_uid] if folder_uid else params.root_folder
+        for subfolder_uid in folder.subfolders:
+            recurse_folder(params, subfolder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
 
 
 class ConvertCommand(Command):
@@ -85,49 +101,59 @@ class ConvertCommand(Command):
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
+        records_by_folder = {}
+        folder_path = {}
         folder_uid = folder.uid or ''
-        records = get_matching_records_from_folder(params, folder_uid, regex, url_regex)
+        recurse = kwargs.get('recursive', False)
+        recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
 
-        if len(records) == 0:
+        if len(records_by_folder) == 0:
             msg = f'No records that can be converted to record types can be found found for pattern "{pattern}"'
             if url_pattern:
                 msg += f' with url matching "{url_pattern}"'
             logging.warning(msg)
             return
 
-        records.sort(key=lambda x: getattr(x, 'title'))
-        if kwargs.get('dry_run', False):
+        dry_run = kwargs.get('dry_run', False)
+        if dry_run:
             print('The following records would be updated:')
+
+        # Sort records and print if dry run
+        records = []
+        for folder_uid in sorted(folder_path, key=lambda x: folder_path[x]):
+            path = folder_path[folder_uid]
+            for record in records_by_folder[folder_uid]:
+                records.append(record)
+                if dry_run:
+                    print(f'{path}{record.title} ({record.record_uid})')
+
+        if not dry_run:
+            record_type = kwargs.get('type') or 'general'
+            rq = record_pb2.RecordsConvertToV3Request()
+            record_rq_by_uid = {}
             for record in records:
-                print(f'{record.title} ({record.record_uid})')
-            return
+                convert_result = recordv3.RecordV3.convert_to_record_type(
+                    record.record_uid, params, record_type=record_type
+                )
+                if convert_result:
+                    v3_record = api.get_record(params, record.record_uid)
+                else:
+                    logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
+                    continue
 
-        record_type = kwargs.get('type') or 'general'
-        rq = record_pb2.RecordsConvertToV3Request()
-        record_rq_by_uid = {}
-        for record in records:
-            convert_result = recordv3.RecordV3.convert_to_record_type(
-                record.record_uid, params, record_type=record_type
-            )
-            if convert_result:
-                v3_record = api.get_record(params, record.record_uid)
-            else:
-                logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
-                continue
+                record_rq, audit_data = api.prepare_record_v3(params, v3_record)
+                record_rq_by_uid[record.record_uid] = record_rq
 
-            record_rq, audit_data = api.prepare_record_v3(params, v3_record)
-            record_rq_by_uid[record.record_uid] = record_rq
+                rc = record_pb2.RecordConvertToV3()
+                rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
+                rc.client_modified_time = record_rq['client_modified_time']
+                rc.revision = record_rq['revision']
+                rc.data = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['data'])
+                rc.audit.data = audit_data
+                rq.records.append(rc)
 
-            rc = record_pb2.RecordConvertToV3()
-            rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
-            rc.client_modified_time = record_rq['client_modified_time']
-            rc.revision = record_rq['revision']
-            rc.data = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['data'])
-            rc.audit.data = audit_data
-            rq.records.append(rc)
-
-        if len(record_rq_by_uid) > 0:
-            rq.client_time = api.current_milli_time()
-            result = api.get_record_v3_response(
-                params, rq, 'vault/records_convert3', record_rq_by_uid, silent=kwargs.get('silent')
-            )
+            if len(record_rq_by_uid) > 0:
+                rq.client_time = api.current_milli_time()
+                result = api.get_record_v3_response(
+                    params, rq, 'vault/records_convert3', record_rq_by_uid, silent=kwargs.get('silent')
+                )
