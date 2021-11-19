@@ -10,6 +10,7 @@
 #
 import argparse
 import fnmatch
+import json
 import logging
 import re
 
@@ -94,6 +95,16 @@ class ConvertCommand(Command):
         recurse = kwargs.get('recursive', False)
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
+
+        record_type = kwargs.get('type') or 'general'
+        available_types = [json.loads(params.record_type_cache.get(rti)).get('$id') for rti in params.record_type_cache]
+        if record_type not in available_types:
+            logging.warning(
+                f'Specified record type "{record_type}" is not valid. '
+                f'Valid types are:\n{", ".join(sorted(available_types))}'
+            )
+            return
+
         pattern_list = kwargs.get('pattern', [])
         if len(pattern_list) == 0:
             logging.warning(f'Please specify a record to convert')
@@ -120,7 +131,7 @@ class ConvertCommand(Command):
 
         dry_run = kwargs.get('dry_run', False)
         if dry_run:
-            print('The following records would be updated:')
+            print(f'The following records would be converted to records with type "{record_type}":')
 
         # Sort records and if dry run print
         records = []
@@ -132,7 +143,6 @@ class ConvertCommand(Command):
                     print(f'{path}{record.title} ({record.record_uid})')
 
         if not dry_run:
-            record_type = kwargs.get('type') or 'general'
             rq = record_pb2.RecordsConvertToV3Request()
             record_rq_by_uid = {}
             for record in records:
