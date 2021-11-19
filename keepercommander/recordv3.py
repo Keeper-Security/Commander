@@ -1277,7 +1277,7 @@ class RecordV3:
         return result
 
     @staticmethod
-    def convert_to_record_type(record_uid, params):
+    def convert_to_record_type(record_uid, params, record_type='general'):
         # Converts records v2 to v3
         result = False
 
@@ -1343,7 +1343,7 @@ class RecordV3:
 
         rt = {
             'title': title,
-            'type': 'general',
+            'type': record_type,
             'fields': [
                 {'type': 'login', 'value': [login] if login else []},
                 {'type': 'password', 'value': [password] if password else []},

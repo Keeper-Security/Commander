@@ -27,7 +27,14 @@ def register_command_info(aliases, command_info):
 
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
-convert_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+convert_parser.add_argument('-t', '--type', dest='type', action='store', help='Convert to record type')
+convert_parser.add_argument(
+    '-u', '--url', dest='url', action='store', help='Convert records with URL pattern (* for any with URL)'
+)
+convert_parser.add_argument(
+    '-n', '--dry-run', dest='dry_run', action='store_true', help='Display the record conversions without updating'
+)
+convert_parser.add_argument('pattern', nargs='?', type=str, action='store', help='Record title/ID search pattern')
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
 
@@ -51,13 +58,13 @@ class ConvertCommand(Command):
             logging.warning(f'Please specify a record to convert')
             return
 
-        rs = try_resolve_path(params, kwargs['pattern'])
+        rs = try_resolve_path(params, pattern)
         if rs is not None:
             folder, pattern = rs
 
-        regex = None
-        if pattern:
-            regex = re.compile(fnmatch.translate(pattern)).match
+        regex = re.compile(fnmatch.translate(pattern)).match if pattern else None
+        url_pattern = kwargs.get('url')
+        url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
         records = []
         folder_uid = folder.uid or ''
@@ -69,18 +76,35 @@ class ConvertCommand(Command):
                 r = api.get_record(params, uid)
                 r_attrs = (r.title, r.record_uid)
                 if any(attr for attr in r_attrs if isinstance(attr, str) and len(attr) > 0 and regex(attr) is not None):
-                    records.append(r)
+                    if url_regex:
+                        url_match = r.login_url and url_regex(r.login_url) is not None
+                    else:
+                        url_match = True
+                    if url_match:
+                        records.append(r)
 
         if len(records) == 0:
-            logging.warning(
-                f'No records that can be converted to record types can be found found for pattern "{kwargs["pattern"]}"'
-            )
+            msg = f'No records that can be converted to record types can be found found for pattern "{pattern}"'
+            if url_pattern:
+                msg += f' with url matching "{url_pattern}"'
+            logging.warning(msg)
             return
 
+        records.sort(key=lambda x: getattr(x, 'title'))
+        if kwargs.get('dry_run', False):
+            print('The following records would be updated:')
+            for record in records:
+                print(f'{record.title} ({record.record_uid})')
+            return
+
+        record_type = kwargs.get('type') or 'general'
         rq = record_pb2.RecordsConvertToV3Request()
         record_rq_by_uid = {}
         for record in records:
-            if recordv3.RecordV3.convert_to_record_type(record.record_uid, params):
+            convert_result = recordv3.RecordV3.convert_to_record_type(
+                record.record_uid, params, record_type=record_type
+            )
+            if convert_result:
                 v3_record = api.get_record(params, record.record_uid)
             else:
                 logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
