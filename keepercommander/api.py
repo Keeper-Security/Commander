@@ -1525,7 +1525,8 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
                     'title': d.get('title', ''),
                     'record_type': rt_name,
                 }
-                if url: adata['url'] = url  # url will only be supplied if there is one on the record
+                if url:
+                    adata['url'] = url  # url will only be supplied if there is one on the record
                 audit_data = crypto.encrypt_ec(json.dumps(adata).encode('utf-8'), params.enterprise_ec_key)
 
         except Exception as e:
@@ -1749,64 +1750,9 @@ def get_pb2_record_update(params, rec, **kwargs):
     return record_rq
 
 
-def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ...) -> Optional[bool]
-    """ Push a record update to the cloud.
-        Takes a Record() object, converts to record JSON
-        and pushes to the Keeper cloud API
-    """
-    record_rq = get_pb2_record_update(params, rec, **kwargs)
-    ru = record_rq['pb2_record_update']
-    rq = records.RecordsUpdateRequest()
-    rq.records.append(ru)
-    #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
-    rs = communicate_rest(params, rq, 'vault/records_update')
-    records_modify_rs = records.RecordsModifyResponse()
-    records_modify_rs.ParseFromString(rs)
-
-    for r in records_modify_rs.records:
-        ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
-        success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
-        status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
-
-        if not success:
-            logging.error(bcolors.FAIL + 'Error: Record update failed with status - %s' + bcolors.ENDC, status)
-            return False
-
-        new_revision = 0
-        if success and ruid == rec.record_uid:
-            new_revision = records_modify_rs.revision
-
-        if new_revision == 0:
-            logging.error('Error: Revision not updated')
-            return False
-
-        if new_revision == record_rq['revision']:
-            logging.error('Error: Revision did not change')
-            return False
-
-        if not kwargs.get('silent'):
-            logging.info('Update record successful for record_uid=%s, revision=%d, new_revision=%s',
-                         record_rq['record_uid'], record_rq['revision'], new_revision)
-
-        record_rq['revision'] = new_revision
-
-    sync_down(params)
-    return True
-
-
-def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List[Record], ...) -> Optional[bool]
-    """ Push a record update to the cloud.
-        Takes a Record() object, converts to record JSON
-        and pushes to the Keeper cloud API
-    """
-    rq = records.RecordsUpdateRequest()
-    record_rq_by_uid = {}
-    for rec in rec_list:
-        record_rq = get_pb2_record_update(params, rec, **kwargs)
-        record_rq_by_uid[rec.record_uid] = record_rq
-        rq.records.append(record_rq['pb2_record_update'])
-    #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
-    rs = communicate_rest(params, rq, 'vault/records_update')
+def get_record_v3_response(params, rq, endpoint, record_rq_by_uid, silent):
+    # type: (KeeperParams, records._message.Message, str, dict[dict]) -> Optional[bool]
+    rs = communicate_rest(params, rq, endpoint)
     records_modify_rs = records.RecordsModifyResponse()
     records_modify_rs.ParseFromString(rs)
 
@@ -1832,14 +1778,44 @@ def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List
             logging.error('Error: Revision did not change')
             return False
 
-        if not kwargs.get('silent'):
-            logging.info('Update record successful for record_uid=%s, revision=%d, new_revision=%s',
-                        record_rq['record_uid'], record_rq['revision'], new_revision)
+        if not silent:
+            logging.info(
+                'Update record successful for record_uid=%s, revision=%d, new_revision=%s',
+                ruid, record_rq['revision'], new_revision
+            )
 
         record_rq['revision'] = new_revision
 
     sync_down(params)
     return True
+
+
+def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ...) -> Optional[bool]
+    """ Push a record update to the cloud.
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    record_rq = get_pb2_record_update(params, rec, **kwargs)
+    ru = record_rq['pb2_record_update']
+    rq = records.RecordsUpdateRequest()
+    rq.records.append(ru)
+    record_rq_by_uid = {rec.record_uid: record_rq}
+    return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid, silent=kwargs.get('silent'))
+
+
+def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List[Record], ...) -> Optional[bool]
+    """ Push a record update to the cloud.
+        Takes a Record() object, converts to record JSON
+        and pushes to the Keeper cloud API
+    """
+    rq = records.RecordsUpdateRequest()
+    record_rq_by_uid = {}
+    for rec in rec_list:
+        record_rq = get_pb2_record_update(params, rec, **kwargs)
+        record_rq_by_uid[rec.record_uid] = record_rq
+        rq.records.append(record_rq['pb2_record_update'])
+
+    return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid)
 
 
 def add_record(params, record,  **kwargs):   # type: (KeeperParams, Record) -> bool
