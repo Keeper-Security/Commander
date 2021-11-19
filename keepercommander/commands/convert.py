@@ -39,6 +39,25 @@ convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
 
 
+def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
+    records = []
+    if folder_uid in params.subfolder_record_cache:
+        for uid in params.subfolder_record_cache[folder_uid]:
+            rv = params.record_cache[uid].get('version') if uid in params.record_cache else None
+            if rv > 2:
+                continue
+            r = api.get_record(params, uid)
+            r_attrs = (r.title, r.record_uid)
+            if any(attr for attr in r_attrs if isinstance(attr, str) and len(attr) > 0 and regex(attr) is not None):
+                if url_regex:
+                    url_match = r.login_url and url_regex(r.login_url) is not None
+                else:
+                    url_match = True
+                if url_match:
+                    records.append(r)
+    return records
+
+
 class ConvertCommand(Command):
     def get_parser(self):
         return convert_parser
@@ -66,22 +85,8 @@ class ConvertCommand(Command):
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
-        records = []
         folder_uid = folder.uid or ''
-        if folder_uid in params.subfolder_record_cache:
-            for uid in params.subfolder_record_cache[folder_uid]:
-                rv = params.record_cache[uid].get('version') if uid in params.record_cache else None
-                if rv > 2:
-                    continue
-                r = api.get_record(params, uid)
-                r_attrs = (r.title, r.record_uid)
-                if any(attr for attr in r_attrs if isinstance(attr, str) and len(attr) > 0 and regex(attr) is not None):
-                    if url_regex:
-                        url_match = r.login_url and url_regex(r.login_url) is not None
-                    else:
-                        url_match = True
-                    if url_match:
-                        records.append(r)
+        records = get_matching_records_from_folder(params, folder_uid, regex, url_regex)
 
         if len(records) == 0:
             msg = f'No records that can be converted to record types can be found found for pattern "{pattern}"'
