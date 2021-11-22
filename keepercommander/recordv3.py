@@ -916,43 +916,41 @@ class RecordV3:
 
         return result
 
+    @staticmethod
+    def get_fileref_location(params, rt_data):
+        # lookup for fileRef presence in following order:
+        # 1) non-empty fileRef in fields[] 2) in custom 3) RT definition 4) if not found anywhere return 'custom'
+        result = ''
 
-  @staticmethod
-  def get_fileref_location(params, rt_data):
-    # lookup for fileRef presence in following order:
-    # 1) non-empty fileRef in fields[] 2) in custom 3) RT definition 4) if not found anywhere return 'custom'
-    result = ''
-
-    # first search for non-empty fileRef in record data
-    rt = rt_data if isinstance(rt_data, dict) else RecordV3.record_type_to_dict(rt_data)
-    flds = rt.get('fields') or []
-    fref = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'fileRef']
-    if fref:
-      result = 'fields'
-    else:
-      flds = rt.get('custom') or []
-      fref = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'fileRef']
-      if fref:
-        result = 'custom'
-
-    # next lookup fileRef in RT definition if needed
-    if not result:
-      rt_def = RecordV3.get_record_type_definition(params, rt_data)
-      rtdef = {}
-      if rt_def:
-        try: rtdef = json.loads(rt_def)
-        except: logging.error(bcolors.FAIL + 'Unable to parse record type definition JSON: ' + str(rt_def) + bcolors.ENDC)
-      if rtdef:
-        has_fref = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'fileRef'), False)
-        if has_fref:
+        # first search for non-empty fileRef in record data
+        rt = rt_data if isinstance(rt_data, dict) else RecordV3.record_type_to_dict(rt_data)
+        flds = rt.get('fields') or []
+        fref = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'fileRef']
+        if fref:
           result = 'fields'
+        else:
+          flds = rt.get('custom') or []
+          fref = [x.get('value') or [] for x in flds if isinstance(x, dict) and x.get('type') == 'fileRef']
+          if fref:
+            result = 'custom'
 
-    # if not found anywhere - use custom
-    if not result:
-      result = 'custom'
+        # next lookup fileRef in RT definition if needed
+        if not result:
+          rt_def = RecordV3.get_record_type_definition(params, rt_data)
+          rtdef = {}
+          if rt_def:
+            try: rtdef = json.loads(rt_def)
+            except: logging.error(bcolors.FAIL + 'Unable to parse record type definition JSON: ' + str(rt_def) + bcolors.ENDC)
+          if rtdef:
+            has_fref = next((True for x in (rtdef.get('fields') or []) if '$ref' in x and x.get('$ref') == 'fileRef'), False)
+            if has_fref:
+              result = 'fields'
 
-    return result
+        # if not found anywhere - use custom
+        if not result:
+          result = 'custom'
 
+        return result
 
     @staticmethod
     def get_record_type_title(rt_data):
