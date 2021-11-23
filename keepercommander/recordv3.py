@@ -29,7 +29,7 @@ def get_v3_field_type(field_value):
         if is_url(field_value):
             return_type = 'url'
         if len(field_value) > 128:
-            return_type = 'multiline'
+            return_type = 'note'
     return return_type
 
 
