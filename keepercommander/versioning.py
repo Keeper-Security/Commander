@@ -15,16 +15,33 @@ import sys
 import requests
 
 from . import __version__, display
+from .params import KeeperParams
 
 
-def is_up_to_date_version():
+def is_up_to_date_version(params):  # type: (KeeperParams) -> dict
 
     curr_git_version = None
     version_comparison = None
     release_download_url = 'https://github.com/Keeper-Security/Commander/releases'
 
     try:
-        release_details = get_latest_release_details()
+        repo_owner = "Keeper-Security"
+        repo_name = "Commander"
+        repo_latest_release_api_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest'
+
+        rs = requests.get(repo_latest_release_api_url, proxies=params.rest_context.proxies, timeout=3)
+
+        rs_dict = json.loads(rs.text)
+
+        latest_tag_name = rs_dict.get('tag_name')
+        publish_date = rs_dict.get('published_at')
+        release_url = rs_dict.get('html_url')
+
+        release_details = {
+            'tag': latest_tag_name,
+            'publish_date': publish_date,
+            'release_url': release_url
+        }
         release_download_url = release_details.get('release_url')
         this_app_version = __version__
         curr_git_version = release_details.get('tag')[1:]
@@ -51,27 +68,6 @@ def is_up_to_date_version():
 def is_binary_app():
     # see: https://pyinstaller.readthedocs.io/en/stable/runtime-information.html#run-time-information
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
-
-
-def get_latest_release_details():
-
-    repo_owner = "Keeper-Security"
-    repo_name = "Commander"
-    repo_latest_release_api_url = 'https://api.github.com/repos/%s/%s/releases/latest' % (repo_owner, repo_name)
-
-    rs = requests.get(repo_latest_release_api_url, timeout=5)
-
-    rs_dict = json.loads(rs.text)
-
-    latest_tag_name = rs_dict.get('tag_name')
-    publish_date = rs_dict.get('published_at')
-    release_url = rs_dict.get('html_url')
-
-    return {
-        'tag': latest_tag_name,
-        'publish_date': publish_date,
-        'release_url': release_url
-    }
 
 
 def __version_compare(v1, v2):
@@ -111,11 +107,11 @@ def __version_compare(v1, v2):
     return 0
 
 
-def welcome_print_version():
+def welcome_print_version(params):
 
     this_app_version = __version__
 
-    ver_info = is_up_to_date_version()
+    ver_info = is_up_to_date_version(params)
 
     if ver_info.get('is_up_to_date') is None:
         logging.debug(display.bcolors.WARNING + "It appears that the internet connection is offline." + display.bcolors.ENDC)

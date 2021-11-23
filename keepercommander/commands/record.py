@@ -856,7 +856,7 @@ class RecordDownloadAttachmentCommand(Command):
                                 break
 
                     if file_key:
-                        rq_http = requests.get(dl['url'], stream=True)
+                        rq_http = requests.get(dl['url'], proxies=params.rest_context.proxies, stream=True)
                         with open(file_name, 'wb') as f:
                             logging.info('Downloading \'%s\'', os.path.abspath(f.name))
                             iv = rq_http.raw.read(16)

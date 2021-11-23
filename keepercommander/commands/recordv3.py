@@ -1134,7 +1134,7 @@ class RecordDownloadAttachmentCommand(Command):
                 continue
 
             BUFFER_SIZE = 10240
-            rq_http = requests.get(url, stream=True)
+            rq_http = requests.get(url, proxies=params.rest_context.proxies, stream=True)
             with open(file_name, 'wb') as f:
                 logging.info('Downloading \'%s\'', os.path.abspath(f.name))
                 iv = rq_http.raw.read(12)
@@ -2312,7 +2312,7 @@ class RecordFileReportCommand(Command):
                         # success = (f.status == records.FileGetResult.DESCRIPTOR.values_by_name['FG_SUCCESS'].number)
                         ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(f.record_uid)
                         if f.url and f.url.strip():
-                            opt_rs = requests.get(f.url, headers={"Range": "bytes=0-1"})
+                            opt_rs = requests.get(f.url, proxies=params.rest_context.proxies, headers={"Range": "bytes=0-1"})
                             file_info[ruid]['status'] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
                 except Exception as e:
                     logging.debug(e)

@@ -18,6 +18,7 @@ install_requires = [
     'protobuf>=3.13.0',
     'pycryptodomex>=3.7.2',
     'pyperclip',
+    'pysocks',
     'requests',
     'tabulate',
 ]

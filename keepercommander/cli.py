@@ -38,6 +38,7 @@ from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
 from .autocomplete import CommandCompleter
+from . import versioning
 
 
 stack = []
@@ -466,6 +467,7 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_while_typing=False)
 
         display.welcome()
+        versioning.welcome_print_version(params)
 
     else:
         logging.getLogger().setLevel(logging.WARNING)

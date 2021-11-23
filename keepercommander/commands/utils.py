@@ -74,6 +74,7 @@ def register_commands(commands):
     commands['this-device'] = ThisDeviceCommand()
     commands['delete-all'] = RecordDeleteAllCommand()
     commands['whoami'] = WhoamiCommand()
+    commands['proxy'] = ProxyCommand()
     commands['login'] = LoginCommand()
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
@@ -94,7 +95,7 @@ def register_command_info(aliases, command_info):
     aliases['v'] = 'version'
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
-    for p in [whoami_parser, this_device_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
+    for p in [whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser
               ]:
         command_info[p.prog] = p.description
@@ -168,6 +169,14 @@ this_device_parser.error = raise_parse_exception
 this_device_parser.exit = suppress_exit
 
 
+proxy_parser = argparse.ArgumentParser(prog='proxy', description='Sets proxy server')
+proxy_parser.add_argument('-a', '--action', dest='action', action='store', choices=['list', 'add', 'remove'], help='action')
+proxy_parser.add_argument('address', nargs='?', type=str, metavar="schema://[user:password@]host:port",
+                          help='"add": proxy address. Schemas are "socks5h", "http", "socks4", etc')
+proxy_parser.error = raise_parse_exception
+proxy_parser.exit = suppress_exit
+
+
 login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper.')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
@@ -175,7 +184,7 @@ login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
 
 
-logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper.')
+logout_parser = argparse.ArgumentParser(prog='logout', description='Logout from Keeper')
 logout_parser.error = raise_parse_exception
 logout_parser.exit = suppress_exit
 
@@ -615,6 +624,42 @@ class KeepAliveCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         """Just send the keepalive."""
         api.send_keepalive(params)
+
+
+class ProxyCommand(Command):
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return proxy_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        action = kwargs.get('action')
+        if action == 'add':
+            proxy_server = kwargs.get('address')  # type: str
+            if proxy_server:
+                is_valid = False
+                for prefix in {'socks5', 'http', 'https'}:
+                    if proxy_server.startswith(prefix):
+                        is_valid = True
+                        break
+                if not is_valid:
+                    logging.warning('Proxy server "%s" does not appear to be a valid proxy URL', proxy_server)
+                    proxy_server = ''
+            else:
+                logging.warning('"add" action requires "proxy" parameter.')
+
+            if proxy_server:
+                params.proxy = proxy_server
+            else:
+                return
+        elif action == 'remove':
+            params.proxy = None
+
+        if params.proxy:
+            logging.info('Proxy server: %s', params.proxy)
+        else:
+            logging.info('Proxy is not configured.')
 
 
 class LoginCommand(Command):
@@ -1929,7 +1974,7 @@ class ConnectCommand(Command):
         if 'url' in rs['downloads'][0]:
             url = rs['downloads'][0]['url']
             key = base64.urlsafe_b64decode(attachment['key'] + '==')
-            rq_http = requests.get(url, stream=True)
+            rq_http = requests.get(url, proxies=params.rest_context.proxies, stream=True)
             iv = rq_http.raw.read(16)
             cipher = AES.new(key, AES.MODE_CBC, iv)
             finished = False
