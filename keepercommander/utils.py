@@ -10,12 +10,14 @@
 #
 
 import base64
-import itertools
 import math
 import time
 from urllib.parse import urlparse
 
 from . import crypto
+
+
+VALID_URL_SCHEME_CHARS = '+-.:'
 
 
 def generate_uid():             # type: () -> str
@@ -85,6 +87,18 @@ def create_auth_verifier(password, salt, iterations):   # type: (str, bytes, int
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     auth_ver = b'\x01' + enc_iter + salt + derived_key
     return base64_url_encode(auth_ver)
+
+
+def is_url(test_str):   # type: (str) -> bool
+    if not isinstance(test_str, str):
+        return False
+    url_parts = test_str.split('://')
+    url_scheme = url_parts[0]
+    valid_scheme = all(c.isalnum or c in VALID_URL_SCHEME_CHARS for c in url_scheme)
+    if len(test_str.split()) == 1 and len(url_parts) > 1 and valid_scheme:
+        return True
+    else:
+        return False
 
 
 def url_strip(url):   # type: (str) -> str
