@@ -20,6 +20,17 @@ from . import api
 from .display import bcolors
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
 from .record import get_totp_code
+from keepercommander.utils import is_url
+
+
+def get_v3_field_type(field_value):
+    return_type = 'text'
+    if field_value:
+        if is_url(field_value):
+            return_type = 'url'
+        if len(field_value) > 128:
+            return_type = 'note'
+    return return_type
 
 
 class RecordV3:
@@ -1363,7 +1374,7 @@ class RecordV3:
         custom2 = data.get('custom') or []
         # custom.type	- Always "text" for legacy reasons.
         custom = [{
-            'type': 'text',
+            'type': get_v3_field_type(x.get('value')),
             'label': x.get('name') or '',
             'value': [x.get('value')] if x.get('value') else []
         } for x in custom2 if x.get('name') or x.get('value')]
