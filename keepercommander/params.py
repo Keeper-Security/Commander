@@ -10,7 +10,6 @@
 
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime
-from typing import Optional
 
 
 LAST_RECORD_UID = 'last_record_uid'
@@ -27,6 +26,7 @@ class RestApiContext:
         self.locale = locale
         self.__device_id = device_id
         self.__store_server_key = False
+        self.proxies = None
 
     def __get_server_base(self):
         return self.__server_base
@@ -53,6 +53,15 @@ class RestApiContext:
 
     def __get_store_server_key(self):
         return self.__store_server_key
+
+    def set_proxy(self, proxy_server):
+        if proxy_server:
+            self.proxies = {
+                'http': proxy_server,
+                'https': proxy_server
+            }
+        else:
+            self.proxies = None
 
     server_base = property(__get_server_base, __set_server_base)
     device_id = property(__get_device_id, __set_device_id)
@@ -121,6 +130,7 @@ class KeeperParams:
         self.record_type_cache = {}  # RT definitions only
         self.breach_watch = None
         self.breach_watch_records = None
+        self.__proxy = None
 
     def clear_session(self):
         self.auth_verifier = None
@@ -186,6 +196,13 @@ class KeeperParams:
         self.__server = value
         self.__rest_context.server_base = value
 
+    def __get_proxy(self):
+        return self.__proxy
+
+    def __set_proxy(self, value):
+        self.__proxy = value
+        self.__rest_context.set_proxy(self.__proxy)
+
     def queue_audit_event(self, name, **kwargs):
         # type: (str, ...) -> None
         if self.license and 'account_type' in self.license:
@@ -195,6 +212,7 @@ class KeeperParams:
                     'inputs': {x: kwargs[x] for x in kwargs if x in {'record_uid', 'file_format', 'attachment_id', 'to_username'}}
                 })
 
+    proxy = property(__get_proxy, __set_proxy)
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
 

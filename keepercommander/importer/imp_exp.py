@@ -1967,5 +1967,5 @@ class KeeperAttachment(ImportAttachment):
         if rs['result'] == 'success':
             dl = rs['downloads'][0]
             if 'url' in dl:
-                with requests.get(dl['url'], stream=True) as rq_http:
+                with requests.get(dl['url'], proxies=self.params.rest_context.proxies, stream=True) as rq_http:
                     yield rq_http.raw

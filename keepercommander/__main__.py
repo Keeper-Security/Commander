@@ -102,6 +102,9 @@ def get_params_from_config(config_filename):
                     if 'private_key' in params.config:
                         params.device_private_key = params.config['private_key']
 
+                    if 'proxy' in params.config:
+                        params.proxy = params.config['proxy']
+
             except Exception as e:
                 logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
                 answer = input('Do you want to delete it (y/N): ')
@@ -137,6 +140,7 @@ parser.add_argument('--login-v3', '-lv3', dest='login_v3', action='store', help=
 parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
                     help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
                          'Windows Start Menu.')
+parser.add_argument('--proxy', dest='proxy', action='store', help='Proxy server..')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
@@ -173,6 +177,9 @@ def main(from_package=False):
 
     if opts.login_v3:
         params.login_v3 = 'TRUE'.startswith(str(opts.login_v3).upper())
+
+    if opts.proxy:
+        params.proxy = opts.proxy
 
     if opts.server:
         params.server = opts.server
