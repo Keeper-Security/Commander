@@ -374,12 +374,18 @@ class LoginV3Flow:
         server = urlparse(params.rest_context.server_base).hostname
         store_config = not params.config or \
                        params.config.get('user') != params.user or \
-                       params.config.get('server') not in [server, params.rest_context.server_base]
+                       params.config.get('server') not in [server, params.rest_context.server_base] or \
+                       (params.config.get('proxy') or '') != (params.proxy or '')
 
         if store_config:
             params.config['user'] = params.user
             if params.config.get('server') not in [server, params.rest_context.server_base]:
                 params.config['server'] = server
+            if params.proxy:
+                params.config['proxy'] = params.proxy
+            else:
+                if 'proxy' in params.config:
+                    del params.config['proxy']
 
             if params.config_filename:
                 try:

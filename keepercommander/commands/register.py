@@ -1402,7 +1402,7 @@ class FileReportCommand(Command):
                             file_ids[file_id] = dl['error_code']
                     for file_id in urls:
                         url = urls[file_id]
-                        opt_rs = requests.get(url, headers={"Range": "bytes=0-1"})
+                        opt_rs = requests.get(url, proxies=params.rest_context.proxies, headers={"Range": "bytes=0-1"})
                         file_ids[file_id] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
                 except Exception as e:
                     logging.debug(e)

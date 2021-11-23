@@ -15,7 +15,6 @@ from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from .subfolder import BaseFolderNode
 from keepercommander import __version__
-from keepercommander import versioning
 
 init()
 
@@ -42,8 +41,6 @@ def welcome():
     print('')
     print(bcolors.FAIL, 'password manager & digital vault' + bcolors.ENDC)
     print('')
-
-    versioning.welcome_print_version()
 
 
 def formatted_records(records, **kwargs):
