@@ -149,8 +149,8 @@ class ConvertCommand(Command):
             rq = record_pb2.RecordsConvertToV3Request()
             record_rq_by_uid = {}
             for record in records:
-                convert_result = recordv3.RecordV3.convert_to_record_type(
-                    record.record_uid, params, record_type=record_type
+                convert_result, file_ids = recordv3.RecordV3.convert_to_record_type(
+                    record.record_uid, params, record_type=record_type, return_file_ids=True
                 )
                 if convert_result:
                     v3_record = api.get_record(params, record.record_uid)
