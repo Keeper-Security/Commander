@@ -1351,7 +1351,7 @@ class RecordV3:
         files = extra.get('files') or []
         has_files = len(file_ids) > 0 or len(files) > 0
         if has_files:
-            logging.error(bcolors.FAIL + 'Record %s has file atachments. Not convertible.' + bcolors.ENDC, record_uid)
+            logging.error(bcolors.FAIL + 'Record %s has file attachments. Not convertible.' + bcolors.ENDC, record_uid)
             return result
 
         # check for other non-convertible data - ex. fields[] has "field_type" != "totp" if present

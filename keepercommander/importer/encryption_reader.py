@@ -1,5 +1,4 @@
 import os
-from contextlib import contextmanager
 from io import RawIOBase, BufferedReader, IOBase, BytesIO
 
 from Cryptodome.Cipher import AES
