@@ -576,7 +576,7 @@ class VersionCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        version_details = is_up_to_date_version()
+        version_details = is_up_to_date_version(params)
         is_verbose = kwargs.get('verbose') or False
 
         this_app_version = __version__
