@@ -12,15 +12,23 @@ import argparse
 import fnmatch
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
+from collections import OrderedDict
 
-from keepercommander import api, loginv3, record_pb2, recordv3
+import requests
+
+from keepercommander import api, crypto, loginv3, record_pb2, recordv3, utils
 from keepercommander.subfolder import try_resolve_path
 from .folder import get_folder_path
 from .base import raise_parse_exception, suppress_exit, Command
+from .helpers.file_id import file_id_to_int64
 
 
 DEFAULT_CONVERT_TO_V3_RECORD_TYPE = 'login'
+TMPDIR_PREFIX = 'keepercommander_convert_v2_files_'
 
 
 def register_commands(commands):
@@ -47,6 +55,46 @@ convert_parser.add_argument(
 )
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
+
+
+def convert_files_to_v3(params, files_by_record, tmpdir=None):
+    rq_batch = []
+    for record_uid, files in files_by_record.items():
+        file_ids = [f['id'] for f in files]
+        rq = {
+            'command': 'request_download',
+            'file_ids': file_ids,
+        }
+        api.resolve_record_access_path(params, record_uid, path=rq)
+        rq_batch.append(rq)
+
+    results = api.execute_batch(params, rq_batch)
+    file_count = sum(len(rs['downloads']) for rs in results if rs['result'] == 'success')
+    if file_count > 0:
+        logging.info(f'Converting {file_count} file attachments:')
+        if tmpdir is None:
+            tmpdir = tempfile.mkdtemp(prefix=TMPDIR_PREFIX)
+        else:
+            if not os.path.exists(tmpdir):
+                os.makedirs(tmpdir)
+            tmpdir = os.path.abspath(tmpdir)
+
+        downloaded_files = []
+        i = 0
+
+    for files, rs in zip(files_by_record.values(), results):
+        if rs['result'] == 'success':
+            for f_info, dl in zip(files, rs['downloads']):
+                i += 1
+                if f_info['id'] not in downloaded_files and 'url' in dl:
+                    rq_http = requests.get(dl['url'], proxies=params.rest_context.proxies, stream=True)
+                    f_info['tmpfile'] = os.path.join(tmpdir, f_info['id'])
+                    f_info['filename'] = f_info.get('title') or f_info.get('name') or f_info.get('id')
+                    with open(f_info['tmpfile'], 'wb') as f:
+                        print(f'{i + 1}. Downloading {f_info["filename"]} ... ', end='', flush=True)
+                        shutil.copyfileobj(rq_http.raw, f)
+                        print('Done')
+                    downloaded_files.append(f_info['id'])
 
 
 def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
@@ -145,28 +193,48 @@ class ConvertCommand(Command):
                 if dry_run:
                     print(f'{path}{record.title} ({record.record_uid})')
 
+        upload_records_with_files = OrderedDict()
         if not dry_run:
             rq = record_pb2.RecordsConvertToV3Request()
             record_rq_by_uid = {}
             for record in records:
-                convert_result, file_ids = recordv3.RecordV3.convert_to_record_type(
-                    record.record_uid, params, record_type=record_type, return_file_ids=True
+                convert_result, file_info = recordv3.RecordV3.convert_to_record_type(
+                    record.record_uid, params, record_type=record_type, return_files=True
                 )
                 if convert_result:
-                    v3_record = api.get_record(params, record.record_uid)
+                    upload_records_with_files[record.record_uid] = file_info
                 else:
                     logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
                     continue
 
+            for record_uid, files in upload_records_with_files.items():
+                v3_record = api.get_record(params, record_uid)
                 record_rq, audit_data = api.prepare_record_v3(params, v3_record)
-                record_rq_by_uid[record.record_uid] = record_rq
+                record_rq_by_uid[record_uid] = record_rq
 
                 rc = record_pb2.RecordConvertToV3()
-                rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
+                rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_uid)
                 rc.client_modified_time = record_rq['client_modified_time']
                 rc.revision = record_rq['revision']
                 rc.data = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['data'])
                 rc.audit.data = audit_data
+                for f_info in files:
+                    data = {}
+                    for k in ('name', 'size', 'title', 'lastModified', 'type'):
+                        data[k] = f_info[k]
+
+                    file_uid = api.generate_record_uid()
+                    file_key = utils.generate_aes_key()
+
+                    rf = record_pb2.RecordFileForConversion()
+                    rf.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(file_uid)
+                    rf.file_file_id = file_id_to_int64(f_info['id'])
+                    rf.data = api.encrypt_aes_plain(json.dumps(data).encode('utf-8'), file_key)
+                    rf.record_key = api.encrypt_aes_plain(file_key, params.data_key)
+                    rf.link_key = crypto.encrypt_aes_v2(
+                        file_key, params.record_cache[record_uid]['record_key_unencrypted']
+                    )
+                    rc.record_file.append(rf)
                 rq.records.append(rc)
 
             if len(record_rq_by_uid) > 0:
