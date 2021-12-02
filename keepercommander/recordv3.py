@@ -1324,9 +1324,9 @@ class RecordV3:
         return result
 
     @staticmethod
-    def convert_to_record_type(record_uid, params, record_type='general', return_file_ids=False):
+    def convert_to_record_type(record_uid, params, record_type='general', return_files=False):
         # Converts records v2 to v3
-        result = False, [] if return_file_ids else False
+        result = False, [] if return_files else False
 
         if not (record_uid and params and params.record_cache and record_uid in params.record_cache):
             logging.error(bcolors.FAIL + 'Record %s not found.' + bcolors.ENDC, record_uid)
@@ -1350,11 +1350,11 @@ class RecordV3:
         udata_file_ids = udata.get('file_ids') or []
         files = extra.get('files') or []
         has_files = len(udata_file_ids) > 0 or len(files) > 0
-        file_ids = []
+        return_file_info = []
         if has_files:
-            if return_file_ids:
+            if return_files:
                 for f_info in files:
-                    file_ids.append(f_info['id'])
+                    return_file_info.append(f_info)
             else:
                 logging.error(bcolors.FAIL + 'Record %s has file attachments. Not convertible.' + bcolors.ENDC, record_uid)
                 return result
@@ -1414,7 +1414,7 @@ class RecordV3:
         record['data_unencrypted'] = json.dumps(rt)
         record['client_modified_time'] = api.current_milli_time()
 
-        result = True, file_ids if return_file_ids else True
+        result = True, return_file_info if return_files else True
         return result
 
     @staticmethod
