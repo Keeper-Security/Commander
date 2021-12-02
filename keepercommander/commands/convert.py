@@ -12,13 +12,8 @@ import argparse
 import fnmatch
 import json
 import logging
-import os
 import re
-import shutil
-import tempfile
 from collections import OrderedDict
-
-import requests
 
 from keepercommander import api, crypto, loginv3, record_pb2, recordv3, utils
 from keepercommander.subfolder import try_resolve_path
@@ -28,7 +23,6 @@ from .helpers.file_id import file_id_to_int64
 
 
 DEFAULT_CONVERT_TO_V3_RECORD_TYPE = 'login'
-TMPDIR_PREFIX = 'keepercommander_convert_v2_files_'
 
 
 def register_commands(commands):
@@ -55,46 +49,6 @@ convert_parser.add_argument(
 )
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
-
-
-def convert_files_to_v3(params, files_by_record, tmpdir=None):
-    rq_batch = []
-    for record_uid, files in files_by_record.items():
-        file_ids = [f['id'] for f in files]
-        rq = {
-            'command': 'request_download',
-            'file_ids': file_ids,
-        }
-        api.resolve_record_access_path(params, record_uid, path=rq)
-        rq_batch.append(rq)
-
-    results = api.execute_batch(params, rq_batch)
-    file_count = sum(len(rs['downloads']) for rs in results if rs['result'] == 'success')
-    if file_count > 0:
-        logging.info(f'Converting {file_count} file attachments:')
-        if tmpdir is None:
-            tmpdir = tempfile.mkdtemp(prefix=TMPDIR_PREFIX)
-        else:
-            if not os.path.exists(tmpdir):
-                os.makedirs(tmpdir)
-            tmpdir = os.path.abspath(tmpdir)
-
-        downloaded_files = []
-        i = 0
-
-    for files, rs in zip(files_by_record.values(), results):
-        if rs['result'] == 'success':
-            for f_info, dl in zip(files, rs['downloads']):
-                i += 1
-                if f_info['id'] not in downloaded_files and 'url' in dl:
-                    rq_http = requests.get(dl['url'], proxies=params.rest_context.proxies, stream=True)
-                    f_info['tmpfile'] = os.path.join(tmpdir, f_info['id'])
-                    f_info['filename'] = f_info.get('title') or f_info.get('name') or f_info.get('id')
-                    with open(f_info['tmpfile'], 'wb') as f:
-                        print(f'{i + 1}. Downloading {f_info["filename"]} ... ', end='', flush=True)
-                        shutil.copyfileobj(rq_http.raw, f)
-                        print('Done')
-                    downloaded_files.append(f_info['id'])
 
 
 def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
