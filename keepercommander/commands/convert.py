@@ -158,7 +158,12 @@ class ConvertCommand(Command):
                     logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
                     continue
 
-                record_rq, audit_data = api.prepare_record_v3(params, v3_record)
+                prepare_result = api.prepare_record_v3(params, v3_record)
+                if prepare_result:
+                    record_rq, audit_data = prepare_result
+                else:
+                    logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
+                    continue
                 record_rq_by_uid[record.record_uid] = record_rq
 
                 rc = record_pb2.RecordConvertToV3()
