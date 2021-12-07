@@ -13,6 +13,7 @@ import fnmatch
 import json
 import logging
 import re
+from collections import OrderedDict
 
 from keepercommander import api, loginv3, record_pb2, recordv3
 from keepercommander.subfolder import try_resolve_path
@@ -33,6 +34,9 @@ def register_command_info(aliases, command_info):
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
 convert_parser.add_argument('-t', '--type', dest='type', action='store', help='Convert to record type')
+convert_parser.add_argument(
+    '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
+)
 convert_parser.add_argument(
     '-u', '--url', dest='url', action='store', help='Convert records with URL pattern (* for record with any URL)'
 )
@@ -132,22 +136,24 @@ class ConvertCommand(Command):
             logging.warning(msg)
             return
 
-        dry_run = kwargs.get('dry_run', False)
-        if dry_run:
-            print(f'The following records would be converted to records with type "{record_type}":')
-
         # Sort records and if dry run print
         records = []
+        record_names = OrderedDict()
         for folder_uid in sorted(folder_path, key=lambda x: folder_path[x]):
             path = folder_path[folder_uid]
             for record in sorted(records_by_folder[folder_uid], key=lambda x: getattr(x, 'title')):
                 records.append(record)
-                if dry_run:
-                    print(f'{path}{record.title} ({record.record_uid})')
+                record_names[record.record_uid] = path + record.title
 
-        if not dry_run:
+        dry_run = kwargs.get('dry_run', False)
+        if dry_run:
+            print(
+                f'The following {len(records)} records were matched'
+                f' and would be converted to records with type "{record_type}":'
+            )
+            print('\n'.join(f'{v} ({k})' for k, v in record_names.items()))
+        else:
             rq = record_pb2.RecordsConvertToV3Request()
-            record_rq_by_uid = {}
             for record in records:
                 convert_result = recordv3.RecordV3.convert_to_record_type(
                     record.record_uid, params, record_type=record_type
@@ -155,16 +161,15 @@ class ConvertCommand(Command):
                 if convert_result:
                     v3_record = api.get_record(params, record.record_uid)
                 else:
-                    logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
+                    logging.warning(f'Conversion failed for {record_names[record.record_uid]} ({record.record_uid})\n')
                     continue
 
                 prepare_result = api.prepare_record_v3(params, v3_record)
                 if prepare_result:
                     record_rq, audit_data = prepare_result
                 else:
-                    logging.warning(f'Conversion failed for {record.title} ({record.record_uid})')
+                    logging.warning(f'Conversion failed for {record_names[record.record_uid]} ({record.record_uid})\n')
                     continue
-                record_rq_by_uid[record.record_uid] = record_rq
 
                 rc = record_pb2.RecordConvertToV3()
                 rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
@@ -174,8 +179,22 @@ class ConvertCommand(Command):
                 rc.audit.data = audit_data
                 rq.records.append(rc)
 
-            if len(record_rq_by_uid) > 0:
+            quiet = kwargs.get('quiet', False)
+            if not quiet:
+                logging.info(f'Matched {len(records)} record(s)')
+
+            if len(rq.records) > 0:
                 rq.client_time = api.current_milli_time()
-                result = api.get_record_v3_response(
-                    params, rq, 'vault/records_convert3', record_rq_by_uid, silent=kwargs.get('silent')
-                )
+                rs = api.communicate_rest(params, rq, 'vault/records_convert3')
+                if not quiet:
+                    records_modify_rs = record_pb2.RecordsModifyResponse()
+                    records_modify_rs.ParseFromString(rs)
+                    success = record_pb2.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number
+                    converted_record_names = [
+                        record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)]
+                        for r in records_modify_rs.records if r.status == success
+                    ]
+                    logging.info(f'Successfully converted the following {len(converted_record_names)} record(s):')
+                    logging.info('\n'.join(converted_record_names))
+            elif not quiet:
+                logging.info('No records successfully converted')
