@@ -491,7 +491,11 @@ class RecordV3:
         'licenseNumber': {
             '$id': 'licenseNumber',
             'type': 'multiline'
-        }
+        },
+        'multiline': {
+            '$id': 'multiline',
+            'type': 'multiline'
+        },
         # 'custom: {
         #   '$id': 'custom',
         #   'type': 'custom'
@@ -1603,9 +1607,14 @@ class RecordV3:
             fields = [x.get('$ref') for x in fields]
             for fname in fields:
                 ft = RecordV3.get_field_type(fname)
-                if not ft or not ft.get('id'):
-                    logging.error(bcolors.FAIL + 'Error - Unknown field type: ' + fname + bcolors.ENDC)
-                    continue
+                if not ft:
+                    ft = {
+                        'id': fname,
+                        'type': 'text',
+                        'valueType': 'string',
+                        'value': '',
+                        'sample': 'unknown type'
+                    }
 
                 val = {
                     'type': fname,
@@ -1630,7 +1639,7 @@ class RecordV3:
             logging.error(bcolors.FAIL + 'Unable to find record type definition for type: ' + str(rt_name) +
                           '   To show available record types definitions use `record-type-info --list-record *` command' + bcolors.ENDC)
 
-        result = json.dumps(rte) if rte else ''
+        result = json.dumps(rte, indent=2) if rte else ''
         return result
 
     @staticmethod
