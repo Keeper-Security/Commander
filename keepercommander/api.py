@@ -811,7 +811,7 @@ def sync_down(params):
                 del params.subfolder_cache[shared_folder_uid]
 
     # process record keys
-    records_to_delete = []
+    records_to_delete = []  # type: List[dict]
     for record_uid in params.record_cache:
         record = params.record_cache[record_uid]
         record_key = record.get('record_key_unencrypted')
@@ -833,21 +833,35 @@ def sync_down(params):
                             record['record_key_unencrypted'] = record_key
                             break
 
-            if record_key:
-                try:
-                    if 'version' in record and record['version'] in (3, 4, 5):
-                        decoded_data = base64.urlsafe_b64decode(record['data'] + '==')
-                        record['data_unencrypted'] = decrypt_aes_plain(decoded_data, record_key)
-                    else:
-                        record['data_unencrypted'] = decrypt_data(record['data'], record_key) if 'data' in record else b'{}'
-                        record['extra_unencrypted'] = decrypt_data(record['extra'], record_key) if 'extra' in record else b'{}'
-                except Exception as e:
-                    logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
-            else:
-                records_to_delete.append(record_uid)
+            if not record_key:
+                records_to_delete.append(record)
 
-    for record_uid in records_to_delete:
+    for record in records_to_delete:
+        record_uid = record['record_uid']
+        if 'link_key' in record and 'owner_uid' in record:
+            try:
+                host_record_uid = record['owner_uid']
+                if host_record_uid in params.record_cache:
+                    host_record_key = params.record_cache[host_record_uid]['record_key_unencrypted']
+                    record['record_key_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['link_key']), host_record_key)
+                    continue
+            except Exception as e:
+                logging.debug('Record %s link key decryption error: %s', record_uid, e)
         params.record_cache.pop(record_uid)
+
+    # decrypt records
+    for record_uid in params.record_cache:
+        record = params.record_cache[record_uid]
+        record_key = record.get('record_key_unencrypted')
+        if record_key and 'data_unencrypted' not in record:
+            try:
+                if 'version' in record and record['version'] in (3, 4, 5):
+                    record['data_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['data']), record_key) if 'data' in record else b'{}'
+                else:
+                    record['data_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(record['data']), record_key) if 'data' in record else b'{}'
+                    record['extra_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(record['extra']), record_key) if 'extra' in record else b'{}'
+            except Exception as e:
+                logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
 
     # decrypt user folders
     if 'user_folders' in response_json:
