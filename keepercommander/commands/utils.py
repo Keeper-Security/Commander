@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
@@ -20,11 +21,11 @@ import platform
 from datetime import datetime, timedelta
 from distutils.util import strtobool
 from time import time
-from urllib.parse import urlparse
 
 import requests
 import tempfile
 import json
+import urllib.parse
 
 from google.protobuf.json_format import MessageToDict
 from tabulate import tabulate
@@ -34,7 +35,7 @@ from Cryptodome.Math.Numbers import Integer
 
 import keepercommander
 from .recordv3 import get_record, RecordRemoveCommand
-from ..APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
+from ..APIRequest_pb2 import ApiRequestPayload, ApiRequest, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
@@ -44,7 +45,7 @@ from ..display import bcolors
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..record import Record
-from .. import api, constants, rest_api, loginv3
+from .. import api, constants, rest_api, loginv3, crypto, utils
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from ..record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
@@ -59,6 +60,7 @@ from ..error import CommandError, KeeperApiError
 from .. import __version__
 from ..utils import json_to_base64
 from ..versioning import is_binary_app, is_up_to_date_version
+from ..proto import ssocloud_pb2 as ssocloud
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -1523,7 +1525,7 @@ class KSMCommand(Command):
                         else:
                             tmp_server = params.server
 
-                        token_w_prefix = f'{urlparse(tmp_server).netloc.lower()}:{token}'
+                        token_w_prefix = f'{urllib.parse.urlparse(tmp_server).netloc.lower()}:{token}'
 
                     otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token_w_prefix}{bcolors.ENDC}\n'
                     tokens.append(token_w_prefix)
@@ -1622,6 +1624,38 @@ class LogoutCommand(Command):
                 api.communicate_rest(params, None, 'vault/logout_v3')
             except:
                 pass
+        if params.sso_login_info and 'idp_session_id' in params.sso_login_info:
+            sso_url = params.sso_login_info.get('sso_url') or ''
+            sp_url_builder = urllib.parse.urlparse(sso_url)
+            sp_url_query = urllib.parse.parse_qsl(sp_url_builder.query)
+            session_id = params.sso_login_info.get('idp_session_id') or ''
+            if params.sso_login_info.get('is_cloud'):
+                sso_rq = ssocloud.SsoCloudRequest()
+                sso_rq.clientVersion = rest_api.CLIENT_VERSION
+                sso_rq.embedded = True
+                sso_rq.username = params.user.lower()
+                sso_rq.idpSessionId = session_id
+                transmission_key = utils.generate_aes_key()
+                rq_payload = ApiRequestPayload()
+                rq_payload.apiVersion = 3
+                rq_payload.payload = sso_rq.SerializeToString()
+                api_rq = ApiRequest()
+                api_rq.locale = params.rest_context.locale or 'en_US'
+                api_rq.encryptedTransmissionKey = rest_api.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
+                api_rq.publicKeyId = params.rest_context.server_key_id
+                api_rq.encryptedPayload = crypto.encrypt_aes_v2(rq_payload.SerializeToString(), transmission_key)
+                sp_url_query.append(('payload', utils.base64_url_encode(api_rq.SerializeToString())))
+            else:
+                sp_url_query.append(('embedded', ''))
+                sp_url_query.append(('token', ''))
+                sp_url_query.append(('user', params.user.lower()))
+                if session_id:
+                    sp_url_query.append(('session_id', session_id))
+
+            sp_url_builder = sp_url_builder._replace(path=sp_url_builder.path.replace('/login', '/logout'), query=urllib.parse.urlencode(sp_url_query, doseq=True))
+            sp_url = urllib.parse.urlunparse(sp_url_builder)
+            logging.info('SSO Logout URL\n%s', sp_url)
+
         params.clear_session()
 
 

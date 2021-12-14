@@ -5,7 +5,9 @@ import json
 import logging
 import os
 import re
-from urllib.parse import urlparse
+import pyperclip
+
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 from collections import OrderedDict
 from sys import platform as _platform
 
@@ -22,6 +24,7 @@ from .humps import decamelize
 
 from . import api, utils, crypto
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
+from .proto import ssocloud_pb2 as ssocloud
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 from .proto import breachwatch_pb2 as breachwatch_proto
 from .display import bcolors
@@ -54,7 +57,12 @@ class LoginV3Flow:
             if params.user.lower() != config_user.lower():
                 clone_code_bytes = None
 
-        resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
+        params.sso_login_info = None
+        login_type = 'NORMAL'
+        if params.config and params.config.get('sso_master_password'):
+            login_type = 'ALTERNATE'
+
+        resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
 
         is_alternate_login = False
 
@@ -107,18 +115,20 @@ class LoginV3Flow:
 
                 # raise Exception('Username is required.')
 
-            elif resp.loginState == proto.REDIRECT_ONSITE_SSO \
-                    or resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nSSO user detected. Attempting to authenticate with a master password." + bcolors.ENDC + bcolors.ENDC)
-                logging.info(bcolors.OKBLUE + "(Note: SSO users can create a Master Password in Web Vault > Settings)\n" + bcolors.ENDC)
-
-                is_alternate_login = True
-
-                resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
+            elif resp.loginState == proto.REDIRECT_ONSITE_SSO  or resp.loginState == proto.REDIRECT_CLOUD_SSO:
+                encryptedLoginToken = LoginV3Flow.handleSsoRedirect(params, resp.loginState == proto.REDIRECT_CLOUD_SSO, resp.url, resp.encryptedLoginToken)
+                if encryptedLoginToken:
+                    resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken, loginMethod='AFTER_SSO')
+                else:
+                    logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nAttempting to authenticate with a master password." + bcolors.ENDC + bcolors.ENDC)
+                    logging.info(bcolors.OKBLUE + "(Note: SSO users can create a Master Password in Web Vault > Settings)\n" + bcolors.ENDC)
+                    is_alternate_login = True
+                    resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
 
             elif resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY:
-                # TODO: Restart login
-                raise Exception('Device encrypted data key is not supported by Commander %s at this time.' % rest_api.CLIENT_VERSION)
+                encryptedLoginToken = resp.encryptedLoginToken
+                LoginV3Flow.handleSsoRequestDataKey(params, resp.encryptedLoginToken, encryptedDeviceToken)
+                resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_ACCOUNT_CREATION:
                 # if isSSOAccount:
@@ -139,6 +149,10 @@ class LoginV3Flow:
                 salt_iterations = salt.iterations
 
                 while True:
+                    if not params.password and params.sso_login_info:
+                        if 'sso_password' in params.sso_login_info and params.sso_login_info['sso_password']:
+                            params.password = params.sso_login_info['sso_password'].pop()
+
                     CommonHelperMethods.fill_password_with_prompt_if_missing(params)
                     if not params.password:
                         return
@@ -153,7 +167,8 @@ class LoginV3Flow:
                     except KeeperApiError as kae:
                         if kae.result_code == 'auth_failed':
                             params.password = None
-                            logging.info(kae)
+                            if not params.sso_login_info:
+                                logging.info(kae)
                         else:
                             raise kae
 
@@ -253,7 +268,10 @@ class LoginV3Flow:
         """
         if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
             decrypted_data_key = CommonHelperMethods.decrypt_ec(params, resp.encryptedDataKey)
-            login_type_message = bcolors.UNDERLINE + "Persistent Login"
+            if params.sso_login_info:
+                login_type_message = bcolors.UNDERLINE + "SSO Login"
+            else:
+                login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
         elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
             decrypted_data_key = api.decrypt_encryption_params(
@@ -468,6 +486,145 @@ class LoginV3Flow:
 
         elif selection == "":
             return True
+
+    @staticmethod
+    def handleSsoRequestDataKey(params, login_token, device_token):  # type: (KeeperParams, bytes) -> None
+        print('Approve this device by selecting a method below:')
+        print('  1. Keeper Push. Send a push notification to your device.')
+        print('  2. Admin Approval. Request your admin to approve this device.')
+        print('')
+        print('  r. Resume SSO login after device is approved.')
+        print('  q. Quit SSO login attempt and return to Commander prompt.')
+
+        while True:
+            answer = input('Selection: ')
+            if answer == 'q':
+                raise KeyboardInterrupt()
+            if answer == 'r':
+                return
+            try:
+                if answer == '1':
+                    rq = proto.TwoFactorSendPushRequest()
+                    rq.pushType = proto.TWO_FA_PUSH_KEEPER
+                    rq.encryptedLoginToken = login_token
+
+                    api.communicate_rest(params, rq, "authentication/2fa_send_push")
+                elif answer == '2':
+                    rq = proto.DeviceVerificationRequest()
+                    rq.username = params.user
+                    rq.clientVersion = rest_api.CLIENT_VERSION
+                    rq.encryptedDeviceToken = device_token
+
+                    rs = api.communicate_rest(params, rq, "authentication/request_device_admin_approval", rs_type=proto.DeviceVerificationResponse)
+                    if rs.deviceStatus == proto.DEVICE_OK:
+                        return
+                elif answer:
+                    logging.info(f'Action \"{answer}\" is not supported.')
+            except Exception as e:
+                logging.warning(f'Device approval request failed: {e}')
+
+    @staticmethod
+    def handleSsoRedirect(params, is_cloud, sso_url, login_token):  # type: (KeeperParams, bool, str, bytes) -> bytes
+        sp_url_builder = urlparse(sso_url)
+        sp_url_query = parse_qsl(sp_url_builder.query, keep_blank_values=True)
+        if is_cloud:
+            sso_rq = ssocloud.SsoCloudRequest()
+            sso_rq.clientVersion = rest_api.CLIENT_VERSION
+            sso_rq.embedded = True
+            sso_rq.username = params.user.lower()
+            sso_rq.forceLogin = False
+
+            transmission_key = utils.generate_aes_key()
+            rq_payload = proto.ApiRequestPayload()
+            rq_payload.apiVersion = 3
+            rq_payload.payload = sso_rq.SerializeToString()
+            api_rq = proto.ApiRequest()
+            api_rq.locale = params.rest_context.locale or 'en_US'
+            api_rq.encryptedTransmissionKey = rest_api.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
+            api_rq.publicKeyId = params.rest_context.server_key_id
+            api_rq.encryptedPayload = crypto.encrypt_aes_v2(rq_payload.SerializeToString(), transmission_key)
+
+            sp_url_query.append(('payload', utils.base64_url_encode(api_rq.SerializeToString())))
+        else:
+            rsa_private, rsa_public = crypto.generate_rsa_key()
+            rsa_public_bytes = crypto.unload_rsa_public_key(rsa_public)
+            sp_url_query.append(('key', utils.base64_url_encode(rsa_public_bytes)))
+            sp_url_query.append(('embedded', ''))
+
+        sp_url_builder = sp_url_builder._replace(query=urlencode(sp_url_query, doseq=True))
+        sp_url = urlunparse(sp_url_builder)
+        print(f'\nSSO Login URL:\n{sp_url}')
+        try:
+            pyperclip.copy(sp_url)
+            print('\nSSO Login URL is copied to clipboard.')
+            print('')
+        except:
+            pass
+        print('Navigate to SSO Login URL with your browser and complete login.')
+        print('Copy a returned SSO token into clipboard.')
+        print('Paste that token into Commander')
+        print('NOTE: To copy SSO Token please select "View Page Source" from right-click context menu on "SSO Connect" page.')
+        print('      Then scroll down to the end of the page to "<script>" HTML section.')
+        print('      You can find SSO token in \'var token = "<SSO TOKEN>";\' line. Copy into clipboard the text between double quotes.')
+        print('      Commander team is working on making SSO token copy process simpler.')
+        print('')
+        print('  a. SSO User with a Master Password')
+        print('  p. Paste SSO Token from clipboard')
+        print('  q. Quit SSO login attempt and return to Commander prompt')
+
+        while True:
+            token = input('Selection: ')
+            if token == 'q':
+                raise KeyboardInterrupt()
+            if token == 'a':
+                return None
+            if token == 'p':
+                try:
+                    token = pyperclip.paste()
+                except:
+                    token = ''
+                    logging.info('Failed to paste from clipboard')
+            if token:
+                try:
+                    if is_cloud:
+                        rs_bytes = crypto.decrypt_aes_v2(utils.base64_url_decode(token), transmission_key)
+                        sso_rs = ssocloud.SsoCloudResponse()
+                        sso_rs.ParseFromString(rs_bytes)
+                        params.user = sso_rs.email
+                        params.sso_login_info = {
+                            'is_cloud': is_cloud,
+                            'sso_provider': sso_rs.providerName,
+                            'idp_session_id': sso_rs.idpSessionId,
+                            'sso_url': sso_url,
+                        }
+                        return sso_rs.encryptedLoginToken
+                    else:
+                        sso_dict = json.loads(token)
+                        if 'email' in sso_dict:
+                            params.user = sso_dict['email']
+
+                        params.sso_login_info = {
+                            'is_cloud': is_cloud,
+                            'sso_provider': sso_dict.get('provider_name') or '',
+                            'idp_session_id': sso_dict.get('session_id') or '',
+                            'sso_url': sso_url,
+                            'sso_password': []
+                        }
+                        if 'password' in sso_dict:
+                            pswd = utils.base64_url_decode(sso_dict['password'])
+                            pswd = crypto.decrypt_rsa(pswd, rsa_private)
+                            params.sso_login_info['sso_password'].append(pswd.decode('utf-8'))
+                        if 'new_password' in sso_dict:
+                            pswd = utils.base64_url_decode(sso_dict['new_password'])
+                            pswd = crypto.decrypt_rsa(pswd, rsa_private)
+                            params.sso_login_info['sso_password'].append(pswd.decode('utf-8'))
+
+                        if sso_dict.get('login_token'):
+                            return utils.base64_url_decode(sso_dict.get('login_token'))
+                        else:
+                            return login_token
+                except Exception as e:
+                    logging.warning(f'SSO Login error: {e}')
 
     @staticmethod
     def handleTwoFactor(params: KeeperParams, encryptedLoginToken, login_resp):
@@ -748,7 +905,7 @@ class LoginV3API:
         return rest_api.execute_rest(params.rest_context, 'authentication/validate_device_verification_code', api_request_payload)
 
     @staticmethod
-    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):
+    def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL', loginMethod='EXISTING_ACCOUNT'):
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.encryptedLoginToken = encryptedLoginToken
@@ -756,7 +913,7 @@ class LoginV3API:
         rq.username = params.user.lower()
         rq.loginType = proto.LoginType.Value(loginType)
         if cloneCode:
-            rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
+            rq.loginMethod = proto.LoginMethod.Value(loginMethod)
             rq.cloneCode = cloneCode
 
         api_request_payload = proto.ApiRequestPayload()

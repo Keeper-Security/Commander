@@ -130,6 +130,7 @@ class KeeperParams:
         self.record_type_cache = {}  # RT definitions only
         self.breach_watch = None
         self.breach_watch_records = None
+        self.sso_login_info = None
         self.__proxy = None
 
     def clear_session(self):
@@ -185,6 +186,7 @@ class KeeperParams:
         self.record_type_cache = {}
         self.breach_watch = None
         self.breach_watch_records = None
+        self.sso_login_info = None
 
     def __get_rest_context(self):
         return self.__rest_context
