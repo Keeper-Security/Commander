@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import pyperclip
+import webbrowser
 
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 from collections import OrderedDict
@@ -531,6 +532,7 @@ class LoginV3Flow:
             sso_rq = ssocloud.SsoCloudRequest()
             sso_rq.clientVersion = rest_api.CLIENT_VERSION
             sso_rq.embedded = True
+            sso_rq.dest = 'commander'
             sso_rq.username = params.user.lower()
             sso_rq.forceLogin = False
 
@@ -549,17 +551,16 @@ class LoginV3Flow:
             rsa_private, rsa_public = crypto.generate_rsa_key()
             rsa_public_bytes = crypto.unload_rsa_public_key(rsa_public)
             sp_url_query.append(('key', utils.base64_url_encode(rsa_public_bytes)))
+            sp_url_query.append(('dest', 'commander'))
             sp_url_query.append(('embedded', ''))
 
+        try:
+            wb = webbrowser.get()
+        except:
+            wb = None
         sp_url_builder = sp_url_builder._replace(query=urlencode(sp_url_query, doseq=True))
         sp_url = urlunparse(sp_url_builder)
         print(f'\nSSO Login URL:\n{sp_url}')
-        try:
-            pyperclip.copy(sp_url)
-            print('\nSSO Login URL is copied to clipboard.')
-            print('')
-        except:
-            pass
         print('Navigate to SSO Login URL with your browser and complete login.')
         print('Copy a returned SSO token into clipboard.')
         print('Paste that token into Commander')
@@ -569,6 +570,9 @@ class LoginV3Flow:
         print('      Commander team is working on making SSO token copy process simpler.')
         print('')
         print('  a. SSO User with a Master Password')
+        print('  c. Copy SSO Login URL to clipboard')
+        if wb:
+            print('  o. Navigate to SSO Login URL with the default web browser')
         print('  p. Paste SSO Token from clipboard')
         print('  q. Quit SSO login attempt and return to Commander prompt')
 
@@ -578,7 +582,21 @@ class LoginV3Flow:
                 raise KeyboardInterrupt()
             if token == 'a':
                 return None
-            if token == 'p':
+            if token == 'c':
+                token = None
+                try:
+                    pyperclip.copy(sp_url)
+                    print('SSO Login URL is copied to clipboard.')
+                except:
+                    print('Failed to copy SSO Login URL to clipboard.')
+            elif token == 'o':
+                token = None
+                if wb:
+                    try:
+                        wb.open_new_tab(sp_url)
+                    except:
+                        print('Failed to open web browser.')
+            elif token == 'p':
                 try:
                     token = pyperclip.paste()
                 except:
