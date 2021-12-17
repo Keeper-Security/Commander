@@ -5,6 +5,7 @@ import codecs
 from io import BytesIO
 import struct
 import re
+from urllib.parse import urlunsplit, urlencode
 
 from Cryptodome.Cipher import AES, PKCS1_OAEP
 from Crypto.Util import number
@@ -21,6 +22,16 @@ ALLOWED_SECURE_NOTE_TYPES = [
     b"Email Account",
     b"Database",
     b"Instant Messenger",
+]
+
+# TOTP
+TOTP_URL_SCHEME = 'otpauth'
+TOTP_URL_NETLOC = 'totp'
+TOTP_URL_PATH = '/lastpass_import'
+TOTP_URL_QUERY_MAPPING = [
+    ('algorithm', 'SHA1'),
+    ('digits', '6'),
+    ('period', '30')
 ]
 
 
@@ -67,6 +78,14 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     else:
         attach_key = None
 
+    skip_item(io, 11)
+    totp_secret = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8')
+    if totp_secret:
+        totp_query_string = urlencode([('secret', totp_secret)] + TOTP_URL_QUERY_MAPPING)
+        totp_url = urlunsplit((TOTP_URL_SCHEME, TOTP_URL_NETLOC, TOTP_URL_PATH, totp_query_string, ''))
+    else:
+        totp_url = None
+
     # Parse secure note
     if secure_note == b'1':
         parsed = parse_secure_note_server(notes)
@@ -76,7 +95,7 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
             username = parsed.get('username', username)
             password = parsed.get('password', password)
 
-    return Account(id, name, username, password, url, group, notes, shared_folder, attach_key)
+    return Account(id, name, username, password, url, group, notes, shared_folder, attach_key, totp_secret, totp_url)
 
 
 def parse_PRIK(chunk, encryption_key):

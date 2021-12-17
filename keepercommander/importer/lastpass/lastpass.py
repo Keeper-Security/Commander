@@ -18,7 +18,8 @@ from glob import glob
 from typing import Optional, List
 
 from ..importer import (
-    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, replace_email_domain
+    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, replace_email_domain,
+    FIELD_TYPE_ONE_TIME_CODE
 )
 from .account import Account
 from .exceptions import LastPassUnknownError
@@ -196,6 +197,10 @@ class LastPassImporter(BaseImporter):
                 record.login = account.username.decode('utf-8')
             if account.password:
                 record.password = account.password.decode('utf-8')
+            if account.totp_url:
+                record.fields.append(
+                    RecordField(type=FIELD_TYPE_ONE_TIME_CODE, value=account.totp_url)
+                )
             if len(account.attachments) > 0:
                 if record.attachments is None:
                     record.attachments = []
