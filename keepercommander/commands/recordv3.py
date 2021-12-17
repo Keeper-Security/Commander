@@ -269,24 +269,7 @@ file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
 
-class RecordV3Mixin:
-    @staticmethod
-    def get_record_type_definition(params, rt_data):
-        result = None
-
-        rt_type = recordv3.RecordV3.get_record_type_name(rt_data)
-        if rt_type:
-            rt_def = recordv3.RecordV3.resolve_record_type_by_name(params, rt_type)
-            if rt_def:
-                result = rt_def
-            else:
-                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
-                              ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
-
-        return result
-
-
-class RecordAddCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
+class RecordAddCommand(Command, recordv2.RecordUtils):
     def get_parser(self):
         return add_parser
 
@@ -548,7 +531,7 @@ class RecordAddCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
         if not password and kwargs.get('generate'):
             password = generator.generate(16)
         if password:
-            data = recordv3.RecordV3.update_password(password, data, self.get_record_type_definition(params, data))
+            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         record_uid = api.generate_record_uid()
         logging.debug('Generated Record UID: %s', record_uid)
@@ -589,7 +572,7 @@ class RecordAddCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
             return record_uid
 
 
-class RecordEditCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
+class RecordEditCommand(Command, recordv2.RecordUtils):
     def get_parser(self):
         return edit_parser
 
@@ -795,7 +778,7 @@ class RecordEditCommand(Command, RecordV3Mixin, recordv2.RecordUtils):
             password = generator.generate(16)
         if password:
             record.password = password
-            data = recordv3.RecordV3.update_password(password, data, self.get_record_type_definition(params, data))
+            data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
         data_dict = json.loads(data)
         changed = rdata_dict != data_dict

@@ -932,6 +932,21 @@ class RecordV3:
         return result
 
     @staticmethod
+    def get_record_type_definition(params, rt_data):
+        result = None
+
+        rt_type = RecordV3.get_record_type_name(rt_data)
+        if rt_type:
+            rt_def = RecordV3.resolve_record_type_by_name(params, rt_type)
+            if rt_def:
+                result = rt_def
+            else:
+                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + str(rt_type) +
+                              ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
+
+        return result
+
+    @staticmethod
     def get_fileref_location(params, rt_data):
         # lookup for fileRef presence in following order:
         # 1) non-empty fileRef in fields[] 2) in custom 3) RT definition 4) if not found anywhere return 'custom'
