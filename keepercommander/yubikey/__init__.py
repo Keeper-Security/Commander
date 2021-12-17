@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .yubikey import u2f_authenticate
+from .yubikey import yubikey_authenticate
 
-__all__ = ['u2f_authenticate']
+__all__ = ['yubikey_authenticate']
