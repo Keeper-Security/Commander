@@ -5,13 +5,11 @@ import json
 import logging
 import os
 import re
-import pyperclip
 import webbrowser
-
-from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
-from collections import OrderedDict
 from sys import platform as _platform
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
+import pyperclip
 from Cryptodome.Math.Numbers import Integer
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -19,21 +17,22 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from google.protobuf.json_format import MessageToDict, MessageToJson
-
-from .humps import decamelize
+from google.protobuf.json_format import MessageToJson
 
 from . import api, utils, crypto
 from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .proto import ssocloud_pb2 as ssocloud
-from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
-from .proto import breachwatch_pb2 as breachwatch_proto
+from .breachwatch import BreachWatch
 from .display import bcolors
 from .error import KeeperApiError
+from .humps import decamelize
 from .params import KeeperParams
-from .breachwatch import BreachWatch
+from .proto import breachwatch_pb2 as breachwatch_proto
+from .proto import ssocloud_pb2 as ssocloud
+from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
 
-warned_on_fido_package = False
+install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
+                               'Install fido2 package ' + bcolors.OKGREEN + \
+                               '\'pip install fido2\'\n' + bcolors.ENDC
 
 permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Console -> Admin -> " \
                         "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
@@ -42,6 +41,7 @@ permissions_error_msg = "Grant Commander SDK permissions to access Keeper by nav
 
 
 class LoginV3Flow:
+    warned_on_fido_package = False
 
     @staticmethod
     def login(params, new_device=False):   # type: (KeeperParams, bool) -> None
@@ -645,63 +645,62 @@ class LoginV3Flow:
                     logging.warning(f'SSO Login error: {e}')
 
     @staticmethod
+    def two_factor_channel_to_desc(channel):
+        if channel == proto.TWO_FA_CODE_TOTP:
+            return 'TOTP (Google and Microsoft Authenticator)'
+        if channel == proto.TWO_FA_CT_SMS:
+            return 'Send SMS Code'
+        if channel == proto.TWO_FA_CODE_DUO:
+            return 'DUO'
+        if channel == proto.TWO_FA_CODE_RSA:
+            return 'RSA SecurID'
+        if channel == proto.TWO_FA_CT_U2F:
+            return 'U2F (FIDO Security Key)'
+        if channel == proto.TWO_FA_CT_WEBAUTHN:
+            return 'WebAuthN (FIDO2 Security Key)'
+        if channel == proto.TWO_FA_CODE_DNA:
+            return 'Keeper DNA (Watch)'
+
+    @staticmethod
     def handleTwoFactor(params: KeeperParams, encryptedLoginToken, login_resp):
-
-        global u2f_response
-        global warned_on_fido_package
-
         print("This account requires 2FA Authentication")
-        login_resp_dict = MessageToDict(login_resp, preserving_proto_field_name=True)
 
-        channel_types = OrderedDict([
-            ('TWO_FA_CT_U2F', 'U2F (FIDO Security Key)'),
-            ('TWO_FA_CT_SMS', 'Send SMS Code'),
-            ('TWO_FA_CT_TOTP', 'TOTP (Google and Microsoft Authenticator)'),
-            ('TWO_FA_CT_DUO', 'DUO'),
-            # ('TWO_FA_CODE_RSA', 'RSA Authenticator'),
-        ])
+        supported_channels = {proto.TWO_FA_CODE_TOTP, proto.TWO_FA_CT_SMS, proto.TWO_FA_CODE_DUO, proto.TWO_FA_CODE_RSA,
+                              proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN, proto.TWO_FA_CODE_DNA}
+        channels = [x for x in login_resp.channels if x.channelType in supported_channels]
 
+        if LoginV3Flow.warned_on_fido_package:
+            channels = [x for x in channels if x.channelType not in {proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN}]
+
+        for i in range(len(channels)):
+            channel = channels[i]
+            print(f"{i+1:>3}. {LoginV3Flow.two_factor_channel_to_desc(channel.channelType)} {channel.channelName} {channel.phoneNumber}")
+
+        print(f"  q. Quit login attempt and return to Commander prompt")
         try:
-            assert 'channels' in login_resp_dict
+            selection = input('Selection: ')
+            if selection == 'q':
+                raise KeyboardInterrupt()
+            idx = 1 if not selection else int(selection)
+            assert 1 <= idx <= len(channels)
+            channel = channels[idx-1]
+            logging.debug(f"Selected {idx}. {LoginV3Flow.two_factor_channel_to_desc(channel.channelType)}")
         except AssertionError:
-            raise Exception("No channels provided by API")
-        else:
-
-            available_channels = dict([(channel['channelType'], channel) for channel in login_resp_dict['channels']])
-
-            for n, (channel_type, channel_desc) in enumerate(channel_types.items()):
-                if channel_type in available_channels:
-                    print(f"{n+1:>3}. {channel_desc} {bcolors.OKGREEN}[ ENABLED ]{bcolors.ENDC}")
-                else:
-                    print(f"     {channel_desc}")
-
-            print(f"  q. Quit login attempt and return to Commander prompt")
-            try:
-                selection = input('Selection: ')
-                if selection == 'q':
-                    raise KeyboardInterrupt()
-                idx = 1 if not selection else int(selection)
-                assert 1 <= idx <= len(channel_types)
-                channel_type = list(channel_types.keys())[idx - 1]
-                channel = available_channels.get(channel_type)
-                logging.debug(f"Selected {idx}. {channel_type}")
-                assert channel is not None
-            except AssertionError:
-                print("Invalid entry, additional factors of authentication shown may be configured if not currently enabled.")
-                return
-            except EOFError:
-                exit(1)
+            print("Invalid entry, additional factors of authentication shown may be configured if not currently enabled.")
+            return
+        except EOFError:
+            exit(1)
 
         mfa_prompt = False
 
-        if channel_type == 'TWO_FA_CODE_NONE':
+        if channel.channelType == proto.TWO_FA_CODE_NONE:
             pass
 
-        elif channel_type == "TWO_FA_CT_SMS":
+        elif channel.channelType == proto.TWO_FA_CT_SMS:
             rs = LoginV3API.twoFactorSend2FAPushMessage(
                 params,
                 encryptedLoginToken,
-                proto.TWO_FA_PUSH_NONE,
+                channel.channelType,
                 expireIn=proto.TWO_FA_EXP_IMMEDIATELY
             )
 
@@ -712,21 +711,31 @@ class LoginV3Flow:
                 logging.error("Was unable to send SMS.")
                 raise KeeperApiError(rs['error'], rs['message'])
 
-        elif channel_type == 'TWO_FA_CODE_RSA':
-            logging.debug("DO RSA")
-            raise NotImplementedError("RSA Authentication not yet available in Commander.")
-
-        elif channel_type == "TWO_FA_CT_U2F":
+        elif channel.channelType in {proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN}:
             try:
-                from .yubikey import u2f_authenticate
-                challenge = json.loads(channel['challenge'])
-                u2f_request = challenge['authenticateRequests']
-                u2f_response = u2f_authenticate(u2f_request)
+                from .yubikey import yubikey_authenticate
+                challenge = json.loads(channel.challenge)
+                response = yubikey_authenticate(challenge)
 
-                if u2f_response:
-                    signature = json.dumps(u2f_response)
+                if response:
+                    if channel.channelType == proto.TWO_FA_CT_U2F:
+                        signature = response
+                        key_value_type = proto.TWO_FA_RESP_U2F
+                    else:
+                        signature = {
+                            "id": utils.base64_url_encode(response['credentialId']),
+                            "rawId": utils.base64_url_encode(response['credentialId']),
+                            "response": {
+                                "authenticatorData": utils.base64_url_encode(response['authenticatorData']),
+                                "clientDataJSON": response['clientData'].b64,
+                                "signature": utils.base64_url_encode(response['signature']),
+                            },
+                            "type": "public-key",
+                            "clientExtensionResults": response['extensionResults']
+                        }
+                        key_value_type = proto.TWO_FA_RESP_WEBAUTHN
 
-                    rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, signature, proto.TWO_FA_EXP_IMMEDIATELY, proto.TWO_FA_RESP_U2F)
+                    rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, json.dumps(signature), proto.TWO_FA_EXP_IMMEDIATELY, key_value_type)
 
                     if type(rs) == bytes:
 
@@ -740,23 +749,18 @@ class LoginV3Flow:
                         print(bcolors.FAIL + "Unable to verify code generated by security key" + bcolors.ENDC)
 
             except ImportError as e:
-                logging.error(e)
-                if not warned_on_fido_package:
-                    logging.warning(api.install_fido_package_warning)
-                    warned_on_fido_package = True
+
+                logging.warning(e)
+                if not LoginV3Flow.warned_on_fido_package:
+                    logging.warning(install_fido_package_warning)
+                    LoginV3Flow.warned_on_fido_package = True
             except Exception as e:
                 logging.error(e)
 
-        # elif channel_type == 'TWO_FA_RESP_WEBAUTHN':
-        # elif channel_type == 'TWO_FA_CT_KEEPER':
-        # elif channel_type == 'TWO_FA_CODE_TOTP':
-        # elif channel_type == 'TWO_FA_CODE_DUO':
-        # elif channel_type == 'TWO_FA_CODE_DNA':
-        # elif channel_type == 'EMAIL_CODE':
-        elif channel_type in ['TWO_FA_CT_TOTP', 'TWO_FA_CT_DUO']:
+        elif channel.channelType in {proto.TWO_FA_CT_TOTP, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA, proto.TWO_FA_CT_DNA}:
             mfa_prompt = True
         else:
-            raise NotImplementedError("Unhandled channel type %s" % channel_type)
+            raise NotImplementedError("Unhandled channel type %s" % channel.channelType)
 
         if mfa_prompt:
             config_expiration = params.config.get('mfa_duration') or 'login'
@@ -819,7 +823,6 @@ class LoginV3Flow:
             else:
                 warning_msg = bcolors.WARNING + "Unable to verify 2FA code '" + otp_code + "'. Regenerate the code and try again." + bcolors.ENDC
                 logging.warning(warning_msg)
-
 
 
 class LoginV3API:
