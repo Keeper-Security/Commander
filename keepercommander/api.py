@@ -77,12 +77,6 @@ def auth_verifier(password, salt, iterations):
     return au_ver.decode().rstrip('=')
 
 
-warned_on_fido_package = False
-install_fido_package_warning = 'You can use Security Key with Commander:\n' +\
-                               'Install fido2 package ' + bcolors.OKGREEN +\
-                               '\'pip install fido2\'' + bcolors.ENDC
-
-
 def login(params):
     # type: (KeeperParams) -> None
 
