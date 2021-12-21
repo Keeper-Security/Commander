@@ -2143,7 +2143,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                 user_id = user_node['enterprise_user_id']
                                 users[user_id] = is_add, user_node
                             else:
-                                logging.warning('User %s could be resolved', u)
+                                logging.warning('User %s could not be resolved', u)
 
                 if len(users) > 0:
                     for team in matched_teams:

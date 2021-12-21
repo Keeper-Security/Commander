@@ -144,3 +144,5 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                 api.communicate(params, rq)
             except Exception as e:
                 pass
+
+        api.query_enterprise(params)
