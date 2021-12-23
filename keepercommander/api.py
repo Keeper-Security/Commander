@@ -1155,6 +1155,7 @@ def get_record(params, record_uid):
         return
 
     cached_rec = params.record_cache[record_uid]
+    version = cached_rec.get('version', 2)
     rec = Record()
 
     try:
@@ -1163,14 +1164,15 @@ def get_record(params, record_uid):
         extra = None
         if 'extra_unencrypted' in cached_rec:
             extra = json.loads(cached_rec['extra_unencrypted'])
-        rec.load(data, revision=cached_rec['revision'], extra=extra)
-        if not resolve_record_view_path(params, record_uid):
-            rec.mask_password()
-        if cached_rec.get('version') == 3:
+        rec.load(data, version=version, revision=cached_rec['revision'], extra=extra)
+        if version == 3:
             rec.record_type = RecordV3.get_record_type_name(data)
             rec.login = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'login')
             rec.password = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'password')
             rec.login_url = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'url')
+            rec.totp = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'totp')
+        if not resolve_record_view_path(params, record_uid):
+            rec.mask_password()
         # if 'version' in cached_rec and cached_rec['version'] in (3, 4):
         #     if 'data_unencrypted' in cached_rec:
         #         version = cached_rec.get('version') or 0

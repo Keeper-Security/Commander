@@ -14,9 +14,12 @@ import re
 import base64
 import logging
 import requests
+import hashlib
 import time
+from tabulate import tabulate
 
 from Cryptodome.PublicKey import RSA
+from typing import Optional
 
 from .. import api
 from .base import dump_report_data, user_choice
@@ -36,6 +39,7 @@ def register_commands(commands):
     commands['share-folder'] = ShareFolderCommand()
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
+    commands['find-duplicate'] = FindDuplicateCommand()
     # commands['file-report'] = FileReportCommand()
 
 
@@ -43,7 +47,8 @@ def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
 
-    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser]:
+    for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
+              find_duplicate_parser]:
         command_info[p.prog] = p.description
 
 
@@ -124,6 +129,16 @@ file_report_parser.add_argument('-d', '--try-download', dest='try_download', act
                                 help='Try downloading every attachment you have access to.')
 file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
+
+
+find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.')
+find_duplicate_parser.add_argument('--title', dest='title', action='store_true', help='Match duplicates by title.')
+find_duplicate_parser.add_argument('--login', dest='login', action='store_true', help='Match duplicates by login.')
+find_duplicate_parser.add_argument('--password', dest='password', action='store_true', help='Match duplicates by password.')
+find_duplicate_parser.add_argument('--url', dest='url', action='store_true', help='Match duplicates by URL.')
+find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
+find_duplicate_parser.error = raise_parse_exception
+find_duplicate_parser.exit = suppress_exit
 
 
 class ShareFolderCommand(Command):
@@ -998,6 +1013,7 @@ class ShareReportCommand(Command):
 
         return '\t(shared on {0})'.format(date_formatted)
 
+
 class RecordPermissionCommand(Command):
     def get_parser(self):
         return record_permission_parser
@@ -1413,3 +1429,137 @@ class FileReportCommand(Command):
                 table.append(row)
 
         dump_report_data(table, headers)
+
+
+class FindDuplicateCommand(Command):
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return find_duplicate_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        by_title = kwargs.get('title', False)
+        by_login = kwargs.get('login', False)
+        by_password = kwargs.get('password', False)
+        by_url = kwargs.get('url', False)
+        by_custom = kwargs.get('full', False)
+        if by_custom:
+            by_title = True
+            by_login = True
+            by_password = True
+            by_url = True
+        elif not by_title and not by_login and not by_password and not by_url:
+            by_title = True
+            by_login = True
+            by_password = True
+
+        hashes = {}
+        for record_uid in params.record_cache:
+            rec = params.record_cache[record_uid]
+            if rec.get('version', 0) not in {2, 3}:
+                continue
+            record = api.get_record(params, record_uid)
+            tokens = []
+            if by_title:
+                tokens.append((record.title or '').lower())
+            if by_login:
+                tokens.append((record.login or '').lower())
+            if by_password:
+                tokens.append(record.password or '')
+            if by_url:
+                tokens.append(record.login_url or '')
+
+            hasher = hashlib.sha256()
+            non_empty = 0
+            for token in tokens:
+                if token:
+                    non_empty += 1
+                hasher.update(token.encode())
+
+            if by_custom:
+                customs = {}
+                for x in record.custom_fields:
+                    name = x.get('name')   # type: str
+                    value = x.get('value')
+                    if name and value:
+                        if isinstance(value, list):
+                            value = [str(x) for x in value]
+                            value.sort()
+                            value = '|'.join(value)
+                        elif isinstance(value, int):
+                            if value != 0:
+                                value = str(value)
+                            else:
+                                value = None
+                        elif isinstance(value, dict):
+                            keys = list(value.keys())
+                            keys.sort()
+                            value = ';'.join((f'{x}:{value[x]}' for x in keys if value.get(x)))
+                        elif not isinstance(value, str):
+                            value = None
+                        if value:
+                            customs[name] = value
+                if record.totp:
+                    customs['totp'] = record.totp
+                if record.record_type:
+                    customs['type:'] = record.record_type
+                keys = list(customs.keys())
+                keys.sort()
+                for key in keys:
+                    non_empty += 1
+                    for_hash = f'{key}={customs[key]}'
+                    hasher.update(for_hash.encode('utf-8'))
+
+            if non_empty > 0:
+                hash_value = hasher.hexdigest()
+                if hash_value in hashes:
+                    hashes[hash_value].append(record_uid)
+                else:
+                    hashes[hash_value] = [record_uid]
+
+        fields = []
+        if by_title:
+            fields.append('Title')
+        if by_login:
+            fields.append('Login')
+        if by_password:
+            fields.append('Password')
+        if by_url:
+            fields.append('Website Address')
+        if by_custom:
+            fields.append('Custom Fields')
+
+        logging.info('Find duplicated records by: %s', ', '.join(fields))
+        duplicates = [x for x in hashes.values() if len(x) > 1]
+        if duplicates:
+            record_uids = []
+            for x in duplicates:
+                record_uids.extend(x)
+            api.get_record_shares(params, record_uids)
+
+            headers = ['#', 'Title', 'Login']
+            if by_url:
+                headers.append('Website Address')
+            headers.extend(['UID', 'Record Owner'])
+            table = []
+            for i in range(len(duplicates)):
+                duplicate = duplicates[i]
+                for j in range(len(duplicate)):
+                    record_uid = duplicate[j]
+                    record = api.get_record(params, record_uid)
+                    row = [i+1 if j == 0 else None, record.title if j == 0 or not by_title else '', record.login if j == 0 or not by_login else '']
+                    if by_url:
+                        row.append(record.login_url if j == 0 else '')
+                    row.append(record_uid)
+                    rec = params.record_cache[record_uid]
+                    owner = params.user if rec.get('shared') is False else ''
+                    if 'shares' in rec:
+                        shares = rec['shares']
+                        if 'user_permissions' in shares:
+                            user_permissions = shares['user_permissions']
+                            un = next((x['username'] for x in user_permissions if x.get('owner')), None)
+                            if un:
+                                owner = un
+                    row.append(owner)
+                    table.append(row)
+            print(tabulate(table, headers=headers))
+        else:
+            logging.info('No duplicates found.')
