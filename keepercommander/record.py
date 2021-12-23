@@ -11,7 +11,9 @@ import datetime
 import hashlib
 import base64
 import hmac
+import itertools
 
+from typing import Optional
 from urllib import parse
 
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
@@ -83,31 +85,74 @@ class Record:
         self.revision = revision
         self.unmasked_password = None
         self.totp = None
+        self.version = 2
 
     def load(self, data, **kwargs):
-        if 'folder' in data:
-            self.folder = Record.xstr(data['folder'])
+        self.version = kwargs.get('version', 2)
         if 'title' in data:
             self.title = Record.xstr(data['title'])
-        if 'secret1' in data:
-            self.login = Record.xstr(data['secret1'])
-        if 'secret2' in data:
-            self.password = Record.xstr(data['secret2'])
-        if 'link' in data:
-            self.login_url = Record.xstr(data['link'])
         if 'notes' in data:
             self.notes = Record.xstr(data['notes'])
-        if 'custom' in data:
-            self.custom_fields = data['custom'] or []
+
+        if self.version == 2:
+            if 'secret1' in data:
+                self.login = Record.xstr(data['secret1'])
+            if 'secret2' in data:
+                self.password = Record.xstr(data['secret2'])
+            if 'link' in data:
+                self.login_url = Record.xstr(data['link'])
+            if 'custom' in data:
+                self.custom_fields = data['custom'] or []
+            if 'extra' in kwargs and kwargs['extra']:
+                extra = kwargs['extra']
+                self.attachments = extra.get('files')
+                if 'fields' in extra:
+                    for field in extra['fields']:
+                        if field['field_type'] == 'totp':
+                            self.totp = field['data']
+        elif self.version == 3:
+            self.record_type = data.get('type', 'login')
+            for field in itertools.chain(data['fields'], data.get('custom') or []):
+                field_label = field.get('label', '')
+                field_type = field.get('type', '')
+                field_value = field.get('value', '')
+                if isinstance(field_value, list):
+                    if len(field_value) == 1:
+                        field_value = field_value[0]
+                    elif len(field_value) == 0:
+                        field_value = None
+                if field_value:
+                    if isinstance(field_value, str):
+                        if field_type == 'login' and not self.login:
+                            self.login = field_value
+                            continue
+                        if field_type == 'password' and not self.password:
+                            self.password = field_value
+                            continue
+                        if field_type == 'url' and not self.login_url:
+                            self.login_url = field_value
+                            continue
+                        if field_type == 'oneTimeCode' and not self.totp:
+                            self.totp = field_value
+                            continue
+
+                    if field_type:
+                        field_name = f'{field_type}:{field_label}'
+                    elif field_label:
+                        field_name = field_label
+                    else:
+                        field_name = 'text'
+                    self.append_field_value(field_name, field_value)
+
+        elif self.version == 4:
+            self.record_type = 'file'
+            for field in ['size', 'name', 'type']:
+                if field in data:
+                    self.append_field_value(field, data[field])
+        else:
+            pass
         if 'revision' in kwargs:
             self.revision = kwargs['revision']
-        if 'extra' in kwargs and kwargs['extra']:
-            extra = kwargs['extra']
-            self.attachments = extra.get('files')
-            if 'fields' in extra:
-                for field in extra['fields']:
-                    if field['field_type'] == 'totp':
-                        self.totp = field['data']
 
     def get(self, field):
         result = ''
@@ -116,6 +161,25 @@ class Record:
                 result = c['value']
                 break
         return result
+
+    def append_field_value(self, name, value):
+        if not value:
+            return
+        field = next((x for x in self.custom_fields if x.get('name', '') == name), None)
+        if not field:
+            field = {'name': name}
+            self.custom_fields.append(field)
+        field_value = field.get('value', None)
+        if field_value:
+            if not isinstance(field_value, list):
+                field_value = [field_value]
+            if isinstance(value, list):
+                field_value.extend(value)
+            else:
+                field_value.append(value)
+        else:
+            field_value = value
+        field['value'] = field_value
 
     def set_field(self, name, value):
         found = False
