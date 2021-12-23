@@ -1356,7 +1356,7 @@ class RecordHistoryCommand(Command):
         else:
             extra = {}
         rec = Record(revision['record_uid'])
-        rec.load(data, extra=extra)
+        rec.load(data, version=revision.get('version'), extra=extra)
         return rec
 
     @staticmethod
