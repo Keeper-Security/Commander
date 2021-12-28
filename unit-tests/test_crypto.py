@@ -1,9 +1,40 @@
+import io
 from unittest import TestCase
 
 from keepercommander import crypto, utils
 
 
 class TestCrypto(TestCase):
+
+    def test_stream_decrypter(self):
+        data = bytearray(999)
+        for i in range(len(data)):
+            data[i] = i & 0xff
+
+        key = utils.generate_aes_key()
+
+        crypter = crypto.StreamCrypter()
+        crypter.key = key
+        crypter.is_gcm = False
+
+        encrypted_data = bytearray()
+        with crypter.set_stream(io.BytesIO(data), True) as cs:
+            while True:
+                buffer = cs.read(1024)
+                if not buffer:
+                    break
+                encrypted_data.extend(buffer)
+        self.assertEqual(crypter.bytes_read, len(data))
+
+        decrypted_data = bytearray()
+        with crypter.set_stream(io.BytesIO(encrypted_data), False) as cs:
+            while True:
+                buffer = cs.read(1024)
+                if not buffer:
+                    break
+                decrypted_data.extend(buffer)
+
+        self.assertEqual(decrypted_data, data)
 
     def test_decrypt_aes_v1(self):
         data = utils.base64_url_decode('KvsOJmE4JNK1HwKSpkBeR5R9YDms86uOb3wjNvc4LbUnZhKQtDxWifgA99tH2ZuP')

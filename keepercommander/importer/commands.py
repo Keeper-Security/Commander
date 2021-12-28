@@ -113,30 +113,6 @@ To load the sample file into your vault, run this command:
 import --format=json sample_data/import.json.txt
 '''
 
-
-class KeeperAttachment(ImportAttachment):
-    # FIXME: Note that this may be a duplicate of keepercommander/importer/imp_exp.py's KeeperAttachment.
-    def __init__(self, params, record_uid,):
-        ImportAttachment.__init__(self)
-        self.params = params
-        self.record_uid = record_uid
-
-    @contextmanager
-    def open(self):
-        rq = {
-            'command': 'request_download',
-            'file_ids': [self.file_id],
-        }
-        api.resolve_record_access_path(self.params, self.record_uid, path=rq)
-
-        rs = api.communicate(self.params, rq)
-        if rs['result'] == 'success':
-            dl = rs['downloads'][0]
-            if 'url' in dl:
-                with requests.get(dl['url'], proxies=self.params.rest_context.proxies, stream=True) as rq_http:
-                    yield rq_http.raw
-
-
 class ImporterCommand(Command):
     def execute_args(self, params, args, **kwargs):
         if args.find('--display-csv') >= 0 or args.find('-dc') >= 0:
