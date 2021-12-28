@@ -8,6 +8,6 @@ asciitree
 pytest
 protobuf
 pyperclip
-libkeepass
+pykeepass
 pysocks
 keeper-secrets-manager-core
