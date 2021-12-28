@@ -386,7 +386,7 @@ def do_command(params, command_line):
                 display_command_help(show_enterprise=(params.enterprise is not None))
 
 
-def runcommands(params, commands=None):
+def runcommands(params, commands=None, quiet=False):
     if commands is None:
         commands = params.commands
 
@@ -395,7 +395,8 @@ def runcommands(params, commands=None):
 
     while keep_running:
         for command in commands:
-            logging.info('Executing [%s]...', command)
+            if not quiet:
+                logging.info('Executing [%s]...', command)
             try:
                 do_command(params, command)
             except CommunicationError as e:

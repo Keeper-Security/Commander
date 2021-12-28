@@ -10,6 +10,8 @@
 #
 import argparse
 import logging
+from glob import glob
+from os.path import normpath
 
 from keepercommander import cli
 from .base import raise_parse_exception, suppress_exit, Command
@@ -46,4 +48,21 @@ class RunBatchCommand(Command):
         return run_batch_parser
 
     def execute(self, params, **kwargs):
-        pass
+        quiet = kwargs.get('quiet', False)
+        pattern_list = kwargs.get('batch-file-patterns', [])
+        if len(pattern_list) == 0:
+            logging.warning(f'Please specify one or more batch files to run')
+            return
+
+        for pattern in pattern_list:
+            for filepath in glob(pattern):
+                filepath = normpath(filepath)
+                if not quiet:
+                    logging.info(f'Running Keeper Commander batch file {filepath}...')
+                with open(filepath) as f:
+                    lines = f.readlines()
+                    commands = [c.strip() for c in lines if not c.startswith('#')]
+                    if len(commands) > 0:
+                        cli.runcommands(params, commands=commands, quiet=quiet)
+                    else:
+                        logging.warning(f'No commands to execute in batch file {filepath}')
