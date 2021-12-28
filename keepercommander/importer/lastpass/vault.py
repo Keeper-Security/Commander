@@ -104,13 +104,12 @@ class Vault(object):
     def process_attachments(self, session, tmpdir=None):
         skip_bad_attachments = []
         attach_cnt = len(self.attachments)
-        if attach_cnt > 0:
-            if tmpdir is None:
-                self.tmpdir = mkdtemp(prefix=TMPDIR_PREFIX)
-            else:
-                if not os.path.exists(tmpdir):
-                    os.makedirs(tmpdir)
-                self.tmpdir = os.path.abspath(tmpdir)
+        if tmpdir is None:
+            self.tmpdir = mkdtemp(prefix=TMPDIR_PREFIX)
+        else:
+            if not os.path.exists(tmpdir):
+                os.makedirs(tmpdir)
+            self.tmpdir = os.path.abspath(tmpdir)
 
         print(f'Processing {attach_cnt} LastPass attachments:')
 

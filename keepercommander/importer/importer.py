@@ -9,12 +9,15 @@
 # Contact: ops@keepersecurity.com
 #
 import abc
+import io
 import os.path
 import importlib
 import logging
 import collections
 
 from typing import List, Optional, Union
+
+from contextlib import contextmanager
 
 from ..error import CommandError
 
@@ -123,15 +126,14 @@ class SharedFolder:
                             raise CommandError('import', 'shared folder permission. property \'{0}\' should be a boolean'.format(attr))
 
 
-class Attachment:
+class Attachment(abc.ABC):
     def __init__(self):
-        self.file_id = None
         self.name = None
         self.size = None
-        self.key = None
         self.mime = None
 
-    def open(self):
+    @abc.abstractmethod
+    def open(self):  # type: () -> io.BufferedIOBase
         raise NotImplementedError()
 
 
@@ -317,3 +319,18 @@ class BaseExporter(abc.ABC):
 
     def supports_v3_record(self):
         return True
+
+
+class BytesAttachment(Attachment):
+    def __init__(self, name, buffer):  # type: (str, bytes) -> None
+        Attachment.__init__(self)
+        self.name = name
+        self.data = buffer
+        self.size = len(buffer)
+
+    @contextmanager
+    def open(self):
+        out = io.BytesIO()
+        out.write(self.data)
+        out.seek(0)
+        yield out

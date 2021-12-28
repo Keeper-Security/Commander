@@ -10,42 +10,39 @@
 #
 
 """Import and export functionality."""
-
-from contextlib import contextmanager
-from typing import Iterator, List, Optional, Union
+import abc
 import base64
 import collections
 import copy
 import hashlib
-import io
 import itertools
 import json
 import logging
-import math
 import os
 import re
+from typing import Iterator, List, Optional, Union, Dict, Tuple
 
-from Cryptodome.Cipher import AES
+import math
 import requests
 
-from keepercommander import api, loginv3, record_pb2
+from keepercommander import api
 from keepercommander.display import bcolors
 from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
-from ..params import KeeperParams
-
 from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
-                       SharedFolder as ImportSharedFolder, Permission as ImportPermission,
+                       SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
-from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
 from .. import folder_pb2
-from .. import utils, crypto
+from .. import record_pb2
 from .. import record_pb2 as record_proto
-from ..recordv3 import RecordV3
+from .. import utils, crypto
 from ..commands.base import user_choice
-
+from ..error import KeeperApiError
+from ..params import KeeperParams
+from ..recordv3 import RecordV3
+from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
 
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
@@ -64,7 +61,7 @@ def get_record_data_json_bytes(data):
         data_str = data_str.ljust(padding)
     return data_str.encode('utf-8')
 
-
+"""
 def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
     data_json = get_record_data_json_bytes(data)
     data_size = len(data_json) + 28
@@ -123,7 +120,7 @@ def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
             data_json = get_record_data_json_bytes(data)
             data_size = len(data_json) + 28
     return False
-
+"""
 
 def get_import_folder(params, folder_uid, record_uid):
     """Get a folder name from a folder uid (?)."""
@@ -342,26 +339,43 @@ def export(params, file_format, filename, **kwargs):
             if not exporter.supports_v3_record() and rec.type and rec.type != 'login':
                 continue
 
-            if exporter.has_attachments() and 'extra_unencrypted' in record:
-                extra = json.loads(record['extra_unencrypted'])
-                if 'files' in extra:
-                    rec.attachments = []
-                    names = set()
-                    for a in extra['files']:
-                        orig_name = a.get('title') or a.get('name') or 'attachment'
-                        name = orig_name
-                        counter = 0
-                        while name in names:
-                            counter += 1
-                            name = "{0}-{1}".format(orig_name, counter)
-                        names.add(name)
-                        atta = KeeperAttachment(params, rec.uid)
-                        atta.file_id = a['id']
-                        atta.name = name
-                        atta.size = a['size']
-                        atta.key = base64.urlsafe_b64decode(a['key'] + '==')
-                        atta.mime = a.get('type') or ''
-                        rec.attachments.append(atta)
+            if exporter.has_attachments():
+                if record_version == 2 and 'extra_unencrypted' in record:
+                    extra = json.loads(record['extra_unencrypted'])
+                    if 'files' in extra:
+                        rec.attachments = []
+                        names = set()
+                        for a in extra['files']:
+                            orig_name = a.get('title') or a.get('name') or 'attachment'
+                            name = orig_name
+                            counter = 0
+                            while name in names:
+                                counter += 1
+                                name = "{0}-{1}".format(orig_name, counter)
+                            names.add(name)
+                            atta = KeeperV2Attachment(params, rec.uid, a['id'])
+                            atta.name = name
+                            atta.size = a['size']
+                            atta.key = utils.base64_url_decode(a['key'])
+                            atta.mime = a.get('type') or ''
+                            rec.attachments.append(atta)
+                elif record_version == 3:
+                    if 'data_unencrypted' in record:
+                        data = json.loads(record['data_unencrypted'])
+                        file_ref = next((x.get('value') for x in data.get('fields', []) if x.get('type', '') == 'fileRef'), None)
+                        if isinstance(file_ref, list) and len(file_ref) > 0:
+                            rec.attachments = []
+                            for file_uid in file_ref:
+                                if file_uid in params.record_cache:
+                                    file = params.record_cache[file_uid]
+                                    if file.get('version') == 4:
+                                        a = json.loads(file['data_unencrypted'])
+                                        atta = KeeperV3Attachment(params, file_uid)
+                                        atta.key = file['record_key_unencrypted']
+                                        atta.name = a.get('name', '')
+                                        atta.size = a.get('size', 0)
+                                        atta.mime = a.get('type', '')
+                                        rec.attachments.append(atta)
 
             for folder_uid in find_folders(params, record_uid):
                 if folder_uid in params.folder_cache:
@@ -371,16 +385,16 @@ def export(params, file_format, filename, **kwargs):
                     rec.folders.append(folder)
 
             to_export.append(rec)
-        elif record_version == 4:
-            if 'data_unencrypted' in record:
-                data = json.loads(record['data_unencrypted'])
-                file = ImportFile()
-                file.file_id = record['record_uid']
-                file.name = data.get('name')
-                file.title = data.get('title')
-                file.size = data.get('size')
-                file.mime = data.get('type')
-                to_export.append(file)
+        # elif record_version == 4:
+        #     if 'data_unencrypted' in record:
+        #         data = json.loads(record['data_unencrypted'])
+        #         file = ImportFile()
+        #         file.file_id = record['record_uid']
+        #         file.name = data.get('name')
+        #         file.title = data.get('title')
+        #         file.size = data.get('size')
+        #         file.mime = data.get('type')
+        #         to_export.append(file)
 
     rec_count = len(to_export) - sf_count
 
@@ -411,7 +425,6 @@ def import_user_permissions(params, shared_folders):  # type: (KeeperParams, Lis
     for fol in folders:
         comps = list(path_components(fol.path))
         parent_uid = ''
-        fol_type = BaseFolderNode.RootFolderType
         for i in range(len(comps)):
             is_last = False
             if i == len(comps) - 1:
@@ -948,7 +961,7 @@ def execute_records_update(params, records):  # type: (KeeperParams, List[record
     return rs_record
 
 
-def upload_v3_attachments(params, records_with_attachments):
+def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperParams, list) -> None
     """Interact with the API to upload v3 attachments"""
     print('Uploading v3 attachments:')
 
@@ -962,12 +975,13 @@ def upload_v3_attachments(params, records_with_attachments):
                 records_with_attachments = records_with_attachments[i:]
                 break
             parent_uid = parent_record.uid
-            for atta in parent_record.attachments:
-                if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
-                    logging.warning(
-                        f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.'
-                    )
-                    continue
+            for atta in parent_record.attachments:  # type: ImportAttachment
+                if isinstance(atta.size, int):
+                    if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
+                        logging.warning(
+                            f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.'
+                        )
+                        continue
 
                 file_data = {
                     'name': atta.name,
@@ -978,23 +992,17 @@ def upload_v3_attachments(params, records_with_attachments):
                 }
                 rdata = json.dumps(file_data).encode('utf-8')
 
-                if not atta.key:
-                    atta.key = utils.generate_aes_key()
-
-                uid = api.generate_record_uid()
-                atta.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(uid)
-                atta.encrypted_key = crypto.encrypt_aes_v2(
-                    atta.key, params.record_cache[parent_uid]['record_key_unencrypted']
-                )
-                atta.parent_uid = parent_uid
+                file_key = utils.generate_aes_key()
+                file_uid = utils.base64_url_decode(api.generate_record_uid())
 
                 rf = record_pb2.File()
-                rf.record_uid = atta.record_uid
-                rf.record_key = api.encrypt_aes_plain(atta.key, params.data_key)
-                rf.data = api.encrypt_aes_plain(rdata, atta.key)
-                rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
+                rf.record_uid = file_uid
+                rf.record_key = crypto.encrypt_aes_v2(file_key, params.data_key)
+                rf.data = crypto.encrypt_aes_v2(rdata, file_key)
+                if 'bytes_total' is params.license and 'bytes_used' in params.license:
+                    rf.fileSize = params.license['bytes_total'] - params.license['bytes_used']
                 rq.files.append(rf)
-                uid_to_attachment[atta.record_uid] = atta
+                uid_to_attachment[file_uid] = (atta, parent_uid, file_key)
 
         else:  # for i, parent_record in enumerate(records_with_attachments)
             records_with_attachments = []
@@ -1004,9 +1012,9 @@ def upload_v3_attachments(params, records_with_attachments):
         files_add_rs = record_pb2.FilesAddResponse()
         files_add_rs.ParseFromString(rs)
 
-        new_attachments_by_parent_uid = {}
+        new_attachments_by_parent_uid = {}  # type: Dict[Tuple[ImportAttachment, bytes, bytes]]
         for f in files_add_rs.files:
-            atta = uid_to_attachment[f.record_uid]
+            atta, parent_uid, file_key = uid_to_attachment[f.record_uid]
             status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
             success = (f.status == record_pb2.FileAddResult.DESCRIPTOR.values_by_name['FA_SUCCESS'].number)
 
@@ -1015,7 +1023,7 @@ def upload_v3_attachments(params, records_with_attachments):
                 continue
 
             with atta.open() as src:
-                with EncryptionReader.get_buffered_reader(src, atta.key) as encrypted_src:
+                with EncryptionReader.get_buffered_reader(src, file_key) as encrypted_src:
                     form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
                     form_params = json.loads(f.parameters)
                     print(f'{atta.name} ... ', end='', flush=True)
@@ -1023,20 +1031,18 @@ def upload_v3_attachments(params, records_with_attachments):
 
             if str(response.status_code) == form_params.get('success_action_status'):
                 print('Done')
-                new_attachments = new_attachments_by_parent_uid.get(atta.parent_uid)
+                new_attachments = new_attachments_by_parent_uid.get(parent_uid)
                 if new_attachments:
-                    new_attachments.append(atta)
+                    new_attachments.append((atta, f.record_uid, file_key))
                 else:
-                    new_attachments_by_parent_uid[atta.parent_uid] = [atta]
+                    new_attachments_by_parent_uid[parent_uid] = [(atta, f.record_uid, file_key)]
             else:
                 print('Failed')
 
         rec_list = []
         record_links_add = {}
         for parent_uid, attachments in new_attachments_by_parent_uid.items():
-            new_attachments_uids = [
-                loginv3.CommonHelperMethods.bytes_to_url_safe_str(a.record_uid) for a in attachments
-            ]
+            new_attachments_uids = [utils.base64_url_encode(a[1]) for a in attachments]
 
             record_data = params.record_cache[parent_uid].get('data_unencrypted')
             if record_data:
@@ -1060,8 +1066,10 @@ def upload_v3_attachments(params, records_with_attachments):
             params.sync_data = True
             rec = api.get_record(params, parent_uid)
             rec_list.append(rec)
+
+            parent_key = params.record_cache[parent_uid]['record_key_unencrypted']
             record_links_add[parent_uid] = [
-                {'record_uid': a.record_uid, 'record_key': a.encrypted_key} for a in attachments
+                {'record_uid': a[1], 'record_key': crypto.encrypt_aes_v2(a[2], parent_key)} for a in attachments
             ]
 
         api.update_records_v3(params, rec_list, record_links_by_uid={'record_links_add': record_links_add}, silent=True)
@@ -1101,38 +1109,19 @@ def upload_attachment(params, attachments):
             return
 
         uploaded = {}
+        crypter = crypto.StreamCrypter()
+        crypter.is_gcm = False
         for record_id, atta in chunk:
             if not uploads:
                 break
 
             try:
                 upload = uploads.pop()
-                buffer = io.BytesIO()
-                cipher = None
-                key = atta.key
-                if not key:
-                    key = os.urandom(32)
-                    iv = os.urandom(16)
-                    cipher = AES.new(key, AES.MODE_CBC, iv)
-                    buffer.write(iv)
-                with atta.open() as s:
-                    finished = False
-                    while not finished:
-                        chunk = s.read(10240)
-                        if len(chunk) > 0:
-                            if cipher is not None:
-                                if len(chunk) < 10240:
-                                    finished = True
-                                    chunk = api.pad_binary(chunk)
-                                chunk = cipher.encrypt(chunk)
-                            buffer.write(chunk)
-                        else:
-                            finished = True
-                size = buffer.tell() - 16
-                if size > 0:
-                    buffer.seek(0, io.SEEK_SET)
+                key = utils.generate_aes_key()
+                crypter.key = key
+                with atta.open() as plain, crypter.set_stream(plain, True) as encypted:
                     files = {
-                        upload['file_parameter']: (atta.name, buffer, 'application/octet-stream')
+                        upload['file_parameter']: (atta.name, encypted, 'application/octet-stream')
                     }
                     print('{0} ... '.format(atta.name), end='', flush=True)
                     response = requests.post(upload['url'], files=files, data=upload['parameters'])
@@ -1140,10 +1129,10 @@ def upload_attachment(params, attachments):
                         if record_id not in uploaded:
                             uploaded[record_id] = []
                         uploaded[record_id].append({
-                            'key': base64.urlsafe_b64encode(key).decode().rstrip('='),
+                            'key': utils.base64_url_encode(key),
                             'name': atta.name,
                             'file_id': upload['file_id'],
-                            'size': size
+                            'size': crypter.bytes_read
                         })
                         print('Done')
                     else:
@@ -1636,14 +1625,23 @@ def prepare_record_add_or_update(update_flag, params, records, v3_enabled):
 
     for import_record in records:
         if v3_enabled and import_record.type:
-            existing_record = params.record_cache.get(import_record.uid)
-            orig_data = None if existing_record is None else json.loads(existing_record['data_unencrypted'])
-            map_data_custom_to_rec_fields = {}
-            data = _construct_record_v3_data(
-                import_record, orig_data, map_data_custom_to_rec_fields=map_data_custom_to_rec_fields
-            )
-            if exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
-                continue
+            if len(import_record.notes or '') > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
+                if import_record.attachments is None:
+                    import_record.attachments = []
+                atta = BytesAttachment(f'{import_record.title}_notes_field.txt', import_record.notes.encode('utf-8'))
+                import_record.attachments.append(atta)
+                import_record.notes = LARGE_FIELD_MSG.format(atta.name)
+
+            for f in import_record.fields:
+                if not f.value:
+                    continue
+                if isinstance(f.value, str):
+                    if len(f.value) > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
+                        if import_record.attachments is None:
+                            import_record.attachments = []
+                        atta = BytesAttachment(f'{import_record.title}_{f.type}_field.txt', f.value.encode('utf-8'))
+                        import_record.attachments.append(atta)
+                        f.value = LARGE_FIELD_MSG.format(atta.name)
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:
@@ -1941,31 +1939,47 @@ def prepare_record_permission(params, records):
     return shared_update
 
 
-class KeeperAttachment(ImportAttachment):
-    """
-    Allow opening an attachment.
-
-    Note that this may be a duplicate of keepercommander/importer/commands.py's KeeperAttachment.
-    """
-
-    def __init__(self, params, record_uid):
-        """Initialize."""
-        ImportAttachment.__init__(self)
+class KeeperBaseAttachment(ImportAttachment, crypto.StreamCrypter, abc.ABC):
+    def __init__(self, params):
+        super().__init__()
         self.params = params
-        self.record_uid = record_uid
 
-    @contextmanager
+
+class KeeperV2Attachment(KeeperBaseAttachment):
+    def __init__(self, params, record_uid, file_id):
+        super().__init__(params)
+        self.file_id = file_id
+        self.record_uid = record_uid
+        self.is_gcm = False
+
     def open(self):
-        """Open an attachment."""
         rq = {
             'command': 'request_download',
             'file_ids': [self.file_id],
         }
         api.resolve_record_access_path(self.params, self.record_uid, path=rq)
-
         rs = api.communicate(self.params, rq)
-        if rs['result'] == 'success':
-            dl = rs['downloads'][0]
-            if 'url' in dl:
-                with requests.get(dl['url'], proxies=self.params.rest_context.proxies, stream=True) as rq_http:
-                    yield rq_http.raw
+        dl = rs['downloads'][0]
+        rs_http = requests.get(dl['url'], proxies=self.params.rest_context.proxies, stream=True)
+        return self.set_stream(rs_http.raw, for_encrypt=False)
+
+
+class KeeperV3Attachment(KeeperBaseAttachment):
+    def __init__(self, params, file_uid):
+        super().__init__(params)
+        self.file_uid = file_uid
+
+    def open(self):
+        rq = record_pb2.FilesGetRequest()
+        rq.record_uids.append(utils.base64_url_decode(self.file_uid))
+        rq.for_thumbnails = False
+        rs = api.communicate_rest(self.params, rq, 'vault/files_download', rs_type=record_pb2.FilesGetResponse)
+        file = rs.files[0]
+        if file.status != record_pb2.FG_SUCCESS:
+            raise KeeperApiError('access_denied', 'Attachment: access denied')
+        self.is_gcm = file.fileKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM
+        url = file.url
+        rs_http = requests.get(url, proxies=self.params.rest_context.proxies, stream=True)
+        if rs_http.status_code != file.success_status_code:
+            raise KeeperApiError('file_not_found', 'Attachment: file not found')
+        return self.set_stream(rs_http.raw, for_encrypt=False)

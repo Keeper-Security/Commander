@@ -1,10 +1,10 @@
 Commander support for Keepass files
 ---
 
-If you plan to use the Keepass import/export features, you need to manually install the libkeepass module.
+If you plan to use the Keepass import/export features, you need to manually install the pykeepass module.
 
 ```bash
-$ pip3 install libkeepass
+$ pip3 install pykeepass
 ```
 
 The above-mentioned command might fail installing the **lxml** package, especially on Microsoft Windows.
@@ -36,9 +36,9 @@ Once you download the correct .whl file from the site, you can install the lxml 
 $ pip3 install lxml-4.2.3-cp36-cp36m-win32.whl
 ```
 
-Then complete installation of libkeepass:
+Then complete installation of pykeepass:
 ```bash
-$ pip3 install libkeepass
+$ pip3 install pykeepass
 ```
 
 Now you can use the ```import --format=keepass``` and ```export --format=keepass``` commands within Keeper Commander.
