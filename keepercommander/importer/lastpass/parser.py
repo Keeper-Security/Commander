@@ -8,8 +8,8 @@ import re
 from urllib.parse import urlunsplit, urlencode
 
 from Cryptodome.Cipher import AES, PKCS1_OAEP
-from Crypto.Util import number
-from Crypto.PublicKey import RSA
+from Cryptodome.Util import number
+from Cryptodome.PublicKey import RSA
 
 from .account import Account
 from .attachment import LastpassAttachment

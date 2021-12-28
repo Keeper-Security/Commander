@@ -62,6 +62,7 @@ class RunBatchCommand(Command):
         return run_batch_parser
 
     def execute(self, params, **kwargs):
+        dry_run = kwargs.get('dry_run', False)
         command_delay = kwargs.get('delay') or 0
         quiet = kwargs.get('quiet', False)
         pattern_list = kwargs.get('batch-file-patterns', [])
@@ -69,18 +70,29 @@ class RunBatchCommand(Command):
             logging.warning(f'Please specify one or more batch files to run')
             return
 
+        if dry_run:
+            print('The following files and commands would be run:')
         for pattern in pattern_list:
             for filepath in glob(pattern):
                 filepath = normpath(filepath)
-                if not quiet:
+                if dry_run:
+                    print(f'{filepath}:')
+                elif not quiet:
                     logging.info(f'Running Keeper Commander batch file {filepath}...')
+
                 with open(filepath) as f:
                     lines = f.readlines()
                     commands = [c.strip() for c in lines if not c.startswith('#')]
                     if len(commands) > 0:
-                        cli.runcommands(params, commands=commands, command_delay=command_delay, quiet=quiet)
+                        if dry_run:
+                            print('    ' + '\n    '.join(commands))
+                        else:
+                            cli.runcommands(params, commands=commands, command_delay=command_delay, quiet=quiet)
                     else:
-                        logging.warning(f'No commands to execute in batch file {filepath}')
+                        if dry_run:
+                            print('No commands')
+                        else:
+                            logging.warning(f'No commands to execute in batch file {filepath}')
 
 
 class SleepCommand(Command):
