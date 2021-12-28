@@ -386,13 +386,23 @@ def do_command(params, command_line):
                 display_command_help(show_enterprise=(params.enterprise is not None))
 
 
-def runcommands(params):
+def runcommands(params, commands=None, command_delay=0, quiet=False):
+    if commands is None:
+        commands = params.commands
+
     keep_running = True
+    first_command = True
     timedelay = params.timedelay
 
     while keep_running:
-        for command in params.commands:
-            logging.info('Executing [%s]...', command)
+        for command in commands:
+            if first_command:
+                first_command = False
+            elif command_delay != 0:
+                time.sleep(command_delay)
+
+            if not quiet:
+                logging.info('Executing [%s]...', command)
             try:
                 do_command(params, command)
             except CommunicationError as e:
