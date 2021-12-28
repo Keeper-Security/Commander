@@ -386,12 +386,15 @@ def do_command(params, command_line):
                 display_command_help(show_enterprise=(params.enterprise is not None))
 
 
-def runcommands(params):
+def runcommands(params, commands=None):
+    if commands is None:
+        commands = params.commands
+
     keep_running = True
     timedelay = params.timedelay
 
     while keep_running:
-        for command in params.commands:
+        for command in commands:
             logging.info('Executing [%s]...', command)
             try:
                 do_command(params, command)
