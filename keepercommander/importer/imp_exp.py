@@ -999,8 +999,15 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
                 rf.record_uid = file_uid
                 rf.record_key = crypto.encrypt_aes_v2(file_key, params.data_key)
                 rf.data = crypto.encrypt_aes_v2(rdata, file_key)
-                if 'bytes_total' is params.license and 'bytes_used' in params.license:
-                    rf.fileSize = params.license['bytes_total'] - params.license['bytes_used']
+                rf.fileSize = IV_LEN + atta.size + GCM_TAG_LEN
+                if 'bytes_total' in params.license and 'bytes_used' in params.license:
+                    try:
+                        bytes_left = int(params.license['bytes_total']) - int(params.license['bytes_used'])
+                        if bytes_left > 2000000000:
+                            bytes_left = 2000000000
+                        rf.fileSize = bytes_left
+                    except:
+                        pass
                 rq.files.append(rf)
                 uid_to_attachment[file_uid] = (atta, parent_uid, file_key)
 
