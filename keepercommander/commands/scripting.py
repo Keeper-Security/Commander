@@ -29,26 +29,27 @@ def register_command_info(aliases, command_info):
     command_info[sleep_parser.prog] = sleep_parser.description
 
 
-run_batch_parser = argparse.ArgumentParser(prog='run-batch', description='Run batch of Commander commands from a file')
+run_batch_parser = argparse.ArgumentParser(prog='run-batch', description='Run commands from a Commander batch file')
 run_batch_parser.add_argument(
     '-d', '--delay', dest='delay', type=int, action='store',
-    help='Delay (in seconds) between commands to prevent throttling'
+    help='Delay (in seconds) between Commander batch file commands to prevent throttling'
 )
 run_batch_parser.add_argument(
-    '-q', '--quiet', dest='quiet', action='store_true', help="Don't display batch file info"
+    '-q', '--quiet', dest='quiet', action='store_true', help="Don't display Commander batch file info before running"
 )
 run_batch_parser.add_argument(
-    '-n', '--dry-run', dest='dry_run', action='store_true', help='Preview the commands that will be run'
+    '-n', '--dry-run', dest='dry_run', action='store_true',
+    help='Preview the Commander batch files and commands that would be run'
 )
 run_batch_parser.add_argument(
-    'batch-file-patterns', nargs='*', type=str, action='store', help='One or more batch files of Commander commands'
+    'batch-file-patterns', nargs='*', type=str, action='store', help='One or more Commander batch files'
 )
 run_batch_parser.error = raise_parse_exception
 run_batch_parser.exit = suppress_exit
 
 
 sleep_parser = argparse.ArgumentParser(
-    prog='sleep', description='Sleep (in seconds) for adding delay between batch commands'
+    prog='sleep', description='Sleep (in seconds) for adding delay between Commander batch commands'
 )
 sleep_parser.add_argument(
     'sleep-duration', nargs='?', type=int, action='store', help='Sleep duration in seconds'
@@ -67,32 +68,36 @@ class RunBatchCommand(Command):
         quiet = kwargs.get('quiet', False)
         pattern_list = kwargs.get('batch-file-patterns', [])
         if len(pattern_list) == 0:
-            logging.warning(f'Please specify one or more batch files to run')
+            logging.warning(f'Please specify one or more Commander batch files to run')
             return
 
         if dry_run:
-            print('The following files and commands would be run:')
+            print('The following Commander batch files and commands would be run:')
         for pattern in pattern_list:
-            for filepath in glob(pattern):
-                filepath = normpath(filepath)
-                if dry_run:
-                    print(f'{filepath}:')
-                elif not quiet:
-                    logging.info(f'Running Keeper Commander batch file {filepath}...')
+            files = glob(pattern)
+            if len(files) == 0:
+                logging.warning(f'No Commander batch files were found for file pattern "{pattern}"')
+            else:
+                for filepath in files:
+                    filepath = normpath(filepath)
+                    if dry_run:
+                        print(f'{filepath}:')
+                    elif not quiet:
+                        logging.info(f'Running Commander batch file {filepath}...')
 
-                with open(filepath) as f:
-                    lines = f.readlines()
-                    commands = [c.strip() for c in lines if not c.startswith('#')]
-                    if len(commands) > 0:
-                        if dry_run:
-                            print('    ' + '\n    '.join(commands))
+                    with open(filepath) as f:
+                        lines = f.readlines()
+                        commands = [c.strip() for c in lines if not c.startswith('#')]
+                        if len(commands) > 0:
+                            if dry_run:
+                                print('    ' + '\n    '.join(commands))
+                            else:
+                                cli.runcommands(params, commands=commands, command_delay=command_delay, quiet=quiet)
                         else:
-                            cli.runcommands(params, commands=commands, command_delay=command_delay, quiet=quiet)
-                    else:
-                        if dry_run:
-                            print('No commands')
-                        else:
-                            logging.warning(f'No commands to execute in batch file {filepath}')
+                            if dry_run:
+                                print('No commands to execute in batch file')
+                            else:
+                                logging.warning(f'No commands to execute in batch file {filepath}')
 
 
 class SleepCommand(Command):

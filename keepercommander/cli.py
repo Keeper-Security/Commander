@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections import OrderedDict
 
 from prompt_toolkit import PromptSession
@@ -405,13 +406,14 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
                 logging.info('Executing [%s]...', command)
             try:
                 do_command(params, command)
+            except CommandError as e:
+                logging.error(f'Error in command "{command}": {e.message}')
             except CommunicationError as e:
-                logging.error("Communication Error: %s", e.message)
+                logging.error(f'Communication Error: {e.message}')
             except AuthenticationError as e:
-                logging.error("AuthenticationError Error: %s", e.message)
-            except Exception as e:
-                logging.debug(e, exc_info=True)
-                logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
+                logging.error(f'AuthenticationError Error: {e.message}')
+            except Exception:
+                logging.error(traceback.format_exc())
 
         if timedelay == 0:
             keep_running = False
