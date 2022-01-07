@@ -34,11 +34,9 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
-from .. import folder_pb2
-from .. import record_pb2
-from .. import record_pb2 as record_proto
 from .. import utils, crypto
-from ..commands.base import user_choice
+from ..commands import base
+from ..proto import record_pb2, folder_pb2
 from ..error import KeeperApiError
 from ..params import KeeperParams
 from ..recordv3 import RecordV3
@@ -317,7 +315,7 @@ def export(params, file_format, filename, **kwargs):
 
     v3_enabled = params.settings.get('record_types_enabled') if params.settings else False
     if v3_enabled and not exporter.supports_v3_record():
-        answer = user_choice(f'Export to {file_format} does not support typed records\n\n'
+        answer = base.user_choice(f'Export to {file_format} does not support typed records\n\n'
                              f'Do you want to continue?', 'yn', 'n')
         if answer.lower() != 'y':
             return
@@ -562,8 +560,8 @@ def _import(params, file_format, filename, **kwargs):
 
         records_v2_to_add = []      # type: List[folder_pb2.RecordRequest]
         records_v2_to_update = []   # type: List[dict]
-        records_v3_to_add = []      # type: List[record_proto.RecordAdd]
-        records_v3_to_update = []   # type: List[record_proto.RecordUpdate]
+        records_v3_to_add = []      # type: List[record_pb2.RecordAdd]
+        records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
         import_uids = {}
 
         records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records, v3_enabled)
@@ -597,7 +595,7 @@ def _import(params, file_format, filename, **kwargs):
                     if not v3_enabled:
                         continue
                     orig_data = json.loads(existing_record['data_unencrypted'])
-                    v3_upd_rq = record_proto.RecordUpdate()
+                    v3_upd_rq = record_pb2.RecordUpdate()
                     v3_upd_rq.record_uid = utils.base64_url_decode(import_record.uid)
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'update'}
                     v3_upd_rq.client_modified_time = utils.current_milli_time()
@@ -625,7 +623,7 @@ def _import(params, file_format, filename, **kwargs):
                         v3_upd_rq.record_links_remove.append(utils.base64_url_decode(uid))
 
                     for uid in reference_uids.difference(orig_refs):
-                        link = record_proto.RecordLink()
+                        link = record_pb2.RecordLink()
                         link.record_uid = utils.base64_url_decode(uid)
                         v3_upd_rq.record_links_add.append(link)
 
@@ -667,7 +665,7 @@ def _import(params, file_format, filename, **kwargs):
                             folder_uid = ''
 
                 if import_record.type and v3_enabled:   # V3
-                    v3_add_rq = record_proto.RecordAdd()
+                    v3_add_rq = record_pb2.RecordAdd()
                     v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
                     v3_add_rq.client_modified_time = utils.current_milli_time()
@@ -680,16 +678,16 @@ def _import(params, file_format, filename, **kwargs):
 
                     v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
                     v3_add_rq.folder_type = \
-                        record_proto.user_folder if folder_type == BaseFolderNode.UserFolderType else \
-                        record_proto.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
-                        record_proto.shared_folder_folder
+                        record_pb2.user_folder if folder_type == BaseFolderNode.UserFolderType else \
+                        record_pb2.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
+                        record_pb2.shared_folder_folder
 
                     if folder_uid:
                         v3_add_rq.folder_uid = utils.base64_url_decode(folder_uid)
                         if shared_folder_key:
                             v3_add_rq.folder_key = crypto.encrypt_aes_v2(record_key, shared_folder_key)
                     for uid in reference_uids:
-                        link = record_proto.RecordLink()
+                        link = record_pb2.RecordLink()
                         link.record_uid = utils.base64_url_decode(uid)
                         v3_add_rq.record_links.append(link)
 
@@ -762,7 +760,7 @@ def _import(params, file_format, filename, **kwargs):
             audit_records = list(prepare_record_audit(params, audit_uids))
             while audit_records:
                 try:
-                    rq = record_proto.AddAuditDataRequest()
+                    rq = record_pb2.AddAuditDataRequest()
                     rq.records.extend(audit_records[:999])
                     audit_records = audit_records[999:]
                     api.communicate_rest(params, rq, 'vault/record_add_audit_data')
@@ -915,30 +913,30 @@ def execute_import_folder_record(params, folders, records):
     return rs_folder, rs_record
 
 
-def record_status_to_str(status):  # type: (record_proto.RecordModifyStatus) -> str
-    if status == record_proto.RS_SUCCESS:
+def record_status_to_str(status):  # type: (record_pb2.RecordModifyStatus) -> str
+    if status == record_pb2.RS_SUCCESS:
         return 'success'
-    if status == record_proto.RS_OUT_OF_SYNC:
+    if status == record_pb2.RS_OUT_OF_SYNC:
         return 'out of sync'
-    if status == record_proto.RS_ACCESS_DENIED:
+    if status == record_pb2.RS_ACCESS_DENIED:
         return 'access denied'
-    if status == record_proto.RS_SHARE_DENIED:
+    if status == record_pb2.RS_SHARE_DENIED:
         return 'share denied'
-    if status == record_proto.RS_RECORD_EXISTS:
+    if status == record_pb2.RS_RECORD_EXISTS:
         return 'record exists'
-    if status == record_proto.RS_OLD_RECORD_VERSION_TYPE:
+    if status == record_pb2.RS_OLD_RECORD_VERSION_TYPE:
         return 'old record version type'
     return str(status)
 
 
-def execute_records_add(params, records):  # type: (KeeperParams, List[record_proto.RecordAdd]) -> List[record_proto.RecordModifyResult]
+def execute_records_add(params, records):  # type: (KeeperParams, List[record_pb2.RecordAdd]) -> List[record_pb2.RecordModifyResult]
     rs_record = []
     while records:
-        rq = record_proto.RecordsAddRequest()
+        rq = record_pb2.RecordsAddRequest()
         rq.client_time = utils.current_milli_time()
         rq.records.extend(records[:999])
         records = records[999:]
-        rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_proto.RecordsModifyResponse)
+        rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
         rs_record.extend(rs.records)
 
     report_statuses('record', (record_status_to_str(x.status) for x in rs_record))
@@ -946,14 +944,14 @@ def execute_records_add(params, records):  # type: (KeeperParams, List[record_pr
     return rs_record
 
 
-def execute_records_update(params, records):  # type: (KeeperParams, List[record_proto.RecordUpdate]) -> List[record_proto.RecordModifyResult]
+def execute_records_update(params, records):  # type: (KeeperParams, List[record_pb2.RecordUpdate]) -> List[record_pb2.RecordModifyResult]
     rs_record = []
     while records:
-        rq = record_proto.RecordsUpdateRequest()
+        rq = record_pb2.RecordsUpdateRequest()
         rq.client_time = utils.current_milli_time()
         rq.records.extend(records[:999])
         records = records[999:]
-        rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_proto.RecordsModifyResponse)
+        rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)
         rs_record.extend(rs.records)
 
     report_statuses('record', (x.status for x in rs_record))
@@ -1353,7 +1351,7 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
 
 
 def prepare_record_audit(params, uids):
-    # type: (KeeperParams, Iterator[str]) -> Iterator[record_proto.RecordAddAuditData]
+    # type: (KeeperParams, Iterator[str]) -> Iterator[record_pb2.RecordAddAuditData]
     if not params.enterprise_ec_key:
         return
     for uid in uids:
@@ -1367,7 +1365,7 @@ def prepare_record_audit(params, uids):
                 }
                 if import_record.login_url:
                     audit_data['url'] = utils.url_strip(import_record.login_url)
-                record_audit_rq = record_proto.RecordAddAuditData()
+                record_audit_rq = record_pb2.RecordAddAuditData()
                 record_audit_rq.record_uid = utils.base64_url_decode(uid)
                 record_audit_rq.revision = 0
                 record_audit_rq.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
@@ -1603,7 +1601,7 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
 
 
 def prepare_record_add_or_update(update_flag, params, records, v3_enabled):
-    # type: (bool, KeeperParams, Iterator[ImportRecord], bool) -> List[ImportRecord]
+    # type: (bool, KeeperParams, Iterator[ImportRecord], bool) -> Tuple[List[ImportRecord], dict]
     """
     Find what records to import or update.
 

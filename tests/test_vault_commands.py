@@ -1,7 +1,6 @@
 import tempfile
 import json
 import os
-import shutil
 import warnings
 from unittest import TestCase, mock
 
@@ -152,7 +151,7 @@ class TestConnectedCommands(TestCase):
             if os.path.isfile(file):
                 os.remove(file)
 
-            with mock.patch('getpass.getpass', return_value='password'):
+            with mock.patch('getpass.getpass', return_value='password'), mock.patch('keepercommander.commands.base.user_choice', return_value='y'):
                 cli.do_command(params, 'export --format=keepass "{0}"'.format(file))
 
             TestConnectedCommands.wipe_out_data()
@@ -190,7 +189,7 @@ class TestConnectedCommands(TestCase):
     def test_quoting(self):
         """Check if quoting is self-consistent among mkdir and cd."""
         params = TestConnectedCommands.params
-        with mock.patch('builtins.input', side_effect = KeyboardInterrupt()), mock.patch('builtins.print'):
+        with mock.patch('builtins.input', side_effect=KeyboardInterrupt()), mock.patch('builtins.print'):
             cli.do_command(params, 'mkdir --user-folder "/quoting"')
             cli.do_command(params, 'cd /quoting')
             for subdir in ('a//b', r'c\ d', r'e\"f', r"g\'h", r'\\'):

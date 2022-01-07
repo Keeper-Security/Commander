@@ -29,7 +29,7 @@ import hmac
 import copy
 import os
 
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
 from Cryptodome.Math.Numbers import Integer
@@ -37,22 +37,28 @@ from asciitree import LeftAligned
 from collections import OrderedDict as OD
 from argparse import RawTextHelpFormatter
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise_common import EnterpriseCommand
 from .helpers import audit_report
 from .record import RecordAddCommand
-from .. import api, rest_api, crypto, utils, constants
-from .. import APIRequest_pb2 as proto
+from .. import api, rest_api,  crypto, utils, constants
 from ..display import bcolors
 from ..record import Record
 from ..params import KeeperParams
 from ..generator import generate
 from ..error import CommandError
+from ..proto import record_pb2 as record_proto
 from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                             ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
-from ..APIRequest_pb2 import ApiRequestPayload, UserDataKeyRequest, UserDataKeyResponse
-from .. import record_pb2 as record_proto
+                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
+from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
+                                    SecurityReportResponse)
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
+from .scim import ScimCommand
 
 
 def register_commands(commands):
@@ -65,7 +71,7 @@ def register_commands(commands):
     commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
-    commands['scim'] = EnterpriseScimCommand()
+    commands['scim'] = ScimCommand()
     commands['transfer-user'] = EnterpriseTransferUserCommand()
 
     commands['audit-log'] = AuditLogCommand()
@@ -88,7 +94,7 @@ def register_command_info(aliases, command_info):
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser,
-              team_approve_parser, device_approve_parser, scim_parser,
+              team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
@@ -98,7 +104,7 @@ SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down|ed',
-                                                                          description='Download & decrypt enterprise data.')
+                                                 description='Download & decrypt enterprise data.')
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei',
                                                  description='Display a tree structure of your enterprise.',
@@ -126,7 +132,7 @@ enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
 
 
-enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Manage an enterprise node.')
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Manage an enterprise node(s).')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -138,7 +144,7 @@ enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
 
-enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Manage an enterprise user.')
+enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Manage an enterprise user(s).')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
@@ -179,7 +185,7 @@ enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
 
-enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Manage an enterprise team.')
+enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Manage an enterprise team(s).')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
@@ -326,11 +332,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
         print('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
-        root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+        user_managed_nodes = set(self.get_user_managed_nodes(params))
         node_scope = set()
         if kwargs.get('node'):
             subnode = kwargs.get('node').lower()
-            root_nodes = [x['node_id'] for x in self.resolve_nodes(params, subnode)]
+            root_nodes = [x['node_id'] for x in self.resolve_nodes(params, subnode) if x['node_id'] in user_managed_nodes]
             if len(root_nodes) == 0:
                 logging.warning('Node \"%s\" not found', subnode)
                 return
@@ -354,9 +360,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 pos += 1
                 if pos > 100:
                     break
-            node_scope.update(nl)
+            node_scope.update([x for x in nl if x in user_managed_nodes])
         else:
-            node_scope.update((x['node_id'] for x in params.enterprise['nodes']))
+            node_scope.update((x['node_id'] for x in params.enterprise['nodes'] if x['node_id'] in user_managed_nodes))
+            root_nodes = list(self.get_user_root_nodes(params))
 
         nodes = {}
         for node in params.enterprise['nodes']:
@@ -368,6 +375,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 'node_id': node_id,
                 'parent_id': node.get('parent_id') or 0,
                 'name': node['data'].get('displayname') or '',
+                'isolated': node.get('restrict_visibility') or False,
                 'users': [],
                 'teams': [],
                 'queued_teams': [],
@@ -519,7 +527,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     name = ch['name']
                     if kwargs.get('verbose'):
                         name += ' ({0})'.format(ch['node_id'])
-                    n['[{0}]'.format(name)] = tree_node(ch)
+                    n['[{0}]{1}'.format(name, ' |Isolated| ' if ch.get('isolated') else '')] = tree_node(ch)
 
                 if len(node['users']) > 0:
                     if kwargs.get('verbose'):
@@ -585,13 +593,13 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     root_name = params.enterprise['enterprise_name']
                 if kwargs.get('verbose'):
                     root_name += ' ({0})'.format(r['node_id'])
-                tree[root_name] = tree_node(r)
-            if len(tree) > 0:
-                root_name = params.enterprise['enterprise_name']
-                tree = OD([(root_name, tree)])
+                tree['{0} {1}'.format(root_name, ' |Isolated| ' if r.get('isolated') else '')] = tree_node(r)
+            if len(root_nodes) > 1:
+                tree = OD([('', tree)])
+            else:
+                print('')
 
             tr = LeftAligned()
-            print('')
             print(tr(tree))
         else:
             columns = set()
@@ -845,22 +853,13 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 displayname = data['displayname']
                 request = SetRestrictVisibilityRequest()
                 request.nodeId = node_id
-                api_request_payload = proto.ApiRequestPayload()
-                api_request_payload.payload = request.SerializeToString()
-                api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-                rs = rest_api.execute_rest(params.rest_context, 'enterprise/set_restrict_visibility', api_request_payload)
-                # FIXME: Should this error checking/reporting be in a reusuble callable instead?
-                if rs == b'':
-                    print('good result: {}'.format(displayname))
-                elif isinstance(rs, dict):
-                    if 'error' in rs:
-                        print('bad result: {}:'.format(displayname))
-                        print('error: {}'.format(rs['error']))
-                        if 'additional_info' in rs:
-                            print('additional_info: {}'.format(rs['additional_info']))
-                else:
-                    print('Unexpected result: ', rs)
-                continue
+                try:
+                    api.communicate_rest(params, request, 'enterprise/set_restrict_visibility')
+                    mn['restrict_visibility'] = not (mn.get('restrict_visibility') or False)
+                    logging.warning('good result: {}'.format(displayname))
+                except Exception as e:
+                    logging.warning('node \"%s\": toggle isolation failed: %s', displayname, e)
+            api.query_enterprise(params)
         else:
             for node_name in unmatched_nodes:
                 logging.warning('Node \'%s\' is not found: Skipping', node_name)
@@ -1078,7 +1077,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
         if kwargs.get('add'):
             if node_id is None:
-                root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+                root_nodes = list(self.get_user_root_nodes(params))
                 if len(root_nodes) == 0:
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
@@ -1524,7 +1523,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 return
 
             if node_id is None:
-                root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+                root_nodes = list(self.get_user_root_nodes(params))
                 if len(root_nodes) == 0:
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
@@ -2077,7 +2076,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 return
 
             if node_id is None:
-                root_nodes = [x['node_id'] for x in self.get_root_nodes(params)]
+                root_nodes = list(self.get_user_root_nodes(params))
                 if len(root_nodes) == 0:
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
@@ -3358,8 +3357,8 @@ class SecurityAuditReportCommand(Command):
         if kwargs.get('format'):
             format = kwargs['format']
 
-        rq = proto.SecurityReportRequest()
-        security_report_data_rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data', rs_type=proto.SecurityReportResponse)
+        rq = SecurityReportRequest()
+        security_report_data_rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data', rs_type=SecurityReportResponse)
 
         rows = []
         for sr in security_report_data_rs.securityReport:
@@ -3920,8 +3919,6 @@ class DeviceApproveCommand(EnterpriseCommand):
     def get_parser(self):
         return device_approve_parser
 
-    DevicesToApprove = None
-
     @staticmethod
     def token_to_string(token): # type: (bytes) -> str
         src = token[0:10]
@@ -3930,24 +3927,11 @@ class DeviceApproveCommand(EnterpriseCommand):
         return ''.join('{:02x}'.format(x) for x in src)
 
     def execute(self, params, **kwargs):
-        try:
-            from cryptography.hazmat.backends import default_backend
-            from cryptography.hazmat.primitives.asymmetric import ec
-            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-            from cryptography.hazmat.primitives import hashes
-            from cryptography.hazmat.primitives import serialization
-        except:
-            print('To use this feature, install cryptography package\n' + bcolors.OKGREEN + '\'pip install cryptography\'' + bcolors.ENDC)
-            return
+        if kwargs.get('reload'):
+            api.query_enterprise(params)
 
-        if DeviceApproveCommand.DevicesToApprove is None or kwargs.get('reload'):
-            request = {
-                'command': 'get_enterprise_data',
-                'include': ['devices_request_for_admin_approval']
-            }
-            response = api.communicate(params, request)
-            DeviceApproveCommand.DevicesToApprove = response.get('devices_request_for_admin_approval') or []
-        if not DeviceApproveCommand.DevicesToApprove:
+        approval_requests = params.enterprise.get('devices_request_for_admin_approval')
+        if not approval_requests:
             logging.info('There are no pending devices to approve')
             return
 
@@ -3956,11 +3940,11 @@ class DeviceApproveCommand(EnterpriseCommand):
 
         devices = kwargs['device']
         matching_devices = {}
-        for device in DeviceApproveCommand.DevicesToApprove:
+        for device in approval_requests:
             device_id = device.get('encrypted_device_token')
             if not device_id:
                 continue
-            device_id = DeviceApproveCommand.token_to_string(base64.urlsafe_b64decode(device_id + '=='))
+            device_id = DeviceApproveCommand.token_to_string(api.base64_decode(device_id))
             found = False
             if devices:
                 for name in devices:
@@ -4028,7 +4012,8 @@ class DeviceApproveCommand(EnterpriseCommand):
                 if keep:
                     trusted_devices[k] = v
                 else:
-                    logging.warning("The user %s attempted to login from an unstrusted IP (%s). To force the approval, run the same command without the --trusted-ip argument", p_uname, p_ip_addr)
+                    logging.warning("The user %s attempted to login from an unstrusted IP (%s). "
+                                    "To force the approval, run the same command without the --trusted-ip argument", p_uname, p_ip_addr)
 
             matching_devices = trusted_devices
 
@@ -4039,20 +4024,19 @@ class DeviceApproveCommand(EnterpriseCommand):
         if kwargs.get('approve') or kwargs.get('deny'):
             approve_rq = ApproveUserDevicesRequest()
             data_keys = {}
+            curve = ec.SECP256R1()
             if kwargs.get('approve'):
-
                 # resolve user data keys shared with enterprise
                 user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
                 user_ids.difference_update(data_keys.keys())
                 if len(user_ids) > 0:
                     ecc_private_key = None
-                    curve = ec.SECP256R1()
                     if 'keys' in params.enterprise:
                         if 'ecc_encrypted_private_key' in params.enterprise['keys']:
                             keys = params.enterprise['keys']
                             try:
-                                ecc_private_key_data = base64.urlsafe_b64decode(keys['ecc_encrypted_private_key'] + '==')
-                                ecc_private_key_data = rest_api.decrypt_aes(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
+                                ecc_private_key_data = api.base64_decode(keys['ecc_encrypted_private_key'] + '==')
+                                ecc_private_key_data = api.decrypt_aes_plain(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
                                 private_value = int.from_bytes(ecc_private_key_data, byteorder='big', signed=False)
                                 ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
                             except Exception as e:
@@ -4061,26 +4045,20 @@ class DeviceApproveCommand(EnterpriseCommand):
                     if ecc_private_key:
                         data_key_rq = UserDataKeyRequest()
                         data_key_rq.enterpriseUserId.extend(user_ids)
-                        api_request_payload = ApiRequestPayload()
-                        api_request_payload.payload = data_key_rq.SerializeToString()
-                        api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-                        rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/get_enterprise_user_data_key', api_request_payload)
-                        if type(rs) is bytes:
-                            data_key_rs = EnterpriseUserDataKeys()
-                            data_key_rs.ParseFromString(rs)
-                            for key in data_key_rs.keys:
-                                enc_data_key = key.userEncryptedDataKey
-                                if enc_data_key:
-                                    try:
-                                        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, enc_data_key[:65])
-                                        shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
-                                        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-                                        digest.update(shared_key)
-                                        enc_key = digest.finalize()
-                                        data_key = rest_api.decrypt_aes(enc_data_key[65:], enc_key)
-                                        data_keys[key.enterpriseUserId] = data_key
-                                    except Exception as e:
-                                        logging.debug(e)
+                        data_key_rs = api.communicate_rest(params, data_key_rq, 'enterprise/get_enterprise_user_data_key', rs_type=EnterpriseUserDataKeys)
+                        for key in data_key_rs.keys:
+                            enc_data_key = key.userEncryptedDataKey
+                            if enc_data_key:
+                                try:
+                                    ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, enc_data_key[:65])
+                                    shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
+                                    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                                    digest.update(shared_key)
+                                    enc_key = digest.finalize()
+                                    data_key = api.decrypt_aes_plain(enc_data_key[65:], enc_key)
+                                    data_keys[key.enterpriseUserId] = data_key
+                                except Exception as e:
+                                    logging.debug(e)
 
                 # resolve user data keys from Account Transfer
                 user_ids = set([x['enterprise_user_id'] for x in matching_devices.values()])
@@ -4088,43 +4066,35 @@ class DeviceApproveCommand(EnterpriseCommand):
                 if len(user_ids) > 0:
                     data_key_rq = UserDataKeyRequest()
                     data_key_rq.enterpriseUserId.extend(user_ids)
-                    api_request_payload = ApiRequestPayload()
-                    api_request_payload.payload = data_key_rq.SerializeToString()
-                    api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-                    rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/get_user_data_key_shared_to_enterprise', api_request_payload)
-                    if type(rs) is bytes:
-                        data_key_rs = UserDataKeyResponse()
-                        data_key_rs.ParseFromString(rs)
-                        if data_key_rs.noEncryptedDataKey:
-                            user_ids = set(data_key_rs.noEncryptedDataKey)
-                            usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
-                            if usernames:
-                                logging.info('User(s) \"%s\" have no accepted account transfers or did not share encryption key', ', '.join(usernames))
-                        if data_key_rs.accessDenied:
-                            user_ids = set(data_key_rs.noEncryptedDataKey)
-                            usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
-                            if usernames:
-                                logging.info('You cannot manage these user(s): %s', ', '.join(usernames))
-                        if data_key_rs.userDataKeys:
-                            for dk in data_key_rs.userDataKeys:
-                                try:
-                                    role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
-                                    private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
-                                    for user_dk in dk.enterpriseUserIdDataKeyPairs:
-                                        if user_dk.enterpriseUserId not in data_keys:
-                                            data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
-                                            data_key = api.decrypt_rsa(data_key_str, private_key)
-                                            data_keys[user_dk.enterpriseUserId] = data_key
-                                except Exception as ex:
-                                    logging.debug(ex)
-                    else:
-                        logging.warning(rs)
+                    data_key_rs = api.communicate_rest(params, data_key_rq, 'enterprise/get_user_data_key_shared_to_enterprise', rs_type=UserDataKeyResponse)
+                    if data_key_rs.noEncryptedDataKey:
+                        user_ids = set(data_key_rs.noEncryptedDataKey)
+                        usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                        if usernames:
+                            logging.info('User(s) \"%s\" have no accepted account transfers or did not share encryption key', ', '.join(usernames))
+                    if data_key_rs.accessDenied:
+                        user_ids = set(data_key_rs.noEncryptedDataKey)
+                        usernames = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] in user_ids]
+                        if usernames:
+                            logging.info('You cannot manage these user(s): %s', ', '.join(usernames))
+                    if data_key_rs.userDataKeys:
+                        for dk in data_key_rs.userDataKeys:
+                            try:
+                                role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
+                                private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
+                                for user_dk in dk.enterpriseUserIdDataKeyPairs:
+                                    if user_dk.enterpriseUserId not in data_keys:
+                                        data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
+                                        data_key = api.decrypt_rsa(data_key_str, private_key)
+                                        data_keys[user_dk.enterpriseUserId] = data_key
+                            except Exception as ex:
+                                logging.debug(ex)
 
             for device in matching_devices.values():
                 ent_user_id = device['enterprise_user_id']
                 device_rq = ApproveUserDeviceRequest()
                 device_rq.enterpriseUserId = ent_user_id
-                device_rq.encryptedDeviceToken = base64.urlsafe_b64decode(device['encrypted_device_token'] + '==')
+                device_rq.encryptedDeviceToken = api.base64_decode(device['encrypted_device_token'])
                 device_rq.denyApproval = True if kwargs.get('deny') else False
                 if kwargs.get('approve'):
                     public_key = device['device_public_key']
@@ -4134,10 +4104,9 @@ class DeviceApproveCommand(EnterpriseCommand):
                     if not data_key:
                         continue
                     try:
-                        curve = ec.SECP256R1()
                         ephemeral_key = ec.generate_private_key(curve,  default_backend())
                         device_public_key = ec.EllipticCurvePublicKey. \
-                            from_encoded_point(curve, base64.urlsafe_b64decode(device['device_public_key'] + '=='))
+                            from_encoded_point(curve, api.base64_decode(device['device_public_key']))
                         shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
                         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                         digest.update(shared_key)
@@ -4154,16 +4123,8 @@ class DeviceApproveCommand(EnterpriseCommand):
             if len(approve_rq.deviceRequests) == 0:
                 return
 
-            api_request_payload = ApiRequestPayload()
-            api_request_payload.payload = approve_rq.SerializeToString()
-            api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
-            rs = api.rest_api.execute_rest(params.rest_context, 'enterprise/approve_user_devices', api_request_payload)
-            if type(rs) is bytes:
-                approve_rs = ApproveUserDevicesResponse()
-                approve_rs.ParseFromString(rs)
-                DeviceApproveCommand.DevicesToApprove = None
-            else:
-                logging.warning(rs)
+            rs = api.communicate_rest(params, approve_rq, 'enterprise/approve_user_devices', rs_type=ApproveUserDevicesResponse)
+            api.query_enterprise(params)
         else:
             print('')
             headers = [
@@ -4201,181 +4162,3 @@ class DeviceApproveCommand(EnterpriseCommand):
             rows.sort(key=lambda x: x[0])
             dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
             print('')
-
-
-scim_description = '''
-SCIM Command Syntax Description:
-scim command [target] [--options]
- Command            Description
-=================================================================
- list               Displays the list of SCIM endpoints
- create             Creates SCIM endpoint
- view               Prints SCIM endpoint details
- edit               Changes SCIM endpoint configuration
- delete             Deletes SCIM endpoint
- 
-  list, create
- 'target' parameter is ignored 
- 
-view, edit, delete
- these commands require 'target' parameter: SCIM endpoint ID
- 
- Option             Commands
-=================================================================
- --reload           all : Reloads SCIM configuration
- --node             create : Node ID or Name 
- --prefix           create, edit : Role prefix
- --unique-groups    create, edit : Unique groups 
- --force            delete : Do not ask for delete confirmation
-'''
-
-
-class EnterpriseScimCommand(EnterpriseCommand):
-    def get_parser(self):  # type: () -> argparse.ArgumentParser or None
-        return scim_parser
-
-    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
-        if kwargs.get('reload'):
-            api.query_enterprise(params)
-
-        command = kwargs.get('command') or ''
-        if command == 'list' or command == '':
-            if command == '':
-                logging.info(scim_description)
-
-            self.dump_scims(params)
-            return
-
-        if command == 'create':
-            node_name = kwargs.get('node')
-            if not node_name:
-                logging.warning('\"--node\" option is required for \"create\" command')
-                return
-            nodes = list(self.resolve_nodes(params, node_name))
-            if len(nodes) > 1:
-                logging.warning('Node name \'%s\' is not unique. Use Node ID.', node_name)
-                return
-            elif len(nodes) == 0:
-                logging.warning('Node name \'%s\' is not found', node_name)
-                return
-
-            matched_node = nodes[0]
-            if not matched_node.get('parent_id'):
-                logging.warning('Root node cannot be used for SCIM endpoint')
-                return
-            token = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('=')
-            rq = {
-                'command': 'scim_add',
-                'scim_id': self.get_enterprise_id(params),
-                'node_id': matched_node['node_id'],
-                'token': token,
-            }
-            prefix = kwargs.get('prefix')
-            if prefix:
-                rq['prefix'] = prefix
-            if kwargs.get('unique_groups'):
-                rq['unique_groups'] = True
-
-            api.communicate(params, rq)
-            api.query_enterprise(params)
-            logging.info('')
-            logging.info('SCIM ID: %d', rq['scim_id'])
-            logging.info('SCIM URL: %s', self.get_scim_url(params, matched_node['node_id']))
-            logging.info('Provisioning Token: %s', token)
-            logging.info('')
-            return token
-
-        target = kwargs.get('target')
-        if not target:
-            logging.warning('\"target\" parameter is required for \"%s\" command', command)
-            return
-        scims = []
-        if params.enterprise and 'scims' in params.enterprise:
-            try:
-                target_id = int(target)
-            except ValueError:
-                logging.warning('SCIM ID should be integer: %s', target)
-                return
-            for info in params.enterprise['scims']:
-                if target_id == info['scim_id'] or target_id == info['node_id']:
-                    scims.append(info)
-                    break
-        if len(scims) == 0:
-            logging.warning('SCIM endpoint with ID \"%d\" not found', target)
-            return
-        scim = scims[0]
-
-        if command == 'edit':
-            token = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('=')
-            rq = {
-                'command': 'scim_update',
-                'scim_id': scim['scim_id'],
-                'token': token,
-            }
-            prefix = kwargs.get('prefix')
-            if prefix:
-                rq['prefix'] = prefix
-            if kwargs.get('unique_groups'):
-                rq['unique_groups'] = True
-
-            api.communicate(params, rq)
-            api.query_enterprise(params)
-            logging.info('')
-            logging.info('SCIM ID: %d', scim['scim_id'])
-            logging.info('SCIM URL: %s', self.get_scim_url(params, scim['node_id']))
-            logging.info('Provisioning Token: %s', token)
-            logging.info('')
-            return token
-
-        if command == 'view':
-            logging.info('{0:>20s}: {1}'.format('SCIM ID', scim['scim_id']))
-            node_id = scim['node_id']
-            logging.info('{0:>20s}: {1}'.format('SCIM URL', self.get_scim_url(params, node_id)))
-            logging.info('{0:>20s}: {1}'.format('Node ID', node_id))
-            logging.info('{0:>20s}: {1}'.format('Node Name', EnterpriseCommand.get_node_path(params, node_id)))
-            logging.info('{0:>20s}: {1}'.format('Prefix', scim.get('role_prefix') or ''))
-            logging.info('{0:>20s}: {1}'.format('Status', scim['status']))
-            last_synced = scim.get('last_synced')
-            if last_synced:
-                logging.info('{0:>20s}: {1}'.format('Last Synced', time.localtime(last_synced)))
-
-        elif command == 'delete':
-            answer = 'y' if kwargs.get('force') else \
-                user_choice(bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-                            'You are about to delete SCIM endpoint {0}'.format(scim['scim_id']) +
-                            '\n\nDo you want to proceed with deletion?', 'yn', 'n')
-            if answer.lower() != 'y':
-                return
-
-            rq = {
-                'command': 'scim_delete',
-                'scim_id': scim['scim_id'],
-            }
-            api.communicate(params, rq)
-            api.query_enterprise(params)
-            logging.warning('SCIM endpoint \"%d\" at node \"%d\" deleted', scim['scim_id'], scim['node_id'])
-        else:
-            logging.warning('Unsupported command \"%s\"', command)
-
-
-    @staticmethod
-    def get_scim_url(params, node_id):  # type:  (KeeperParams, int) -> any
-        p = urlparse(params.rest_context.server_base)
-        return urlunparse((p.scheme, p.netloc, '/api/rest/scim/v2/' + str(node_id), None, None, None))
-
-    @staticmethod
-    def dump_scims(params):    # type: (KeeperParams) -> None
-        table = []
-        headers = ['SCIM ID', 'Node Name', 'Node ID', 'Prefix', 'Status', 'Last Synced']
-        if params.enterprise and 'scims' in params.enterprise:
-            for info in params.enterprise['scims']:
-                node_id = info['node_id']
-                last_synced = info.get('last_synced')
-                if last_synced:
-                    last_synced = str(time.localtime(last_synced))
-                else:
-                    last_synced = ''
-                row = [info['scim_id'], EnterpriseCommand.get_node_path(params, node_id), node_id,
-                       info.get('role_prefix') or '', info['status'], last_synced]
-                table.append(row)
-        dump_report_data(table, headers=headers)

@@ -16,7 +16,7 @@ from typing import Iterator, Tuple, Optional, List, Callable, Union
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api
 from .proto import breachwatch_pb2 as breachwatch_proto, client_pb2 as client_proto
-from . import APIRequest_pb2 as api_request_proto
+from .proto import APIRequest_pb2 as api_request_proto
 from .error import KeeperApiError
 from .record import Record
 from .params import KeeperParams

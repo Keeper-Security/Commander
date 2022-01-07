@@ -1,3 +1,4 @@
+wheel
 colorama
 cryptography>=3.4.8
 pycryptodomex
@@ -6,7 +7,7 @@ tabulate
 prompt_toolkit==2.0.10
 asciitree
 pytest
-protobuf
+protobuf>=3.19.0
 pyperclip
 pykeepass
 pysocks

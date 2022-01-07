@@ -38,25 +38,28 @@ class TestEnterpriseCommands(TestCase):
     def wipe_out_data(cls):
         params = cls.params    # type: KeeperParams
         managed_roles = set()
-        for mn in params.enterprise['managed_nodes']:
-            managed_roles.add(mn['role_id'])
+        if 'managed_nodes' in params.enterprise:
+            for mn in params.enterprise['managed_nodes']:
+                managed_roles.add(mn['role_id'])
 
-        for ru in params.enterprise['role_users']:
-            if ru['role_id'] not in managed_roles:
-                request = {
-                    'command': 'role_user_remove',
-                    'role_id': ru['role_id'],
-                    'enterprise_user_id': ru['enterprise_user_id']
-                }
-                api.communicate(params, request)
+        if 'role_users' in params.enterprise:
+            for ru in params.enterprise['role_users']:
+                if ru['role_id'] not in managed_roles:
+                    request = {
+                        'command': 'role_user_remove',
+                        'role_id': ru['role_id'],
+                        'enterprise_user_id': ru['enterprise_user_id']
+                    }
+                    api.communicate(params, request)
 
-        for user in params.enterprise['users']:
-            if user['status'] == 'invited':
-                request = {
-                    'command': 'enterprise_user_delete',
-                    'enterprise_user_id': user['enterprise_user_id']
-                }
-                api.communicate(params, request)
+        if 'users' in params.enterprise:
+            for user in params.enterprise['users']:
+                if user['status'] == 'invited':
+                    request = {
+                        'command': 'enterprise_user_delete',
+                        'enterprise_user_id': user['enterprise_user_id']
+                    }
+                    api.communicate(params, request)
 
         if 'teams' in params.enterprise:
             for team in params.enterprise['teams']:

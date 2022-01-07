@@ -2,7 +2,7 @@ from unittest import TestCase, mock
 
 from data_vault import VaultEnvironment, get_connected_params, get_sync_down_response, get_synced_params
 from helper import KeeperApiHelper
-from keepercommander.api import sync_down, convert_to_folders
+from keepercommander.api import sync_down
 
 vault_env = VaultEnvironment()
 
@@ -134,11 +134,3 @@ class TestSyncDown(TestCase):
             self.assertTrue('shared_folder_key_unencrypted' in sf)
         for t in params.team_cache.values():
             self.assertTrue('team_key_unencrypted' in t)
-
-    def test_convert_to_folders(self):
-        params = get_synced_params()
-
-        KeeperApiHelper.communicate_expect(['convert_to_folders'])
-        result = convert_to_folders(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
-        self.assertTrue(result)
