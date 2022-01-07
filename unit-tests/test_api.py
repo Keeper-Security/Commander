@@ -3,7 +3,7 @@ from unittest import TestCase, mock
 from data_vault import VaultEnvironment, get_synced_params, get_connected_params
 from helper import KeeperApiHelper
 from keepercommander import api
-from keepercommander import APIRequest_pb2 as proto
+from keepercommander.proto import APIRequest_pb2
 
 vault_env = VaultEnvironment()
 
@@ -65,7 +65,7 @@ class TestSearch(TestCase):
         params = get_connected_params()
 
         with mock.patch('keepercommander.rest_api.get_new_user_params') as m_params, mock.patch('builtins.print'), mock.patch('getpass.getpass') as m_getpass:
-            user_params = proto.NewUserMinimumParams()
+            user_params = APIRequest_pb2.NewUserMinimumParams()
             user_params.minimumIterations = 1000
             user_params.passwordMatchRegex.extend(['^(?=(.*[A-Z]){1,}).*$', '^(?=(.*[0-9]){2,}).*$', '.{6,}'])
             user_params.passwordMatchDescription.extend(['Contains at least 1 uppercase character(s)', 'Contains at least 2 digit(s)', 'At least 6 character(s)'])
@@ -81,7 +81,7 @@ class TestSearch(TestCase):
         params = get_connected_params()
 
         with mock.patch('keepercommander.rest_api.get_new_user_params') as m_params, mock.patch('builtins.print'), mock.patch('getpass.getpass') as m_getpass:
-            user_params = proto.NewUserMinimumParams()
+            user_params = APIRequest_pb2.NewUserMinimumParams()
             user_params.minimumIterations = 1000
             user_params.passwordMatchRegex.extend(['^(?=(.*[A-Z]){1,}).*$', '^(?=(.*[0-9]){2,}).*$', '.{6,}'])
             user_params.passwordMatchDescription.extend(['Contains at least 1 uppercase character(s)', 'Contains at least 2 digit(s)', 'At least 6 character(s)'])
@@ -96,7 +96,7 @@ class TestSearch(TestCase):
         params = get_connected_params()
 
         with mock.patch('keepercommander.rest_api.get_new_user_params') as m_params, mock.patch('builtins.print'), mock.patch('getpass.getpass') as m_getpass:
-            user_params = proto.NewUserMinimumParams()
+            user_params = APIRequest_pb2.NewUserMinimumParams()
             user_params.minimumIterations = 1000
             user_params.passwordMatchRegex.extend(['^(?=(.*[A-Z]){1,}).*$', '^(?=(.*[0-9]){2,}).*$', '.{6,}'])
             user_params.passwordMatchDescription.extend(['Contains at least 1 uppercase character(s)', 'Contains at least 2 digit(s)', 'At least 6 character(s)'])

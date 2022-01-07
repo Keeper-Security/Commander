@@ -23,11 +23,10 @@ import urllib.parse
 from typing import Optional, Tuple, Iterable, List
 
 from google.protobuf.json_format import MessageToDict
-from . import record_pb2 as record_proto
 from datetime import datetime
 
-from . import constants, rest_api, APIRequest_pb2 as proto, record_pb2 as records, loginv3, utils, crypto
-from .proto import client_pb2 as client_proto
+from . import constants, rest_api, loginv3, utils, crypto
+from .proto import client_pb2 as client_proto, APIRequest_pb2 as proto, record_pb2 as records
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .record import Record
 from .shared_folder import SharedFolder
@@ -43,6 +42,7 @@ from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 
+from .enterprise import query_enterprise as qe
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
@@ -56,6 +56,7 @@ unpad_char = lambda s: s[0:-ord(s[-1])]
 decode_uid_to_str = lambda uid: base64.urlsafe_b64encode(uid).decode().rstrip('=')
 
 LOCALE='en_US'
+
 
 def run_command(params, request):
     # type: (KeeperParams, dict) -> dict
@@ -157,8 +158,8 @@ def login(params):
                 params.data_key = decrypt_encryption_params(keys['encryption_params'], params.password)
             elif 'encrypted_data_key' in keys:
                 encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
-                key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
-                params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
+                key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
+                params.data_key = crypto.decrypt_aes_v2(encrypted_data_key, key)
 
             params.rsa_key = decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
 
@@ -193,7 +194,6 @@ def login(params):
 
             if response_json.get('is_enterprise_admin'):
                 query_enterprise(params)
-                query_msp(params)
 
             params.sync_data = True
             params.prepare_commands = True
@@ -353,6 +353,7 @@ def pad_aes_gcm(json):
             result = result + pad if isinstance(result, str) else b''.join([result, pad.encode('UTF-8')])
 
     return result
+
 
 def decrypt_aes_plain(data: bytes, key: bytes):
     cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=data[:12])
@@ -645,8 +646,8 @@ def sync_down(params):
 
                 elif meta_data['record_key_type'] == 4:
                     # ECIES-encrypted key
-                    decoded_key = base64.urlsafe_b64decode(meta_data['record_key'] + '==')
-                    key_unencrypted = ecies_decrypt(decoded_key, params.ecc_key)
+                    decoded_key = utils.base64_url_decode(meta_data['record_key'])
+                    key_unencrypted = crypto.decrypt_ec(decoded_key, params.ecc_key)
                     if len(key_unencrypted) == 32:
                         meta_data['record_key_unencrypted'] = key_unencrypted
             except Exception as e:
@@ -938,12 +939,6 @@ def sync_down(params):
                 'flag': 'folders'
             }
             rs = communicate(params, rq)
-            if rs['result'] == 'success':
-                if not rs['value']:
-                    if convert_to_folders(params):
-                        params.revision = 0
-                        sync_down(params)
-                        return
     except:
         pass
 
@@ -1002,48 +997,6 @@ def sync_down(params):
                 record_count += 1
         if record_count:
             logging.info('Decrypted [%d] record(s)', record_count)
-
-
-def convert_to_folders(params):
-    folders = {}
-
-    for uid in params.record_cache:
-        if uid in params.meta_data_cache:
-            rec = get_record(params, uid)
-            if len(rec.folder) > 0:
-                key = rec.folder.lower()
-                if key not in folders:
-                    folder_key = os.urandom(32)
-                    data = {'name': rec.folder}
-                    folders[key] = {
-                        'folder_uid': generate_record_uid(),
-                        'data': encrypt_aes(json.dumps(data).encode('utf-8'), folder_key),
-                        'folder_key': encrypt_aes(folder_key, params.data_key),
-                        'records': []
-                    }
-                folders[key]['records'].append(uid)
-
-    if len(folders) > 0:
-        rq = {
-            'command': 'convert_to_folders',
-            'folders': [],
-            'records': []
-        }
-        for f in folders.values():
-            rq['folders'].append({
-                'folder_uid': f['folder_uid'],
-                'data': f['data'],
-                'folder_key': f['folder_key']
-            })
-            for ruid in f['records']:
-                rq['records'].append({
-                    'folder_uid': f['folder_uid'],
-                    'record_uid': ruid
-                })
-        rs = communicate(params, rq)
-        return rs['result'] == 'success'
-
-    return False
 
 
 def create_auth_verifier(password, salt, iterations):
@@ -1126,9 +1079,9 @@ def decrypt_data_key(params: KeeperParams, encrypted_data_key):
     if encrypted_data_key_len != 60:
         raise CryptoError('Invalid encryption params: Encrypted data key was unexpected length ' + str(encrypted_data_key_len))
 
-    decryption_key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
+    decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
 
-    return rest_api.decrypt_aes(encrypted_data_key, decryption_key)
+    return crypto.decrypt_aes_v2(encrypted_data_key, decryption_key)
 
 
 def get_record(params, record_uid):
@@ -1827,7 +1780,7 @@ def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List
     return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid)
 
 
-def add_record(params, record,  **kwargs):   # type: (KeeperParams, Record) -> bool
+def add_record(params, record,  **kwargs):   # type: (KeeperParams, Record, any) -> bool
 
     new_record = prepare_record(params, record)
     request = {
@@ -1860,11 +1813,11 @@ def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterabl
         return
 
     uids = set((x for x in record_uids if x in params.record_cache))
-    audit_data = []   # type: List[record_proto.RecordAddAuditData]
+    audit_data = []   # type: List[records.RecordAddAuditData]
     for record_uid in uids:
         record = get_record(params, record_uid)
         if record:
-            audit = record_proto.RecordAddAuditData()
+            audit = records.RecordAddAuditData()
             audit.record_uid = utils.base64_url_decode(record_uid)
             audit.revision = record.revision
             data = {
@@ -1877,73 +1830,12 @@ def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterabl
             audit_data.append(audit)
 
     if audit_data:
-        rq = record_proto.AddAuditDataRequest()
+        rq = records.AddAuditDataRequest()
         rq.records.extend(audit_data)
         try:
             communicate_rest(params, rq, 'vault/record_add_audit_data')
         except Exception as e:
             logging.info('Failed to store audit data: %s', str(e))
-
-
-def ecies_encrypt(message, pub_key, id=b''):
-    try:
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives import serialization
-    except:
-        logging.info('To use this feature, install cryptography package\n' + bcolors.OKGREEN + '\'pip install cryptography\'' + bcolors.ENDC)
-
-    result = message
-    try:
-        curve = ec.SECP256R1()
-        ephemeral_key = ec.generate_private_key(curve,  default_backend())
-        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, pub_key[:65])
-        shared_key = ephemeral_key.exchange(ec.ECDH(), ephemeral_public_key)
-        shared_key = shared_key + id if id else shared_key
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        digest.update(shared_key)
-        enc_key = digest.finalize()
-
-        messagebytes = message.encode('utf-8') if isinstance(message, str) else message
-        data_enc = rest_api.encrypt_aes(messagebytes, enc_key)
-        eph_public_key = ephemeral_key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-
-        result = eph_public_key + data_enc
-    except Exception as e:
-        logging.debug(e)
-    return result
-
-
-def ecies_decrypt(ciphertext, priv_key_data, id = b''):
-    try:
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives import hashes
-    except:
-        logging.info('To use this feature, install cryptography package\n' + bcolors.OKGREEN + '\'pip install cryptography\'' + bcolors.ENDC)
-
-    result = b''
-    try:
-        server_public_key = ciphertext[:65]
-        encrypted_data = ciphertext[65:]
-
-        curve = ec.SECP256R1()
-        private_value = int.from_bytes(priv_key_data, byteorder='big', signed=False)
-        ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
-        # ecc_private_key = CommonHelperMethods.get_private_key_ecc(params)
-
-        ephemeral_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, server_public_key)
-        shared_key = ecc_private_key.exchange(ec.ECDH(), ephemeral_public_key)
-        shared_key = shared_key + id if id else shared_key
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        digest.update(shared_key)
-        enc_key = digest.finalize()
-
-        result = rest_api.decrypt_aes(encrypted_data, enc_key)
-    except Exception as e:
-        logging.debug(e)
-    return result
 
 
 def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...) -> Optional[bool]
@@ -2311,111 +2203,9 @@ def get_record_shares(params, record_uids):
             logging.error(e)
 
 
-def query_msp(params):
-    def fix_data(d):
-        idx = d.rfind(b'}')
-        if idx < len(d) - 1:
-            d = d[:idx+1]
-        return d
-
-    request = {
-        'command': 'get_enterprise_data',
-        'include': ['managed_companies']
-    }
-
-    try:
-        response = communicate(params, request)
-        if response['result'] == 'success':
-            if 'key_type_id' in response:
-                tree_key = None
-                if response['key_type_id'] == 1:
-                    tree_key = decrypt_data(response['tree_key'], params.data_key)
-                elif response['key_type_id'] == 2:
-                    tree_key = decrypt_rsa(response['tree_key'], params.rsa_key)
-                if not tree_key is None:
-                    tree_key = tree_key[:32]
-                    response['unencrypted_tree_key'] = tree_key
-                    if 'managed_companies' in response:
-                        for mc in response['managed_companies']:
-                            mc['data'] = {}
-                            if 'encrypted_data' in mc:
-                                try:
-                                    data = decrypt_data(mc['encrypted_data'], tree_key)
-                                    data = fix_data(data)
-                                    mc['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
-                                    pass
-                        if params.enterprise:
-                            params.enterprise['managed_companies'] = response['managed_companies']
-    except:
-        pass
-
-
 def query_enterprise(params):
-    def fix_data(d):
-        idx = d.rfind(b'}')
-        if idx < len(d) - 1:
-            d = d[:idx+1]
-        return d
-
-    request = {
-        'command': 'get_enterprise_data',
-        'include': ['nodes', 'users', 'teams', 'team_users', 'roles', 'role_enforcements', 'role_privileges',
-                    'role_users', 'managed_nodes', 'role_keys', 'role_keys2', 'licenses', 'queued_teams', 'queued_team_users',
-                    'licenses', 'keys', 'scims']
-    }
     try:
-        response = communicate(params, request)
-        if response['result'] == 'success':
-            if 'key_type_id' in response:
-                tree_key = None
-                if response['key_type_id'] == 1:
-                    tree_key = decrypt_data(response['tree_key'], params.data_key)  # old AES
-                elif response['key_type_id'] == 2:
-                    if params.enterprise_id > 0:
-
-                        decoded_data = base64.urlsafe_b64decode(response['tree_key'] + '==')
-
-                        tree_key = rest_api.decrypt_aes(decoded_data, params.msp_tree_key)  # new AES
-                        # tree_key = decrypt_data(response['tree_key'], msp_tree_key)
-                    else:
-                        tree_key = decrypt_rsa(response['tree_key'], params.rsa_key) # old RSA
-                if not tree_key is None:
-                    tree_key = tree_key[:32]
-                    response['unencrypted_tree_key'] = tree_key
-                    if 'nodes' in response:
-                        for node in response['nodes']:
-                            node['data'] = {}
-                            if 'encrypted_data' in node:
-                                try:
-                                    data = decrypt_data(node['encrypted_data'], tree_key)
-                                    data = fix_data(data)
-                                    node['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
-                                    pass
-                    if 'users' in response:
-                        for user in response['users']:
-                            user['data'] = {}
-                            if 'encrypted_data' in user:
-                                try:
-                                    data = decrypt_data(user['encrypted_data'], tree_key)
-                                    data = fix_data(data)
-                                    user['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
-                                    if 'key_type' in user and user['key_type'] == 'no_key':
-                                        user['data']['displayname'] = user.get('encrypted_data') or ''
-                    if 'roles' in response:
-                        for role in response['roles']:
-                            role['data'] = {}
-                            if 'encrypted_data' in role:
-                                try:
-                                    data = decrypt_data(role['encrypted_data'], tree_key)
-                                    data = fix_data(data)
-                                    role['data'] = json.loads(data.decode('utf-8'))
-                                except Exception as e:
-                                    pass
-
-                    params.enterprise = response
+        qe(params)
     except Exception as e:
         share_account_by = params.get_share_account_timestamp()
         share_account_expired = share_account_by and datetime.today() > share_account_by

@@ -3,11 +3,10 @@ import json
 from datetime import datetime, timedelta
 from unittest import TestCase, mock
 
-import pytest
-
-from data_enterprise import get_enterprise_data, EnterpriseEnvironment, enterprise_allocate_ids
-from keepercommander import api
+from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
+from keepercommander import api, crypto, utils
 from keepercommander.record import Record
+from keepercommander.params import KeeperParams
 from keepercommander.error import CommandError
 from data_vault import VaultEnvironment, get_connected_params
 from keepercommander.commands import enterprise
@@ -25,6 +24,8 @@ class TestEnterprise(TestCase):
         TestEnterprise.expected_commands.clear()
         self.communicate_mock = mock.patch('keepercommander.api.communicate').start()
         self.communicate_mock.side_effect = TestEnterprise.communicate_success
+        self.query_enterprise_mock = mock.patch('keepercommander.api.query_enterprise').start()
+        self.query_enterprise_mock.side_effect = TestEnterprise.query_enterprise
 
     def tearDown(self):
         mock.patch.stopall()
@@ -141,9 +142,11 @@ class TestEnterprise(TestCase):
         with mock.patch('builtins.print'):
             cmd.execute(params, role=[ent_env.role1_name])
 
-        TestEnterprise.expected_commands = ['role_user_add']
-        cmd.execute(params, add_user=[ent_env.user2_email], role=[ent_env.role1_id])
-        self.assertEqual(len(TestEnterprise.expected_commands), 0)
+        with mock.patch('keepercommander.commands.enterprise.user_choice') as mock_choice:
+            mock_choice.return_value = 'y'
+            TestEnterprise.expected_commands = ['role_user_add']
+            cmd.execute(params, add_user=[ent_env.user2_email], role=[ent_env.role1_id])
+            self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['role_user_remove']
         cmd.execute(params, remove_user=[ent_env.user2_email], role=[ent_env.role1_name])
@@ -352,10 +355,27 @@ class TestEnterprise(TestCase):
         }
 
     @staticmethod
+    def query_enterprise(params):   # type: (KeeperParams) -> None
+        params.enterprise = get_enterprise_data(params)
+        if params.enterprise:
+            encrypted_tree_key = utils.base64_url_decode(params.enterprise['tree_key'])
+            params.enterprise['unencrypted_tree_key'] = crypto.decrypt_aes_v1(encrypted_tree_key, params.data_key)
+
+            tree_key = params.enterprise['unencrypted_tree_key']
+            for key in params.enterprise:
+                o = params.enterprise[key]
+                if not isinstance(o, list):
+                    continue
+                for elem in o:
+                    if not isinstance(elem, dict):
+                        continue
+                    if 'encrypted_data' in elem:
+                        decrypted_data = crypto.decrypt_aes_v1(utils.base64_url_decode(elem['encrypted_data']), tree_key)
+                        elem['data'] = json.loads(decrypted_data.decode('utf-8'))
+
+    @staticmethod
     def communicate_success(params, request):
         # type: (any, dict) -> dict
-        if request['command'] == 'get_enterprise_data':
-            return get_enterprise_data(params, request)
         if request['command'] == 'enterprise_allocate_ids':
             return enterprise_allocate_ids(params, request)
 

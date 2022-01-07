@@ -35,7 +35,7 @@ from Cryptodome.Math.Numbers import Integer
 
 import keepercommander
 from .recordv3 import get_record, RecordRemoveCommand
-from ..APIRequest_pb2 import ApiRequestPayload, ApiRequest, ApplicationShareType, AddAppClientRequest, \
+from ..proto.APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
@@ -47,7 +47,7 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..record import Record
 from .. import api, constants, rest_api, loginv3, crypto, utils
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
-from ..record_pb2 import ApplicationAddRequest
+from ..proto.record_pb2 import ApplicationAddRequest
 from ..rest_api import execute_rest
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from .helpers.timeout import (

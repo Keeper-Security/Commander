@@ -1,10 +1,9 @@
 from pkgutil import walk_packages
-from setuptools import find_packages, find_packages
 
 import pytest
+from setuptools import find_packages
 
 import keepercommander
-
 
 SKIP_PKG_IMPORT = ['keepercommander.yubikey', ]
 SKIP_PLUGIN_IMPORT = ['azureadpwd', 'mssql', 'mysql', 'oracle', 'postgresql', 'ssh', 'unixpasswd']

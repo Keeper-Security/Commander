@@ -317,7 +317,6 @@ def do_command(params, command_line):
         current_mc_id = None
 
         api.query_enterprise(params)
-        api.query_msp(params)
 
     else:
         cmd, args = command_and_args_from_cmd(command_line)

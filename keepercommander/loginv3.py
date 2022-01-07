@@ -19,9 +19,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from google.protobuf.json_format import MessageToJson
 
-from . import api, utils, crypto
-from . import rest_api, APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .breachwatch import BreachWatch
+from . import api, rest_api, utils, crypto
+from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
+from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
+from .proto import breachwatch_pb2 as breachwatch_proto
 from .display import bcolors
 from .error import KeeperApiError
 from .humps import decamelize
@@ -29,6 +30,7 @@ from .params import KeeperParams
 from .proto import breachwatch_pb2 as breachwatch_proto
 from .proto import ssocloud_pb2 as ssocloud
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
+from .breachwatch import BreachWatch
 
 install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
                                'Install fido2 package ' + bcolors.OKGREEN + \
@@ -351,8 +353,9 @@ class LoginV3Flow:
 
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
             if 'encrypted_ecc_private_key' in keys:
-                encrypted_ecc_key = base64.urlsafe_b64decode(keys['encrypted_ecc_private_key'])
-                params.ecc_key = api.decrypt_aes_plain(encrypted_ecc_key, params.data_key)
+                encrypted_ecc_key = utils.base64_url_decode(keys['encrypted_ecc_private_key'])
+                decrypted_ecc_key = crypto.decrypt_aes_v2(encrypted_ecc_key, params.data_key)
+                params.ecc_key = crypto.load_ec_private_key(decrypted_ecc_key)
 
         if not params.session_token:
             if 'session_token' in acct_summary_dict_snake_case:
@@ -382,10 +385,8 @@ class LoginV3Flow:
         # license
         params.license = acct_summary_dict_snake_case['license']
 
-        if 'is_enterprise_admin' in acct_summary_dict_snake_case \
-                and acct_summary_dict_snake_case['is_enterprise_admin']:
+        if acct_summary_dict_snake_case.get('is_enterprise_admin'):
             api.query_enterprise(params)
-            api.query_msp(params)
 
         params.sync_data = True
         params.prepare_commands = True
