@@ -67,7 +67,7 @@ _ENCRYPTED_PRIVATE_KEY = api.encrypt_aes(_DER_PRIVATE_KEY, _USER_DATA_KEY)
 _IMPORTED_PUBLIC_KEY = crypto.load_rsa_public_key(base64.b64decode(_USER_PUBLIC_KEY))
 _ENCODED_PUBLIC_KEY = utils.base64_url_encode(crypto.unload_rsa_public_key(_IMPORTED_PUBLIC_KEY))
 
-_V2_DERIVED_KEY = rest_api.derive_key_v2('data_key', _USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
+_V2_DERIVED_KEY = crypto.derive_keyhash_v2('data_key', _USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
 _dk = rest_api.encrypt_aes(_USER_DATA_KEY, _V2_DERIVED_KEY)
 _ENCRYPTED_DATA_KEY = base64.urlsafe_b64encode(_dk).decode('utf-8').strip()
 

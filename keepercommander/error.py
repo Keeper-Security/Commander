@@ -12,6 +12,7 @@ class Error(Exception):
     """Base class for exceptions in this module."""
     pass
 
+
 class InputError(Error):
     """Exception raised for errors in the input.
 
@@ -24,6 +25,7 @@ class InputError(Error):
         self.expression = expression
         self.message = message
 
+
 class AuthenticationError(Error):
     """Exception raised with user fails authentication
 
@@ -33,6 +35,7 @@ class AuthenticationError(Error):
 
     def __init__(self, message):
         self.message = message
+
 
 class CommunicationError(Error):
     """Exception raised with network issues

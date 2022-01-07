@@ -12,9 +12,9 @@
 import collections
 
 from .base import Command
-from ..params import KeeperParams
 from .. import api, utils, crypto
 from ..error import CommandError
+from ..params import KeeperParams
 
 
 class EnterpriseCommand(Command):
@@ -146,9 +146,85 @@ class EnterpriseCommand(Command):
                     yield node
 
     @staticmethod
-    def get_root_nodes(params):  # type: (KeeperParams) -> [dict]
-        node_set = {x['node_id'] for x in params.enterprise['nodes']}
-        for node in params.enterprise['nodes']:
-            parent_id = node.get('parent_id') or ''
-            if parent_id not in node_set:
-                yield node
+    def get_user_root_nodes(params):  # type: (KeeperParams) -> collections.Iterable[int]
+        if 'user_root_nodes' not in params.enterprise:
+            EnterpriseCommand._load_managed_nodes(params)
+
+        for x in params.enterprise['user_root_nodes']:
+            yield x
+
+    @staticmethod
+    def get_user_managed_nodes(params):  # type: (KeeperParams) -> collections.Iterable[int]
+        if 'user_managed_nodes' not in params.enterprise:
+            EnterpriseCommand._load_managed_nodes(params)
+
+        for x in params.enterprise['user_managed_nodes']:
+            yield x
+
+    @staticmethod
+    def _load_managed_nodes(params):  # type: (KeeperParams) -> None
+        if 'nodes' not in params.enterprise:
+            return
+        nodes = params.enterprise['nodes']
+        root_node_id = next((x['node_id'] for x in nodes if x['node_id'] & 0xffffffff == 2), None)
+        if not root_node_id:
+            return
+
+        if 'users' not in params.enterprise:
+            return
+        enterprise_user_id = next((x['enterprise_user_id'] for x in params.enterprise['users'] if x.get('username', '').lower() == params.user.lower()), None)
+
+        if not enterprise_user_id:
+            return
+
+        root_nodes = set()
+        managed_nodes = set()
+        current_user_roles = set((x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == enterprise_user_id))
+        is_main_admin = any(True for x in params.enterprise['managed_nodes'] if x['role_id'] in current_user_roles and x['cascade_node_management'] and x['managed_node_id'] == root_node_id)
+        if is_main_admin:
+            root_nodes.add(root_node_id)
+            managed_nodes.update((x['node_id'] for x in nodes))
+        else:
+            singles = []
+            for mn in params.enterprise['managed_nodes']:
+                role_id = mn['role_id']
+                if role_id not in current_user_roles:
+                    continue
+                node_id = mn['managed_node_id']
+                if mn['cascade_node_management']:
+                    managed_nodes.add(node_id)
+                else:
+                    singles.append(node_id)
+
+            missed = set()
+            lookup = {x['node_id']: x for x in nodes}
+            for node in nodes:
+                node_id = node['node_id']
+                if node_id in managed_nodes:
+                    continue
+
+                stack = []
+                while node_id in lookup:
+                    if node_id in managed_nodes:
+                        managed_nodes.update(stack)
+                        stack.clear()
+                        break
+                    if node_id in missed:
+                        break
+                    stack.append(node_id)
+                    node_id = lookup[node_id].get('parent_id', 0)
+                missed.update(stack)
+            managed_nodes.update(singles)
+
+            for mn in params.enterprise['managed_nodes']:
+                role_id = mn['role_id']
+                if role_id not in current_user_roles:
+                    continue
+                node_id = mn['managed_node_id']
+                if node_id in lookup:
+                    parent_id = lookup[node_id].get('parent_id', 0)
+                    if parent_id not in managed_nodes:
+                        root_nodes.add(node_id)
+
+        params.enterprise['user_root_nodes'] = list(root_nodes)
+        params.enterprise['user_managed_nodes'] = list(managed_nodes)

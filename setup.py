@@ -10,12 +10,13 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 install_requires = [
+    'wheel',
     'asciitree',
     'colorama',
     'cryptography>=3.4.8',
     'pykeepass',
     'prompt_toolkit>=2.0.4,<=2.0.10',
-    'protobuf>=3.13.0',
+    'protobuf>=3.18.0',
     'pycryptodomex>=3.7.2',
     'pyperclip',
     'pysocks',

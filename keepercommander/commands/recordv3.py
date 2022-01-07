@@ -25,16 +25,17 @@ from pathlib import Path
 from tabulate import tabulate
 
 from .. import api, crypto, generator
-from .. import record_pb2 as records, recordv3, loginv3
+from .. import recordv3, loginv3
 from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from ..display import bcolors
 from ..record import Record, get_totp_code
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
-from . import record as recordv2
 from .register import FileReportCommand
+from . import record as recordv2
 from . import record_common
+from ..proto import record_pb2 as records
 
 
 def register_commands(commands):

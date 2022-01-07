@@ -15,8 +15,9 @@ import logging
 import re
 from collections import OrderedDict
 
-from keepercommander import api, loginv3, record_pb2, recordv3
-from keepercommander.subfolder import try_resolve_path
+from .. import api, loginv3, recordv3
+from ..subfolder import try_resolve_path
+from ..proto import record_pb2
 from .folder import get_folder_path
 from .base import raise_parse_exception, suppress_exit, Command
 
@@ -130,7 +131,7 @@ class ConvertCommand(Command):
             recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
 
         if len(records_by_folder) == 0:
-            msg = f'No records that can be converted to record types can be found found for pattern "{pattern}"'
+            msg = f'No records that can be converted to record types can be found for pattern "{pattern}"'
             if url_pattern:
                 msg += f' with url matching "{url_pattern}"'
             logging.warning(msg)

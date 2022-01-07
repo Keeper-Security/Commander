@@ -97,7 +97,7 @@ class GetMSPDataCommand(EnterpriseCommand):
         return msp_data_parser
 
     def execute(self, params, **kwargs):
-        api.query_msp(params)
+        api.query_enterprise(params)
 
 
 class MSPInfoCommand(EnterpriseCommand):
@@ -183,7 +183,7 @@ class MSPLicenseCommand(EnterpriseCommand):
             if rs['result'] == 'success':
                 mc_from_rs = find(lambda mc: mc['mc_enterprise_id'] == rs["enterprise_id"], managed_companies)
                 print("Successfully updated '%s' id=%d" % (mc_from_rs['mc_enterprise_name'], mc_from_rs['mc_enterprise_id']))
-                api.query_msp(params)
+                api.query_enterprise(params)
 
 
 class MSPLicensesReportCommand(EnterpriseCommand):

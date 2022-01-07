@@ -5,35 +5,31 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2019 Keeper Security Inc.
+# Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 import requests
-import base64
 import os
 import json
-import hashlib
-import hmac
 import logging
 
 from typing import Union
 
 from .params import RestApiContext
 from .error import KeeperApiError, CommunicationError
-from . import APIRequest_pb2 as proto
+from .proto import APIRequest_pb2 as proto
+from . import crypto, utils
 
-from Cryptodome.PublicKey import RSA
-from Cryptodome.Cipher import AES, PKCS1_v1_5
 from . import __version__
 
 
 LEGACY_CLIENT_VERSION = 'c14.0.0'
-# CLIENT_VERSION = 'c' + __version__
-CLIENT_VERSION = 'c16.4.5'
+CLIENT_VERSION = 'c' + __version__
+# CLIENT_VERSION = 'c16.4.5'
 
 SERVER_PUBLIC_KEYS = {
-    1: RSA.importKey(base64.urlsafe_b64decode(
+    1: crypto.load_rsa_public_key(utils.base64_url_decode(
         'MIIBCgKCAQEA9Z_CZzxiNUz8-npqI4V10-zW3AL7-M4UQDdd_17759Xzm0MOEfH' +
         'OOsOgZxxNK1DEsbyCTCE05fd3Hz1mn1uGjXvm5HnN2mL_3TOVxyLU6VwH9EDInn' +
         'j4DNMFifs69il3KlviT3llRgPCcjF4xrF8d4SR0_N3eqS1f9CBJPNEKEH-am5Xb' +
@@ -41,7 +37,7 @@ SERVER_PUBLIC_KEYS = {
         'xIXtxRy-4jA49zK-CQrGmWqIm5DzZcBvUtVGZ3UXd6LeMXMJOifvuCneGC2T2uB' +
         '6G2g5yD54-onmKIETyNX0LtpR1MsZmKLgru5ugwIDAQAB')),
 
-    2: RSA.importKey(base64.urlsafe_b64decode(
+    2: crypto.load_rsa_public_key(utils.base64_url_decode(
         'MIIBCgKCAQEAkOpym7xC3sSysw5DAidLoVF7JUgnvXejbieDWmEiD-DQOKxzfQq' +
         'YHoFfeeix__bx3wMW3I8cAc8zwZ1JO8hyB2ON732JE2Zp301GAUMnAK_rBhQWmY' +
         'KP_-uXSKeTJPiuaW9PVG0oRJ4MEdS-t1vIA4eDPhI1EexHaY3P2wHKoV8twcGvd' +
@@ -49,7 +45,7 @@ SERVER_PUBLIC_KEYS = {
         'BnQ72Bdbsry0KKVTlcPsudAnnWUtsMJNgmyQbESPm-aVv-GzdVUFvWKpKkAxDpN' +
         'ArPMf0xt8VL2frw2LDe5_n9IMFogUiSYt156_mQIDAQAB')),
 
-    3: RSA.importKey(base64.urlsafe_b64decode(
+    3: crypto.load_rsa_public_key(utils.base64_url_decode(
         'MIIBCgKCAQEAyvxCWbLvtMRmq57oFg3mY4DWfkb1dir7b29E8UcwcKDcCsGTqoI' +
         'hubU2pO46TVUXmFgC4E-Zlxt-9F-YA-MY7i_5GrDvySwAy4nbDhRL6Z0kz-rqUi' +
         'rgm9WWsP9v-X_BwzARqq83HNBuzAjf3UHgYDsKmCCarVAzRplZdT3Q5rnNiYPYS' +
@@ -57,7 +53,7 @@ SERVER_PUBLIC_KEYS = {
         'Xn1RdtbNohmMXldAH-C8uIh3Sz8erS4hZFSdUG1WlDsKpyRouNPQ3diorbO88wE' +
         'AgpHjXkOLj63d1fYJBFG0yfu73U80aEZehQkSawIDAQAB')),
 
-    4: RSA.importKey(base64.urlsafe_b64decode(
+    4: crypto.load_rsa_public_key(utils.base64_url_decode(
         'MIIBCgKCAQEA0TVoXLpgluaqw3P011zFPSIzWhUMBqXT-Ocjy8NKjJbdrbs53eR' +
         'FKk1waeB3hNn5JEKNVSNbUIe-MjacB9P34iCfKtdnrdDB8JXx0nIbIPzLtcJC4H' +
         'CYASpjX_TVXrU9BgeCE3NUtnIxjHDy8PCbJyAS_Pv299Q_wpLWnkkjq70ZJ2_fX' +
@@ -65,7 +61,7 @@ SERVER_PUBLIC_KEYS = {
         'KMcAbKQcLrml8CMPc2mmf0KQ5MbS_KSbLXHUF-81AsZVHfQRSuigOStQKxgSGL5' +
         'osY4NrEcODbEXtkuDrKNMsZYhijKiUHBj9vvgKwIDAQAB')),
 
-    5: RSA.importKey(base64.urlsafe_b64decode(
+    5: crypto.load_rsa_public_key(utils.base64_url_decode(
         'MIIBCgKCAQEAueOWC26w-HlOLW7s88WeWkXpjxK4mkjqngIzwbjnsU9145R51Hv' +
         'sILvjXJNdAuueVDHj3OOtQjfUM6eMMLr-3kaPv68y4FNusvB49uKc5ETI0HtHmH' +
         'FSn9qAZvC7dQHSpYqC2TeCus-xKeUciQ5AmSfwpNtwzM6Oh2TO45zAqSA-QBSk_' +
@@ -73,7 +69,7 @@ SERVER_PUBLIC_KEYS = {
         'hBgTFXRHg5OmJbbPoHj217Yh-kHYA8IWEAHylboH6CVBdrNL4Na0fracQVTm-nO' +
         'WdM95dKk3fH-KJYk_SmwB47ndWACLLi5epLl9vwIDAQAB')),
 
-    6: RSA.importKey(base64.urlsafe_b64decode(
+    6: crypto.load_rsa_public_key(utils.base64_url_decode(
         'MIIBCgKCAQEA2PJRM7-4R97rHwY_zCkFA8B3llawb6gF7oAZCpxprl6KB5z2cqL' +
         'AvUfEOBtnr7RIturX04p3ThnwaFnAR7ADVZWBGOYuAyaLzGHDI5mvs8D-NewG9v' +
         'w8qRkTT7Mb8fuOHC6-_lTp9AF2OA2H4QYiT1vt43KbuD0Y2CCVrOTKzDMXG8msl' +
@@ -83,30 +79,12 @@ SERVER_PUBLIC_KEYS = {
 }
 
 
-def encrypt_rsa(data, rsa_key):
-    # type: (bytes, RSA.RsaKey) -> bytes
-    cipher = PKCS1_v1_5.new(rsa_key)
-    return cipher.encrypt(data)
-
-
 def encrypt_aes(data, key):
-    # type: (bytes, bytes) -> bytes
-    iv = os.urandom(12)
-    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=iv)
-    enc_data, tag = cipher.encrypt_and_digest(data)
-    return iv + enc_data + tag
+    return crypto.encrypt_aes_v2(data, key)
 
 
 def decrypt_aes(data, key):
-    # type: (bytes, bytes) -> bytes
-    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=data[:12])
-    return cipher.decrypt_and_verify(data[12:-16], data[-16:])
-
-
-def derive_key_v2(domain, password, salt, iterations):
-    # type: (str, str, bytes, int) -> bytes
-    derived_key = hashlib.pbkdf2_hmac('sha512', (domain+password).encode('utf-8'), salt, iterations, 64)
-    return hmac.new(derived_key, domain.encode('utf-8'), digestmod=hashlib.sha256).digest()
+    return crypto.decrypt_aes_v2(data, key)
 
 
 def execute_rest(context, endpoint, payload):
@@ -122,7 +100,7 @@ def execute_rest(context, endpoint, payload):
         run_request = False
 
         api_request = proto.ApiRequest()
-        api_request.encryptedTransmissionKey = encrypt_rsa(context.transmission_key, SERVER_PUBLIC_KEYS[context.server_key_id])
+        api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, SERVER_PUBLIC_KEYS[context.server_key_id])
         api_request.publicKeyId = context.server_key_id
         api_request.locale = context.locale or 'en_US'
 

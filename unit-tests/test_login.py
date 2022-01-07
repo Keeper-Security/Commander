@@ -3,7 +3,7 @@ import base64
 from unittest import TestCase, mock, skip
 
 from keepercommander.api import login, auth_verifier
-from keepercommander.APIRequest_pb2 import PreLoginResponse, DeviceStatus
+from keepercommander.proto.APIRequest_pb2 import PreLoginResponse, DeviceStatus
 from keepercommander.error import KeeperApiError, AuthenticationError
 
 from data_vault import get_user_params, VaultEnvironment, get_connected_params
