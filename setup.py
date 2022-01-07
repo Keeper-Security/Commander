@@ -21,6 +21,7 @@ install_requires = [
     'pysocks',
     'requests',
     'tabulate',
+    'keeper-secrets-manager-core'
 ]
 adpasswd_requires = ['ldap3']
 test_requires = ['pytest', 'testfixtures']

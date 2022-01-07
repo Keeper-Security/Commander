@@ -1581,19 +1581,19 @@ class KSMCommand(Command):
 
         secrets_manager.get_secrets("NON-EXISTING-RECORD-UID")
 
-        config_str = '{' \
-                   '"hostname": "%s",' \
-                   '"clientId": "%s",' \
-                   '"privateKey": "%s",' \
-                   '"serverPublicKeyId": "%s",' \
-                   '"appKey": "%s"' \
-                   '}' % (
-                       ksm_conf_storage.config.get(ConfigKeys.KEY_HOSTNAME),
-                       ksm_conf_storage.config.get(ConfigKeys.KEY_CLIENT_ID),
-                       ksm_conf_storage.config.get(ConfigKeys.KEY_PRIVATE_KEY),
-                       ksm_conf_storage.config.get(ConfigKeys.KEY_SERVER_PUBLIC_KEY_ID),
-                       ksm_conf_storage.config.get(ConfigKeys.KEY_APP_KEY)
-                   )
+        config_dict = {
+            ConfigKeys.KEY_HOSTNAME.value:             ksm_conf_storage.config.get(ConfigKeys.KEY_HOSTNAME),
+            ConfigKeys.KEY_CLIENT_ID.value:            ksm_conf_storage.config.get(ConfigKeys.KEY_CLIENT_ID),
+            ConfigKeys.KEY_PRIVATE_KEY.value:          ksm_conf_storage.config.get(ConfigKeys.KEY_PRIVATE_KEY),
+            ConfigKeys.KEY_SERVER_PUBLIC_KEY_ID.value: ksm_conf_storage.config.get(ConfigKeys.KEY_SERVER_PUBLIC_KEY_ID),
+            ConfigKeys.KEY_APP_KEY.value:              ksm_conf_storage.config.get(ConfigKeys.KEY_APP_KEY),
+        }
+
+        # if the SDK version is below 16.2.0 then this key won't be present
+        if ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY):
+            config_dict[ConfigKeys.KEY_OWNER_PUBLIC_KEY.value] = ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY)
+
+        config_str = json.dumps(config_dict)
 
         if config_init in ['b64', 'k8s']:
             config_str = json_to_base64(config_str)
