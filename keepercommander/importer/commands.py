@@ -11,21 +11,19 @@
 
 
 import argparse
-import logging
-import requests
-import os
 import getpass
-
+import logging
+import os
 from typing import Optional, List
-from contextlib import contextmanager
-from .. import api
+
 from . import imp_exp
-from ..params import KeeperParams
-from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
-from .importer import Attachment as ImportAttachment, SharedFolder, Permission, PathDelimiter, replace_email_domain
+from .importer import BaseFileImporter, SharedFolder, Permission, PathDelimiter, replace_email_domain
+from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from .lastpass import fetcher
 from .lastpass.vault import Vault
-from .json.json import KeeperJsonImporter, KeeperJsonExporter
+from .. import api
+from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
+from ..params import KeeperParams
 
 
 def register_commands(commands):
@@ -61,6 +59,7 @@ export_parser = argparse.ArgumentParser(prog='export', description='Export data 
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
 export_parser.add_argument('--max-size', dest='max_size', help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
 export_parser.add_argument('-kp', '--keepass-file-password', dest='keepass_file_password', action='store', help='Password for the exported Keepass file')
+export_parser.add_argument('--force', dest='force', action='store_true', help='Suppress user interaction. Assume "yes"')
 export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
 export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
@@ -179,19 +178,16 @@ class RecordExportCommand(ImporterCommand):
     def execute(self, params, **kwargs):
 
         if is_export_restricted(params):
-            logging.warning('Permissions Required: `export` command is disabled. Please contact your enterprise administrator.')
+            logging.warning('Permissions Required: `export` command is disabled. '
+                            'Please contact your enterprise administrator.')
             return
 
-        export_format = kwargs['format'] if 'format' in kwargs else None
-        export_name = kwargs['name'] if 'name' in kwargs else None
-
-        extra = {}
-        if kwargs.get('keepass_file_password'):
-            extra['keepass_file_password'] = kwargs.get('keepass_file_password')
+        export_format = kwargs.pop('format', None)
+        export_name = kwargs.pop('name', None)
 
         if format:
             logging.info('Processing... please wait.')
-            msize = kwargs.get('max_size')    # type: str
+            msize = kwargs.pop('max_size', None)    # type: str
             if msize:
                 multiplier = 1
                 scale = msize[-1].upper()
@@ -206,12 +202,12 @@ class RecordExportCommand(ImporterCommand):
                     msize = msize[:-1]
                 try:
                     max_size = int(msize) * multiplier
-                    extra['max_size'] = max_size
+                    kwargs['max_size'] = max_size
                 except ValueError:
                     logging.error('Invalid maximum attachment file size parameter: %s', kwargs.get('max_size'))
                     return
 
-            imp_exp.export(params, export_format, export_name, **extra)
+            imp_exp.export(params, export_format, export_name, **kwargs)
         else:
             logging.error('Missing argument')
 
