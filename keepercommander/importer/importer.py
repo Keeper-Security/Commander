@@ -268,7 +268,7 @@ class BaseFileImporter(BaseImporter, abc.ABC):
         super(BaseFileImporter, self).__init__()
 
     def execute(self, name, **kwargs):
-        # type: (BaseFileImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
+        # type: (str, ...) -> collections.Iterable[Union[Record, SharedFolder, File]]
 
         path = os.path.expanduser(name)
         if not os.path.isfile(path):
