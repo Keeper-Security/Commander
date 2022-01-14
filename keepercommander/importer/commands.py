@@ -47,6 +47,7 @@ import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update',  action='store_true',  help='Update records with common login, url or title')
 import_parser.add_argument('--users',  dest='users',  action='store_true',  help='Update shared folder user permissions only')
+import_parser.add_argument('--login-type', '-l', dest='login_type', action='store_true',  help='Import legacy records as login record type')
 import_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
 import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 import_parser.add_argument('--file-cache', dest='tmpdir', action='store', help='Temp directory used to cache encrypted attachment imports')
@@ -166,7 +167,8 @@ class RecordImportCommand(ImporterCommand):
             imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
                             manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
                             can_edit=can_edit, can_share=can_share, update_flag=update_flag, tmpdir=kwargs.get('tmpdir'),
-                            old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'))
+                            old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'),
+                            login_type=kwargs.get('login_type'))
         else:
             logging.error('Missing argument')
 
