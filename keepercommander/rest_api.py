@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -25,8 +25,8 @@ from . import __version__
 
 
 LEGACY_CLIENT_VERSION = 'c14.0.0'
-CLIENT_VERSION = 'c' + __version__
-# CLIENT_VERSION = 'c16.4.5'
+# CLIENT_VERSION = 'c' + __version__
+CLIENT_VERSION = 'c16.5.0'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(

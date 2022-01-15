@@ -543,7 +543,7 @@ class LoginV3Flow:
             rq_payload.payload = sso_rq.SerializeToString()
             api_rq = proto.ApiRequest()
             api_rq.locale = params.rest_context.locale or 'en_US'
-            api_rq.encryptedTransmissionKey = rest_api.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
+            api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
             api_rq.publicKeyId = params.rest_context.server_key_id
             api_rq.encryptedPayload = crypto.encrypt_aes_v2(rq_payload.SerializeToString(), transmission_key)
 
