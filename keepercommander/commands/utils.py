@@ -9,58 +9,56 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-import hmac
-import re
-import os
-import base64
 import argparse
-import logging
+import base64
 import getpass
-import sys
+import hmac
+import json
+import logging
+import os
 import platform
+import re
+import sys
+import tempfile
+import urllib.parse
 from datetime import datetime, timedelta
 from distutils.util import strtobool
 from time import time
 
 import requests
-import tempfile
-import json
-import urllib.parse
-
+from Cryptodome.Cipher import AES
+from Cryptodome.Math.Numbers import Integer
+from Cryptodome.PublicKey import RSA
 from google.protobuf.json_format import MessageToDict
 from tabulate import tabulate
-from Cryptodome.Cipher import AES
-from Cryptodome.PublicKey import RSA
-from Cryptodome.Math.Numbers import Integer
 
 import keepercommander
-from .recordv3 import get_record, RecordRemoveCommand
-from ..proto.APIRequest_pb2 import ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
-    GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
-    RemoveAppSharesRequest
-from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
-from ..recordv3 import init_recordv3_commands
-from ..constants import get_abbrev_by_host
-from ..display import bcolors
-from ..loginv3 import CommonHelperMethods
-from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
-from ..record import Record
-from .. import api, constants, rest_api, loginv3, crypto, utils
+from . import aliases, commands, enterprise_commands
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
-from ..proto.record_pb2 import ApplicationAddRequest
-from ..rest_api import execute_rest
-from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
 from .helpers.whoami import get_hostname, get_environment, get_data_center
-from . import aliases, commands, enterprise_commands
-from ..error import CommandError, KeeperApiError
-
+from .recordv3 import get_record, RecordRemoveCommand
 from .. import __version__
+from .. import api, rest_api, loginv3, crypto, utils
+from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
+from ..constants import get_abbrev_by_host
+from ..display import bcolors
+from ..error import CommandError, KeeperApiError
+from ..loginv3 import CommonHelperMethods
+from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
+from ..proto import ssocloud_pb2 as ssocloud
+from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
+    GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
+    RemoveAppSharesRequest
+from ..proto.record_pb2 import ApplicationAddRequest
+from ..record import Record
+from ..recordv3 import init_recordv3_commands
+from ..rest_api import execute_rest
+from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from ..utils import json_to_base64
 from ..versioning import is_binary_app, is_up_to_date_version
-from ..proto import ssocloud_pb2 as ssocloud
 
 SSH_AGENT_FAILURE = 5
 SSH_AGENT_SUCCESS = 6
@@ -1641,7 +1639,7 @@ class LogoutCommand(Command):
                 rq_payload.payload = sso_rq.SerializeToString()
                 api_rq = ApiRequest()
                 api_rq.locale = params.rest_context.locale or 'en_US'
-                api_rq.encryptedTransmissionKey = rest_api.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
+                api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
                 api_rq.publicKeyId = params.rest_context.server_key_id
                 api_rq.encryptedPayload = crypto.encrypt_aes_v2(rq_payload.SerializeToString(), transmission_key)
                 sp_url_query.append(('payload', utils.base64_url_encode(api_rq.SerializeToString())))
