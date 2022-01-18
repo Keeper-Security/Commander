@@ -803,7 +803,9 @@ def _import(params, file_format, filename, **kwargs):
                     existing_data = json.loads(existing_record['data_unencrypted'])
                     filerefs = [f for f in existing_data.get('fields', []) if f['type'] == 'fileRef']
                     if len(filerefs) > 0:
-                        existing_attachments = [params.record_cache[uid] for uid in filerefs[0].get('value') or []]
+                        existing_attachments = [
+                            params.record_cache[u] for u in filerefs[0].get('value') or [] if u in params.record_cache
+                        ]
                         attachment_data = [json.loads(a['data_unencrypted']) for a in existing_attachments]
                     else:
                         attachment_data = []
