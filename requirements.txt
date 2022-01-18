@@ -11,4 +11,4 @@ protobuf>=3.19.0
 pyperclip
 pykeepass
 pysocks
-keeper-secrets-manager-core
+keeper-secrets-manager-core>=16.2.0
