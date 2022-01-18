@@ -599,27 +599,29 @@ class SearchCommand(Command):
     def execute(self, params, **kwargs):
         pattern = (kwargs['pattern'] if 'pattern' in kwargs else None) or ''
         categories = (kwargs.get('categories') or 'rst').lower()
+        verbose = kwargs.get('verbose', False)
+        skip_details = not verbose
 
         # Search records
         if 'r' in categories:
             results = api.search_records(params, pattern)
             if results:
                 print('')
-                display.formatted_records(results, verbose=kwargs.get('verbose', False))
+                display.formatted_records(results, verbose=verbose)
 
         # Search shared folders
         if 's' in categories:
             results = api.search_shared_folders(params, pattern)
             if results:
                 print('')
-                display.formatted_shared_folders(results, params=params, skip_details=True)
+                display.formatted_shared_folders(results, params=params, skip_details=skip_details)
 
         # Search teams
         if 't' in categories:
             results = api.search_teams(params, pattern)
             if results:
                 print('')
-                display.formatted_teams(results, params=params, skip_details=True)
+                display.formatted_teams(results, params=params, skip_details=skip_details)
 
 
 class RecordListCommand(Command):
