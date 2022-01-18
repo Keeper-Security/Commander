@@ -479,7 +479,7 @@ class LoginV3Flow:
             rs = LoginV3API.twoFactorSend2FAPushMessage(
                 params,
                 encryptedLoginToken,
-                proto.TWO_FA_PUSH_KEEPER)
+                pushType=proto.TWO_FA_PUSH_KEEPER)
 
             if type(rs) == bytes:
                 logging.info('Successfully made a push notification to the approved device.\nPress <Enter> when approved.')
@@ -701,7 +701,8 @@ class LoginV3Flow:
             rs = LoginV3API.twoFactorSend2FAPushMessage(
                 params,
                 encryptedLoginToken,
-                channel.channelType,
+                pushType=proto.TWO_FA_PUSH_SMS,
+                channel_uid=channel.channel_uid,
                 expireIn=proto.TWO_FA_EXP_IMMEDIATELY
             )
 
@@ -736,7 +737,9 @@ class LoginV3Flow:
                         }
                         key_value_type = proto.TWO_FA_RESP_WEBAUTHN
 
-                    rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, json.dumps(signature), proto.TWO_FA_EXP_IMMEDIATELY, key_value_type)
+                    rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, json.dumps(signature),
+                                                             proto.TWO_FA_EXP_IMMEDIATELY, key_value_type,
+                                                             channel_uid=channel.channel_uid)
 
                     if type(rs) == bytes:
 
@@ -810,7 +813,8 @@ class LoginV3Flow:
                 params,
                 encryptedLoginToken,
                 otp_code,
-                mfa_expiration
+                mfa_expiration,
+                channel_uid=channel.channel_uid
             )
 
             if type(rs) == bytes:
@@ -1052,7 +1056,8 @@ class LoginV3API:
             raise KeeperApiError(error_code, 'Invalid email or password combination, please re-enter.' if error_code == 'auth_failed' else rs['message'] )
 
     @staticmethod
-    def twoFactorValidateMessage(params: KeeperParams, encryptedLoginToken: bytes, otp_code: str, tfa_expire_in, twoFactorValueType=None):
+    def twoFactorValidateMessage(params, encryptedLoginToken, otp_code, tfa_expire_in,
+                                 twoFactorValueType=None, channel_uid=None):
 
         rq = proto.TwoFactorValidateRequest()
         rq.encryptedLoginToken = encryptedLoginToken
@@ -1060,6 +1065,8 @@ class LoginV3API:
 
         if twoFactorValueType:
             rq.valueType = twoFactorValueType
+        if channel_uid:
+            rq.channel_uid = channel_uid
 
         rq.expireIn = tfa_expire_in
 
@@ -1080,7 +1087,8 @@ class LoginV3API:
         rq = proto.TwoFactorSendPushRequest()
 
         rq.encryptedLoginToken = encryptedLoginToken
-        # rq.channel_uid = channel_uid
+        if channel_uid:
+            rq.channel_uid = channel_uid
 
         if expireIn:
             rq.expireIn = expireIn
