@@ -150,6 +150,10 @@ list_parser.exit = suppress_exit
 search_parser = argparse.ArgumentParser(prog='search|s', description='Search the vault. Can use a regular expression.')
 search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+search_parser.add_argument(
+    '-c', '--categories', dest='categories', action='store',
+    help='One or more of these letters for categories to search: "r" = records, "s" = shared folders, "t" = teams'
+)
 search_parser.error = raise_parse_exception
 search_parser.exit = suppress_exit
 
@@ -594,24 +598,28 @@ class SearchCommand(Command):
 
     def execute(self, params, **kwargs):
         pattern = (kwargs['pattern'] if 'pattern' in kwargs else None) or ''
+        categories = (kwargs.get('categories') or 'rst').lower()
 
         # Search records
-        results = api.search_records(params, pattern)
-        if results:
-            print('')
-            display.formatted_records(results, verbose=kwargs.get('verbose', False))
+        if 'r' in categories:
+            results = api.search_records(params, pattern)
+            if results:
+                print('')
+                display.formatted_records(results, verbose=kwargs.get('verbose', False))
 
         # Search shared folders
-        results = api.search_shared_folders(params, pattern)
-        if results:
-            print('')
-            display.formatted_shared_folders(results, params=params, skip_details=True)
+        if 's' in categories:
+            results = api.search_shared_folders(params, pattern)
+            if results:
+                print('')
+                display.formatted_shared_folders(results, params=params, skip_details=True)
 
         # Search teams
-        results = api.search_teams(params, pattern)
-        if results:
-            print('')
-            display.formatted_teams(results, params=params, skip_details=True)
+        if 't' in categories:
+            results = api.search_teams(params, pattern)
+            if results:
+                print('')
+                display.formatted_teams(results, params=params, skip_details=True)
 
 
 class RecordListCommand(Command):

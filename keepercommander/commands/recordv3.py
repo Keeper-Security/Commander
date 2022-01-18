@@ -140,7 +140,10 @@ rm_parser.exit = suppress_exit
 search_parser = argparse.ArgumentParser(prog='search|s', description='Search the vault. Can use a regular expression')
 search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
-#search_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
+search_parser.add_argument(
+    '-c', '--categories', dest='categories', action='store',
+    help='One or more of these letters for categories to search: "r" = records, "s" = shared folders, "t" = teams'
+)
 search_parser.error = raise_parse_exception
 search_parser.exit = suppress_exit
 
