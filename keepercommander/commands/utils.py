@@ -1588,7 +1588,7 @@ class KSMCommand(Command):
         }
 
         # if the SDK version is below 16.2.0 then this key won't be present
-        if ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY):
+        if 'KEY_OWNER_PUBLIC_KEY' in ConfigKeys.__members__ and ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY):
             config_dict[ConfigKeys.KEY_OWNER_PUBLIC_KEY.value] = ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY)
 
         config_str = json.dumps(config_dict)
