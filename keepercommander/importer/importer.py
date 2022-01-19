@@ -218,13 +218,13 @@ class Record:
 
     def validate(self):
         if not self.title:
-            raise CommandError('import', 'record. title cannot be empty')
+            raise CommandError('import', 'Record: title cannot be empty')
         if self.folders:
             for f in self.folders:
                 for attr in ['can_edit', 'can_share']:
                     if hasattr(f, attr):
                         if not check_if_bool(getattr(f, attr)):
-                            raise CommandError('import', f'record\'s folder property \'{attr}\' should be a boolean')
+                            raise CommandError('import', f'Record \'{self.title}\': folder property \'{attr}\' should be boolean')
 
 
 class RecordSchemaField:

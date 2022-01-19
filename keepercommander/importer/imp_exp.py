@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Iterator, List, Optional, Union, Dict, Tuple
 
 import math
@@ -37,7 +38,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
 from .. import utils, crypto
 from ..commands import base
 from ..proto import record_pb2, folder_pb2
-from ..error import KeeperApiError
+from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
 from ..recordv3 import RecordV3
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
@@ -509,8 +510,10 @@ def _import(params, file_format, filename, **kwargs):
 
             if login_type and not x.type:
                 x.type = 'login'
-
-            x.validate()
+            try:
+                x.validate()
+            except CommandError as ce:
+                logging.info(ce.message)
             records.append(x)
         elif isinstance(x, ImportSharedFolder):
             if shared:
@@ -914,6 +917,8 @@ def execute_import_folder_record(params, folders, records):
             rs_folder.extend(import_rs.folderResponse)
         if len(import_rs.recordResponse) > 0:
             rs_record.extend(import_rs.recordResponse)
+        if len(folders or []) > 0 or len(records or []) > 0:
+            time.sleep(5)
 
     report_statuses('folder', (element.status for element in rs_folder))
     report_statuses('legacy record', (element.status for element in rs_record))
