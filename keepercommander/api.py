@@ -917,6 +917,7 @@ def sync_down(params):
 
     prepare_folder_tree(params)
 
+    """
     # remove records that are not referenced by any folder
     all_records = set(params.record_cache.keys())
     record_links = set()
@@ -928,6 +929,7 @@ def sync_down(params):
             del params.record_cache[record_uid]
         if record_uid in params.meta_data_cache:
             del params.meta_data_cache[record_uid]
+    """
 
     if 'pending_shares_from' in response_json:
         params.pending_share_requests.update(response_json['pending_shares_from'])
