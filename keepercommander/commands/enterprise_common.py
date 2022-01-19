@@ -170,17 +170,18 @@ class EnterpriseCommand(Command):
         if not root_node_id:
             return
 
-        if 'users' not in params.enterprise:
-            return
-        enterprise_user_id = next((x['enterprise_user_id'] for x in params.enterprise['users'] if x.get('username', '').lower() == params.user.lower()), None)
-
-        if not enterprise_user_id:
-            return
+        enterprise_user_id = None
+        if 'users' in params.enterprise:
+            enterprise_user_id = next((x['enterprise_user_id'] for x in params.enterprise['users'] if x.get('username', '').lower() == params.user.lower()), None)
 
         root_nodes = set()
         managed_nodes = set()
-        current_user_roles = set((x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == enterprise_user_id))
-        is_main_admin = any(True for x in params.enterprise['managed_nodes'] if x['role_id'] in current_user_roles and x['cascade_node_management'] and x['managed_node_id'] == root_node_id)
+        if enterprise_user_id:
+            current_user_roles = set((x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == enterprise_user_id))
+            is_main_admin = any(True for x in params.enterprise['managed_nodes'] if x['role_id'] in current_user_roles and x['cascade_node_management'] and x['managed_node_id'] == root_node_id)
+        else:
+            is_main_admin = True
+            current_user_roles = set()
         if is_main_admin:
             root_nodes.add(root_node_id)
             managed_nodes.update((x['node_id'] for x in nodes))

@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -17,7 +17,7 @@ from google.protobuf import message
 
 from .params import KeeperParams
 from .proto import enterprise_pb2 as proto
-from . import api, utils
+from . import api, utils, crypto
 
 
 def query_enterprise(params):  # type: (KeeperParams) -> None
@@ -98,10 +98,14 @@ class _EnterpriseLoader(object):
             rs = api.communicate_rest(params, rq, 'enterprise/get_enterprise_data_keys',
                                       rs_type=proto.GetEnterpriseDataKeysResponse)
             if rs.treeKey:
+                encrypted_tree_key = utils.base64_url_decode(rs.treeKey.treeKey)
                 if rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_DATA_KEY:
-                    self._enterprise._tree_key = api.decrypt_data(rs.treeKey.treeKey, params.data_key)
+                    self._enterprise._tree_key = crypto.decrypt_aes_v1(encrypted_tree_key, params.data_key)
                 elif rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_PUBLIC_KEY:
-                    self._enterprise._tree_key = api.decrypt_rsa(rs.treeKey.treeKey, params.rsa_key)
+                    if len(encrypted_tree_key) == 60:
+                        self._enterprise._tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, params.msp_tree_key)
+                    else:
+                        self._enterprise._tree_key = api.decrypt_rsa(rs.treeKey.treeKey, params.rsa_key)
                 params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
 
             if rs.enterpriseKeys:
@@ -487,6 +491,15 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'storage_expiration',
                        proto_entity.storageExpiration if proto_entity.storageExpiration > 0 else None)
         _set_or_remove(keeper_entity, 'lic_status', proto_entity.licenseStatus)
+        msp_pool = None
+        if proto_entity.mspPool:
+            msp_pool = [{
+                'product_id': x.productId,
+                'seats': x.seats,
+                'availableSeats': x.availableSeats,
+                'stash': x.stash
+            } for x in proto_entity.mspPool]
+        _set_or_remove(keeper_entity, 'msp_pool', msp_pool)
         if proto_entity.managedBy and proto_entity.managedBy.enterpriseId > 0:
             _set_or_remove(keeper_entity, 'managed_by', {
                 'enterprise_id': proto_entity.managedBy.enterpriseId,
@@ -500,6 +513,8 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
                 'created': x.created,
                 'expiration': x.expiration,
             } for x in proto_entity.addOns])
+        _set_or_remove(keeper_entity, 'next_billing_date',
+                       proto_entity.nextBillingDate if proto_entity.nextBillingDate > 0 else None)
 
     def get_keeper_entity_id(self, entity):  # type: (dict) -> any
         return entity.get('enterprise_license_id')
