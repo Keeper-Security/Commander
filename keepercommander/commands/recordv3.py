@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -123,7 +123,6 @@ command_group.add_argument('-v3f', '--from-file', dest='data_file', action='stor
 edit_parser.add_argument('option', nargs='*', type=str, action='store', help='load record type data from strings with dot notation')
 edit_parser.add_argument('-r', '--record', dest='record', required=True, type=str, action='store', help='record path or UID')
 command_group = edit_parser.add_mutually_exclusive_group()
-command_group.add_argument('-c', '--convert', dest='convert', action='store_true', help='convert record v2 to v3 (type: General)')
 edit_parser.error = raise_parse_exception
 edit_parser.exit = suppress_exit
 
@@ -663,15 +662,6 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             return
 
         recordv3.RecordV3.validate_access(params, record_uid)
-        convert = bool(kwargs.get('convert'))
-        if convert:
-            if recordv3.RecordV3.convert_to_record_type(record_uid, params=params):
-                record = api.get_record(params, record_uid)
-                params.sync_data = True
-                api.update_record(params, record)
-            else:
-                logging.error('Conversion failed for record: %s', record_uid)
-            return
 
         # positional aguments can't be in a mutually exclusive groups
         if has_v3_options and options and bool(kwargs.get('data') or kwargs.get('data_file')):
@@ -1042,7 +1032,6 @@ class RecordDownloadAttachmentCommand(Command):
             logging.error('Record Version not found for record "%s"', str(name))
             return
 
-        # is_v2 = bool(kwargs.get('legacy'))
         is_v2 = not record_version or record_version < 3
         if is_v2:
             recordv2.RecordDownloadAttachmentCommand().execute(params, **kwargs)
@@ -1079,22 +1068,14 @@ class RecordDownloadAttachmentCommand(Command):
         rq.record_uids.extend(record_uids)
         rq.for_thumbnails = False
         # rq.emergency_access_account_owner = ''
-        rs = api.communicate_rest(params, rq, 'vault/files_download')
-        files_get_rs = records.FilesGetResponse()
-        files_get_rs.ParseFromString(rs)
+        files_get_rs = api.communicate_rest(params, rq, 'vault/files_download', rs_type=records.FilesGetResponse)
         for f in files_get_rs.files:
             ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(f.record_uid)
-            status = records.FileGetResult.DESCRIPTOR.values_by_number[f.status].name
-            success = (f.status == records.FileGetResult.DESCRIPTOR.values_by_name['FG_SUCCESS'].number)
             url = f.url
-            stats_code = f.success_status_code
-
-            if not success:
-                #raise CommandError('download-attachment', 'FileRef "{0}": Failed to get file download data'.format(ruid))
+            if f.status != records.FG_SUCCESS:
                 logging.info('download-attachment - FileRef "%s": Failed to get file download data', ruid)
                 continue
             if not (url and url.strip()):
-                #raise CommandError('download-attachment', 'FileRef "{0}": Failed to get file download URL'.format(ruid))
                 logging.info('download-attachment - FileRef "%s": Failed to get file download URL', ruid)
                 continue
 
@@ -1106,8 +1087,8 @@ class RecordDownloadAttachmentCommand(Command):
                 rdata = params.record_cache[ruid]['data'] if 'data' in params.record_cache[ruid] else ''
                 rkey = params.record_cache[ruid]['record_key_unencrypted'] if 'record_key_unencrypted' in params.record_cache[ruid] else ''
                 decoded_data = base64.urlsafe_b64decode(rdata + '==')
-                data_unencrytped = api.decrypt_aes_plain(decoded_data, rkey)
-                data_dict = json.loads(data_unencrytped)
+                data_unencrypted = api.decrypt_aes_plain(decoded_data, rkey)
+                data_dict = json.loads(data_unencrypted)
                 file_data = file_data | data_dict
                 file_data['record_uid'] = ruid
                 file_data['record_key'] = params.record_cache[ruid]['record_key_unencrypted']
@@ -1116,31 +1097,47 @@ class RecordDownloadAttachmentCommand(Command):
                 file_size = file_data.get('size') if file_data.get('size') else 0
 
             if not file_key:
-                # raise CommandError('download-attachment', 'File "{0}": Failed to file encryption key'.format(file_name))
                 logging.info('download-attachment - FileRef "%s": Failed to get file encryption key', ruid)
                 continue
 
+            is_gcm_encrypted = False  # f.fileKeyType == 3
             BUFFER_SIZE = 10240
             rq_http = requests.get(url, proxies=params.rest_context.proxies, stream=True)
-            with open(file_name, 'wb') as f:
-                logging.info('Downloading \'%s\'', os.path.abspath(f.name))
-                iv = rq_http.raw.read(12)
-                content_byte_count = 0
-                tag = bytearray(b'')
-                cipher = AES.new(file_key, AES.MODE_GCM, iv)
-                data = rq_http.raw.read(BUFFER_SIZE)
-                while len(data) != 0:
-                    n = content_byte_count + len(data) - file_size
-                    content_byte_count = (content_byte_count + len(data)) if n <= 0 else file_size
-                    if n > 0:
-                        tag.extend(data[-n:])
-                        data = data[:-n]
-                    decrypted_data = cipher.decrypt(data)
-                    f.write(decrypted_data)
+            if f.success_status_code == rq_http.status_code:
+                with open(file_name, 'wb') as f:
+                    logging.info('Downloading \'%s\'', os.path.abspath(f.name))
+                    if is_gcm_encrypted:
+                        iv = rq_http.raw.read(12)
+                    else:
+                        iv = rq_http.raw.read(16)
+                    content_byte_count = 0
+                    if is_gcm_encrypted:
+                        cipher = AES.new(file_key, AES.MODE_GCM, iv)
+                        tag = bytearray(b'')
+                    else:
+                        cipher = AES.new(file_key, AES.MODE_CBC, iv)
                     data = rq_http.raw.read(BUFFER_SIZE)
-                dst_size = f.tell()
-                assert (dst_size == file_size), "Files sizes don't match"
-                cipher.verify(tag)
+                    while len(data) != 0:
+                        if is_gcm_encrypted:
+                            n = content_byte_count + len(data) - file_size
+                            content_byte_count = (content_byte_count + len(data)) if n <= 0 else file_size
+                            if n > 0:
+                                tag.extend(data[-n:])
+                                data = data[:-n]
+
+                        decrypted_data = cipher.decrypt(data)
+
+                        if not is_gcm_encrypted and len(data) < BUFFER_SIZE:
+                            decrypted_data = api.unpad_binary(decrypted_data)
+
+                        f.write(decrypted_data)
+                        data = rq_http.raw.read(BUFFER_SIZE)
+                    dst_size = f.tell()
+                    assert (dst_size == file_size), "Files sizes don't match"
+                    if is_gcm_encrypted:
+                        cipher.verify(tag)
+            else:
+                logging.info('download-attachment - FileRef "%s": Failed to download URL', ruid)
 
 
 class RecordUploadAttachmentCommand(Command):

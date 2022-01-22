@@ -22,9 +22,11 @@ import os
 import re
 import time
 from typing import Iterator, List, Optional, Union, Dict, Tuple
+from contextlib import contextmanager
 
 import math
 import requests
+from Cryptodome.Cipher import AES
 
 from keepercommander import api
 from keepercommander.display import bcolors
@@ -62,7 +64,7 @@ def get_record_data_json_bytes(data):
 
 """
 def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
-    data_json = get_record_data_json_bytes(data)
+    data_json = api.get_record_data_json_bytes(data)
     data_size = len(data_json) + 28
     if data_size > RECORD_MAX_DATA_LEN:
         field_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['fields']]
@@ -116,7 +118,7 @@ def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
                 import_record.attachments.append(atta)
             else:
                 import_record.attachments = [atta]
-            data_json = get_record_data_json_bytes(data)
+            data_json = api.get_record_data_json_bytes(data)
             data_size = len(data_json) + 28
     return False
 """
@@ -610,7 +612,7 @@ def _import(params, file_format, filename, **kwargs):
                     v3_upd_rq.client_modified_time = utils.current_milli_time()
                     v3_upd_rq.revision = existing_record.get('revision') or 0
                     data = _construct_record_v3_data(import_record, orig_data)
-                    v3_upd_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
+                    v3_upd_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
                     data_size = len(v3_upd_rq.data)
                     if data_size > RECORD_MAX_DATA_LEN:
                         logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
@@ -679,7 +681,7 @@ def _import(params, file_format, filename, **kwargs):
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
                     v3_add_rq.client_modified_time = utils.current_milli_time()
                     data = _construct_record_v3_data(import_record)
-                    v3_add_rq.data = crypto.encrypt_aes_v2(get_record_data_json_bytes(data), record_key)
+                    v3_add_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
                     data_size = len(v3_add_rq.data)
                     if data_size > RECORD_MAX_DATA_LEN:
                         logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
