@@ -19,6 +19,7 @@ import time
 import os
 import hashlib
 import logging
+import math
 import urllib.parse
 from typing import Optional, Tuple, Iterable, List
 
@@ -335,6 +336,15 @@ def accept_account_transfer_consent(params):
         return True
     else:
         return False
+
+
+def get_record_data_json_bytes(data): # type: (dict) -> bytes
+    """Get serialized and utf-8 encoded record data with padding"""
+    data_str = json.dumps(data)
+    padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
+    if padding:
+        data_str = data_str.ljust(padding)
+    return data_str.encode('utf-8')
 
 
 def pad_aes_gcm(json):
@@ -842,6 +852,7 @@ def sync_down(params):
             except Exception as e:
                 logging.debug('Record %s link key decryption error: %s', record_uid, e)
         params.record_cache.pop(record_uid)
+    del records_to_delete
 
     # decrypt records
     for record_uid in params.record_cache:
@@ -926,6 +937,8 @@ def sync_down(params):
             record_links.update(uids)
     for record_uid in all_records.difference(record_links):
         if record_uid in params.record_cache:
+            if params.record_cache[record_uid].get('version') == 4:
+                continue
             del params.record_cache[record_uid]
         if record_uid in params.meta_data_cache:
             del params.meta_data_cache[record_uid]
@@ -1446,8 +1459,6 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
         encrypted record key is sent to the server.  If the record is in a
         shared folder, must send shared folder UID for edit permission.
     """
-    from .commands.recordv3 import RecordTypeInfo
-
     if not record.record_uid:
         logging.debug('Generated Record UID: %s', record.record_uid)
         record.record_uid = generate_record_uid()

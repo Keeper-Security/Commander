@@ -5,24 +5,25 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
 import argparse
 import fnmatch
 import json
 import logging
 import re
 from collections import OrderedDict
+from typing import Optional, Tuple
 
-from .. import api, loginv3, recordv3
-from ..subfolder import try_resolve_path
-from ..proto import record_pb2
-from .folder import get_folder_path
+from keepercommander.utils import is_url, is_email
 from .base import raise_parse_exception, suppress_exit, Command
-
-
-DEFAULT_CONVERT_TO_V3_RECORD_TYPE = 'login'
+from .folder import get_folder_path
+from .. import api, crypto, loginv3, utils
+from ..params import KeeperParams
+from ..proto import record_pb2
+from ..subfolder import try_resolve_path, find_folders
 
 
 def register_commands(commands):
@@ -34,7 +35,7 @@ def register_command_info(aliases, command_info):
 
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
-convert_parser.add_argument('-t', '--type', dest='type', action='store', help='Convert to record type')
+# convert_parser.add_argument('-t', '--type', dest='DEFAULT_CONVERT_TO_V3_RECORD_TYPE', action='store', help='Convert to record type')
 convert_parser.add_argument(
     '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
 )
@@ -58,8 +59,15 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
     records = []
     if folder_uid in params.subfolder_record_cache:
         for uid in params.subfolder_record_cache[folder_uid]:
-            rv = params.record_cache[uid].get('version') if uid in params.record_cache else None
-            if rv > 2:
+            if uid not in params.meta_data_cache:
+                continue
+            md = params.meta_data_cache[uid]
+            if not md.get('owner', False):
+                continue
+            if uid not in params.record_cache:
+                continue
+            rv = params.record_cache[uid].get('version', 0)
+            if rv != 2:
                 continue
             r = api.get_record(params, uid)
             r_attrs = (r.title, r.record_uid)
@@ -104,15 +112,6 @@ class ConvertCommand(Command):
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
-        record_type = kwargs.get('type') or DEFAULT_CONVERT_TO_V3_RECORD_TYPE
-        available_types = [json.loads(params.record_type_cache.get(rti)).get('$id') for rti in params.record_type_cache]
-        if record_type not in available_types:
-            logging.warning(
-                f'Specified record type "{record_type}" is not valid. '
-                f'Valid types are:\n{", ".join(sorted(available_types))}'
-            )
-            return
-
         pattern_list = kwargs.get('record-uid-name-patterns', [])
         if len(pattern_list) == 0:
             logging.warning(f'Please specify a record to convert')
@@ -131,71 +130,201 @@ class ConvertCommand(Command):
             recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
 
         if len(records_by_folder) == 0:
-            msg = f'No records that can be converted to record types can be found for pattern "{pattern}"'
+            patterns = ', '.join(pattern_list)
+            msg = f'No records that can be converted to record types can be found for pattern "{patterns}"'
             if url_pattern:
                 msg += f' with url matching "{url_pattern}"'
             logging.warning(msg)
             return
 
         # Sort records and if dry run print
-        records = []
+        record_uids = set()
         record_names = OrderedDict()
         for folder_uid in sorted(folder_path, key=lambda x: folder_path[x]):
             path = folder_path[folder_uid]
             for record in sorted(records_by_folder[folder_uid], key=lambda x: getattr(x, 'title')):
-                records.append(record)
-                record_names[record.record_uid] = path + record.title
+                if record.record_uid not in record_uids:
+                    record_uids.add(record.record_uid)
+                    record_names[record.record_uid] = path + record.title
 
         dry_run = kwargs.get('dry_run', False)
         if dry_run:
             print(
-                f'The following {len(records)} records were matched'
-                f' and would be converted to records with type "{record_type}":'
+                f'The following {len(record_uids)} records that you own were matched'
+                f' and would be converted to records with type "login":'
             )
+
             print('\n'.join(f'{v} ({k})' for k, v in record_names.items()))
         else:
             rq = record_pb2.RecordsConvertToV3Request()
-            for record in records:
-                convert_result = recordv3.RecordV3.convert_to_record_type(
-                    record.record_uid, params, record_type=record_type
-                )
-                if convert_result:
-                    v3_record = api.get_record(params, record.record_uid)
-                else:
-                    logging.warning(f'Conversion failed for {record_names[record.record_uid]} ({record.record_uid})\n')
+            for record_uid in record_uids:
+                convert_result = ConvertCommand.convert_to_record_type_data(record_uid, params)
+                if not convert_result:
+                    logging.warning(f'Conversion failed for {record_names[record_uid]} ({record_uid})\n')
                     continue
-
-                prepare_result = api.prepare_record_v3(params, v3_record)
-                if prepare_result:
-                    record_rq, audit_data = prepare_result
-                else:
-                    logging.warning(f'Conversion failed for {record_names[record.record_uid]} ({record.record_uid})\n')
-                    continue
+                v3_data, file_info = convert_result
+                record_key = params.record_cache[record_uid]['record_key_unencrypted']
 
                 rc = record_pb2.RecordConvertToV3()
-                rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
-                rc.client_modified_time = record_rq['client_modified_time']
-                rc.revision = record_rq['revision']
-                rc.data = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['data'])
-                rc.audit.data = audit_data
+                rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_uid)
+                rc.client_modified_time = api.current_milli_time()
+                record = api.get_record(params, record_uid)
+                rc.revision = record.revision
+
+                if file_info:
+                    file_ref = next((x for x in v3_data['fields'] if x.get('type') == 'fileRef'), None)
+                    if file_ref is None:
+                        file_ref = {'type': 'fileRef'}
+                        v3_data['fields'].append(file_ref)
+                    if not isinstance(file_ref.get('value'), list):
+                        file_ref['value'] = []
+
+                    for f_info in file_info:
+                        file_uid = utils.generate_uid()
+                        file_ref['value'].append(file_uid)
+                        file_key = utils.base64_url_decode(f_info['key'])
+
+                        data = {}
+                        for k in ('name', 'size', 'title', 'lastModified', 'type'):
+                            data[k] = f_info[k]
+
+                        rf = record_pb2.RecordFileForConversion()
+                        rf.record_uid = utils.base64_url_decode(file_uid)
+                        rf.file_file_id = f_info['id']
+                        if 'thumbs' in f_info:
+                            thumbs = f_info['thumbs']
+                            if len(thumbs) > 0:
+                                rf.thumb_file_id = thumbs[0]['id']
+                        rf.data = crypto.encrypt_aes_v2(json.dumps(data).encode('utf-8'), file_key)
+                        rf.record_key = crypto.encrypt_aes_v2(file_key, params.data_key)
+                        rf.link_key = crypto.encrypt_aes_v2(file_key, record_key)
+                        rc.record_file.append(rf)
+                rc.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(v3_data), record_key)
+                if record_uid in params.non_shared_data_cache:
+                    nsd = params.non_shared_data_cache[record_uid]
+                    if 'data_unencrypted' in nsd:
+                        rc.non_shared_data = crypto.encrypt_aes_v2(nsd['data_unencrypted'], record_key)
+
+                for folder_uid in find_folders(params, record_uid):
+                    if folder_uid in params.shared_folder_cache:
+                        sf = params.shared_folder_cache[folder_uid]
+                        if sf.get('manage_records', False):
+                            rc.folder_uid = utils.base64_url_decode(folder_uid)
+                            rc.record_folder_key = crypto.encrypt_aes_v2(record_key, sf['shared_folder_key_unencrypted'])
+                            break
+
+                if params.enterprise_ec_key:
+                    audit_data = {
+                        'title': record.title or '',
+                        'record_type': v3_data['type'],
+                    }
+                    if record.login_url:
+                        audit_data['url'] = utils.url_strip(record.login_url)
+                    rc.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
+
                 rq.records.append(rc)
 
             quiet = kwargs.get('quiet', False)
             if not quiet:
-                logging.info(f'Matched {len(records)} record(s)')
+                logging.info(f'Matched {len(record_uids)} record(s)')
 
             if len(rq.records) > 0:
+                params.sync_data = True
                 rq.client_time = api.current_milli_time()
-                rs = api.communicate_rest(params, rq, 'vault/records_convert3')
+                records_modify_rs = api.communicate_rest(params, rq, 'vault/records_convert3',
+                                                         rs_type=record_pb2.RecordsModifyResponse)
                 if not quiet:
-                    records_modify_rs = record_pb2.RecordsModifyResponse()
-                    records_modify_rs.ParseFromString(rs)
-                    success = record_pb2.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number
                     converted_record_names = [
                         record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)]
-                        for r in records_modify_rs.records if r.status == success
+                        for r in records_modify_rs.records if r.status == record_pb2.RS_SUCCESS
                     ]
-                    logging.info(f'Successfully converted the following {len(converted_record_names)} record(s):')
-                    logging.info('\n'.join(converted_record_names))
+                    if len(converted_record_names) > 0:
+                        logging.info(f'Successfully converted the following {len(converted_record_names)} record(s):')
+                        logging.info('\n'.join(converted_record_names))
+
+                    convert_errors = [(record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(x.record_uid)], x.message)
+                                      for x in records_modify_rs.records if x.status != record_pb2.RS_SUCCESS]
+                    if len(convert_errors) > 0:
+                        logging.warning(f'Failed to convert the following {len(convert_errors)} record(s):')
+                        logging.warning('\n'.join((f'{x[0]} : {x[1]}' for x in convert_errors)))
             elif not quiet:
                 logging.info('No records successfully converted')
+
+    @staticmethod
+    def get_v3_field_type(field_value):
+        return_type = 'text'
+        if field_value:
+            if is_url(field_value):
+                return_type = 'url'
+            elif is_email(field_value):
+                return_type = 'email'
+            if len(field_value) > 128:
+                return_type = 'note'
+        return return_type
+
+    @staticmethod
+    def convert_to_record_type_data(record_uid, params):
+        # type: (str, KeeperParams) -> Optional[Tuple[dict, list]]
+
+        if not (record_uid and params and params.record_cache and record_uid in params.record_cache):
+            logging.warning('Record %s not found.', record_uid)
+            return
+
+        record = params.record_cache[record_uid]
+        version = record.get('version') or 0
+        if version != 2:
+            logging.warning('Record %s is not version 2.', record_uid)
+            return
+
+        data = record.get('data_unencrypted')
+        extra = record.get('extra_unencrypted')
+
+        data = data if isinstance(data, dict) else json.loads(data or '{}')
+        extra = extra if isinstance(extra, dict) else json.loads(extra or '{}')
+
+        # check for other non-convertible data - ex. fields[] has "field_type" != "totp" if present
+        fields = extra.get('fields') or []
+        otps = [x['data'] for x in fields if 'totp' == (x.get('field_type') or '') and 'data' in x]
+        totp = otps[0] if len(otps) > 0 else ''
+        otps = otps[1:]
+        # label = otp.get('field_title') or ''
+
+        title = data.get('title') or ''
+        login = data.get('secret1') or ''
+        password = data.get('secret2') or ''
+        url = data.get('link') or ''
+
+        notes = data.get('notes') or ''
+        custom2 = data.get('custom') or []
+        # custom.type	- Always "text" for legacy reasons.
+        custom = []
+        custom.extend(({
+            'type': ConvertCommand.get_v3_field_type(x.get('value')),
+            'label': x.get('name') or '',
+            'value': [x.get('value')] if x.get('value') else []
+        } for x in custom2 if x.get('name') or x.get('value')))
+
+        # Add any remaining TOTP codes to custom[]
+        if len(otps) > 0:
+            custom.extend(({
+                'type': 'oneTimeCode',
+                'value': [x]
+            } for x in otps if x))
+
+        file_info = extra.get('files') or []
+
+        v3_data = {
+            'title': title,
+            'type': 'login',
+            'fields': [
+                {'type': 'login', 'value': [login] if login else []},
+                {'type': 'password', 'value': [password] if password else []},
+                {'type': 'url', 'value': [url] if url else []},
+                {'type': 'oneTimeCode', 'value': [totp] if totp else []},
+                {'type': 'fileRef', 'value': []}
+            ],
+            'custom': custom,
+            'notes': notes
+        }
+
+        return v3_data, file_info

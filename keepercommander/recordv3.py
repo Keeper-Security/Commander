@@ -12,25 +12,13 @@
 import copy
 import datetime
 import json
-from .params import KeeperParams
 import logging
 import re
 
-from . import api
 from .display import bcolors
-from .subfolder import get_folder_path, find_folders, BaseFolderNode
+from .params import KeeperParams
 from .record import get_totp_code
-from keepercommander.utils import is_url
-
-
-def get_v3_field_type(field_value):
-    return_type = 'text'
-    if field_value:
-        if is_url(field_value):
-            return_type = 'url'
-        if len(field_value) > 128:
-            return_type = 'note'
-    return return_type
+from .subfolder import get_folder_path, find_folders, BaseFolderNode
 
 
 class RecordV3:
@@ -1340,94 +1328,6 @@ class RecordV3:
         if not result['errors']:
             result['record'] = rt
 
-        return result
-
-    @staticmethod
-    def convert_to_record_type(record_uid, params, record_type='general'):
-        # Converts records v2 to v3
-        result = False
-
-        if not (record_uid and params and params.record_cache and record_uid in params.record_cache):
-            logging.error(bcolors.FAIL + 'Record %s not found.' + bcolors.ENDC, record_uid)
-            return result
-
-        record = params.record_cache[record_uid]
-        version = record.get('version') or 0
-        if version != 2:
-            logging.error(bcolors.FAIL + 'Record %s is not version 2.' + bcolors.ENDC, record_uid)
-            return result
-
-        udata = record.get('udata')
-        data = record.get('data_unencrypted')
-        extra = record.get('extra_unencrypted')
-        # extra contains: files, fields, (favicon_url - deprecated, smartfill - deprecated)
-
-        udata = udata if isinstance(udata, dict) else json.loads(udata or '{}')
-        data = data if isinstance(data, dict) else json.loads(data or '{}')
-        extra = extra if isinstance(extra, dict) else json.loads(extra or '{}')
-
-        file_ids = udata.get('file_ids') or []
-        files = extra.get('files') or []
-        has_files = len(file_ids) > 0 or len(files) > 0
-        if has_files:
-            logging.error(bcolors.FAIL + 'Record %s has file atachments. Not convertible.' + bcolors.ENDC, record_uid)
-            return result
-
-        # check for other non-convertible data - ex. fields[] has "field_type" != "totp" if present
-        fields = extra.get('fields') or []
-        otps = [x for x in fields if 'totp' == (x.get('field_type') or '')]
-        if bool(data.get('folder')) or len(fields) != len(otps):
-            logging.error(bcolors.FAIL + 'Record %s has unknown extra fields.' + bcolors.ENDC, record_uid)
-            return result
-
-        otp = otps[0] if otps else {}
-        totp = otp.get('data') or ''
-        # label = otp.get('field_title') or ''
-
-        title = data.get('title') or ''
-        login = data.get('secret1') or ''
-        password = data.get('secret2') or ''
-        url = data.get('link') or ''
-
-        notes = data.get('notes') or ''
-        custom2 = data.get('custom') or []
-        # custom.type	- Always "text" for legacy reasons.
-        custom = [{
-            'type': get_v3_field_type(x.get('value')),
-            'label': x.get('name') or '',
-            'value': [x.get('value')] if x.get('value') else []
-        } for x in custom2 if x.get('name') or x.get('value')]
-
-        # Add any remaining TOTP codes to custom[]
-        if len(otps) > 1:
-            otps.pop(0)
-            otp2 = [{
-                'type': 'oneTimeCode',
-                'value': [x.get('data')]
-            } for x in otps if x.get('data')]
-            if otp2: custom.extend(otp2)
-
-        rt = {
-            'title': title,
-            'type': record_type,
-            'fields': [
-                {'type': 'login', 'value': [login] if login else []},
-                {'type': 'password', 'value': [password] if password else []},
-                {'type': 'url', 'value': [url] if url else []},
-                {'type': 'oneTimeCode', 'value': [totp] if totp else []},
-                {'type': 'fileRef', 'value': []}
-            ],
-            'custom': custom,
-            'notes': notes
-        }
-
-        record['version'] = 3
-        record.pop('udata', None)
-        record.pop('extra', None)
-        record.pop('extra_unencrypted', None)
-        record['data_unencrypted'] = json.dumps(rt)
-        record['client_modified_time'] = api.current_milli_time()
-        result = True
         return result
 
     @staticmethod
