@@ -11,10 +11,12 @@
 
 import base64
 import math
+import re
 import time
 from urllib.parse import urlparse
 
 from . import crypto
+from .constants import EMAIL_PATTERN
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
@@ -99,6 +101,13 @@ def is_url(test_str):   # type: (str) -> bool
         return True
     else:
         return False
+
+
+email_pattern = re.compile(EMAIL_PATTERN)
+
+
+def is_email(test_str):
+    return email_pattern.match(test_str) is not None
 
 
 def url_strip(url):   # type: (str) -> str
