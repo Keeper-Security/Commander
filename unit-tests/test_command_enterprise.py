@@ -9,7 +9,7 @@ from keepercommander.record import Record
 from keepercommander.params import KeeperParams
 from keepercommander.error import CommandError
 from data_vault import VaultEnvironment, get_connected_params
-from keepercommander.commands import enterprise
+from keepercommander.commands import enterprise, aram
 
 
 vault_env = VaultEnvironment()
@@ -199,7 +199,7 @@ class TestEnterprise(TestCase):
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_audit_log_splunk_properties_success(self):
-        splunk = enterprise.AuditLogSplunkExport()
+        splunk = aram.AuditLogSplunkExport()
         props = {}
         record = Record()
 
@@ -220,7 +220,7 @@ class TestEnterprise(TestCase):
             self.assertTrue(splunk.store_record)
 
     def test_audit_log_splunk_properties_cancel(self):
-        splunk = enterprise.AuditLogSplunkExport()
+        splunk = aram.AuditLogSplunkExport()
         props = {}
         record = Record()
         with mock.patch('builtins.print'), mock.patch('builtins.input') as mock_input, mock.patch('requests.post') as mock_post:
@@ -232,7 +232,7 @@ class TestEnterprise(TestCase):
                 splunk.get_properties(record, props)
 
     def test_audit_log_splunk_convert_event(self):
-        splunk = enterprise.AuditLogSplunkExport()
+        splunk = aram.AuditLogSplunkExport()
         props = {
             'host': 'h',
             'enterprise_name': 'Unittest'
@@ -240,7 +240,7 @@ class TestEnterprise(TestCase):
         splunk.convert_event(props, self.get_audit_event())
 
     def test_audit_audit_report_parse_date_filter(self):
-        cmd = enterprise.AuditReportCommand()
+        cmd = aram.AuditReportCommand()
 
         epoch_max = int(datetime.now().timestamp())
         dt_max = datetime.fromtimestamp(epoch_max)
@@ -275,7 +275,7 @@ class TestEnterprise(TestCase):
         self.assertEqual(rng['max'], epoch_max)
 
     def test_audit_audit_report_parse_int_filter(self):
-        cmd = enterprise.AuditReportCommand()
+        cmd = aram.AuditReportCommand()
         arr = cmd.get_filter('In (1,2,3, 4, 6,   5,7, 0)', cmd.convert_int)
         self.assertTrue(type(arr) == list)
         arr.sort()
