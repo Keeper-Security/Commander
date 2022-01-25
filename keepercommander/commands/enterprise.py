@@ -148,9 +148,10 @@ enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', desc
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
-enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true', help='extend vault transfer consent by 7 days')
+enterprise_user_parser.add_argument('--extend', dest='extend', action='store_true',
+                                    help='extend vault transfer consent by 7 days. Supports the following pseudo users: @all')
 enterprise_user_parser.add_argument('--lock', dest='lock', action='store_true', help='lock user')
-enterprise_user_parser.add_argument('--unlock', dest='unlock', action='store_true', help='unlock user')
+enterprise_user_parser.add_argument('--unlock', dest='unlock', action='store_true', help='unlock user. Supports the following pseudo users: @all')
 enterprise_user_parser.add_argument('--disable-2fa', dest='disable_2fa', action='store_true', help='disable 2fa for user')
 enterprise_user_parser.add_argument('--add', dest='add', action='store_true', help='invite user')
 enterprise_user_parser.add_argument('--delete', dest='delete', action='store_true', help='delete user')
@@ -1041,22 +1042,36 @@ class EnterpriseUserCommand(EnterpriseCommand):
         user_lookup = {}
         if 'users' in params.enterprise:
             for u in params.enterprise['users']:
+
                 user_lookup[str(u['enterprise_user_id'])] = u
 
                 if 'username' in u:
                     user_lookup[u['username'].lower()] = u
                 else:
-                    logging.debug('All users: %s' % params.enterprise['users'])
-                    logging.debug('WARNING: username is missing from the user id=%s, obj=%s' % (u['enterprise_user_id'], u))
+                    logging.debug('All users: %s', params.enterprise['users'])
+                    logging.debug('WARNING: username is missing from the user id=%s, obj=%s', u['enterprise_user_id'], u)
 
         emails = kwargs['email']
         if emails:
             for email in emails:
                 email = email.lower()
-                if email in user_lookup:
-                    matched_users.append(user_lookup[email])
+                if email == '@all':
+                    if kwargs.get('unlock') or kwargs.get('extend'):
+                        now = round(time.time() * 1000)
+                        for u in params.enterprise['users'] if 'users' in params.enterprise else []:
+                            if kwargs.get('unlock') and u.get('lock', 0) == 1:
+                                matched_users.append(u)
+                            if kwargs.get('extend'):
+                                if 'account_share_expiration' in u:
+                                    if 0 < u['account_share_expiration'] < now:
+                                        matched_users.append(u)
+                    else:
+                        logging.warning('@all pseudo-user can be used with \'unlock\' and \'extend\' actions only.')
                 else:
-                    unmatched_emails.add(email)
+                    if email in user_lookup:
+                        matched_users.append(user_lookup[email])
+                    else:
+                        unmatched_emails.add(email)
 
         node_id = None
         node_name = kwargs.get('node')
@@ -3944,7 +3959,7 @@ class DeviceApproveCommand(EnterpriseCommand):
             device_id = device.get('encrypted_device_token')
             if not device_id:
                 continue
-            device_id = DeviceApproveCommand.token_to_string(api.base64_decode(device_id))
+            device_id = DeviceApproveCommand.token_to_string(utils.base64_url_decode(device_id))
             found = False
             if devices:
                 for name in devices:
@@ -4035,7 +4050,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                         if 'ecc_encrypted_private_key' in params.enterprise['keys']:
                             keys = params.enterprise['keys']
                             try:
-                                ecc_private_key_data = api.base64_decode(keys['ecc_encrypted_private_key'] + '==')
+                                ecc_private_key_data = utils.base64_url_decode(keys['ecc_encrypted_private_key'])
                                 ecc_private_key_data = api.decrypt_aes_plain(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
                                 private_value = int.from_bytes(ecc_private_key_data, byteorder='big', signed=False)
                                 ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
@@ -4094,7 +4109,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                 ent_user_id = device['enterprise_user_id']
                 device_rq = ApproveUserDeviceRequest()
                 device_rq.enterpriseUserId = ent_user_id
-                device_rq.encryptedDeviceToken = api.base64_decode(device['encrypted_device_token'])
+                device_rq.encryptedDeviceToken = utils.base64_url_decode(device['encrypted_device_token'])
                 device_rq.denyApproval = True if kwargs.get('deny') else False
                 if kwargs.get('approve'):
                     public_key = device['device_public_key']
@@ -4106,7 +4121,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                     try:
                         ephemeral_key = ec.generate_private_key(curve,  default_backend())
                         device_public_key = ec.EllipticCurvePublicKey. \
-                            from_encoded_point(curve, api.base64_decode(device['device_public_key']))
+                            from_encoded_point(curve, utils.base64_url_decode(device['device_public_key']))
                         shared_key = ephemeral_key.exchange(ec.ECDH(), device_public_key)
                         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                         digest.update(shared_key)
