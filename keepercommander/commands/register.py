@@ -25,7 +25,7 @@ from .. import api
 from .base import dump_report_data, user_choice
 from ..recordv3 import RecordV3
 from ..params import KeeperParams
-from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path
+from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
@@ -855,9 +855,17 @@ class ShareReportCommand(Command):
                                             record_shared_with[uid].append('{0} => {1}{2}'.format(team_name, permission, date_shared))
 
             if len(record_owners) > 0:
-                headers = ['#', 'Record Title', 'Record UID', 'Owner', 'Shared with']
+                headers = ['#', 'Record Title', 'Record UID', 'Owner', 'Shared with', 'Folder Path']
                 table = []
                 for uid, user_name in record_owners.items():
+
+                    folder_paths = []
+                    folders = list(find_folders(params, uid))
+                    if len(folders) > 0:
+                        for folder_uid in folders:
+                            folder_paths.append(get_folder_path(params, folder_uid))
+                    folder_paths = '\n'.join(folder_paths)
+
                     record = api.get_record(params, uid)
                     row = [record.title[0:32] if record else '', uid, user_name]
                     share_to = record_shared_with.get(uid)
@@ -866,9 +874,10 @@ class ShareReportCommand(Command):
                         row.append(share_to)
                     else:
                         row.append(len(share_to) if share_to else 0)
+                    row.append(folder_paths)
                     table.append(row)
                 table.sort(key=lambda x: len(x[3]) if type(x[3]) == list else x[3], reverse=True)
-                table = [[i + 1, s[0], s[1], s[2], s[3]] for i, s in enumerate(table)]
+                table = [[i + 1, s[0], s[1], s[2], s[3], s[4]] for i, s in enumerate(table)]
                 dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
