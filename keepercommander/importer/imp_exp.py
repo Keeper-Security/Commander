@@ -1802,18 +1802,42 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
     emails = set()
     teams = set()
     for fol in folders:
+        shared_folder_uid = shared_folder_lookup.get(fol.path)
+        if not shared_folder_uid:
+            continue
+        shared_folder = params.shared_folder_cache.get(shared_folder_uid)
+        if not shared_folder:
+            continue
+        shared_folder_key = shared_folder.get('shared_folder_key_unencrypted')
+        if not shared_folder_key:
+            continue
+
         if fol.permissions:
             for perm in fol.permissions:
                 if perm.uid:
+                    if 'teams' in shared_folder:
+                        found = next((True for x in shared_folder['teams'] if x['team_uid'] == perm.uid), False)
+                        if found:
+                            continue
                     teams.add(perm.uid)
                     if perm.name:
                         teams.add(perm.name)
                 elif perm.name:
+                    lower_name = perm.name.casefold()
                     match = email_pattern.match(perm.name)
                     if match:
-                        if perm.name != params.user:
-                            emails.add(perm.name.lower())
+                        if perm.name == params.user:
+                            continue
+                        if 'users' in shared_folder:
+                            found = next((True for x in shared_folder['users'] if x['username'].lower() == lower_name), False)
+                            if found:
+                                continue
+                        emails.add(perm.name.lower())
                     else:
+                        if 'teams' in shared_folder:
+                            found = next((True for x in shared_folder['teams'] if x['name'].lower() == lower_name), False)
+                            if found:
+                                continue
                         teams.add(perm.name)
 
     if len(emails) > 0:
@@ -1850,6 +1874,10 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                 try:
                     if perm.uid:
                         if perm.uid in params.key_cache:
+                            if 'teams' in shared_folder:
+                                found = next((True for x in shared_folder['teams'] if x['team_uid'] == perm.uid), False)
+                                if found:
+                                    continue
                             team_key = params.key_cache[perm.uid]
                             rq = {
                                 'team_uid': perm.uid,
@@ -1866,6 +1894,11 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                     if perm.name:
                         name = perm.name.casefold()
                         if name in params.key_cache:
+                            if 'users' in shared_folder:
+                                found = next((True for x in shared_folder['users'] if x['username'].lower() == name), False)
+                                if found:
+                                    continue
+
                             rsa_key = params.key_cache[name]
                             rq = {
                                 'username': name,
@@ -1876,9 +1909,12 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                             add_users.append(rq)
                             continue
 
-                        team_uid = next((x.get('team_uid') for x in params.available_team_cache
-                                         if x.get('team_name').casefold() == name), None)
+                        team_uid = next((x.get('team_uid') for x in params.available_team_cache if x.get('team_name').casefold() == name), None)
                         if team_uid in params.key_cache:
+                            if 'teams' in shared_folder:
+                                found = next((True for x in shared_folder['teams'] if x['team_uid'] == team_uid), False)
+                                if found:
+                                    continue
                             team_key = params.key_cache[team_uid]
                             rq = {
                                 'team_uid': team_uid,
@@ -1895,15 +1931,19 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                 except Exception as e:
                     logging.debug(e)
 
-            if add_teams or add_users:
+            while len(add_teams) > 0 or len(add_users) > 0:
+                team_chunk = add_teams[:400]
+                add_teams = add_teams[400:]
+                user_chunk = add_users[:400]
+                add_users = add_users[400:]
                 request = {
                     'command': 'shared_folder_update',
                     'operation': 'update',
                     'pt': 'Commander',
                     'shared_folder_uid': shared_folder_uid,
                     'force_update': True,
-                    'add_teams': add_teams,
-                    'add_users': add_users,
+                    'add_teams': team_chunk,
+                    'add_users': user_chunk,
                 }
                 folder_permissions.append(request)
 
