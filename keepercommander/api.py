@@ -1229,28 +1229,32 @@ def load_user_public_keys(params, emails):  # type: (KeeperParams, list) -> None
 
 
 def load_team_keys(params, team_uids):          # type: (KeeperParams, list) -> None
-    uids_to_load = [x for x in team_uids if x not in params.key_cache]
+    uids_to_load = {x for x in team_uids if x not in params.key_cache}
     if not uids_to_load:
         return
-    rq = {
-        'command': 'team_get_keys',
-        'teams': uids_to_load
-    }
-    rs = communicate(params, rq)
-    if 'keys' in rs:
-        for tk in rs['keys']:
-            if 'key' in tk:
-                team_uid = tk['team_uid']
-                try:
-                    if tk['type'] == 1:
-                        params.key_cache[team_uid] = decrypt_data(tk['key'], params.data_key)
-                    elif tk['type'] == 2:
-                        params.key_cache[team_uid] = decrypt_rsa(tk['key'], params.rsa_key)
-                    elif tk['type'] == 3:
-                        public_key = base64.urlsafe_b64decode(tk['key'] + '==')
-                        params.key_cache[team_uid] = RSA.importKey(public_key)
-                except Exception as e:
-                    logging.debug(e)
+    uids_to_load = list(uids_to_load)
+    while len(uids_to_load) > 0:
+        uids = uids_to_load[:90]
+        uids_to_load = uids_to_load[90:]
+        rq = {
+            'command': 'team_get_keys',
+            'teams': uids
+        }
+        rs = communicate(params, rq)
+        if 'keys' in rs:
+            for tk in rs['keys']:
+                if 'key' in tk:
+                    team_uid = tk['team_uid']
+                    try:
+                        if tk['type'] == 1:
+                            params.key_cache[team_uid] = decrypt_data(tk['key'], params.data_key)
+                        elif tk['type'] == 2:
+                            params.key_cache[team_uid] = decrypt_rsa(tk['key'], params.rsa_key)
+                        elif tk['type'] == 3:
+                            public_key = utils.base64_url_decode(tk['key'])
+                            params.key_cache[team_uid] = RSA.importKey(public_key)
+                    except Exception as e:
+                        logging.debug(e)
 
 
 def load_available_teams(params):
@@ -1594,7 +1598,7 @@ def execute_batch(params, requests):
     if not requests:
         return responses
 
-    chunk_size = 80
+    chunk_size = 98
     queue = requests.copy()
     while len(queue) > 0:
         chunk = queue[:chunk_size]
@@ -1622,7 +1626,7 @@ def execute_batch(params, requests):
         except Exception as e:
             logging.error(e)
         if len(chunk) > 50:
-            time.sleep(5)
+            time.sleep(4)
 
     return responses
 
