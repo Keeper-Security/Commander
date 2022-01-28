@@ -194,7 +194,9 @@ class ConvertCommand(Command):
                         if 'thumbs' in f_info:
                             thumbs = f_info['thumbs']
                             if len(thumbs) > 0:
-                                rf.thumb_file_id = thumbs[0]['id']
+                                thumb = next((x for x in thumbs if isinstance(x, dict)), None)
+                                if thumb:
+                                    rf.thumb_file_id = thumbs[0]['id']
                         rf.data = crypto.encrypt_aes_v2(json.dumps(data).encode('utf-8'), file_key)
                         rf.record_key = crypto.encrypt_aes_v2(file_key, params.data_key)
                         rf.link_key = crypto.encrypt_aes_v2(file_key, record_key)

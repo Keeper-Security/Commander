@@ -56,7 +56,7 @@ unpad_char = lambda s: s[0:-ord(s[-1])]
 
 decode_uid_to_str = lambda uid: base64.urlsafe_b64encode(uid).decode().rstrip('=')
 
-LOCALE='en_US'
+LOCALE = 'en_US'
 
 
 def run_command(params, request):
@@ -452,6 +452,10 @@ def merge_lists_on_value(list1, list2, field_name):
     return [x for x in d.values()]
 
 
+FOLDER_SCOPE = ['folders', 'shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
+RECORD_SCOPE = ['record', 'typed_record', 'app_record']
+
+
 def sync_down(params):
     """Sync full or partial data down to the client"""
 
@@ -463,7 +467,7 @@ def sync_down(params):
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': ['sfheaders', 'sfrecords', 'sfusers', 'teams', 'folders', 'typed_record', 'app_record']
+        'include': FOLDER_SCOPE + RECORD_SCOPE + ['explicit']
     }
     response_json = communicate(params, rq)
 
@@ -1111,7 +1115,7 @@ def get_record(params, record_uid):
         logging.warning('No record cache.  Sync down first.')
         return
 
-    if not record_uid in params.record_cache:
+    if record_uid not in params.record_cache:
         logging.warning('Record UID %s not found in cache.' % record_uid)
         return
 
@@ -1120,32 +1124,12 @@ def get_record(params, record_uid):
     rec = Record()
 
     try:
-        data = json.loads(cached_rec['data_unencrypted'])
         rec = Record(record_uid)
-        extra = None
-        if 'extra_unencrypted' in cached_rec:
-            extra = json.loads(cached_rec['extra_unencrypted'])
+        data = json.loads(cached_rec['data_unencrypted'])
+        extra = json.loads(cached_rec['extra_unencrypted']) if 'extra_unencrypted' in cached_rec else None
         rec.load(data, version=version, revision=cached_rec['revision'], extra=extra)
-        if version == 3:
-            rec.record_type = RecordV3.get_record_type_name(data)
-            rec.login = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'login')
-            rec.password = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'password')
-            rec.login_url = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'url')
-            rec.totp = RecordV3.get_record_field_value(cached_rec.get('data_unencrypted'), 'totp')
         if not resolve_record_view_path(params, record_uid):
             rec.mask_password()
-        # if 'version' in cached_rec and cached_rec['version'] in (3, 4):
-        #     if 'data_unencrypted' in cached_rec:
-        #         version = cached_rec.get('version') or 0
-        #         data_unencrypted = json.loads(cached_rec['data_unencrypted'])
-        #         if version == 3:
-        #             rec_type = data_unencrypted.get('type') or ''
-        #             if (rec_type and rec_type.strip()):
-        #                 rec.login = 'type: ' + rec_type.strip()
-        #         elif version == 4:
-        #             fname = data_unencrypted.get('name') or ''
-        #             if (fname and fname.strip()):
-        #                 rec.login = 'file: ' + fname.strip()
     except:
         logging.error('**** Error decrypting record %s', record_uid)
 

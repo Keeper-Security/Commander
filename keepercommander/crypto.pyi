@@ -1,5 +1,5 @@
 import io
-from typing import Optional
+from typing import Optional, BinaryIO
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey, RSAPrivateKey
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey, EllipticCurvePublicKey
@@ -39,11 +39,11 @@ def derive_keyhash_v2(domain: str, password: str, salt: bytes, iterations: int) 
 
 def hmac_sha512(key: bytes, data: bytes) -> bytes: ...
 
-class StreamCrypter(io.IOBase):
+class StreamCrypter:
     key: bytes
     is_gcm: bool
     @property
     def bytes_read(self) -> int: ...
-    def set_stream(self, stream: io.IOBase, for_encrypt: bool) -> io.IOBase: ...
+    def set_stream(self, stream: BinaryIO, for_encrypt: bool) -> BinaryIO: ...
 
 
