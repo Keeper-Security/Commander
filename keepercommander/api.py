@@ -467,7 +467,7 @@ def sync_down(params):
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': FOLDER_SCOPE + RECORD_SCOPE + ['explicit']
+        'include': FOLDER_SCOPE + RECORD_SCOPE + ['non_shared_data', 'explicit']
     }
     response_json = communicate(params, rq)
 
@@ -567,6 +567,20 @@ def sync_down(params):
                     for r in shared_folder['records']:
                         if 'record_uid' in r:
                             delete_record_key(r['record_uid'])
+
+    if 'removed_links' in response_json:
+        logging.debug('Processing removed record links')
+        for link in response_json['removed_links']:
+            record_uid = link['record_uid']
+            if record_uid in params.record_cache:
+                delete_record_key(record_uid)
+                record = params.record_cache[record_uid]
+                owner_uid = link['owner_uid']
+                if 'owner_uid' in record:
+                    if record['owner_uid'] == owner_uid:
+                        del record['owner_uid']
+                        if 'link_key' in record:
+                            del record['link_key']
 
     if 'user_folders_removed' in response_json:
         for ufr in response_json['user_folders_removed']:
@@ -847,15 +861,17 @@ def sync_down(params):
     for record in records_to_delete:
         record_uid = record['record_uid']
         if 'link_key' in record and 'owner_uid' in record:
-            try:
-                host_record_uid = record['owner_uid']
-                if host_record_uid in params.record_cache:
-                    host_record_key = params.record_cache[host_record_uid]['record_key_unencrypted']
-                    record['record_key_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['link_key']), host_record_key)
-                    continue
-            except Exception as e:
-                logging.debug('Record %s link key decryption error: %s', record_uid, e)
-        params.record_cache.pop(record_uid)
+            host_record_uid = record['owner_uid']
+            if host_record_uid in params.record_cache:
+                host_record = params.record_cache[host_record_uid]
+                if 'record_key_unencrypted' in host_record:
+                    host_record_key = host_record['record_key_unencrypted']
+                    try:
+                        record['record_key_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['link_key']), host_record_key)
+                    except Exception as e:
+                        logging.debug('Record %s link key decryption error: %s', record_uid, e)
+        if 'record_key_unencrypted' not in record:
+            params.record_cache.pop(record_uid)
     del records_to_delete
 
     # decrypt records
@@ -1976,29 +1992,6 @@ def delete_record(params, record_uid):
     logging.info('Record deleted with success')
     sync_down(params)
     return True
-
-
-def store_non_shared_data(params, record_uid, data):
-    # type: (KeeperParams, str, dict) -> None
-    if record_uid not in params.record_cache:
-        logging.error('Record UID %s does not exist.', record_uid)
-        return
-
-    ur = resolve_record_access_path(params, record_uid)
-    ur['non_shared_data'] = encrypt_aes(json.dumps(data).encode('utf-8'), params.data_key)
-    ur['client_modified_time'] = current_milli_time()
-    ur['version'] = 2
-    if record_uid in params.non_shared_data_cache:
-        ur['revision'] = params.non_shared_data_cache[record_uid]['revision']
-    else:
-        ur['revision'] = 0
-
-    request = {
-        'command': 'record_update',
-        'update_records': [ur]
-    }
-    _ = communicate(params, request)
-    sync_down(params)
 
 
 def generate_record_uid():

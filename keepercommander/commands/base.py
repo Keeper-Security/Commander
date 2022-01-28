@@ -57,9 +57,11 @@ def register_commands(commands, aliases, command_info):
     breachwatch.register_commands(commands)
     breachwatch.register_command_info(aliases, command_info)
 
+    '''
     from . import convert
     convert.register_commands(commands)
     convert.register_command_info(aliases, command_info)
+    '''
 
     from . import scripting
     scripting.register_commands(commands)
