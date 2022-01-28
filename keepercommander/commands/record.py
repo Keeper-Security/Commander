@@ -33,7 +33,7 @@ from ..params import KeeperParams, LAST_RECORD_UID
 from ..error import CommandError
 from ..proto.enterprise_pb2 import SharedRecordResponse
 from . import record_common
-
+from .. import attachment
 
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
@@ -836,60 +836,12 @@ class RecordDownloadAttachmentCommand(Command):
         if record_uid is None:
             raise CommandError('download-attachment', 'Enter name or uid of existing record')
 
-        file_ids = []
-        r = params.record_cache[record_uid]
-        extra = json.loads(r['extra_unencrypted'].decode())
-        if 'files' in extra:
-            for f_info in extra['files']:
-                file_ids.append(f_info['id'])
-
-        if len(file_ids) == 0:
+        attachments = list(attachment.prepare_attachment_download(params, record_uid))
+        if len(attachments) == 0:
             raise CommandError('download-attachment', 'No attachments associated with the record')
 
-        rq = {
-            'command': 'request_download',
-            'file_ids': file_ids,
-        }
-        api.resolve_record_access_path(params, record_uid, path=rq)
-
-        rs = api.communicate(params, rq)
-        if rs['result'] == 'success':
-            for file_id, dl in zip(file_ids, rs['downloads']):
-                if 'url' in dl:
-                    file_key = None
-                    file_name = None
-                    if 'files' in extra:
-                        for f_info in extra['files']:
-                            if f_info['id'] == file_id:
-                                file_key = base64.urlsafe_b64decode(f_info['key'] + '==')
-                                file_name = f_info.get('title') or f_info.get('name') or f_info.get('id')
-                                break
-
-                    if file_key:
-                        rq_http = requests.get(dl['url'], proxies=params.rest_context.proxies, stream=True)
-                        with open(file_name, 'wb') as f:
-                            logging.info('Downloading \'%s\'', os.path.abspath(f.name))
-                            iv = rq_http.raw.read(16)
-                            cipher = AES.new(file_key, AES.MODE_CBC, iv)
-                            finished = False
-                            decrypted = None
-                            while not finished:
-                                if decrypted:
-                                    f.write(decrypted)
-                                    decrypted = None
-
-                                to_decrypt = rq_http.raw.read(10240)
-                                finished = len(to_decrypt) < 10240
-                                if len(to_decrypt) > 0:
-                                    decrypted = cipher.decrypt(to_decrypt)
-                            if decrypted:
-                                decrypted = api.unpad_binary(decrypted)
-                                f.write(decrypted)
-                            params.queue_audit_event('file_attachment_downloaded', record_uid=record_uid, attachment_id=file_id)
-                    else:
-                        raise CommandError('download-attachment', 'File "{0}": Failed to file encryption key'.format(file_name))
-                else:
-                    raise CommandError('download-attachment', 'File "{0}" download error: {1}'.format(file_id, dl['message']))
+        for atta in attachments:
+            atta.download_to_file(params, atta.title)
 
 
 class RecordUploadAttachmentCommand(Command):
