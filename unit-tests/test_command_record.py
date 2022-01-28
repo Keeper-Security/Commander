@@ -1,14 +1,13 @@
 import json
 import os
 import io
-import base64
 
 from unittest import TestCase, mock
 
 from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
-from keepercommander import api
+from keepercommander import api, utils, crypto, attachment
 from keepercommander.commands import record
 from keepercommander.error import CommandError
 
@@ -226,32 +225,39 @@ class TestRecord(TestCase):
         rec = records[0]
         record_uid = rec['record_uid']
         extra = json.loads(rec['extra_unencrypted'].decode('utf-8'))
-        attachments = {}
+        attachments = {}  # type: dict[any, tuple[attachment.AttachmentDownloadRequest, bytes]]
         for file in extra['files']:
-            key = base64.urlsafe_b64decode(file['key'] + '==')
-            body_encoded = api.encrypt_aes(os.urandom(file['size']), key)
-            attachments['https://keepersecurity.com/files/' + file['id']] = body_encoded
+            atta_id = file['id']   # type: str
+            key = utils.base64_url_decode(file['key'])
+            body_encoded = crypto.encrypt_aes_v1(os.urandom(file['size']), key)
+            rq = attachment.AttachmentDownloadRequest()
+            rq.title = 'Title'
+            rq.url = f'https://keepersecurity.com/files/{atta_id}'
+            rq.is_gcm_encrypted = False
+            rq.encryption_key = key
 
-        def request_download(rq):
-            self.assertEqual(rq['command'], 'request_download')
-            return {
-                'downloads': [{
-                    'url': 'https://keepersecurity.com/files/' + x
-                } for x in rq['file_ids']]
-            }
+            attachments[atta_id] = (rq, body_encoded)
 
-        def request_http_get(url, **kwargs):
-            attachment = mock.Mock()
-            attachment.raw = io.BytesIO(base64.urlsafe_b64decode(attachments[url] + '=='))
-            return attachment
+        def prepare_download(params, record_uid):
+            return (x[0] for x in attachments.values())
 
-        with mock.patch('requests.get', side_effect=request_http_get) as mock_get, \
-                mock.patch('builtins.open', mock.mock_open()), mock.patch('os.path.abspath', return_value='/file_name') as mock_abspath:
-            KeeperApiHelper.communicate_expect([request_download])
+        def requests_get(url, **kwargs):
+            body = next((x[1] for x in attachments.values() if x[0].url == url), None)
+            if not body:
+                raise Exception(f'URL \"{url}\" not found.')
+            rs = mock.Mock()
+            rs.status_code = 200
+            stream = io.BytesIO(body)
+            rs.raw = stream
+            rs.__enter__ = mock.Mock(return_value=rs)
+            rs.__exit__ = mock.Mock(return_value=None)
+            return rs
+
+        with mock.patch('keepercommander.attachment.prepare_attachment_download', side_effect=prepare_download), \
+                mock.patch('requests.get', side_effect=requests_get), \
+                mock.patch('builtins.open', mock.mock_open()), \
+                mock.patch('os.path.abspath', return_value='/file_name'):
             cmd.execute(params, record=record_uid)
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
-            mock_get.assert_called()
-            mock_abspath.assert_called()
 
     def test_upload_attachment_command(self):
         params = get_synced_params()

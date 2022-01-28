@@ -9,33 +9,34 @@
 # Contact: ops@keepersecurity.com
 #
 
-import os
 import argparse
-import re
 import datetime
 import json
-from typing import Generator, List, Tuple
-import requests
-import base64
-import tempfile
 import logging
+import os
+import re
+import tempfile
 import threading
-from Cryptodome.Cipher import AES
 from pathlib import Path
+from typing import Generator, List, Tuple
+
+import requests
+from Cryptodome.Cipher import AES
 from tabulate import tabulate
 
-from .. import api, crypto, generator
-from .. import recordv3, loginv3
-from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
-from ..display import bcolors
-from ..record import Record, get_totp_code
-from ..params import KeeperParams, LAST_RECORD_UID
-from ..error import CommandError
-from .register import FileReportCommand
 from . import record as recordv2
 from . import record_common
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .register import FileReportCommand
+from .. import api, crypto, generator
+from .. import recordv3, loginv3
+from ..display import bcolors
+from ..error import CommandError
+from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import record_pb2 as records
+from ..record import Record, get_totp_code
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
+from ..attachment import prepare_attachment_download
 
 
 def register_commands(commands):
@@ -1007,10 +1008,8 @@ class RecordDownloadAttachmentCommand(Command):
             return
 
         record_uid = None
-        record_version = None
         if name in params.record_cache:
             record_uid = name
-            record_version = params.record_cache[record_uid]['version'] if 'version' in params.record_cache[record_uid] else None
         else:
             rs = try_resolve_path(params, name)
             if rs is not None:
@@ -1022,122 +1021,18 @@ class RecordDownloadAttachmentCommand(Command):
                             r = api.get_record(params, uid)
                             if r.title.lower() == name.lower():
                                 record_uid = uid
-                                record_version = params.record_cache[record_uid]['version'] if 'version' in params.record_cache[record_uid] else None
                                 break
 
         if not record_uid:
             logging.error('Record UID not found for record name "%s"', str(name))
             return
-        if not record_version:
-            logging.error('Record Version not found for record "%s"', str(name))
-            return
 
-        is_v2 = not record_version or record_version < 3
-        if is_v2:
-            recordv2.RecordDownloadAttachmentCommand().execute(params, **kwargs)
-            return
-
-        recordv3.RecordV3.validate_access(params, record_uid)
-        if record_version != 3:
-            logging.error('Record is not a record type (version 3) - UID: %s', str(record_uid))
-            return
-
-        if params.sync_data:
-            api.sync_down(params)
-
-        record_uids = []
-        r = params.record_cache[record_uid]
-        data = json.loads(r['data_unencrypted']) if 'data_unencrypted' in r else {}
-
-        fields = data['fields'] if 'fields' in data else []
-        for fr in (ft for ft in fields if ft['type'] == 'fileRef'):
-            if fr and 'value' in fr:
-                record_uids.extend(fr['value'])
-
-        fields = data['custom'] if 'custom' in data else []
-        for fr in (ft for ft in fields if ft['type'] == 'fileRef'):
-            if fr and 'value' in fr:
-                record_uids.extend(fr['value'])
-
-        if not record_uids:
+        attachments = list(prepare_attachment_download(params, record_uid))
+        if len(attachments) == 0:
             raise CommandError('download-attachment', 'No attachments associated with the record')
 
-        #api.resolve_record_access_path(params, record_uid, path=rq)
-        record_uids = [loginv3.CommonHelperMethods.url_safe_str_to_bytes(i) if type(i) == str else i for i in record_uids]
-        rq = records.FilesGetRequest()
-        rq.record_uids.extend(record_uids)
-        rq.for_thumbnails = False
-        # rq.emergency_access_account_owner = ''
-        files_get_rs = api.communicate_rest(params, rq, 'vault/files_download', rs_type=records.FilesGetResponse)
-        for f in files_get_rs.files:
-            ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(f.record_uid)
-            url = f.url
-            if f.status != records.FG_SUCCESS:
-                logging.info('download-attachment - FileRef "%s": Failed to get file download data', ruid)
-                continue
-            if not (url and url.strip()):
-                logging.info('download-attachment - FileRef "%s": Failed to get file download URL', ruid)
-                continue
-
-            file_key = None
-            file_name = None
-            file_size = 0
-            file_data = {}
-            if ruid in params.record_cache:
-                rdata = params.record_cache[ruid]['data'] if 'data' in params.record_cache[ruid] else ''
-                rkey = params.record_cache[ruid]['record_key_unencrypted'] if 'record_key_unencrypted' in params.record_cache[ruid] else ''
-                decoded_data = base64.urlsafe_b64decode(rdata + '==')
-                data_unencrypted = api.decrypt_aes_plain(decoded_data, rkey)
-                data_dict = json.loads(data_unencrypted)
-                file_data = file_data | data_dict
-                file_data['record_uid'] = ruid
-                file_data['record_key'] = params.record_cache[ruid]['record_key_unencrypted']
-                file_name = file_data.get('name') or file_data.get('title') # or file_data.get('record_uid')
-                file_key = file_data.get('record_key')
-                file_size = file_data.get('size') if file_data.get('size') else 0
-
-            if not file_key:
-                logging.info('download-attachment - FileRef "%s": Failed to get file encryption key', ruid)
-                continue
-
-            is_gcm_encrypted = False  # f.fileKeyType == 3
-            BUFFER_SIZE = 10240
-            rq_http = requests.get(url, proxies=params.rest_context.proxies, stream=True)
-            if f.success_status_code == rq_http.status_code:
-                with open(file_name, 'wb') as f:
-                    logging.info('Downloading \'%s\'', os.path.abspath(f.name))
-                    if is_gcm_encrypted:
-                        iv = rq_http.raw.read(12)
-                    else:
-                        iv = rq_http.raw.read(16)
-                    content_byte_count = 0
-                    if is_gcm_encrypted:
-                        cipher = AES.new(file_key, AES.MODE_GCM, iv)
-                        tag = bytearray(b'')
-                    else:
-                        cipher = AES.new(file_key, AES.MODE_CBC, iv)
-                    data = rq_http.raw.read(BUFFER_SIZE)
-                    while len(data) != 0:
-                        if is_gcm_encrypted:
-                            n = content_byte_count + len(data) - file_size
-                            content_byte_count = (content_byte_count + len(data)) if n <= 0 else file_size
-                            if n > 0:
-                                tag.extend(data[-n:])
-                                data = data[:-n]
-
-                        decrypted_data = cipher.decrypt(data)
-
-                        if not is_gcm_encrypted and len(data) < BUFFER_SIZE:
-                            decrypted_data = api.unpad_binary(decrypted_data)
-
-                        f.write(decrypted_data)
-                        data = rq_http.raw.read(BUFFER_SIZE)
-                    dst_size = f.tell()
-                    assert (dst_size == file_size), "Files sizes don't match"
-                    if is_gcm_encrypted:
-                        cipher.verify(tag)
-            else:
-                logging.info('download-attachment - FileRef "%s": Failed to download URL', ruid)
+        for attachment in attachments:
+            attachment.download_to_file(params, attachment.title)
 
 
 class RecordUploadAttachmentCommand(Command):

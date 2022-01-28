@@ -7,17 +7,22 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
+
+import base64
 import datetime
 import hashlib
-import base64
 import hmac
+import io
 import itertools
+import logging
+import requests
 
-from typing import Optional
 from urllib import parse
 
-from .subfolder import get_folder_path, find_folders, BaseFolderNode
+from . import api
+from .params import KeeperParams
 from .error import Error
+from .subfolder import get_folder_path, find_folders, BaseFolderNode
 
 
 def get_totp_code(url):
@@ -362,13 +367,13 @@ class Record:
         # data - always present (UID, Title, ...)
         if data:
             data_types = {
-                'folder': { 'field': 'folder', 'name': 'folder', 'type': '' },
-                'title': { 'field': 'title', 'name': 'title', 'type': '' },
-                'secret1': { 'field': 'secret1', 'name': 'login', 'type': '' },
-                'secret2': { 'field': 'secret2', 'name': 'password', 'type': '' },
-                'link': { 'field': 'link', 'name': 'url', 'type': '' },
-                'notes': { 'field': 'notes', 'name': 'notes', 'type': '' },
-                'custom': { 'field': 'custom', 'name': 'custom', 'type': [] }
+                'folder': {'field': 'folder', 'name': 'folder', 'type': ''},
+                'title': {'field': 'title', 'name': 'title', 'type': ''},
+                'secret1': {'field': 'secret1', 'name': 'login', 'type': ''},
+                'secret2': {'field': 'secret2', 'name': 'password', 'type': ''},
+                'link': {'field': 'link', 'name': 'url', 'type': ''},
+                'notes': {'field': 'notes', 'name': 'notes', 'type': ''},
+                'custom': {'field': 'custom', 'name': 'custom', 'type': []}
             }
 
             for item in data_types:
