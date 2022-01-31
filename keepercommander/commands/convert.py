@@ -202,10 +202,6 @@ class ConvertCommand(Command):
                         rf.link_key = crypto.encrypt_aes_v2(file_key, record_key)
                         rc.record_file.append(rf)
                 rc.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(v3_data), record_key)
-                if record_uid in params.non_shared_data_cache:
-                    nsd = params.non_shared_data_cache[record_uid]
-                    if 'data_unencrypted' in nsd:
-                        rc.non_shared_data = crypto.encrypt_aes_v2(nsd['data_unencrypted'], record_key)
 
                 for folder_uid in find_folders(params, record_uid):
                     if folder_uid in params.shared_folder_cache:

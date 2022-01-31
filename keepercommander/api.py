@@ -454,6 +454,8 @@ def merge_lists_on_value(list1, list2, field_name):
 
 FOLDER_SCOPE = ['folders', 'shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
 RECORD_SCOPE = ['record', 'typed_record', 'app_record']
+NON_SHARED_DATA_SCOPE = ['non_shared_data']
+EXPLICIT = ['explicit']
 
 
 def sync_down(params):
@@ -467,7 +469,7 @@ def sync_down(params):
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': FOLDER_SCOPE + RECORD_SCOPE + ['non_shared_data', 'explicit']
+        'include': FOLDER_SCOPE + RECORD_SCOPE + EXPLICIT
     }
     response_json = communicate(params, rq)
 
@@ -512,7 +514,6 @@ def sync_down(params):
             params.shared_folder_cache.clear()
             params.team_cache.clear()
             params.available_team_cache = None
-            params.non_shared_data_cache.clear()
             params.subfolder_cache.clear()
             params.subfolder_record_cache.clear()
             params.record_history.clear()
@@ -623,16 +624,6 @@ def sync_down(params):
                 r_uid = sfrrr['record_uid']
                 if r_uid in rs:
                     rs.remove(r_uid)
-
-    if 'non_shared_data' in response_json:
-        for non_shared_data in response_json['non_shared_data']:
-            if 'data' in non_shared_data and non_shared_data['data']:
-                try:
-                    decrypted_data = decrypt_data(non_shared_data['data'], params.data_key)
-                    non_shared_data['data_unencrypted'] = decrypted_data
-                    params.non_shared_data_cache[non_shared_data['record_uid']] = non_shared_data
-                except:
-                    logging.debug('Non-shared data for record %s could not be decrypted', non_shared_data['record_uid'])
 
     # convert record keys from RSA to AES-256
     if 'record_meta_data' in response_json:
