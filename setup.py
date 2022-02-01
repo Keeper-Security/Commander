@@ -15,7 +15,7 @@ install_requires = [
     'colorama',
     'cryptography>=3.4.8',
     'pykeepass',
-    'prompt_toolkit>=2.0.4,<=2.0.10',
+    'prompt_toolkit',
     'protobuf>=3.18.0',
     'pycryptodomex>=3.7.2',
     'pyperclip',
