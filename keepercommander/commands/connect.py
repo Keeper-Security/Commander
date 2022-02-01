@@ -69,6 +69,7 @@ Supported parameters:
     ${user_email}                   Keeper user email address
     ${login}                        Record login
     ${password}                     Record password
+    ${host}                         The content of the Hostname field. "hostname[:port]"
     ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
     ${body:<attachment_name>}       content of the attachment file.
     ${<custom_field_name>}          custom field value
