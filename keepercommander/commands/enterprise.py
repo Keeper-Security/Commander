@@ -763,13 +763,13 @@ class EnterpriseNodeCommand(EnterpriseCommand):
 
     @staticmethod
     def get_subnodes(params, nodes, index):
-        if index < len(nodes):
+        while index < len(nodes):
             node_id = nodes[index]
             for node in params.enterprise['nodes']:
                 parent_id = node.get('parent_id')
                 if parent_id == node_id:
                     nodes.append(node['node_id'])
-            EnterpriseNodeCommand.get_subnodes(params, nodes, index + 1)
+            index += 1
 
     def execute(self, params, **kwargs):
         if kwargs.get('delete') and kwargs.get('add'):
