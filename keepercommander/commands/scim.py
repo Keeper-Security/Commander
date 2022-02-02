@@ -71,7 +71,21 @@ class ScimListCommand(EnterpriseCommand):
         return scim_list_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
-        dump_scims(params)
+        table = []
+        headers = ['SCIM ID', 'Node Name', 'Node ID', 'Prefix', 'Status', 'Last Synced']
+        if params.enterprise and 'scims' in params.enterprise:
+            for info in params.enterprise['scims']:
+                node_id = info['node_id']
+                last_synced = info.get('last_synced')
+                if isinstance(last_synced, int):
+                    dt = datetime.datetime.fromtimestamp(last_synced / 1000)
+                    last_synced = dt.strftime('%c')
+                else:
+                    last_synced = str(last_synced or '')
+                row = [info['scim_id'], self.get_node_path(params, node_id), node_id,
+                       info.get('role_prefix') or '', info['status'], last_synced]
+                table.append(row)
+        dump_report_data(table, headers=headers)
 
 
 class ScimCreateCommand(EnterpriseCommand):
@@ -144,7 +158,7 @@ class ScimViewCommand(EnterpriseCommand):
         node_id = scim['node_id']
         logging.info('{0:>20s}: {1}'.format('SCIM URL', get_scim_url(params, node_id)))
         logging.info('{0:>20s}: {1}'.format('Node ID', node_id))
-        logging.info('{0:>20s}: {1}'.format('Node Name', EnterpriseCommand.get_node_path(params, node_id)))
+        logging.info('{0:>20s}: {1}'.format('Node Name', self.get_node_path(params, node_id)))
         logging.info('{0:>20s}: {1}'.format('Status', scim['status']))
         logging.info('{0:>20s}: {1}'.format('Prefix', scim.get('role_prefix') or ''))
         logging.info('{0:>20s}: {1}'.format('Unique Groups', scim.get('unique_groups', False)))
@@ -208,21 +222,3 @@ class ScimDeleteCommand(EnterpriseCommand):
 def get_scim_url(params, node_id):  # type:  (KeeperParams, int) -> any
     p = urlparse(params.rest_context.server_base)
     return urlunparse((p.scheme, p.netloc, '/api/rest/scim/v2/' + str(node_id), None, None, None))
-
-
-def dump_scims(params):    # type: (KeeperParams) -> None
-    table = []
-    headers = ['SCIM ID', 'Node Name', 'Node ID', 'Prefix', 'Status', 'Last Synced']
-    if params.enterprise and 'scims' in params.enterprise:
-        for info in params.enterprise['scims']:
-            node_id = info['node_id']
-            last_synced = info.get('last_synced')
-            if isinstance(last_synced, int):
-                dt = datetime.datetime.fromtimestamp(last_synced / 1000)
-                last_synced = dt.strftime('%c')
-            else:
-                last_synced = str(last_synced or '')
-            row = [info['scim_id'], EnterpriseCommand.get_node_path(params, node_id), node_id,
-                   info.get('role_prefix') or '', info['status'], last_synced]
-            table.append(row)
-    dump_report_data(table, headers=headers)
