@@ -89,6 +89,7 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
@@ -449,23 +450,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 if role_id in roles:
                     roles[role_id]['is_admin'] = True
 
+        show_nodes = kwargs.get('nodes') or False
         show_users = kwargs.get('users') or False
         show_teams = kwargs.get('teams') or False
         show_roles = kwargs.get('roles') or False
-
-        def node_path(node_id):
-            path = ''
-            n = nodes.get(node_id)
-            while n:
-                if path:
-                    path = '\\' + path
-                name = n['name'] if n['parent_id'] else params.enterprise['enterprise_name']
-                path = name + path
-                if n['parent_id']:
-                    n = nodes.get(n['parent_id'])
-                else:
-                    n = None
-            return path
 
         def user_email(user_id):
             if user_id in users:
@@ -480,7 +468,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             rs += 'S' if team['restrict_sharing'] else ' '
             return rs
 
-        if not show_users and not show_teams and not show_roles:
+        if not show_users and not show_teams and not show_roles and not show_nodes:
             def tree_node(node):
                 children = [nodes[x] for x in node['children']]
                 children.sort(key=lambda x: x['name'])
@@ -568,7 +556,60 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if kwargs.get('columns'):
                 columns.update(kwargs.get('columns').split(','))
             pattern = (kwargs.get('pattern') or '').lower()
-            if show_users:
+            if show_nodes:
+                supported_columns = SUPPORTED_NODE_COLUMNS
+                if len(columns) == 0:
+                    columns.update(('parent_node', 'user_count', 'team_count', 'role_count'))
+                else:
+                    wc = columns.difference(supported_columns)
+                    if len(wc) > 0:
+                        logging.warning('\n\nSupported node columns: %s\n', ', '.join(supported_columns))
+
+                displayed_columns = [x for x in supported_columns if x in columns]
+                rows = []
+                for n in nodes.values():
+                    node_id = n['node_id']
+                    row = [node_id, n['name']]
+                    for column in displayed_columns:
+                        if column == 'parent_node':
+                            parent_id = n.get('parent_id', 0)
+                            row.append(self.get_node_path(params, parent_id) if parent_id > 0 else '')
+                        elif column == 'user_count':
+                            us = n.get('users', [])
+                            row.append(len(us))
+                        elif column == 'users':
+                            us = n.get('users', [])
+                            user_names = [users[x]['username'] for x in us if x in users]
+                            row.append(user_names)
+                        elif column == 'team_count':
+                            ts = n.get('teams', [])
+                            row.append(len(ts))
+                        elif column == 'teams':
+                            ts = n.get('teams', [])
+                            team_names = [teams[x]['name'] for x in ts if x in teams]
+                            row.append(team_names)
+                        elif column == 'role_count':
+                            rs = n.get('roles', [])
+                            row.append(len(rs))
+                        elif column == 'roles':
+                            rs = n.get('roles', [])
+                            role_names = [roles[x]['name'] for x in rs if x in roles]
+                            row.append(role_names)
+
+                    if pattern:
+                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
+                            continue
+                    rows.append(row)
+
+                rows.sort(key=lambda x: x[1])
+
+                print('')
+                headers = ['node_id', 'name']
+                headers.extend(displayed_columns)
+                if kwargs.get('format') != 'json':
+                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+            elif show_users:
                 supported_columns = SUPPORTED_USER_COLUMNS
                 if len(columns) == 0:
                     columns.update(('name', 'status', 'transfer_status', 'node'))
@@ -593,7 +634,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'transfer_status':
                             row.append(user_status_dict['acct_transfer_status'])
                         elif column == 'node':
-                            row.append(node_path(u['node_id']))
+                            row.append(self.get_node_path(params, u['node_id']))
                         elif column == 'team_count':
                             row.append(len([1 for t in teams.values() if t['users'] and user_id in t['users']]))
                         elif column == 'teams':
@@ -635,7 +676,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         if column == 'restricts':
                             row.append(restricts(t))
                         elif column == 'node':
-                            row.append(node_path(t['node_id']))
+                            row.append(self.get_node_path(params, t['node_id']))
                         elif column == 'user_count':
                             row.append(len(t['users']))
                         elif column == 'users':
@@ -652,7 +693,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         if column == 'restricts':
                             row.append('Queued')
                         elif column == 'node':
-                            row.append(node_path(t['node_id']))
+                            row.append(self.get_node_path(params, t['node_id']))
                         elif column == 'user_count':
                             row.append(len(t['users']))
                         elif column == 'users':
@@ -693,7 +734,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'is_admin':
                             row.append('Y' if r['is_admin'] else '')
                         elif column == 'node':
-                            row.append(node_path(r['node_id']))
+                            row.append(self.get_node_path(params, r['node_id']))
                         elif column == 'user_count':
                             row.append(len(r['users']))
                         elif column == 'users':
@@ -954,6 +995,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                                 continue
                         rq = {
                             'command': 'node_update',
+                            'node_id': node['node_id'],
                             'encrypted_data': encrypted_data
                         }
                         if parent_id:
@@ -2587,9 +2629,9 @@ class EnterprisePushCommand(EnterpriseCommand):
         return emails
 
 
-class UserReportCommand(Command):
+class UserReportCommand(EnterpriseCommand):
     def __init__(self):
-        Command.__init__(self)
+        super(UserReportCommand, self).__init__()
         self.nodes = {}
         self.roles = {}
         self.teams = {}
@@ -2701,7 +2743,7 @@ class UserReportCommand(Command):
             acct_status = status_dict['acct_status']
             acct_transfer_status = status_dict['acct_transfer_status']
 
-            path = self.get_node_path(user['node_id'])
+            path = self.get_node_path(params, user['node_id'])
             teams = self.user_teams.get(user['enterprise_user_id']) or []
             roles = self.user_roles.get(user['enterprise_user_id']) or []
             teams.sort(key=str.lower)
@@ -2714,7 +2756,7 @@ class UserReportCommand(Command):
                 acct_status,            # status == acct_status
                 acct_transfer_status,   # acct_transfer_status
                 last_log,               # last_login
-                ' -> '.join(path),      # node
+                path,                   # node
                 roles,                  # roles
                 teams                   # teams
             ])
@@ -2722,19 +2764,6 @@ class UserReportCommand(Command):
         if kwargs.get('format') != 'json':
             headers = [string.capwords(x.replace('_', ' ')) for x in headers]
         dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
-
-    def get_node_path(self, node_id):
-        path = []
-        while node_id:
-            if node_id in self.nodes:
-                node = self.nodes[node_id]
-                node_name = node['name'] or 'Root'
-                path.append(node_name)
-                node_id = node['parent_id']
-            else:
-                break
-        path.reverse()
-        return path
 
     @staticmethod
     def get_user_status(user):
