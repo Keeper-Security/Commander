@@ -8,19 +8,14 @@
 # Contact: ops@keepersecurity.com
 #
 
-import base64
 import datetime
 import hashlib
 import hmac
-import io
 import itertools
-import logging
-import requests
 
 from urllib import parse
 
-from . import api
-from .params import KeeperParams
+from .base32hex import b32decode
 from .error import Error
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
 
@@ -51,7 +46,7 @@ def get_totp_code(url):
                 if reminder in {2, 4, 5, 7}:
                     padding = '=' * (8 - reminder)
                     secret += padding
-                key = base64.b32decode(secret, casefold=True)
+                key = bytes(b32decode(secret))
                 msg = int(tm).to_bytes(8, byteorder='big')
                 hash = hashlib.__dict__[alg]
                 hm = hmac.new(key, msg=msg, digestmod=hash)
