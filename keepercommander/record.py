@@ -46,7 +46,7 @@ def get_totp_code(url):
                 if reminder in {2, 4, 5, 7}:
                     padding = '=' * (8 - reminder)
                     secret += padding
-                key = b32decode(secret)
+                key = bytes(b32decode(secret))
                 msg = int(tm).to_bytes(8, byteorder='big')
                 hash = hashlib.__dict__[alg]
                 hm = hmac.new(key, msg=msg, digestmod=hash)
