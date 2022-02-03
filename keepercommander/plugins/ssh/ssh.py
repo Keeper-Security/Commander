@@ -16,6 +16,8 @@
 import logging
 import os
 
+from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
+
 if os.name == 'posix':
     from pexpect import pxssh, exceptions
 else:
@@ -37,7 +39,7 @@ def rotate(record, newpassword):
 
     result = False
 
-    optional_port = record.get('cmdr:port')
+    optional_port = get_v2_or_v3_custom_field_value(record, 'cmdr:port')
     if not optional_port:
         port = 22
     else:
@@ -47,7 +49,7 @@ def rotate(record, newpassword):
             print('port {} could not be converted to int'.format(optional_port))
             return result
 
-    host = record.get('cmdr:host')
+    host = get_v2_or_v3_custom_field_value(record, 'cmdr:host')
 
     try:
         options = {
