@@ -58,7 +58,7 @@ def adjust_password(password):   # type: (str) -> str
 
 def get_v2_or_v3_custom_field_value(record, custom_field_name, default_value=None):
     if record.record_type:  # V3 record
-        matches = [x for x in record.custom_fields if x['label'] == custom_field_name]
+        matches = [x for x in record.custom_fields if x.get('name', x.get('label')).endswith(custom_field_name)]
         if len(matches) > 0:
             value_list = matches[0].get('value') or []
             ret_val = value_list[0] if len(value_list) > 0 else default_value
@@ -92,10 +92,10 @@ def rotate_password(params, record_uid, name=None, new_password=None):
 
     # execute rotation plugin associated with this record
     plugin_name = None
-    plugins = [x for x in record.custom_fields if x.get('name', x.get('label', '')).startswith('cmdr:plugin')]
+    plugins = [x for x in record.custom_fields if 'cmdr:plugin' in x.get('name', x.get('label', ''))]
     if plugins:
         if name:
-            plugins = [x for x in plugins if x.get('name', x.get('label')) == 'cmdr:plugin:' + name]
+            plugins = [x for x in plugins if x.get('name', x.get('label')).endswith('cmdr:plugin:' + name)]
     if plugins:
         plugin_name = plugins[0]['value']
     if isinstance(plugin_name, list):
