@@ -60,8 +60,11 @@ def get_v2_or_v3_custom_field_value(record, custom_field_name, default_value=Non
     if record.record_type:  # V3 record
         matches = [x for x in record.custom_fields if x.get('name', x.get('label')).endswith(custom_field_name)]
         if len(matches) > 0:
-            value_list = matches[0].get('value') or []
-            ret_val = value_list[0] if len(value_list) > 0 else default_value
+            value_list = matches[0].get('value') or default_value
+            if isinstance(value_list, list):
+                ret_val = value_list[0] if len(value_list) > 0 else default_value
+            else:
+                ret_val = value_list
         else:
             ret_val = default_value
 
