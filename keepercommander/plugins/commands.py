@@ -210,7 +210,7 @@ class RecordRotateCommand(Command):
             results = api.search_records(params, match)
             for r in results:
                 if force or confirm(f'Rotate password for record {r.title}?'):
-                    rotate_password(params, r.record_uid)
+                    rotate_password(params, r.record_uid, new_password=kwargs.get('password'))
                     if print_result:
                         record = api.get_record(params, r.record_uid)
                         record.display()
