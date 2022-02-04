@@ -91,7 +91,7 @@ def register_command_info(aliases, command_info):
 
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
-SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users']
+SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
 SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down|ed',
@@ -386,7 +386,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'restrict_sharing': team['restrict_sharing'],
                     'restrict_edit': team['restrict_edit'],
                     'restrict_view': team['restrict_view'],
-                    'users': []
+                    'users': [],
+                    'queued_users': [],
                 }
                 if node_id in nodes:
                     nodes[node_id]['teams'].append(team_id)
@@ -407,7 +408,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'id': team_id,
                     'node_id': node_id,
                     'name': queued_team['name'],
-                    'users': []
+                    'queued_users': [],
                 }
                 if node_id in nodes:
                     nodes[node_id]['queued_teams'].append(team_id)
@@ -415,9 +416,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         if 'queued_team_users' in params.enterprise:
             for tu in params.enterprise['queued_team_users']:
                 if tu['team_uid'] in queued_teams:
-                    queued_teams[tu['team_uid']]['users'].extend(tu['users'])
+                    queued_teams[tu['team_uid']]['queued_users'].extend(tu['users'])
                 elif tu['team_uid'] in teams:
-                    teams[tu['team_uid']]['users'].extend(tu['users'])
+                    teams[tu['team_uid']]['queued_users'].extend(tu['users'])
 
         roles = {}
         if 'roles' in params.enterprise:
@@ -663,6 +664,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 supported_columns = SUPPORTED_TEAM_COLUMNS
                 if len(columns) == 0:
                     columns.update(('restricts', 'node', 'user_count'))
+                    if 'queued_team_users' in params.enterprise:
+                        if len(params.enterprise['queued_team_users']) > 0:
+                            columns.update(('queued_user_count',))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
@@ -681,6 +685,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             row.append(len(t['users']))
                         elif column == 'users':
                             row.append([user_email(x) for x in t['users']])
+                        elif column == 'queued_user_count':
+                            row.append(len(t['queued_users']))
+                        elif column == 'queued_users':
+                            row.append([user_email(x) for x in t['queued_users']])
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -694,10 +702,12 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             row.append('Queued')
                         elif column == 'node':
                             row.append(self.get_node_path(params, t['node_id']))
-                        elif column == 'user_count':
-                            row.append(len(t['users']))
-                        elif column == 'users':
-                            row.append([user_email(x) for x in t['users']])
+                        elif column in {'user_count', 'users'}:
+                            row.append('')
+                        elif column == 'queued_user_count':
+                            row.append(len(t['queued_users']))
+                        elif column == 'queued_users':
+                            row.append([user_email(x) for x in t['queued_users']])
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -715,7 +725,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_roles:
                 supported_columns = SUPPORTED_TEAM_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('is_visible_below', 'is_new_user', 'is_admin','node', 'user_count'))
+                    columns.update(('is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count'))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
