@@ -112,6 +112,7 @@ enterprise_info_parser.add_argument('--output', dest='output', action='store',
                                     help='output file name. (ignored for table format)')
 enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                     help='comma-separated list of available columns per argument:' +
+                                         '\n for `nodes` (%s)' % ', '.join(SUPPORTED_NODE_COLUMNS) +
                                          '\n for `users` (%s)' % ', '.join(SUPPORTED_USER_COLUMNS) +
                                          '\n for `teams` (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
                                          '\n for `roles` (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
@@ -555,7 +556,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         else:
             columns = set()
             if kwargs.get('columns'):
-                columns.update(kwargs.get('columns').split(','))
+                columns.update((x.strip() for x in kwargs.get('columns').split(',')))
             pattern = (kwargs.get('pattern') or '').lower()
             if show_nodes:
                 supported_columns = SUPPORTED_NODE_COLUMNS
@@ -609,7 +610,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
                     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
-                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
             elif show_users:
                 supported_columns = SUPPORTED_USER_COLUMNS
                 if len(columns) == 0:
@@ -658,7 +659,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
                     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
-                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_teams:
                 supported_columns = SUPPORTED_TEAM_COLUMNS
@@ -720,7 +721,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
                     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
-                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_roles:
                 supported_columns = SUPPORTED_TEAM_COLUMNS
@@ -762,7 +763,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
                     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
-                dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         print('')
 
@@ -2404,7 +2405,7 @@ class SecurityAuditReportCommand(Command):
             for f in fields:
                 row.append(raw[f])
             table.append(row)
-        dump_report_data(table, field_descriptions, fmt=format, filename=kwargs.get('output'))
+        return dump_report_data(table, field_descriptions, fmt=format, filename=kwargs.get('output'))
 
 
 enterprise_push_description = '''
@@ -2773,7 +2774,7 @@ class UserReportCommand(EnterpriseCommand):
 
         if kwargs.get('format') != 'json':
             headers = [string.capwords(x.replace('_', ' ')) for x in headers]
-        dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+        return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def get_user_status(user):
@@ -3149,5 +3150,4 @@ class DeviceApproveCommand(EnterpriseCommand):
                     v.get('location')
                 ])
             rows.sort(key=lambda x: x[0])
-            dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
-            print('')
+            return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))

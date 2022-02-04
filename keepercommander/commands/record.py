@@ -1613,4 +1613,4 @@ class SharedRecordsReport(Command):
                 row.append(raw[f])
             table.append(row)
 
-        dump_report_data(table, field_descriptions, fmt=export_format, filename=export_name)
+        return dump_report_data(table, field_descriptions, fmt=export_format, filename=export_name)

@@ -10,7 +10,7 @@ from data_config import read_config_file
 from keepercommander.params import KeeperParams
 from keepercommander import cli, api
 from keepercommander.subfolder import BaseFolderNode
-
+from keepercommander.commands import recordv3
 
 @pytest.mark.integration
 class TestConnectedCommands(TestCase):
@@ -196,3 +196,17 @@ class TestConnectedCommands(TestCase):
                 cli.do_command(params, 'mkdir --user-folder {}'.format(subdir))
                 cli.do_command(params, 'cd {}'.format(subdir))
                 cli.do_command(params, 'cd /quoting')
+
+    def test_vault_reports(self):
+        params = TestConnectedCommands.params
+
+        record_types = recordv3.RecordTypeInfo()
+        report_json = record_types.execute(params, record_name='*', format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+        for record_type in report:
+            type_name = record_type['content']
+            report_json = record_types.execute(params, record_name=type_name, format='json')
+            report = json.loads(report_json)
+            self.assertTrue(isinstance(report, list))
+
