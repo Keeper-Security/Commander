@@ -77,6 +77,7 @@ class _EnterpriseLoader(object):
             proto.SCIMS: _EnterpriseScimEntity(self._enterprise),
             proto.SSO_SERVICES: _EnterpriseSsoServiceEntity(self._enterprise),
             proto.TEAM_USERS: _EnterpriseTeamUserEntity(self._enterprise),
+            proto.QUEUED_TEAM_USERS: _EnterpriseQueuedTeamUserEntity(self._enterprise),
             proto.ROLE_USERS: _EnterpriseRoleUserEntity(self._enterprise),
             proto.MANAGED_NODES: _EnterpriseManagedNodeEntity(self._enterprise),
             proto.ROLE_PRIVILEGES: _EnterpriseRolePrivilegeEntity(self._enterprise),
@@ -737,7 +738,7 @@ class _EnterpriseManagedCompanyEntity(_EnterpriseEntity):
         return 'managed_companies'
 
 
-class _EnterpriseQueuedTeamUsers(_EnterpriseDataParser):
+class _EnterpriseQueuedTeamUserEntity(_EnterpriseDataParser):
     def parse(self, params, enterprise_data, **kwargs):  # type: (KeeperParams, proto.EnterpriseData, dict) -> None
         entities = self.get_entities(params)
         entity_map = {x['team_uid']: x for x in entities}
@@ -824,3 +825,4 @@ class _EnterpriseSsoServiceEntity(_EnterpriseEntity):
 
     def get_keeper_entity_name(self):  # type: () -> str
         return 'sso_services'
+
