@@ -1946,8 +1946,7 @@ class RecordTypeInfo(Command):
             field_descriptions = column_names if format == 'table' else fields
 
             table = [list(row) for row in rows]
-            dump_report_data(table, field_descriptions, fmt=format, filename=output)
-            return
+            return dump_report_data(table, field_descriptions, fmt=format, filename=output)
 
         record_name = lrid
         if record_name and record_name != '*' and example:
@@ -2010,7 +2009,7 @@ class RecordTypeInfo(Command):
             for f in fields:
                 row.append(raw[f])
             table.append(row)
-        dump_report_data(table, field_descriptions, fmt=format, filename=output)
+        return dump_report_data(table, field_descriptions, fmt=format, filename=output)
 
 
 record_type_description = '''
@@ -2204,7 +2203,7 @@ class RecordFileReportCommand(Command):
             del headers[4] # remove downloadable status column
             for row in table:
                 del row[4] 
-        dump_report_data(table, headers)
+        return dump_report_data(table, headers)
 
 
 class RecordGetUidCommand(Command):

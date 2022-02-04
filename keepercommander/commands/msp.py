@@ -266,11 +266,13 @@ class MSPLicensesReportCommand(EnterpriseCommand):
         if kwargs.get('format') != 'json':
             headers = [string.capwords(x.replace('_', ' ')) for x in headers]
 
-        dump_report_data(rows, headers, fmt=report_format, filename=report_output_file, append=to_append)
+        output = dump_report_data(rows, headers, fmt=report_format, filename=report_output_file, append=to_append)
 
-        if report_format != 'table':
+        if report_format != 'table' and not output:
             print("Successfully saved report to", report_generation_message(report_output_file, report_format))
             print()
+
+        return output
 
 
 def get_mc_by_name_or_id(msc, name_or_id):
