@@ -785,7 +785,7 @@ class ShareReportCommand(Command):
                 [(s[0], list(s[1]) if verbose else len(s[1])) for s in record_shares.items()]
                 table.sort(key=lambda x: len(x[1]) if type(x[1]) == list else x[1], reverse=True)
                 table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
-                dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
         else:
 
@@ -878,7 +878,7 @@ class ShareReportCommand(Command):
                     table.append(row)
                 table.sort(key=lambda x: len(x[3]) if type(x[3]) == list else x[3], reverse=True)
                 table = [[i + 1, s[0], s[1], s[2], s[3], s[4]] for i, s in enumerate(table)]
-                dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def get_permission_text(can_edit, can_share, can_view=True):

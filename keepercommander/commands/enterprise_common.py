@@ -26,7 +26,7 @@ class EnterpriseCommand(Command):
 
     def execute_args(self, params, args, **kwargs):
         if params.enterprise:
-            Command.execute_args(self, params, args, **kwargs)
+            return Command.execute_args(self, params, args, **kwargs)
         else:
             raise CommandError('', 'This command  is only available for Administrators of Keeper.')
 

@@ -43,7 +43,7 @@ from .register import EMAIL_PATTERN
 
 audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
-audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table',
+audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
                                  help='output format.')
 audit_report_parser.add_argument('--output', dest='output', action='store',
                                  help='output file name. (ignored for table format)')
@@ -882,8 +882,8 @@ class AuditReportCommand(Command):
 
         if field == "created":
             if isinstance(value, str):
-                dt = value
-            else:
+                return value
+            if isinstance(value, (int, float)):
                 dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
                 rt = kwargs.get('report_type') or ''
                 if rt in {'day', 'week'}:
@@ -892,8 +892,7 @@ class AuditReportCommand(Command):
                     dt = dt.strftime('%B, %Y')
                 elif rt == 'hour':
                     dt = dt.strftime('%Y-%m-%d @%H:00')
-
-            return dt
+                return dt
         elif field in {"first_created", "last_created"}:
             return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
         return value
@@ -997,7 +996,7 @@ class AuditReportCommand(Command):
                     logging.info('{0:>10d}:  {1}'.format(event_id, event_name))
             return
 
-        report_type = kwargs['report_type']
+        report_type = kwargs.get('report_type', 'raw')
         if report_type == 'dim':
             columns = kwargs['columns']
             if not isinstance(columns, list):
@@ -1023,7 +1022,7 @@ class AuditReportCommand(Command):
                             table.append([row.get(x) for x in fields])
                         else:
                             table.append([row])
-                    dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                    return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             return
 
@@ -1056,7 +1055,7 @@ class AuditReportCommand(Command):
                     rq_columns.remove(lookup_field)
                     if uid_name not in rq_columns:
                         rq_columns.append(uid_name)
-            rq['columns'] = set(rq_columns)
+            rq['columns'] = list(set(rq_columns))
 
         aggregates = []
         if report_type != 'raw' and kwargs.get('aggregate'):
@@ -1064,7 +1063,7 @@ class AuditReportCommand(Command):
                 aggregates = kwargs['aggregate']
                 rq['aggregate'] = aggregates
 
-        if kwargs.get('limit'):
+        if 'limit' in kwargs and kwargs['limit']:
             rq['limit'] = kwargs['limit']
         else:
             rq['limit'] = 50
@@ -1073,22 +1072,22 @@ class AuditReportCommand(Command):
             rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'
 
         audit_filter = {}
-        if kwargs['created']:
+        if 'created' in kwargs and ['created']:
             if kwargs['created'] in ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']:
                 audit_filter['created'] = kwargs['created']
             else:
                 audit_filter['created'] = self.get_filter(kwargs['created'], AuditReportCommand.convert_date)
-        if kwargs['event_type']:
+        if 'event_type' in kwargs and kwargs['event_type']:
             audit_filter['audit_event_type'] = self.get_filter(kwargs['event_type'], AuditReportCommand.convert_str_or_int)
-        if kwargs['username']:
+        if 'username' in kwargs and kwargs['username']:
             audit_filter['username'] = self.get_filter(kwargs['username'], AuditReportCommand.convert_str)
-        if kwargs['to_username']:
+        if 'to_username' in kwargs and kwargs['to_username']:
             audit_filter['to_username'] = self.get_filter(kwargs['to_username'], AuditReportCommand.convert_str)
-        if kwargs['record_uid']:
+        if 'record_uid' in kwargs and kwargs['record_uid']:
             audit_filter['record_uid'] = self.get_filter(kwargs['record_uid'], AuditReportCommand.convert_str)
-        if kwargs['shared_folder_uid']:
+        if 'shared_folder_uid' in kwargs and kwargs['shared_folder_uid']:
             audit_filter['shared_folder_uid'] = self.get_filter(kwargs['shared_folder_uid'], AuditReportCommand.convert_str)
-        if kwargs['geo_location']:
+        if 'geo_location' in kwargs and kwargs['geo_location']:
             ip_filter = set()
             geo_location_comps = kwargs['geo_location'].split(',')
             country = (geo_location_comps.pop() if geo_location_comps else '').strip().lower()
@@ -1110,7 +1109,7 @@ class AuditReportCommand(Command):
             if len(ip_filter) == 0:
                 raise CommandError('audit-report', "'geo_location' filter: no events")
             audit_filter['ip_address'] = list(ip_filter)
-        if kwargs['device_type']:
+        if 'device_type' in kwargs and kwargs['device_type']:
             version_filter = set()
             device_comps = kwargs['device_type'].split(',')
             device_type = (device_comps[0] if len(device_comps) > 0 else '').strip().lower()
@@ -1169,7 +1168,7 @@ class AuditReportCommand(Command):
                     value = self.get_value(params, field, event)
                     row.append(self.convert_value(field, value, details=details, params=params))
                 table.append(row)
-            dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+            return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
             if aggregates:
                 fields.extend(aggregates)
@@ -1191,7 +1190,7 @@ class AuditReportCommand(Command):
                     else:
                         row.append('')
                 table.append(row)
-            dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+            return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
     def convert_date(value):

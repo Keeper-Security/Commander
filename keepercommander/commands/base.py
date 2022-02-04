@@ -11,6 +11,8 @@
 
 import argparse
 import collections
+import datetime
+import io
 import shlex
 import logging
 import json
@@ -22,7 +24,7 @@ import abc
 
 from tabulate import tabulate
 from collections import OrderedDict
-from typing import Optional
+from typing import Optional, Sequence
 
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path
@@ -133,40 +135,58 @@ def suppress_exit(*args):
     raise ParseError()
 
 
+def json_serialized(obj):
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    return str(obj)
+
+
+def is_json_value_field(obj):
+    if obj is None:
+        return False
+    if isinstance(obj, str):
+        return len(obj) > 0
+    return True
+
+
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False):
-    # type: (list, list, str, str, str, bool) -> None
+    # type: (Sequence[Sequence], Sequence[str], Optional[str], Optional[str], Optional[str], bool) -> Optional[str]
     if fmt == 'csv':
         if filename:
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.csv'
-        fd = open(filename, 'a' if append else 'w', newline='') if filename else sys.stdout
-        csv_writer = csv.writer(fd)
-        if title:
-            csv_writer.writerow([])
-            csv_writer.writerow([title])
-            csv_writer.writerow([])
-        elif append:
-            csv_writer.writerow([])
 
-        starting_column = 0
-        if headers:
-            if headers[0] == '#':
-                starting_column = 1
-            csv_writer.writerow(headers[starting_column:])
-        for row in data:
-            for i in range(len(row)):
-                if type(row[i]) == list:
-                    row[i] = '\n'.join(row[i])
-            csv_writer.writerow(row[starting_column:])
-        if filename:
-            fd.flush()
-            fd.close()
+        with open(filename, 'a' if append else 'w', newline='') if filename else io.StringIO() as fd:
+            csv_writer = csv.writer(fd)
+            if title:
+                csv_writer.writerow([])
+                csv_writer.writerow([title])
+                csv_writer.writerow([])
+            elif append:
+                csv_writer.writerow([])
+
+            starting_column = 0
+            if headers:
+                if headers[0] == '#':
+                    starting_column = 1
+                csv_writer.writerow(headers[starting_column:])
+            for row in data:
+                for i in range(len(row)):
+                    if type(row[i]) == list:
+                        row[i] = '\n'.join(row[i])
+                csv_writer.writerow(row[starting_column:])
+            if isinstance(fd, io.StringIO):
+                report = fd.getvalue()
+                if append:
+                    logging.info(report)
+                else:
+                    return report
     elif fmt == 'json':
         data_list = []
         for row in data:
             obj = {}
-            for index, column in filter(lambda x: x[1], enumerate(row)):
+            for index, column in filter(lambda x: is_json_value_field(x[1]), enumerate(row)):
                 name = headers[index] if headers and index < len(headers) else "#{:0>2}".format(index)
                 if name != '#':
                     obj[name] = column
@@ -175,11 +195,14 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.json'
-        fd = open(filename, 'a' if append else 'w') if filename else sys.stdout
-        json.dump(data_list, fd, indent=2)
-        if filename:
-            fd.flush()
-            fd.close()
+            with open(filename, 'a' if append else 'w') as fd:
+                json.dump(data_list, fd, indent=2, default=json_serialized)
+        else:
+            report = json.dumps(data_list, indent=2, default=json_serialized)
+            if append:
+                logging.info(report)
+            else:
+                return report
     else:
         if title:
             print('\n{0}\n'.format(title))
