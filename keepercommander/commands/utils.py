@@ -14,6 +14,7 @@ import argparse
 import base64
 import getpass
 import hmac
+import itertools
 import json
 import logging
 import os
@@ -47,7 +48,7 @@ from ..proto import ssocloud_pb2 as ssocloud
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest
-from ..proto.record_pb2 import ApplicationAddRequest
+from ..proto import record_pb2
 from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
 from ..utils import json_to_base64
@@ -73,6 +74,7 @@ def register_commands(commands):
     commands['secrets-manager'] = KSMCommand()
     commands['version'] = VersionCommand()
     commands['keep-alive'] = KeepAliveCommand()
+    commands['verify-records'] = VerifyRecordsCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -1262,7 +1264,7 @@ class KSMCommand(Command):
 
         client_modif_time = api.current_milli_time()
 
-        ra = ApplicationAddRequest()
+        ra = record_pb2.ApplicationAddRequest()
         ra.app_uid = app_record_uid
         ra.record_key = record_key_encrypted
         ra.client_modified_time = client_modif_time
@@ -1717,3 +1719,68 @@ class DeleteCorruptedCommand(Command):
                     logging.warning("%s records failed to delete", len(failures))
         else:
             logging.info('No corrupted records are found.')
+
+class VerifyRecordsCommand(Command):
+    def execute(self, params, **kwargs):
+        records_to_fix = {}
+        records_to_delete = set()
+        for record_uid in params.record_cache:
+            record = params.record_cache[record_uid]
+            if record.get('version', 0) != 3:
+                continue
+            if 'data_unencrypted' not in record:
+                continue
+
+            try:
+                data = json.loads(record['data_unencrypted'])
+            except:
+                records_to_delete.add(record_uid)
+                continue
+            is_broken = False
+            for field in itertools.chain(data.get('fields', []), data.get('custom', [])):
+                value = field.get('value')
+                if not isinstance(value, list):
+                    is_broken = True
+                    if value:
+                        value = [value]
+                    else:
+                        value = []
+                    field['value'] = value
+            if is_broken:
+                records_to_fix[record_uid] = data
+
+        if len(records_to_fix) > 0:
+            print(f'There are {len(records_to_fix)} record(s) to be corrected')
+            answer = user_choice('Do you want to proceed?', 'yn', 'n')
+            if answer.lower() == 'y':
+                rq = record_pb2.RecordsUpdateRequest()
+                rq.client_time = utils.current_milli_time()
+                for record_uid in records_to_fix:
+                    record = params.record_cache[record_uid]
+                    record_key = record['record_key_unencrypted']
+                    upd_rq = record_pb2.RecordUpdate()
+                    upd_rq.record_uid = utils.base64_url_decode(record_uid)
+                    upd_rq.client_modified_time = utils.current_milli_time()
+                    upd_rq.revision = record.get('revision') or 0
+                    data = records_to_fix[record_uid]
+                    upd_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
+                    rq.records.append(upd_rq)
+                    if len(rq.records) >= 999:
+                        break
+                rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)
+                success = 0
+                failed = []
+                for status in rs.records:
+                    if status.status == record_pb2.RS_SUCCESS:
+                        success += 1
+                    else:
+                        record_uid = utils.base64_url_encode(status.record_uid)
+                        failed.append(f'{record_uid}: {status.message}')
+                if success > 0:
+                    logging.info('Successfully corrected %d record(s)', success)
+                if len(failed) > 0:
+                    logging.warning('Failed to correct %d record(s)', len(failed))
+                    logging.info('\n'.join(failed))
+
+                params.sync_data = True
+
