@@ -1763,6 +1763,12 @@ class VerifyRecordsCommand(Command):
                         else:
                             field['value'] = []
                             break
+                if field.get('type', '') == 'date':
+                    orig_dates = field['value']
+                    tested_dates = [x for x in orig_dates if isinstance(x, int)]
+                    if len(tested_dates) < len(orig_dates):
+                        field['value'] = tested_dates
+                        is_broken = True
             if is_broken:
                 records_to_fix[record_uid] = data
 
