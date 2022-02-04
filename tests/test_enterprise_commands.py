@@ -1,4 +1,6 @@
+import json
 import logging
+from typing import Optional
 from unittest import TestCase, mock
 
 import pytest
@@ -6,11 +8,12 @@ import pytest
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
 from keepercommander import cli, api
+from keepercommander.commands import aram, enterprise
 
 
 @pytest.mark.integration
 class TestEnterpriseCommands(TestCase):
-    params = None
+    params = None   # type: Optional[KeeperParams]
 
     @classmethod
     def setUpClass(cls):
@@ -21,7 +24,7 @@ class TestEnterpriseCommands(TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        params = cls.params     # type: KeeperParams
+        params = cls.params
         api.query_enterprise(params)
         for user in params.enterprise['users']:
             if user['status'] == 'actove' and user['lock'] != 0:
@@ -127,7 +130,62 @@ class TestEnterpriseCommands(TestCase):
 ]'''
 
         new_user = 'integration.new.user@keepersecurity.com'
-        with mock.patch('builtins.open', mock.mock_open(read_data=template_body)), mock.patch('os.path.abspath', return_value='template.json'), mock.patch('os.path.isfile', return_value=True):
+        with mock.patch('builtins.open', mock.mock_open(read_data=template_body)), \
+                mock.patch('os.path.abspath', return_value='template.json'), \
+                mock.patch('os.path.isfile', return_value=True):
 
             with self.assertLogs(level=logging.WARNING):
-                cli.do_command(params, 'create-user --generate --name="New User" --expire --records="template.json" --question="This app name?" --answer="Commander" {0}'.format(new_user))
+                cli.do_command(params, f'create-user --generate --name="New User" --expire --records="template.json" '
+                                       f'--question="This app name?" --answer="Commander" {new_user}')
+
+    def test_report_commands(self):
+        params = TestEnterpriseCommands.params
+        self.assertIsNotNone(params.enterprise)
+
+        user_report = enterprise.UserReportCommand()
+        report_json = user_report.execute(params,  format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+
+        device_approve = enterprise.DeviceApproveCommand()
+        device_approve.execute(params, reload=True, format='json')
+
+        enterprise_info = enterprise.EnterpriseInfoCommand()
+        report_csv = enterprise_info.execute(params, nodes=True, columns=','.join(enterprise.SUPPORTED_NODE_COLUMNS), format='csv')
+        self.assertTrue(len(report_csv) > 0)
+        report_json = enterprise_info.execute(params, users=True, columns=','.join(enterprise.SUPPORTED_USER_COLUMNS), format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+        report_json = enterprise_info.execute(params, teams=True, columns=','.join(enterprise.SUPPORTED_TEAM_COLUMNS), format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+        report_csv = enterprise_info.execute(params, roles=True, columns=','.join(enterprise.SUPPORTED_ROLE_COLUMNS), format='csv')
+        self.assertTrue(len(report_csv) > 0)
+
+        audit_report = aram.AuditReportCommand()
+        report_json = audit_report.execute(params, report_type='dim', columns=['audit_event_type'], format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+        report_json = audit_report.execute(params, report_type='raw', created='last_30_days', format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+        report_json = audit_report.execute(params, report_type='day', columns=['audit_event_type'], aggregate=['occurrences', 'first_created', 'last_created'],
+                                           created='last_30_days', format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+
+        security_audit_report = enterprise.SecurityAuditReportCommand()
+        report_json = security_audit_report.execute(params, format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
+        # check report returns expected fields
+        for line in report:
+            self.assertTrue(isinstance(line['username'], str))
+            self.assertTrue(isinstance(line['email'], str))
+            self.assertTrue(isinstance(line['weak'], int))
+            self.assertTrue(isinstance(line['medium'], int))
+            self.assertTrue(isinstance(line['strong'], int))
+            self.assertTrue(isinstance(line['reused'], int))
+            self.assertTrue(isinstance(line['unique'], int))
+            self.assertTrue(isinstance(line['securityScore'], int))
+            self.assertTrue(isinstance(line['twoFactorChannel'], str))

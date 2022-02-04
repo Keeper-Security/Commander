@@ -547,7 +547,7 @@ def loop(params):  # type: (KeeperParams) -> int
             result = do_command(params, command)
             error_no = 0
             if result:
-                logging.warning(result)
+                logging.info(result)
         except EOFError:
             break
         except KeyboardInterrupt:
