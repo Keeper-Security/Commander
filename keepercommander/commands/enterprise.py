@@ -83,8 +83,7 @@ def register_command_info(aliases, command_info):
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
-              enterprise_push_parser,
-              team_approve_parser, device_approve_parser,
+              enterprise_push_parser, team_approve_parser, device_approve_parser,
               audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
@@ -242,6 +241,7 @@ enterprise_push_parser.exit = suppress_exit
 
 security_audit_report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
 security_audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
+security_audit_report_parser.add_argument('-b', '--breachwatch', dest='breachwatch', action='store_true', help='display BreachWatch report')
 security_audit_report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format.')
 security_audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 security_audit_report_parser.error = raise_parse_exception
@@ -2321,9 +2321,9 @@ class SecurityAuditReportCommand(Command):
         return security_audit_report_parser
 
     def get_security_score(self, total, strong, unique, twoFactorOn, masterPassword):
-        strongByTotal = 0 if (total == 0 ) else (strong / total)
-        uniqueByTotal = 0 if (total == 0 ) else (unique / total)
-        twoFactorOnVal = 1 if (twoFactorOn == True) else 0
+        strongByTotal = 0 if (total == 0) else (strong / total)
+        uniqueByTotal = 0 if (total == 0) else (unique / total)
+        twoFactorOnVal = 1 if (twoFactorOn is True) else 0
         score = (strongByTotal + uniqueByTotal + masterPassword + twoFactorOnVal) / 4
         return score
 
@@ -2372,11 +2372,15 @@ class SecurityAuditReportCommand(Command):
             row = {
                 'username': user,
                 'email': email,
+                'total': 0,
                 'weak': 0,
                 'medium': 0,
                 'strong': 0,
                 'reused': sr.numberOfReusedPassword,
                 'unique': 0,
+                'passed': 0,
+                'at_risk': 0,
+                'ignored': 0,
                 'securityScore': 25,
                 'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
             }
@@ -2385,19 +2389,32 @@ class SecurityAuditReportCommand(Command):
             if sr.encryptedReportData:
                 sri = rest_api.decrypt_aes(sr.encryptedReportData, params.enterprise['unencrypted_tree_key'])
                 data = json.loads(sri)
-                row['weak'] = data['weak_record_passwords'] if 'weak_record_passwords' in data else 0
-                row['strong'] = data['strong_record_passwords'] if 'weak_record_passwords' in data else 0
-                row['medium'] = data['total_record_passwords'] - row['weak'] - row['strong']
-                row['unique'] = data['total_record_passwords'] - row['reused']
-                score = self.get_security_score(data['total_record_passwords'], row['strong'], row['unique'], twofa_on, master_password_strength)
+                if 'weak_record_passwords' in data:
+                    row['weak'] = data['weak_record_passwords']
+                if 'strong_record_passwords' in data:
+                    row['strong'] = data['strong_record_passwords']
+                if 'total_record_passwords' in data:
+                    row['total'] = data['total_record_passwords']
+                if 'passed_records' in data:
+                    row['passed'] = data['passed_records']
+                if 'at_risk_records' in data:
+                    row['at_risk'] = data['at_risk_records']
+                if 'ignored_records' in data:
+                    row['ignored'] = data['ignored_records']
+
+                row['medium'] = row['total'] - row['weak'] - row['strong']
+                row['unique'] = row['total'] - row['reused']
+
+                score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_password_strength)
                 score = int(100 * round(score, 2))
                 row['securityScore'] = score
             rows.append(row)
 
-        fields = ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel')
+        fields = ('username', 'email', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
+            ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel')
         field_descriptions = fields
         if format == 'table':
-            field_descriptions = ('User', 'e-mail', 'Weak', 'Medium', 'Strong', 'Reused', 'Unique', 'Security Score', '2FA')
+            field_descriptions = (self.get_title_for_field(x) for x in fields)
 
         table = []
         for raw in rows:
@@ -2406,6 +2423,21 @@ class SecurityAuditReportCommand(Command):
                 row.append(raw[f])
             table.append(row)
         return dump_report_data(table, field_descriptions, fmt=format, filename=kwargs.get('output'))
+
+    @staticmethod
+    def get_title_for_field(field):  # type: (str) -> str
+        if field == 'username':
+            return 'User'
+        elif field == 'email':
+            return 'E-Mail'
+        elif field == 'securityScore':
+            return 'Security Score'
+        elif field == 'twoFactorChannel':
+            return '2FA'
+        elif field == 'at_risk':
+            return 'At Risk'
+
+        return field.capitalize()
 
 
 enterprise_push_description = '''

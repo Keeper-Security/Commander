@@ -178,14 +178,7 @@ class TestEnterpriseCommands(TestCase):
         report_json = security_audit_report.execute(params, format='json')
         report = json.loads(report_json)
         self.assertTrue(isinstance(report, list))
-        # check report returns expected fields
-        for line in report:
-            self.assertTrue(isinstance(line['username'], str))
-            self.assertTrue(isinstance(line['email'], str))
-            self.assertTrue(isinstance(line['weak'], int))
-            self.assertTrue(isinstance(line['medium'], int))
-            self.assertTrue(isinstance(line['strong'], int))
-            self.assertTrue(isinstance(line['reused'], int))
-            self.assertTrue(isinstance(line['unique'], int))
-            self.assertTrue(isinstance(line['securityScore'], int))
-            self.assertTrue(isinstance(line['twoFactorChannel'], str))
+
+        report_json = security_audit_report.execute(params, breachwatch=True, format='json')
+        report = json.loads(report_json)
+        self.assertTrue(isinstance(report, list))
