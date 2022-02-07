@@ -35,27 +35,26 @@ def register_command_info(aliases, command_info):
 
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
-# convert_parser.add_argument('-t', '--type', dest='DEFAULT_CONVERT_TO_V3_RECORD_TYPE', action='store', help='Convert to record type')
-convert_parser.add_argument(
-    '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
-)
-convert_parser.add_argument(
-    '-u', '--url', dest='url', action='store', help='Convert records with URL pattern (* for record with any URL)'
-)
-convert_parser.add_argument(
-    '-n', '--dry-run', dest='dry_run', action='store_true', help='Preview the record conversions without updating'
-)
-convert_parser.add_argument(
-    '-r', '--recursive', dest='recursive', action='store_true', help='Convert recursively through subfolders'
-)
-convert_parser.add_argument(
-    'record-uid-name-patterns', nargs='*', type=str, action='store', help='One or more record title/UID search patterns'
-)
+# convert_parser.add_argument('-t', '--type', dest='DEFAULT_CONVERT_TO_V3_RECORD_TYPE', action='store',
+#                            help='Convert to record type')
+convert_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true',
+                            help="Don't display info about records matched and converted")
+convert_parser.add_argument('-f', '--force', dest='force', action='store_true',
+                            help='Convert all records including records with attachments. '
+                                 'Please note that file attachments may not be decrypted by Keeper clients.')
+convert_parser.add_argument('-u', '--url', dest='url', action='store',
+                            help='Convert records with URL pattern (* for record with any URL)')
+convert_parser.add_argument('-n', '--dry-run', dest='dry_run', action='store_true',
+                            help='Preview the record conversions without updating')
+convert_parser.add_argument('-r', '--recursive', dest='recursive', action='store_true',
+                            help='Convert recursively through subfolders')
+convert_parser.add_argument('record-uid-name-patterns', nargs='*', type=str, action='store',
+                            help='One or more record title/UID search patterns')
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
 
 
-def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
+def get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments=False):
     records = []
     if folder_uid in params.subfolder_record_cache:
         for uid in params.subfolder_record_cache[folder_uid]:
@@ -70,6 +69,8 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
             if rv != 2:
                 continue
             r = api.get_record(params, uid)
+            if not attachments and r.attachments:
+                continue
             r_attrs = (r.title, r.record_uid)
             if any(attr for attr in r_attrs if isinstance(attr, str) and len(attr) > 0 and regex(attr) is not None):
                 if url_regex:
@@ -81,8 +82,8 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex):
     return records
 
 
-def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse):
-    folder_records = get_matching_records_from_folder(params, folder_uid, regex, url_regex)
+def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse, attachments=False):
+    folder_records = get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments)
     if len(folder_records) > 0:
         if folder_uid not in folder_path:
             folder_path[folder_uid] = get_folder_path(params, folder_uid)
@@ -92,7 +93,7 @@ def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, ur
     if recurse:
         folder = params.folder_cache[folder_uid] if folder_uid else params.root_folder
         for subfolder_uid in folder.subfolders:
-            recurse_folder(params, subfolder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
+            recurse_folder(params, subfolder_uid, folder_path, records_by_folder, regex, url_regex, recurse, attachments)
 
 
 class ConvertCommand(Command):
@@ -112,6 +113,10 @@ class ConvertCommand(Command):
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
+        attachments = kwargs.get('force', False)
+        if not isinstance(attachments, bool):
+            attachments = False
+
         pattern_list = kwargs.get('record-uid-name-patterns', [])
         if len(pattern_list) == 0:
             logging.warning(f'Please specify a record to convert')
@@ -127,7 +132,8 @@ class ConvertCommand(Command):
             regex = re.compile(fnmatch.translate(pattern)).match if pattern else None
 
             folder_uid = folder.uid or ''
-            recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse)
+            recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse,
+                           attachments=attachments)
 
         if len(records_by_folder) == 0:
             patterns = ', '.join(pattern_list)
