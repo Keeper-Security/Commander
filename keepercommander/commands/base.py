@@ -9,27 +9,25 @@
 # Contact: ops@keepersecurity.com
 #
 
+import abc
 import argparse
 import collections
+import csv
 import datetime
 import io
-import shlex
-import logging
 import json
+import logging
 import os
 import re
-import csv
-import sys
-import abc
-
-from tabulate import tabulate
+import shlex
 from collections import OrderedDict
 from typing import Optional, Sequence
 
+from tabulate import tabulate
+
+from .. import api
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path
-from .. import api
-
 
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
