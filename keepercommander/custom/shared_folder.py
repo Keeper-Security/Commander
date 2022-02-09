@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2020 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: commander@keepersecurity.com
 #
 # Example code to retrieve the password for a record
@@ -13,7 +13,7 @@
 # from config.json or writes the config file if it does not exist.
 #
 # Usage:
-#    python get.py
+#    python shared_folder.py
 
 import os
 import json
@@ -45,6 +45,7 @@ def read_config_file(params):
             if 'device_id' in params.config:
                 device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
                 params.rest_context.device_id = device_id
+
 
 my_params = KeeperParams()
 read_config_file(my_params)

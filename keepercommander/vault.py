@@ -7,13 +7,16 @@
 # Keeper Commander
 # Contact: ops@keepersecurity.com
 #
+
 import abc
 import json
+
 import itertools
+import re
 
-from typing import Optional, List
+from typing import Optional, List, Tuple, Iterable, Union
 
-from keepercommander.params import KeeperParams
+from .params import KeeperParams
 
 
 class KeeperRecord(abc.ABC):
@@ -33,8 +36,36 @@ class KeeperRecord(abc.ABC):
         return self.get_version()
 
     @abc.abstractmethod
+    def get_record_type(self):  # type: () -> str
+        pass
+
+    @property
+    def record_type(self):
+        return self.get_record_type()
+
+    @abc.abstractmethod
     def load_record_data(self, data, extra=None):   # type: (dict, Optional[dict]) -> None
         pass
+
+    @staticmethod
+    def create(params, record_type):  # type: (KeeperParams, str) -> Optional['KeeperRecord']
+        if not record_type:
+            record_type = 'login'
+        if record_type in {'legacy', 'general'}:
+            record = PasswordRecord()
+        elif record_type == 'file':
+            record = FileRecord()
+        else:
+            record = TypedRecord()
+            meta_data = next((x for x in params.record_type_cache.values()
+                              if x.get('$id', '') == record_type.lower()), None)
+            if meta_data and 'fields' in meta_data:
+                for field in meta_data['fields']:
+                    typed_field = TypedField()
+                    typed_field.type = field.get('$ref', 'text')
+                    typed_field.label = field.get('label', None)
+                    record.fields.append(typed_field)
+        return record
 
     @staticmethod
     def load(params, record_uid):  # type: (KeeperParams, str) -> Optional['KeeperRecord']
@@ -64,6 +95,9 @@ class KeeperRecord(abc.ABC):
         keeper_record.load_record_data(data, extra)
 
         return keeper_record
+
+    def enumerate_fields(self):    # type: () -> Iterable[Tuple[str, any]]
+        yield '(title)', self.title
 
 
 class CustomField(object):
@@ -109,6 +143,9 @@ class PasswordRecord(KeeperRecord):
     def get_version(self):  # type: () -> int
         return 2
 
+    def get_record_type(self):
+        return 'general'
+
     def load_record_data(self, data, extra=None):
         self.title = data.get('title', '')
         self.login = data.get('secret1', '')
@@ -122,6 +159,25 @@ class PasswordRecord(KeeperRecord):
 
             if 'fields' in extra:
                 self.fields = [ExtraField(x) for x in extra['fields']]
+
+    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, any]]
+        for pair in super(PasswordRecord, self).enumerate_fields():
+            yield pair
+        yield '(login)', self.login
+        yield '(password)', self.password
+        yield '(url)', self.link
+        yield '(notes)', self.notes
+        for cf in self.custom:
+            yield cf.name, cf.value
+        if self.fields:
+            for f in self.fields:
+                field_type = f.field_type
+                if field_type == 'totp':
+                    field_type = '(oneTimeCode)'
+                field_title = f.field_title
+                field_name = f'{field_type}.{field_title}' \
+                    if (field_type and field_title) else (field_type or field_title)
+                yield field_name, f.data
 
 
 class TypedField(object):
@@ -137,6 +193,19 @@ class TypedField(object):
             return next((x for x in self.value if x), None)
         return self.value
 
+    def get_field_name(self):
+        return f'({self.type}.{self.label})' if self.type and self.label else \
+               f'({self.type})' if self.type else \
+               f'{self.label}'
+
+    def get_external_value(self):
+        if isinstance(self.value, list):
+            if len(self.value) == 0:
+                return None
+            if len(self.value) == 1:
+                return self.value[0]
+        return self.value
+
 
 class TypedRecord(KeeperRecord):
     def __init__(self):
@@ -148,6 +217,9 @@ class TypedRecord(KeeperRecord):
 
     def get_version(self):  # type: () -> int
         return 3
+
+    def get_record_type(self):
+        return self.type_name
 
     def get_typed_field(self, field_type, label=None):    # type: (str, Optional[str]) -> Optional['TypedField']
         return next((x for x in itertools.chain(self.fields, self.custom)
@@ -161,13 +233,19 @@ class TypedRecord(KeeperRecord):
         self.fields.extend((TypedField(x) for x in data.get('fields', [])))
         self.custom.extend((TypedField(x) for x in data.get('custom', [])))
 
+    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, any]]
+        for pair in super(TypedRecord, self).enumerate_fields():
+            yield pair
+        yield '(notes)', self.notes
+        for field in itertools.chain(self.fields, self.custom):
+            yield field.get_field_name(), field.get_external_value()
+
 
 class FileRecord(KeeperRecord):
     def __init__(self):
         super(FileRecord, self).__init__()
         self.name = ''
         self.size = None   # type: Optional[int]
-        self.title = ''
         self.mime_type = ''
         self.last_modified = None   # type: Optional[int]
         self.storage_size = None   # type: Optional[int]
@@ -175,9 +253,33 @@ class FileRecord(KeeperRecord):
     def get_version(self):  # type: () -> int
         return 4
 
+    def get_record_type(self):
+        return 'file'
+
     def load_record_data(self, data, extra=None):
+        self.title = data.get('title', '')
         self.name = data.get('name', '')
         self.size = data.get('size')
         self.mime_type = data.get('type', '')
-        self.title = data.get('title', '')
         self.last_modified = data.get('lastModified')
+
+    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, any]]
+        for pair in super(FileRecord, self).enumerate_fields():
+            yield pair
+        yield 'File Name', self.name
+        yield 'Mime Type', self.mime_type
+
+
+def tokenize_typed_value(value):  # type: (any) -> Iterable[str]
+    if isinstance(value, list):
+        for v in value:
+            for token in tokenize_typed_value(v):
+                yield token
+    elif isinstance(value, dict):
+        for key in value:
+            v = value[key]
+            if v and isinstance(v, str):
+                yield v
+    elif isinstance(value, str):
+        if value:
+            yield value

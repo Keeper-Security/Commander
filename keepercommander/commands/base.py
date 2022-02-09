@@ -41,9 +41,13 @@ class ParseError(Exception):
 
 
 def register_commands(commands, aliases, command_info):
-    from .recordv3 import register_commands as record_commands, register_command_info as record_command_info
+    from .record import register_commands as record_commands, register_command_info as record_command_info
     record_commands(commands)
     record_command_info(aliases, command_info)
+
+    from .recordv3 import register_commands as recordv3_commands, register_command_info as recordv3_command_info
+    recordv3_commands(commands)
+    recordv3_command_info(aliases, command_info)
 
     from .folder import register_commands as folder_commands, register_command_info as folder_command_info
     folder_commands(commands)
@@ -147,8 +151,11 @@ def is_json_value_field(obj):
     return True
 
 
-def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False):
-    # type: (Sequence[Sequence], Sequence[str], Optional[str], Optional[str], Optional[str], bool) -> Optional[str]
+def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
+    # type: (Sequence[Sequence], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
+    # kwargs:
+    #           row_number: boolean     - Add row number. table only
+    #           column_width: int       - Truncate long columns. table only
     if fmt == 'csv':
         if filename:
             _, ext = os.path.splitext(filename)
@@ -206,8 +213,26 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             print('\n{0}\n'.format(title))
         elif append:
             print('\n')
+        row_number = kwargs.get('row_number')
+        if not isinstance(row_number, bool):
+            row_number = False
+        column_width = kwargs.get('column_width')
+        if not isinstance(column_width, int):
+            column_width = 0
+        if 0 < column_width < 32:
+            column_width = 32
+
+        if row_number and headers:
+            headers = list(headers)
+            headers.insert(0, '#')
+
         expanded_data = []
-        for row in data:
+        for row_no in range(len(data)):
+            row = data[row_no]
+            if row_number:
+                if not isinstance(row, list):
+                    row = list(row)
+                row.insert(0, row_no + 1)
             expanded_rows = 1
             for column in row:
                 if type(column) == list:
@@ -222,6 +247,9 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                             value = column[i]
                     elif i == 0:
                         value = column
+                    if column_width > 0:
+                        if isinstance(value, str) and len(value) > column_width:
+                            value = value[:column_width-2] + '...'
                     rowi.append(value)
                 expanded_data.append(rowi)
         print(tabulate(expanded_data, headers=headers))

@@ -31,7 +31,7 @@ import hmac
 from urllib.parse import urlparse
 
 from ..record import Record
-from .record import RecordAddCommand
+from .recordv2 import RecordAddCommand
 from .helpers import audit_report
 from .enterprise_common import EnterpriseCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command

@@ -15,6 +15,7 @@ import base64
 import collections
 import re
 import getpass
+import google
 import time
 import os
 import hashlib
@@ -23,7 +24,6 @@ import math
 import urllib.parse
 from typing import Optional, Tuple, Iterable, List
 
-from google.protobuf.json_format import MessageToDict
 from datetime import datetime
 
 from . import constants, rest_api, loginv3, utils, crypto
@@ -986,7 +986,7 @@ def sync_down(params):
                     data = crypto.decrypt_aes_v2(data, record['record_key_unencrypted'])
                     data_obj = client_proto.BreachWatchData()
                     data_obj.ParseFromString(data)
-                    bwr['data_unencrypted'] = MessageToDict(data_obj)
+                    bwr['data_unencrypted'] = google.protobuf.json_format.MessageToDict(data_obj)
                 params.breach_watch_records[record_uid] = bwr
             except Exception as e:
                 logging.debug('Decrypt bw data: %s', e)
@@ -1303,15 +1303,12 @@ def search_records(params, searchstring):
     p = re.compile(searchstring.lower())
     search_results = []
 
-    v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
     for record_uid in params.record_cache:
         target = ''
         rec = get_record(params, record_uid)
         cached_rec = params.record_cache[record_uid] or {}
 
         if cached_rec.get('version') == 3:
-            if not v3_enabled:
-                continue
             data = cached_rec.get('data_unencrypted')
             rec.record_type = RecordV3.get_record_type_name(data)
             target = RecordV3.values_to_lowerstring(data)

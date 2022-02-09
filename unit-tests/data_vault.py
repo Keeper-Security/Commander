@@ -123,6 +123,19 @@ def get_synced_params():
     with mock.patch('keepercommander.api.communicate') as mock_comm:
         mock_comm.return_value = get_sync_down_response()
         api.sync_down(p)
+
+    p.record_type_cache[1] = {
+        "$id": "login",
+        "categories": ["login"],
+        "description": "Login template",
+        "fields": [
+            {"$ref": "login"},
+            {"$ref": "password"},
+            {"$ref": "url"},
+            {"$ref": "fileRef"},
+            {"$ref": "oneTimeCode"}
+        ]
+    }
     return p
 
 

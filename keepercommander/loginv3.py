@@ -4,12 +4,10 @@ import io
 import json
 import logging
 import os
+import pyperclip
 import re
 import webbrowser
-from sys import platform as _platform
-from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
-import pyperclip
 from Cryptodome.Math.Numbers import Integer
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Util.asn1 import DerSequence
@@ -18,19 +16,19 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from google.protobuf.json_format import MessageToJson
+from sys import platform as _platform
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
 from . import api, rest_api, utils, crypto
-from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
-from .proto import breachwatch_pb2 as breachwatch_proto
+from .breachwatch import BreachWatch
 from .display import bcolors
 from .error import KeeperApiError
 from .humps import decamelize
 from .params import KeeperParams
+from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto import breachwatch_pb2 as breachwatch_proto
 from .proto import ssocloud_pb2 as ssocloud
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
-from .breachwatch import BreachWatch
 
 install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
                                'Install fido2 package ' + bcolors.OKGREEN + \
@@ -1176,16 +1174,9 @@ class LoginV3API:
 
     @staticmethod
     def accountSummary(params: KeeperParams):
-
         rq = proto_as.AccountSummaryRequest()
         rq.summaryVersion = 1
-
-        rs = api.communicate_rest(params, rq, 'login/account_summary')
-
-        acct_summary_rs = proto_as.AccountSummaryElements()
-        acct_summary_rs.ParseFromString(rs)
-
-        return acct_summary_rs
+        return api.communicate_rest(params, rq, 'login/account_summary', rs_type=proto_as.AccountSummaryElements)
 
     @staticmethod
     def loginToMc(rest_context, session_token, mc_id):
