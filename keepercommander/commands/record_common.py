@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Code/Data shared between recordv3.py and record.py."""
+"""Code/Data shared between recordv3.py and recordv2.py."""
 
 import urllib.parse
 

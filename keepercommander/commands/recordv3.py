@@ -24,7 +24,7 @@ import requests
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
 
-from . import record as recordv2
+from . import recordv2 as recordv2
 from . import record_common
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .register import FileReportCommand
@@ -43,10 +43,6 @@ def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['edit'] = RecordEditCommand()
     commands['rm'] = RecordRemoveCommand()
-    commands['search'] = SearchCommand()
-    commands['list'] = RecordListCommand()
-    commands['list-sf'] = RecordListSfCommand()
-    commands['list-team'] = RecordListTeamCommand()
     commands['get'] = RecordGetUidCommand()
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
@@ -63,10 +59,6 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['a'] = 'add'
-    aliases['s'] = 'search'
-    aliases['l'] = 'list'
-    aliases['lsf'] = 'list-sf'
-    aliases['lt'] = 'list-team'
     aliases['g'] = 'get'
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
@@ -77,12 +69,11 @@ def register_command_info(aliases, command_info):
     aliases['rti'] = 'record-type-info'
     aliases['rt'] = 'record-type'
 
-    for p in [add_parser, edit_parser, rm_parser, search_parser, list_parser, get_info_parser, append_parser,
-                download_parser, upload_parser, delete_attachment_parser, clipboard_copy_parser, record_history_parser,
-                totp_parser, shared_records_report_parser, record_type_info_parser, record_type_parser, file_report_parser]:
+    for p in [add_parser, edit_parser, rm_parser,  list_parser, get_info_parser, append_parser,
+              download_parser, upload_parser, delete_attachment_parser, clipboard_copy_parser, record_history_parser,
+              totp_parser, shared_records_report_parser, record_type_info_parser, record_type_parser,
+              file_report_parser]:
         command_info[p.prog] = p.description
-    command_info['list-sf|lsf'] = 'Display all shared folders'
-    command_info['list-team|lt'] = 'Display all teams'
 
 
 add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
@@ -135,17 +126,6 @@ rm_parser.add_argument('record', nargs='?', type=str, action='store', help='reco
 rm_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 rm_parser.error = raise_parse_exception
 rm_parser.exit = suppress_exit
-
-
-search_parser = argparse.ArgumentParser(prog='search|s', description='Search the vault. Can use a regular expression')
-search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
-search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
-search_parser.add_argument(
-    '-c', '--categories', dest='categories', action='store',
-    help='One or more of these letters for categories to search: "r" = records, "s" = shared folders, "t" = teams'
-)
-search_parser.error = raise_parse_exception
-search_parser.exit = suppress_exit
 
 
 list_parser = argparse.ArgumentParser(prog='list|l', description='List all records, ordered by title')
@@ -968,32 +948,6 @@ class RecordRemoveCommand(Command):
                     api.communicate(params, rq)
 
         params.sync_data = True
-
-
-class SearchCommand(Command):
-    def get_parser(self):
-        return search_parser
-
-    def execute(self, params, **kwargs):
-        recordv2.SearchCommand().execute(params, **kwargs)
-
-
-class RecordListCommand(Command):
-    def get_parser(self):
-        return list_parser
-
-    def execute(self, params, **kwargs):
-        recordv2.RecordListCommand().execute(params, **kwargs)
-
-
-class RecordListSfCommand(Command):
-    def execute(self, params, **kwargs):
-        recordv2.RecordListSfCommand().execute(params, **kwargs)
-
-
-class RecordListTeamCommand(Command):
-    def execute(self, params, **kwargs):
-        recordv2.RecordListTeamCommand().execute(params, **kwargs)
 
 
 class RecordDownloadAttachmentCommand(Command):

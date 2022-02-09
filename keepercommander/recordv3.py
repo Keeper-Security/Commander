@@ -1836,7 +1836,7 @@ def init_recordv3_commands(params):
     v3_commands = {}
 
     def init_v3_commands():
-        from .commands.record import RecordAddCommand, RecordEditCommand, add_parser, edit_parser
+        from .commands.recordv2 import RecordAddCommand, RecordEditCommand, add_parser, edit_parser
         global v3_commands
         if v3_commands:
             return
