@@ -135,7 +135,7 @@ class RecordV3:
         # if refs:
         #   return { 'is_valid': False, 'error': 'File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead. ' + str(refs) }
 
-        # fields[] must contain all 'requried' fields (and requried value parts) - custom[] is not in RT definition
+        # fields[] must contain all 'required' fields (and required value parts) - custom[] is not in RT definition
         reqd = [x.get('$ref') for x in (rtd.get('fields') or []) if '$ref' in x and 'required' in x]
         reqf = [x for x in rt_fields if x.get('type') in reqd]
         regf = [x for x in rt_fields if x.get('type') not in reqd] + rt_custom
@@ -143,7 +143,7 @@ class RecordV3:
         # all fields required by RT definition must be present
         miss = set(reqd) - set([x.get('type') for x in reqf])
         if miss:
-            return {'is_valid': False, 'error': 'Missing requried fields: ' + str(miss)}
+            return {'is_valid': False, 'error': 'Missing required fields: ' + str(miss)}
 
         # validate field values
         fver = []
@@ -151,7 +151,7 @@ class RecordV3:
             err = RecordV3.is_valid_field_data(fld, True)
             fver.extend(err)
         if fver:
-            return {'is_valid': False, 'error': 'Error(s) validating requried fields: ' + str(fver)}
+            return {'is_valid': False, 'error': 'Error(s) validating required fields: ' + str(fver)}
 
         for fld in regf:
             err = RecordV3.is_valid_field_data(fld, False)
@@ -747,7 +747,7 @@ class RecordV3:
                 fvt = cls.field_values.get(ftyp) or {}
                 fval = fvt.get('value')
                 freq = (fvt.get('required') or []) if reqd else []
-                # warnings.append('Couldn\'t find requried fields for field type: ' + str(ftyp))
+                # warnings.append('Couldn\'t find required fields for field type: ' + str(ftyp))
 
                 if ftyp in ('fileRef', 'cardRef', 'addressRef'):
                     for fv in fvalue:
@@ -805,7 +805,7 @@ class RecordV3:
     @classmethod
     def is_valid_field_type_ref(cls, field_type_json):
         # field ref inside record type definition - ex. {"$ref":"name", "required":true, "label":"placeName"}
-        # 2021-04-26 currently the only used options in field ref are - $ref, label, requried
+        # 2021-04-26 currently the only used options in field ref are - $ref, label, required
         result = False
         if field_type_json:
             try:
@@ -825,7 +825,7 @@ class RecordV3:
     @classmethod
     def is_valid_field_type_data(cls, field_type_json):
         # field data inside record type - ex. {"type":"name","value":[{"first":"John","last":"Doe"}],"required":true, "label":"personName"}
-        # 2021-04-26 currently the only used options in fields are - type, label, requried, value[]
+        # 2021-04-26 currently the only used options in fields are - type, label, required, value[]
         result = False
         if field_type_json:
             try:
@@ -835,7 +835,7 @@ class RecordV3:
             ref = ft.get('type')
             result = True if ref and cls.field_types.get(ref) else False
 
-            known_keys = ('type', 'label', 'requried')
+            known_keys = ('type', 'label', 'required')
             unknown_keys = [x for x in ft if x.lower() not in known_keys]
             if unknown_keys:
                 logging.warning('Unknown attributes in field type data: ' + str(unknown_keys))
@@ -1139,7 +1139,7 @@ class RecordV3:
         rt_custom = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'custom'), None)
 
         if not rt_type:
-            result['errors'].append('Record types "type" is requried')
+            result['errors'].append('Record types "type" is required')
         if rt_fields or rt_custom:
             result['errors'].append('Array types fields[] and custom[] cannot be assigned directly')
         if result['errors']: return result
@@ -1160,6 +1160,7 @@ class RecordV3:
 
         # field type options - ex. -o field.name.first=Jane -o f.name.last=Doe
         flo = [x for x in opts if x and x[0].__contains__('.')]
+        flon = [x[0] for x in flo if x and x[0]]
 
         # All fields must be either in fields[] or custom[] arrays
         badg = [x for x in flo if x[0].split('.', 1)[0].strip().lower() not in ('fields', 'custom')]
@@ -1208,7 +1209,7 @@ class RecordV3:
         if result['errors']: return result
 
         # edit command: JSON validation before update
-        # add command: fields[] must contain all 'requried' fields (and requried value parts)
+        # add command: fields[] must contain all 'required' fields (and required value parts)
         if not is_edit:
             reqd = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x and 'required' in x]
             for fld in reqd:
@@ -1216,13 +1217,12 @@ class RecordV3:
                 ftr = (RecordV3.field_values.get(ft) or {}).get('required') or []
                 if ftr:
                     ftr = ['fields.' + fld + '.' + x for x in ftr]
-                    flon = [x[0] for x in flo if x and x[0]]
                     ftrm = [x for x in ftr if x not in flon]
                     if ftrm:
-                        result['errors'].append('Missing requried fields: ' + str(
+                        result['errors'].append('Missing required fields: ' + str(
                             ftrm) + '   Use `rti -lf field_name --example` to generate valid field sample.')
-                else:
-                    result['warnings'].append('Couldn\'t find requried fields for the field type: ' + str(ft))
+                elif next((f for f in flon if f.startswith(f'fields.{fld}')), None) is None:
+                    result['warnings'].append('Couldn\'t find required fields for the field type: ' + str(ft))
         if result['errors']: return result
 
         # NB! cmdline labels override RT definition labels which override FT definition labels
