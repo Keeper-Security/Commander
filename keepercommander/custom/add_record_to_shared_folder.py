@@ -19,7 +19,7 @@ import sys
 
 from keepercommander import api
 from keepercommander.__main__ import get_params_from_config
-from keepercommander.commands.record import RecordAddCommand, RecordEditCommand
+from keepercommander.commands.recordv2 import RecordAddCommand, RecordEditCommand
 from keepercommander.params import KeeperParams
 
 

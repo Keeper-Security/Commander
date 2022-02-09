@@ -7,8 +7,8 @@ from unittest import TestCase, mock
 from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
-from keepercommander import api, utils, crypto, attachment
-from keepercommander.commands import record
+from keepercommander import api, utils, crypto, attachment, vault
+from keepercommander.commands import recordv2, record
 from keepercommander.error import CommandError
 
 
@@ -22,9 +22,14 @@ class TestRecord(TestCase):
     def tearDown(self):
         mock.patch.stopall()
 
+    def test_create_record(self):
+        params = get_synced_params()
+        record = vault.KeeperRecord.create(params, 'login')
+        
+
     def test_add_command(self):
         params = get_synced_params()
-        cmd = record.RecordAddCommand()
+        cmd = recordv2.RecordAddCommand()
 
         with mock.patch('keepercommander.api.sync_down'):
             KeeperApiHelper.communicate_expect(['record_add'])
@@ -46,7 +51,7 @@ class TestRecord(TestCase):
 
     def test_add_command_check_request(self):
         params = get_synced_params()
-        cmd = record.RecordAddCommand()
+        cmd = recordv2.RecordAddCommand()
 
         def check_record(rq):
             rq['command'] = 'record_add'
@@ -65,7 +70,7 @@ class TestRecord(TestCase):
 
     def test_remove_command_from_root(self):
         params = get_synced_params()
-        cmd = record.RecordRemoveCommand()
+        cmd = recordv2.RecordRemoveCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
         rec = api.get_record(params, record_uid)
@@ -82,7 +87,7 @@ class TestRecord(TestCase):
                 }
             }
 
-        with mock.patch('keepercommander.commands.record.user_choice') as choice_mock:
+        with mock.patch('keepercommander.commands.recordv2.user_choice') as choice_mock:
             choice_mock.return_value = KeyboardInterrupt()
             KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
             cmd.execute(params, force=True, record=rec.record_uid)
@@ -123,16 +128,13 @@ class TestRecord(TestCase):
         params = get_synced_params()
         cmd = record.RecordListCommand()
 
-        with mock.patch('builtins.print') as mock_print, mock.patch('keepercommander.api.get_record_shares') as mock_shares:
+        with mock.patch('builtins.print') as mock_print:
             cmd.execute(params, pattern='record')
             mock_print.assert_called()
-            mock_shares.assert_called()
 
             mock_print.reset_mock()
-            mock_shares.reset_mock()
             cmd.execute(params, pattern='INVALID')
             mock_print.assert_not_called()
-            mock_shares.assert_not_called()
 
     def test_shared_list_command(self):
         params = get_synced_params()
@@ -171,7 +173,7 @@ class TestRecord(TestCase):
 
     def test_get_record_uid(self):
         params = get_synced_params()
-        cmd = record.RecordGetUidCommand()
+        cmd = recordv2.RecordGetUidCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
         with mock.patch('builtins.print'), mock.patch('keepercommander.api.get_record_shares'):
@@ -180,7 +182,7 @@ class TestRecord(TestCase):
 
     def test_get_shared_folder_uid(self):
         params = get_synced_params()
-        cmd = record.RecordGetUidCommand()
+        cmd = recordv2.RecordGetUidCommand()
 
         shared_folder_uid = next(iter(params.shared_folder_cache))
         with mock.patch('builtins.print'):
@@ -189,7 +191,7 @@ class TestRecord(TestCase):
 
     def test_get_team_uid(self):
         params = get_synced_params()
-        cmd = record.RecordGetUidCommand()
+        cmd = recordv2.RecordGetUidCommand()
 
         team_uid = next(iter(params.team_cache))
         with mock.patch('builtins.print'):
@@ -198,14 +200,14 @@ class TestRecord(TestCase):
 
     def test_get_invalid_uid(self):
         params = get_synced_params()
-        cmd = record.RecordGetUidCommand()
+        cmd = recordv2.RecordGetUidCommand()
 
         with self.assertRaises(CommandError):
             cmd.execute(params, uid='invalid')
 
     def test_append_notes_command(self):
         params = get_synced_params()
-        cmd = record.RecordAppendNotesCommand()
+        cmd = recordv2.RecordAppendNotesCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
         with mock.patch('keepercommander.api.update_record'):
@@ -219,7 +221,7 @@ class TestRecord(TestCase):
 
     def test_download_attachment_command(self):
         params = get_synced_params()
-        cmd = record.RecordDownloadAttachmentCommand()
+        cmd = recordv2.RecordDownloadAttachmentCommand()
 
         records = [x for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]
         rec = records[0]
@@ -261,7 +263,7 @@ class TestRecord(TestCase):
 
     def test_upload_attachment_command(self):
         params = get_synced_params()
-        cmd = record.RecordUploadAttachmentCommand()
+        cmd = recordv2.RecordUploadAttachmentCommand()
 
         record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
         rec = api.get_record(params, record_uid)
@@ -307,7 +309,7 @@ class TestRecord(TestCase):
 
     def test_delete_attachment_command(self):
         params = get_synced_params()
-        cmd = record.RecordDeleteAttachmentCommand()
+        cmd = recordv2.RecordDeleteAttachmentCommand()
 
         record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
         rec = api.get_record(params, record_uid)

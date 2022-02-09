@@ -276,3 +276,16 @@ def confirm(msg):
     while answer not in ('y', 'n'):
         answer = input(question).lower()
     return answer == 'y'
+
+
+def size_to_str(size):  # type: (int) -> str
+    if size < 2000:
+        return f'{size} b'
+    size = size / 1024
+    if size < 1000:
+        return f'{size:.2f} Kb'
+    size = size / 1024
+    if size < 1000:
+        return f'{size:.2f} Mb'
+    size = size / 1024
+    return f'{size:,.2f} Gb'

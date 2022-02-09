@@ -33,7 +33,7 @@ api.sync_down(my_params)
 results = api.search_records(my_params, searchstring) 
 for r in results:
     print('Record UID ' + r.record_uid + ' matches')
-    # Note: see record.py for available fields or 
+    # Note: see recordv2.py for available fields or
     #       call display.formatted_records(results) to show all record details
 
 # Search shared folders

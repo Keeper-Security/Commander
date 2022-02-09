@@ -87,7 +87,7 @@ def get_params_from_config(config_filename):
                             logging.info('Debug ON')
 
                     if 'batch_mode' in params.config:
-                        params.batch_mode = params.config['batch_mode'] == True
+                        params.batch_mode = params.config['batch_mode'] is True
 
                     if 'device_id' in params.config:
                         device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')

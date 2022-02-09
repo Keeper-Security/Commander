@@ -49,7 +49,7 @@ def formatted_records(records, **kwargs):
     if 'params' in kwargs:
         params = kwargs['params']
 
-    # Sort by folder+title
+    # Sort by title
     records.sort(key=lambda x: x.title.lower(), reverse=False)
 
     def abbreviate_text(text: str, chars_num: int):
