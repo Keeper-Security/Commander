@@ -1221,7 +1221,7 @@ class RecordV3:
                     if ftrm:
                         result['errors'].append('Missing required fields: ' + str(
                             ftrm) + '   Use `rti -lf field_name --example` to generate valid field sample.')
-                elif next((f for f in flon if f.startswith(f'fields.{fld}')), None) is None:
+                elif next((f for f in flon if f.split('.')[:2] == ['fields', fld]), None) is None:
                     result['warnings'].append('Couldn\'t find required fields for the field type: ' + str(ft))
         if result['errors']: return result
 
