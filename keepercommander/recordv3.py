@@ -14,6 +14,7 @@ import datetime
 import json
 import logging
 import re
+from collections import Counter
 
 from .display import bcolors
 from .params import KeeperParams
@@ -1078,6 +1079,14 @@ class RecordV3:
         return result
 
     @staticmethod
+    def add_field_label(rtdef, field_labels_to_add, fname):
+        if fname not in field_labels_to_add:
+            label_gen = (f.get('label') for f in rtdef.get('fields', []) if f.get('$ref') == fname)
+            label = next(label_gen, None)
+            if label is not None:
+                field_labels_to_add[fname] = label
+
+    @staticmethod
     def convert_options_to_json(params, rt_json, rt_def, kwargs):
         # Converts dot notation options string to JSON string representing a valid record type
         # NB! Currently duplicate field types cannot be added or edited using dot notation syntax
@@ -1160,7 +1169,6 @@ class RecordV3:
 
         # field type options - ex. -o field.name.first=Jane -o f.name.last=Doe
         flo = [x for x in opts if x and x[0].__contains__('.')]
-        flon = [x[0] for x in flo if x and x[0]]
 
         # All fields must be either in fields[] or custom[] arrays
         badg = [x for x in flo if x[0].split('.', 1)[0].strip().lower() not in ('fields', 'custom')]
@@ -1211,6 +1219,7 @@ class RecordV3:
         # edit command: JSON validation before update
         # add command: fields[] must contain all 'required' fields (and required value parts)
         if not is_edit:
+            flon = [x[0] for x in flo if x and x[0]]
             reqd = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x and 'required' in x]
             for fld in reqd:
                 ft = (RecordV3.field_types.get(fld) or {}).get('type')
@@ -1242,6 +1251,8 @@ class RecordV3:
             if is_edit and rt_notes == '': r['notes'] = ''  # edit: delete notes
             if not 'fields' in r: r['fields'] = []
             if not 'custom' in r: r['custom'] = []
+            unique_field_types = [k for k, v in Counter(rtdf).items() if v == 1]
+            field_labels_to_add = {}
             for lst in [flds, cust]:
                 for f in lst:
                     if f and len(f) == 2:
@@ -1275,6 +1286,8 @@ class RecordV3:
                                         v = next((x for x in v if isinstance(x, dict)), {})
                                         v.pop(fvname, None)
                                 elif bool(val):  # upsert
+                                    if forc == 'fields' and fname in unique_field_types:
+                                        RecordV3.add_field_label(rtdef, field_labels_to_add, fname)
                                     # v = next((x for x in fv['value'] if isinstance(x, dict) and fvname in x), None)
                                     v = next((x for x in fv['value'] if isinstance(x, dict)), None)
                                     if v:
@@ -1288,6 +1301,8 @@ class RecordV3:
                                     result['warnings'].append('Skipped empty field value: ' + str(f))
                             else:  # simple value str/int assign directly - ex. c.login=MyLogin
                                 if bool(val):
+                                    if forc == 'fields' and fname in unique_field_types:
+                                        RecordV3.add_field_label(rtdef, field_labels_to_add, fname)
                                     del fv['value'][:]
                                     fv['value'].append(val)
                                 elif 'value' in fv and isinstance(fv['value'], list):  # delete
@@ -1296,6 +1311,12 @@ class RecordV3:
                         result['errors'].append(
                             'Miltiple field values per single option aren\'t allowed. Use multiple options: -o f.name.first=A -o f.name.last=B ' + str(
                                 f))
+            if len(field_labels_to_add) > 0:
+                for field_type, label in field_labels_to_add.items():
+                    for rfield in r.get('fields', []):
+                        if rfield['type'] in field_labels_to_add and 'label' not in rfield:
+                            rfield['label'] = field_labels_to_add[rfield['type']]
+
 
         # add command could pass multiple custom options - ex. --custom='{"name1":"value1", "name2":"value: 2,3,4"}'
         # since dot format can't handle duplicate keys we pass these as kwargs['custom_list']
