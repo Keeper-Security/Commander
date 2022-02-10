@@ -14,6 +14,7 @@ import datetime
 import json
 import logging
 import re
+from collections import Counter
 
 from .display import bcolors
 from .params import KeeperParams
@@ -135,7 +136,7 @@ class RecordV3:
         # if refs:
         #   return { 'is_valid': False, 'error': 'File reference manipulations are disabled here. Use upload-attachment/delete-attachment commands instead. ' + str(refs) }
 
-        # fields[] must contain all 'requried' fields (and requried value parts) - custom[] is not in RT definition
+        # fields[] must contain all 'required' fields (and required value parts) - custom[] is not in RT definition
         reqd = [x.get('$ref') for x in (rtd.get('fields') or []) if '$ref' in x and 'required' in x]
         reqf = [x for x in rt_fields if x.get('type') in reqd]
         regf = [x for x in rt_fields if x.get('type') not in reqd] + rt_custom
@@ -143,7 +144,7 @@ class RecordV3:
         # all fields required by RT definition must be present
         miss = set(reqd) - set([x.get('type') for x in reqf])
         if miss:
-            return {'is_valid': False, 'error': 'Missing requried fields: ' + str(miss)}
+            return {'is_valid': False, 'error': 'Missing required fields: ' + str(miss)}
 
         # validate field values
         fver = []
@@ -151,7 +152,7 @@ class RecordV3:
             err = RecordV3.is_valid_field_data(fld, True)
             fver.extend(err)
         if fver:
-            return {'is_valid': False, 'error': 'Error(s) validating requried fields: ' + str(fver)}
+            return {'is_valid': False, 'error': 'Error(s) validating required fields: ' + str(fver)}
 
         for fld in regf:
             err = RecordV3.is_valid_field_data(fld, False)
@@ -747,7 +748,7 @@ class RecordV3:
                 fvt = cls.field_values.get(ftyp) or {}
                 fval = fvt.get('value')
                 freq = (fvt.get('required') or []) if reqd else []
-                # warnings.append('Couldn\'t find requried fields for field type: ' + str(ftyp))
+                # warnings.append('Couldn\'t find required fields for field type: ' + str(ftyp))
 
                 if ftyp in ('fileRef', 'cardRef', 'addressRef'):
                     for fv in fvalue:
@@ -805,7 +806,7 @@ class RecordV3:
     @classmethod
     def is_valid_field_type_ref(cls, field_type_json):
         # field ref inside record type definition - ex. {"$ref":"name", "required":true, "label":"placeName"}
-        # 2021-04-26 currently the only used options in field ref are - $ref, label, requried
+        # 2021-04-26 currently the only used options in field ref are - $ref, label, required
         result = False
         if field_type_json:
             try:
@@ -825,7 +826,7 @@ class RecordV3:
     @classmethod
     def is_valid_field_type_data(cls, field_type_json):
         # field data inside record type - ex. {"type":"name","value":[{"first":"John","last":"Doe"}],"required":true, "label":"personName"}
-        # 2021-04-26 currently the only used options in fields are - type, label, requried, value[]
+        # 2021-04-26 currently the only used options in fields are - type, label, required, value[]
         result = False
         if field_type_json:
             try:
@@ -835,7 +836,7 @@ class RecordV3:
             ref = ft.get('type')
             result = True if ref and cls.field_types.get(ref) else False
 
-            known_keys = ('type', 'label', 'requried')
+            known_keys = ('type', 'label', 'required')
             unknown_keys = [x for x in ft if x.lower() not in known_keys]
             if unknown_keys:
                 logging.warning('Unknown attributes in field type data: ' + str(unknown_keys))
@@ -1078,6 +1079,14 @@ class RecordV3:
         return result
 
     @staticmethod
+    def add_field_label(rtdef, field_labels_to_add, fname):
+        if fname not in field_labels_to_add:
+            label_gen = (f.get('label') for f in rtdef.get('fields', []) if f.get('$ref') == fname)
+            label = next(label_gen, None)
+            if label is not None:
+                field_labels_to_add[fname] = label
+
+    @staticmethod
     def convert_options_to_json(params, rt_json, rt_def, kwargs):
         # Converts dot notation options string to JSON string representing a valid record type
         # NB! Currently duplicate field types cannot be added or edited using dot notation syntax
@@ -1139,7 +1148,7 @@ class RecordV3:
         rt_custom = next((x[1] for x in opts if x and len(x) == 2 and x[0].lower() == 'custom'), None)
 
         if not rt_type:
-            result['errors'].append('Record types "type" is requried')
+            result['errors'].append('Record types "type" is required')
         if rt_fields or rt_custom:
             result['errors'].append('Array types fields[] and custom[] cannot be assigned directly')
         if result['errors']: return result
@@ -1208,21 +1217,21 @@ class RecordV3:
         if result['errors']: return result
 
         # edit command: JSON validation before update
-        # add command: fields[] must contain all 'requried' fields (and requried value parts)
+        # add command: fields[] must contain all 'required' fields (and required value parts)
         if not is_edit:
+            flon = [x[0] for x in flo if x and x[0]]
             reqd = [x.get('$ref') for x in (rtdef.get('fields') or []) if '$ref' in x and 'required' in x]
             for fld in reqd:
                 ft = (RecordV3.field_types.get(fld) or {}).get('type')
                 ftr = (RecordV3.field_values.get(ft) or {}).get('required') or []
                 if ftr:
                     ftr = ['fields.' + fld + '.' + x for x in ftr]
-                    flon = [x[0] for x in flo if x and x[0]]
                     ftrm = [x for x in ftr if x not in flon]
                     if ftrm:
-                        result['errors'].append('Missing requried fields: ' + str(
+                        result['errors'].append('Missing required fields: ' + str(
                             ftrm) + '   Use `rti -lf field_name --example` to generate valid field sample.')
-                else:
-                    result['warnings'].append('Couldn\'t find requried fields for the field type: ' + str(ft))
+                elif next((f for f in flon if f.split('.')[:2] == ['fields', fld]), None) is None:
+                    result['warnings'].append('Couldn\'t find required fields for the field type: ' + str(ft))
         if result['errors']: return result
 
         # NB! cmdline labels override RT definition labels which override FT definition labels
@@ -1242,6 +1251,8 @@ class RecordV3:
             if is_edit and rt_notes == '': r['notes'] = ''  # edit: delete notes
             if not 'fields' in r: r['fields'] = []
             if not 'custom' in r: r['custom'] = []
+            unique_field_types = [k for k, v in Counter(rtdf).items() if v == 1]
+            field_labels_to_add = {}
             for lst in [flds, cust]:
                 for f in lst:
                     if f and len(f) == 2:
@@ -1275,6 +1286,8 @@ class RecordV3:
                                         v = next((x for x in v if isinstance(x, dict)), {})
                                         v.pop(fvname, None)
                                 elif bool(val):  # upsert
+                                    if forc == 'fields' and fname in unique_field_types:
+                                        RecordV3.add_field_label(rtdef, field_labels_to_add, fname)
                                     # v = next((x for x in fv['value'] if isinstance(x, dict) and fvname in x), None)
                                     v = next((x for x in fv['value'] if isinstance(x, dict)), None)
                                     if v:
@@ -1288,6 +1301,8 @@ class RecordV3:
                                     result['warnings'].append('Skipped empty field value: ' + str(f))
                             else:  # simple value str/int assign directly - ex. c.login=MyLogin
                                 if bool(val):
+                                    if forc == 'fields' and fname in unique_field_types:
+                                        RecordV3.add_field_label(rtdef, field_labels_to_add, fname)
                                     del fv['value'][:]
                                     fv['value'].append(val)
                                 elif 'value' in fv and isinstance(fv['value'], list):  # delete
@@ -1296,6 +1311,12 @@ class RecordV3:
                         result['errors'].append(
                             'Miltiple field values per single option aren\'t allowed. Use multiple options: -o f.name.first=A -o f.name.last=B ' + str(
                                 f))
+            if len(field_labels_to_add) > 0:
+                for field_type, label in field_labels_to_add.items():
+                    for rfield in r.get('fields', []):
+                        if rfield['type'] in field_labels_to_add and 'label' not in rfield:
+                            rfield['label'] = field_labels_to_add[rfield['type']]
+
 
         # add command could pass multiple custom options - ex. --custom='{"name1":"value1", "name2":"value: 2,3,4"}'
         # since dot format can't handle duplicate keys we pass these as kwargs['custom_list']
