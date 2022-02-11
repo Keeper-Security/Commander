@@ -47,15 +47,8 @@ def is_up_to_date_version(params):  # type: (KeeperParams) -> dict
         curr_git_version = release_details.get('tag')[1:]
 
         version_comparison = __version_compare(this_app_version, curr_git_version)
-
-    except requests.exceptions.HTTPError as errh:
-        logging.debug("Http Error:", errh)
-    except requests.exceptions.ConnectionError as errc:
-        logging.debug("Error Connecting:", errc)
-    except requests.exceptions.Timeout as errt:
-        logging.debug("Timeout Error:", errt)
-    except requests.exceptions.RequestException as err:
-        logging.debug("Request Error:", err)
+    except Exception as e:
+        logging.debug(e)
 
     return {
         'is_up_to_date': version_comparison >= 0 if version_comparison else None,
