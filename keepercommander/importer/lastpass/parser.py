@@ -79,12 +79,16 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
         attach_key = None
 
     skip_item(io, 11)
-    totp_secret = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8')
-    if totp_secret:
-        totp_query_string = urlencode([('secret', totp_secret)] + TOTP_URL_QUERY_MAPPING)
-        totp_url = urlunsplit((TOTP_URL_SCHEME, TOTP_URL_NETLOC, TOTP_URL_PATH, totp_query_string, ''))
-    else:
+    try:
+        totp_secret = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8')
+    except Exception:
         totp_url = None
+    else:
+        if totp_secret:
+            totp_query_string = urlencode([('secret', totp_secret)] + TOTP_URL_QUERY_MAPPING)
+            totp_url = urlunsplit((TOTP_URL_SCHEME, TOTP_URL_NETLOC, TOTP_URL_PATH, totp_query_string, ''))
+        else:
+            totp_url = None
 
     # Parse secure note
     if secure_note == b'1':
