@@ -1015,15 +1015,15 @@ class LoginV3API:
                     params.device_id = None
                     # continue
 
-                if 'additional_info' in rs:
-                    err_msg = "\n" + rs['additional_info']
+                err_msg = rs['message']
+                if rs['error'] == 'device_not_registered':
+                    err_msg += "\nRegister this user in the current region or change server region"
 
-                    if rs['error'] == 'device_not_registered':
-                        err_msg += "\nRegister this user in the current region or change server region"
+                add_info = rs.get('additional_info')
+                if add_info:
+                    err_msg += "\n" + rs['additional_info']
 
-                    raise KeeperApiError(rs['error'], err_msg)
-
-                raise KeeperApiError(rs['error'], rs['message'])
+                raise KeeperApiError(rs['error'], err_msg)
 
     @staticmethod
     def auth_verifier_loginv3(params: KeeperParams):
