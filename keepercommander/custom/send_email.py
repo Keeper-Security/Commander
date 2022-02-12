@@ -8,8 +8,12 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: commander@keepersecurity.com
 #
-# Example code to retrieve the password for a record
-# stored in the vault.  This example also pulls configuration
+# Example code to run a BreachWatch status report for 
+# all users, and send users an email reminder to address their 
+# found issues. SMTP credentials must be supplied via a vault record
+# in order to send the mail. 
+# 
+# This example also pulls configuration
 # from config.json or writes the config file if it does not exist.
 #
 # Usage:
