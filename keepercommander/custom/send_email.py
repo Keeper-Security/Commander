@@ -36,8 +36,8 @@ email_message = '''
 From: {0}
 Subject: Keeper BreachWatch Alert
 
-Keeper BreachWatch detected the records at risk in your vault.
-Please login to Keeper and review the records marked "At Risk"
+BreachWatch detected records at risk in your vault.
+Please login to Keeper and review the records marked "At Risk".
 '''
 
 def read_config_file(params):
