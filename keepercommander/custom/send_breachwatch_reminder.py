@@ -8,16 +8,17 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: commander@keepersecurity.com
 #
-# Example code to run a BreachWatch status report for 
-# all users, and send users an email reminder to address their 
-# found issues. SMTP credentials must be supplied via a vault record
-# in order to send the mail. 
+# Example script to run a BreachWatch status report, parse the results,
+# and send users an email reminder to address their found issues.
+#
+# Note: SMTP credentials must be supplied via a vault record
+# in order to send the email. 
 # 
 # This example also pulls configuration
 # from config.json or writes the config file if it does not exist.
 #
 # Usage:
-#    python send_email.py
+#    python send_breachwatch_reminder.py
 
 import base64
 import getpass
