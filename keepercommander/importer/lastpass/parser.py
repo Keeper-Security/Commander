@@ -82,6 +82,7 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     try:
         totp_secret = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8')
     except Exception:
+        totp_secret = None
         totp_url = None
     else:
         if totp_secret:
