@@ -18,6 +18,7 @@ import uuid
 from xml.sax.saxutils import escape
 
 from pykeepass import PyKeePass
+from pykeepass.exceptions import CredentialsError
 from pykeepass.attachment import Attachment as KeepassAttachment
 from pykeepass.group import Group
 
@@ -65,135 +66,137 @@ class KeepassImporter(BaseFileImporter):
             keyfile = os.path.expanduser(keyfile)
         else:
             keyfile = None
+        try:
+            with PyKeePass(filename, password=password, keyfile=keyfile) as kdb:
+                root = kdb.root_group
+                if not root:
+                    return
+                groups = [root]  # type: list
+                pos = 0
+                while pos < len(groups):
+                    g = groups[pos]
+                    groups.extend(g.subgroups)
+                    pos = pos + 1
 
-        with PyKeePass(filename, password=password, keyfile=keyfile) as kdb:
-            root = kdb.root_group
-            if not root:
-                return
-            groups = [root]  # type: list
-            pos = 0
-            while pos < len(groups):
-                g = groups[pos]
-                groups.extend(g.subgroups)
-                pos = pos + 1
-
-            records = []
-            for group in groups:
-                entries = group.entries
-                if len(entries) > 0:
-                    folder = KeepassImporter.get_folder(group)
-                    for entry in entries:
-                        record = Record()
-                        fol = Folder()
-                        fol.path = folder
-                        record.folders = [fol]
-                        if entry.uuid:
-                            record.uid = utils.base64_url_encode(entry.uuid.bytes)
-                        if entry.title:
-                            record.title = entry.title
-                        if entry.username:
-                            record.login = entry.username
-                        if entry.password:
-                            record.password = entry.password
-                        if entry.url:
-                            record.login_url = entry.url
-                        if entry.notes:
-                            record.notes = entry.notes
-                        for key, value in entry.custom_properties.items():
-                            if key.startswith('$'):
-                                pos = key.find(':')
-                                if pos > 0:
-                                    field_type = key[1:pos].strip()
-                                    field_label = key[pos+1:].strip()
+                records = []
+                for group in groups:
+                    entries = group.entries
+                    if len(entries) > 0:
+                        folder = KeepassImporter.get_folder(group)
+                        for entry in entries:
+                            record = Record()
+                            fol = Folder()
+                            fol.path = folder
+                            record.folders = [fol]
+                            if entry.uuid:
+                                record.uid = utils.base64_url_encode(entry.uuid.bytes)
+                            if entry.title:
+                                record.title = entry.title
+                            if entry.username:
+                                record.login = entry.username
+                            if entry.password:
+                                record.password = entry.password
+                            if entry.url:
+                                record.login_url = entry.url
+                            if entry.notes:
+                                record.notes = entry.notes
+                            for key, value in entry.custom_properties.items():
+                                if key.startswith('$'):
+                                    pos = key.find(':')
+                                    if pos > 0:
+                                        field_type = key[1:pos].strip()
+                                        field_label = key[pos+1:].strip()
+                                    else:
+                                        field_type = key[1:]
+                                        field_label = ''
                                 else:
-                                    field_type = key[1:]
-                                    field_label = ''
-                            else:
-                                field_type = ''
-                                field_label = key
-                            field = RecordField()
-                            field.type = field_type
-                            field.label = field_label
-                            field.value = value
-                            record.fields.append(field)
+                                    field_type = ''
+                                    field_label = key
+                                field = RecordField()
+                                field.type = field_type
+                                field.label = field_label
+                                field.value = value
+                                record.fields.append(field)
 
-                        if entry.attachments:
-                            for a in entry.attachments:
-                                if isinstance(a, KeepassAttachment):
-                                    if record.attachments is None:
-                                        record.attachments = []
-                                    record.attachments.append(BytesAttachment(a.filename, a.binary))
+                            if entry.attachments:
+                                for a in entry.attachments:
+                                    if isinstance(a, KeepassAttachment):
+                                        if record.attachments is None:
+                                            record.attachments = []
+                                        record.attachments.append(BytesAttachment(a.filename, a.binary))
 
-                        records.append(record)
-            id_map = None
-            title_map = None
-            ref_re = re.compile(_REFERENCE, re.IGNORECASE)
+                            records.append(record)
+                id_map = None
+                title_map = None
+                ref_re = re.compile(_REFERENCE, re.IGNORECASE)
 
-            def resolve_references(text):
-                nonlocal id_map
-                nonlocal title_map
+                def resolve_references(text):
+                    nonlocal id_map
+                    nonlocal title_map
 
-                if not text:
-                    return text
-                matches = list(ref_re.finditer(text))
-                if not matches:
-                    return text
-                values = []
-                for match in matches:
-                    comps = match.groups()
-                    val = match.group(0)
-                    if len(comps) == 3:
-                        rec = None
-                        if comps[1].upper() == 'I':
-                            if id_map is None:
-                                id_map = {}
-                                for r in records:
-                                    if r.uid:
-                                        id_map[r.uid] = r
-                            uid = uuid.UUID(comps[2])
-                            if uid:
-                                ref_id = utils.base64_url_encode(uid.bytes)
-                                rec = id_map.get(ref_id)
-                        elif comps[1].upper() == 'T':
-                            if title_map is None:
-                                title_map = {}
-                                for r in records:
-                                    if r.title:
-                                        title_map[r.title] = r
-                            rec = title_map.get(comps[2])
-                        if rec:
-                            field_id = comps[0].upper()
-                            if field_id == 'T':
-                                val = rec.title
-                            elif field_id == 'U':
-                                val = rec.login
-                            elif field_id == 'P':
-                                val = rec.password
-                            elif field_id == 'A':
-                                val = rec.login_url
-                            elif field_id == 'N':
-                                val = rec.notes
-                    values.append(val or '')
+                    if not text:
+                        return text
+                    matches = list(ref_re.finditer(text))
+                    if not matches:
+                        return text
+                    values = []
+                    for match in matches:
+                        comps = match.groups()
+                        val = match.group(0)
+                        if len(comps) == 3:
+                            rec = None
+                            if comps[1].upper() == 'I':
+                                if id_map is None:
+                                    id_map = {}
+                                    for r in records:
+                                        if r.uid:
+                                            id_map[r.uid] = r
+                                uid = uuid.UUID(comps[2])
+                                if uid:
+                                    ref_id = utils.base64_url_encode(uid.bytes)
+                                    rec = id_map.get(ref_id)
+                            elif comps[1].upper() == 'T':
+                                if title_map is None:
+                                    title_map = {}
+                                    for r in records:
+                                        if r.title:
+                                            title_map[r.title] = r
+                                rec = title_map.get(comps[2])
+                            if rec:
+                                field_id = comps[0].upper()
+                                if field_id == 'T':
+                                    val = rec.title
+                                elif field_id == 'U':
+                                    val = rec.login
+                                elif field_id == 'P':
+                                    val = rec.password
+                                elif field_id == 'A':
+                                    val = rec.login_url
+                                elif field_id == 'N':
+                                    val = rec.notes
+                        values.append(val or '')
 
-                    idx = list(range(len(matches)))
-                    idx.reverse()
-                    for index in idx:
-                        match = matches[index]
-                        val = values[index] if index < len(values) else ''
-                        text = text[:match.start()] + val + text[match.end():]
-                    return text
+                        idx = list(range(len(matches)))
+                        idx.reverse()
+                        for index in idx:
+                            match = matches[index]
+                            val = values[index] if index < len(values) else ''
+                            text = text[:match.start()] + val + text[match.end():]
+                        return text
 
-            for record in records:
-                try:
-                    record.login = resolve_references(record.login)
-                    record.password = resolve_references(record.password)
-                    record.login_url = resolve_references(record.login_url)
-                    record.notes = resolve_references(record.notes)
-                    for field in record.fields:
-                        field.value = resolve_references(field.value)
-                except Exception as e:
-                    logging.debug(e)
-                yield record
+                for record in records:
+                    try:
+                        record.login = resolve_references(record.login)
+                        record.password = resolve_references(record.password)
+                        record.login_url = resolve_references(record.login_url)
+                        record.notes = resolve_references(record.notes)
+                        for field in record.fields:
+                            field.value = resolve_references(field.value)
+                    except Exception as e:
+                        logging.debug(e)
+                    yield record
+        except CredentialsError:
+            logging.warning('Invalid Keepass credentials')
 
     def extension(self):
         return 'kdbx'
@@ -264,7 +267,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
                             if cf.type and cf.label:
                                 title = f'${cf.type}:{cf.label}'
                             elif cf.type:
-                                title = f'{cf.type}'
+                                title = f'${cf.type}'
                             else:
                                 title = cf.label or ''
                             entry.set_custom_property(title, self.to_keepass_value(cf.value))
