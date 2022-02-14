@@ -58,7 +58,7 @@ def load_rsa_public_key(der_public_key):
 
 def unload_rsa_private_key(private_key):
     return private_key.private_bytes(encoding=serialization.Encoding.DER,
-                                     format=serialization.PrivateFormat.PKCS8,
+                                     format=serialization.PrivateFormat.TraditionalOpenSSL,
                                      encryption_algorithm=serialization.NoEncryption())
 
 
