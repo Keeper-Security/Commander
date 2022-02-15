@@ -93,6 +93,7 @@ class _EnterpriseLoader(object):
     def load(self, params):  # type: (KeeperParams) -> None
         if params.enterprise is None:
             params.enterprise = {}
+            self._continuationToken = b''
 
         if not self._enterprise.tree_key:
             rq = proto.GetEnterpriseDataKeysRequest()
