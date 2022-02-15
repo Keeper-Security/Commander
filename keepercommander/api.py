@@ -2192,9 +2192,10 @@ def query_enterprise(params):
         share_account_by = params.get_share_account_timestamp()
         share_account_expired = share_account_by and datetime.today() > share_account_by
         # An exception is expected here if an Account Transfer is expired
-        if not share_account_expired:
+        if share_account_expired:
+            params.enterprise = None
+        else:
             logging.warning(e)
-        params.enterprise = None
 
 
 def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
