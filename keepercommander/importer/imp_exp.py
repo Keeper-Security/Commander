@@ -988,7 +988,15 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
                 records_with_attachments = records_with_attachments[i:]
                 break
             parent_uid = parent_record.uid
+            existing_record = params.record_cache.get(parent_uid)
             for atta in parent_record.attachments:  # type: ImportAttachment
+                if not existing_record:
+                    parent_title = getattr(parent_record, 'title', '')
+                    logging.warning(
+                        f'Upload of {atta.name} failed: Parent record {parent_title} ({parent_uid}) is missing.'
+                    )
+                    continue
+
                 if isinstance(atta.size, int):
                     if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
                         logging.warning(
