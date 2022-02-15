@@ -470,7 +470,7 @@ def _import(params, file_format, filename, **kwargs):
     new_domain = kwargs.get('new_domain')
     tmpdir = kwargs.get('tmpdir')
     v3_enabled = params.settings.get('record_types_enabled', False) if params.settings else False
-    login_type = kwargs.get('login_type', False) and v3_enabled
+    record_type = kwargs.get('record_type') if v3_enabled else None
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -510,8 +510,8 @@ def _import(params, file_format, filename, **kwargs):
                         else:
                             f.path = import_into
 
-            if login_type and not x.type:
-                x.type = 'login'
+            if record_type and not x.type:
+                x.type = record_type
             try:
                 x.validate()
             except CommandError as ce:
