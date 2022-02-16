@@ -35,21 +35,29 @@ def register_command_info(aliases, command_info):
 
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
-# convert_parser.add_argument('-t', '--type', dest='DEFAULT_CONVERT_TO_V3_RECORD_TYPE', action='store',
-#                            help='Convert to record type')
-convert_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true',
-                            help="Don't display info about records matched and converted")
-convert_parser.add_argument('-f', '--force', dest='force', action='store_true',
-                            help='Convert all records including records with attachments. '
-                                 'Please note that file attachments may not be decrypted by Keeper clients.')
-convert_parser.add_argument('-u', '--url', dest='url', action='store',
-                            help='Convert records with URL pattern (* for record with any URL)')
-convert_parser.add_argument('-n', '--dry-run', dest='dry_run', action='store_true',
-                            help='Preview the record conversions without updating')
-convert_parser.add_argument('-r', '--recursive', dest='recursive', action='store_true',
-                            help='Convert recursively through subfolders')
-convert_parser.add_argument('record-uid-name-patterns', nargs='*', type=str, action='store',
-                            help='One or more record title/UID search patterns')
+convert_parser.add_argument(
+    '-t', '--record_type', dest='record_type', action='store', help='Convert to record type'
+)
+convert_parser.add_argument(
+    '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
+)
+convert_parser.add_argument(
+    '-f', '--force', dest='force', action='store_true',
+    help='Convert all records including records with attachments. '
+         'Please note that file attachments may not be decrypted by Keeper clients.'
+)
+convert_parser.add_argument(
+    '-u', '--url', dest='url', action='store', help='Convert records with URL pattern (* for record with any URL)'
+)
+convert_parser.add_argument(
+    '-n', '--dry-run', dest='dry_run', action='store_true', help='Preview the record conversions without updating'
+)
+convert_parser.add_argument(
+    '-r', '--recursive', dest='recursive', action='store_true', help='Convert recursively through subfolders'
+)
+convert_parser.add_argument(
+    'record-uid-name-patterns', nargs='*', type=str, action='store', help='One or more record title/UID search patterns'
+)
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
 
@@ -113,6 +121,16 @@ class ConvertCommand(Command):
         url_pattern = kwargs.get('url')
         url_regex = re.compile(fnmatch.translate(url_pattern)).match if url_pattern else None
 
+        record_type = kwargs.get('record_type') or 'login'
+        available_types = [json.loads(x) for x in params.record_type_cache.values()]
+        type_info = next((x for x in available_types if x.get('$id') == record_type), None)
+        if type_info is None:
+            logging.warning(
+                f'Specified record type "{record_type}" is not valid. '
+                f'Valid types are:\n{", ".join(sorted((x.get("$id") for x in available_types)))}'
+            )
+            return
+
         attachments = kwargs.get('force', False)
         if not isinstance(attachments, bool):
             attachments = False
@@ -126,6 +144,15 @@ class ConvertCommand(Command):
         records_by_folder = {}
         folder_path = {}
         for pattern in pattern_list:
+            if pattern in params.record_cache:
+                record = api.get_record(params, pattern)
+                if record:
+                    if '' not in folder_path:
+                        folder_path[''] = ''
+                    if '' not in records_by_folder:
+                        records_by_folder[''] = set()
+                    records_by_folder[''].add(record)
+                continue
             rs = try_resolve_path(params, pattern)
             if rs is not None:
                 folder, pattern = rs
@@ -164,7 +191,7 @@ class ConvertCommand(Command):
         else:
             rq = record_pb2.RecordsConvertToV3Request()
             for record_uid in record_uids:
-                convert_result = ConvertCommand.convert_to_record_type_data(record_uid, params)
+                convert_result = ConvertCommand.convert_to_record_type_data(record_uid, params, type_info)
                 if not convert_result:
                     logging.warning(f'Conversion failed for {record_names[record_uid]} ({record_uid})\n')
                     continue
@@ -267,8 +294,8 @@ class ConvertCommand(Command):
         return return_type
 
     @staticmethod
-    def convert_to_record_type_data(record_uid, params):
-        # type: (str, KeeperParams) -> Optional[Tuple[dict, list]]
+    def convert_to_record_type_data(record_uid, params, type_info):
+        # type: (str, KeeperParams, dict) -> Optional[Tuple[dict, list]]
 
         if not (record_uid and params and params.record_cache and record_uid in params.record_cache):
             logging.warning('Record %s not found.', record_uid)
@@ -287,8 +314,8 @@ class ConvertCommand(Command):
         extra = extra if isinstance(extra, dict) else json.loads(extra or '{}')
 
         # check for other non-convertible data - ex. fields[] has "field_type" != "totp" if present
-        fields = extra.get('fields') or []
-        otps = [x['data'] for x in fields if 'totp' == (x.get('field_type') or '') and 'data' in x]
+        extra_fields = extra.get('fields') or []
+        otps = [x['data'] for x in extra_fields if 'totp' == (x.get('field_type') or '') and 'data' in x]
         totp = otps[0] if len(otps) > 0 else ''
         otps = otps[1:]
         # label = otp.get('field_title') or ''
@@ -297,11 +324,39 @@ class ConvertCommand(Command):
         login = data.get('secret1') or ''
         password = data.get('secret2') or ''
         url = data.get('link') or ''
+        v2_fields = {}
+        if login:
+            v2_fields['login'] = login
+        if password:
+            v2_fields['password'] = password
+        if url:
+            v2_fields['url'] = url
+        if totp:
+            v2_fields['oneTimeCode'] = totp
 
         notes = data.get('notes') or ''
         custom2 = data.get('custom') or []
         # custom.type	- Always "text" for legacy reasons.
+        fields = []
+        for field in type_info.get('fields', []):
+            ref = field.get('$ref', 'text')
+            label = field.get('label')
+            typed_field = {
+                'type': ref,
+                'value': []
+            }
+            if label:
+                typed_field['label'] = label
+            if not label and ref in v2_fields:
+                value = v2_fields.pop(ref)
+                typed_field['value'].append(value)
+            fields.append(typed_field)
+
         custom = []
+        custom.extend(({
+            'type': x[0],
+            'value': [x[1]],
+        } for x in v2_fields.items()))
         custom.extend(({
             'type': ConvertCommand.get_v3_field_type(x.get('value')),
             'label': x.get('name') or '',
@@ -315,20 +370,13 @@ class ConvertCommand(Command):
                 'value': [x]
             } for x in otps if x))
 
-        file_info = extra.get('files') or []
-
         v3_data = {
             'title': title,
-            'type': 'login',
-            'fields': [
-                {'type': 'login', 'value': [login] if login else []},
-                {'type': 'password', 'value': [password] if password else []},
-                {'type': 'url', 'value': [url] if url else []},
-                {'type': 'oneTimeCode', 'value': [totp] if totp else []},
-                {'type': 'fileRef', 'value': []}
-            ],
+            'type': type_info['$id'],
+            'fields': fields,
             'custom': custom,
             'notes': notes
         }
 
+        file_info = extra.get('files') or []
         return v3_data, file_info

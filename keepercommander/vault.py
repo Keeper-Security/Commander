@@ -10,11 +10,9 @@
 
 import abc
 import json
+from typing import Optional, List, Tuple, Iterable
 
 import itertools
-import re
-
-from typing import Optional, List, Tuple, Iterable, Union
 
 from .params import KeeperParams
 
