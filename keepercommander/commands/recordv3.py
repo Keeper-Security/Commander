@@ -114,7 +114,6 @@ command_group.add_argument('-v3f', '--from-file', dest='data_file', action='stor
 # command_group.add_argument('-o', '--option', dest='option', action='append', help='load record type data from string with dot notation')
 edit_parser.add_argument('option', nargs='*', type=str, action='store', help='load record type data from strings with dot notation')
 edit_parser.add_argument('-r', '--record', dest='record', required=True, type=str, action='store', help='record path or UID')
-command_group = edit_parser.add_mutually_exclusive_group()
 edit_parser.error = raise_parse_exception
 edit_parser.exit = suppress_exit
 
