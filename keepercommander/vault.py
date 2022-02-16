@@ -83,6 +83,8 @@ class KeeperRecord(abc.ABC):
         elif version == 4:
             keeper_record = FileRecord()
             keeper_record.storage_size = record.get('file_size')
+        elif version == 5:
+            keeper_record = ApplicationRecord()
         else:
             return
         keeper_record.record_uid = record['record_uid']
@@ -268,6 +270,22 @@ class FileRecord(KeeperRecord):
             yield pair
         yield 'File Name', self.name
         yield 'Mime Type', self.mime_type
+
+
+class ApplicationRecord(KeeperRecord):
+    def __init__(self):
+        super(ApplicationRecord, self).__init__()
+        self.type_name = ''
+
+    def get_version(self):
+        return 5
+
+    def get_record_type(self):
+        return self.type_name
+
+    def load_record_data(self, data, extra=None):
+        self.title = data.get('title', '')
+        self.type_name = data.get('type', 'app')
 
 
 def tokenize_typed_value(value):  # type: (any) -> Iterable[str]

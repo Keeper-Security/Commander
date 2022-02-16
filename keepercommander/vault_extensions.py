@@ -29,6 +29,8 @@ def find_records(params, search_str=None, record_type=None):
 
     for record_uid in params.record_cache:
         record = vault.KeeperRecord.load(params, record_uid)
+        if not record:
+            continue
         if type_filter and record.record_type not in type_filter:
             continue
         if not pattern:
