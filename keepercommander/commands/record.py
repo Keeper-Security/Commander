@@ -74,6 +74,9 @@ class SearchCommand(Command):
 
     def execute(self, params, **kwargs):
         pattern = (kwargs['pattern'] if 'pattern' in kwargs else None) or ''
+        if pattern == '*':
+            pattern = '.*'
+
         categories = (kwargs.get('categories') or 'rst').lower()
         verbose = kwargs.get('verbose', False)
         skip_details = not verbose
@@ -106,20 +109,12 @@ class RecordListCommand(Command):
 
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose', False)
-        exclude_files = not verbose
         fmt = kwargs.get('format', 'table')
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
         record_type = kwargs['record_type'] if 'record_type' in kwargs else None
-        if record_type:
-            if isinstance(record_type, str):
-                if record_type == 'file':
-                    exclude_files = False
-            if isinstance(record_type, list):
-                if 'file' in record_type:
-                    exclude_files = False
 
         records = [x for x in vault_extensions.find_records(params, pattern, record_type)
-                   if (True if not exclude_files else x.record_type != 'file')]
+                   if (True if (verbose or record_type) else x.version in {2, 3})]
         if any(records):
             table = []
             headers = ['record_uid', 'type', 'title', 'description'] if fmt == 'json' else \
