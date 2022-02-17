@@ -1198,7 +1198,7 @@ def delete_orphaned_attachments(params):
             all_fields.extend(data.get('custom') or [])
             for fileref in (n.get('value') for n in all_fields if n.get('type') == 'fileRef' and n.get('value')):
                 for fileref_id in fileref:
-                    orphaned.pop(fileref_id)
+                    orphaned.pop(fileref_id, None)
 
     if len(orphaned) == 0:
         print('There are no orphaned file attachments in this account.')
