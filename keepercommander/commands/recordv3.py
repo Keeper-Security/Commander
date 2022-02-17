@@ -167,9 +167,17 @@ upload_parser.error = raise_parse_exception
 upload_parser.exit = suppress_exit
 
 
-delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
-delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
-delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
+delete_attachment_parser = argparse.ArgumentParser(
+    prog='delete-attachment', description='Delete an attachment from a record',
+    usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg"
+)
+delete_attachment_parser.add_argument(
+    '--name', dest='name', action='append', help='attachment file name or ID. Can be repeated.'
+)
+delete_attachment_parser.add_argument(
+    '-o', '--orphaned', dest='orphaned', action='store_true', help='delete orphaned file attachments'
+)
+delete_attachment_parser.add_argument('record', nargs='?', action='store', help='record path or UID')
 #delete_attachment_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
@@ -1179,14 +1187,55 @@ class RecordUploadAttachmentCommand(Command):
                 api.update_record_v3(params, rec, **{'record_links': record_links})
 
 
+def delete_orphaned_attachments(params):
+    orphaned = {
+        k: json.loads(v['data_unencrypted'])['title'] for k, v in params.record_cache.items() if v.get('version') == 4
+    }
+    for uid, rec in params.record_cache.items():
+        if rec.get('version') == 3:
+            data = json.loads(rec.get('data_unencrypted', '{}'))
+            all_fields = data.get('fields') or []
+            all_fields.extend(data.get('custom') or [])
+            for fileref in (n.get('value') for n in all_fields if n.get('type') == 'fileRef' and n.get('value')):
+                for fileref_id in fileref:
+                    orphaned.pop(fileref_id)
+
+    if len(orphaned) == 0:
+        print('There are no orphaned file attachments in this account.')
+    else:
+        print('The following file attachments are not referenced by any records with a type in this account:')
+        print('\n'.join(f'{v} ({k})' for k, v in orphaned.items()))
+        msg = "\nIt's possible the files could be referenced elsewhere, are you sure you want to delete these files?"
+        if input(f'{msg} (y/n) ').lower() == 'y':
+            rq = {
+                'command': 'record_update',
+                'pt': 'Commander',
+                'device_id': 'Commander',
+                'client_time': api.current_milli_time(),
+                'delete_records': list(orphaned.keys())
+            }
+            rs = api.communicate(params, rq)
+            if 'delete_records' in rs:
+                for status in rs['delete_records']:
+                    if status['status'] != 'success':
+                        logging.warning('Delete attachment error: %s', status.get('status'))
+
+            api.sync_down(params)
+
+
 class RecordDeleteAttachmentCommand(Command):
     def get_parser(self):
         return delete_attachment_parser
 
     def execute(self, params, **kwargs):
-        record_name = kwargs['record'] if 'record' in kwargs else None
+        record_name = kwargs.get('record')
+        names = kwargs.get('name')
 
-        if not record_name:
+        if kwargs.get('orphaned', False):
+            delete_orphaned_attachments(params)
+            return
+        elif not record_name or not names:
+            logging.warning('"record" argument and "--name" option are required without "--orphaned" option')
             self.get_parser().print_help()
             return
 
@@ -1230,7 +1279,6 @@ class RecordDeleteAttachmentCommand(Command):
         record = api.get_record(params, record_uid)
 
         # using file names is too risky, duplicate names allowed - switched to fileRef UIDs only
-        names = kwargs['name'] if 'name' in kwargs else None
         if names is None:
             raise CommandError('delete-attachment', 'No file reference UID specified')
 
