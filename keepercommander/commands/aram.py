@@ -321,6 +321,7 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
         port = None
         is_ssl = False
         is_udp = False
+        is_octet_counting = False
         url = record.login_url
         if url:
             p = urlparse(url)
@@ -331,6 +332,14 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
                     is_ssl = p.scheme == 'syslogs'
                 host = p.hostname
                 port = p.port
+
+            val = record.get('is_octet_counting')
+            if val:
+                try:
+                    oc = int(val)
+                    is_octet_counting = oc > 0
+                except:
+                    pass
 
         if not host or not port:
             print('Enter Syslog connection parameters:')
@@ -358,31 +367,40 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM if not is_udp else socket.SOCK_DGRAM) as sock:
                 sock.settimeout(1)
                 if is_ssl:
-                    s = ssl.wrap_socket(sock)
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3)
+                    s = context.wrap_socket(sock, server_hostname=host)
                 else:
                     s = sock
                 s.connect((host, port))
             record.login_url = 'syslog{0}://{1}:{2}'.format('u' if is_udp else 's' if is_ssl else '', host, port)
+            record.set_field('is_octet_counting', '1' if is_octet_counting else '0')
             self.store_record = True
 
         props['is_udp'] = is_udp
         props['is_ssl'] = is_ssl
         props['host'] = host
         props['port'] = port
+        props['is_octet_counting'] = is_octet_counting
 
     def export_events(self, props, events):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM if not props['is_udp'] else socket.SOCK_DGRAM) as sock:
+            is_udp = props['is_udp']
+            is_octet_counting = props.get('is_octet_counting', False)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM if not is_udp else socket.SOCK_DGRAM) as sock:
                 sock.settimeout(1)
+                hostname = props['host']
                 if props['is_ssl']:
-                    s = ssl.wrap_socket(sock)
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3)
+                    s = context.wrap_socket(sock, server_hostname=hostname)
                 else:
                     s = sock
-                s.connect((props['host'], props['port']))
+                port = props['port']
+                s.connect((hostname, port))
                 for line in events:
-                    s.send(line.encode('utf-8'))
-                    s.send(b'\n')
-        except:
+                    syslog_event = f'{len(line)} {line}' if is_octet_counting else f'{line}\n'
+                    s.send(syslog_event.encode('utf-8'))
+        except Exception as e:
+            logging.debug(e)
             self.should_cancel = True
 
 
@@ -600,6 +618,12 @@ class AuditLogCommand(EnterpriseCommand):
         }
         log_export.store_record = False
         log_export.get_properties(record, props)
+        if log_export.store_record:
+            record_uid = record.record_uid
+            api.update_record(params, record, silent=True)
+            api.sync_down(params)
+            record = api.get_record(params, record_uid)
+            log_export.store_record = False
 
         # query data
         last_event_time = 0
