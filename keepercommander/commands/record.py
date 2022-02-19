@@ -30,7 +30,7 @@ def register_command_info(aliases, command_info):
     aliases['lsf'] = 'list-sf'
     aliases['lt'] = 'list-team'
 
-    for p in [search_parser, list_parser, list_sf_parser]:
+    for p in [search_parser, list_parser, list_sf_parser, list_team_parser]:
         command_info[p.prog] = p.description
 
 
