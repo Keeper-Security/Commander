@@ -52,7 +52,7 @@ from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
 from ..utils import json_to_base64
 from ..versioning import is_binary_app, is_up_to_date_version
-from .connect import ConnectCommand
+from .connect import ConnectSshCommand
 
 
 def register_commands(commands):
@@ -65,7 +65,7 @@ def register_commands(commands):
     commands['logout'] = LogoutCommand()
     commands['check-enforcements'] = CheckEnforcementsCommand()
     commands['accept-transfer'] = AcceptTransferCommand()
-    commands['connect'] = ConnectCommand()
+    commands['ssh'] = ConnectSshCommand()
     commands['delete-corrupted'] = DeleteCorruptedCommand()
     commands['echo'] = EchoCommand()
     commands['set'] = SetCommand()

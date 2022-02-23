@@ -11,97 +11,81 @@
 #
 
 import argparse
-import io
 import logging
 import os
-import re
-import tempfile
-from typing import Optional, Iterable, Tuple
+import shutil
+from typing import Optional, Callable, Iterator
 
-import itertools
+import sys
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 
-from cryptography.hazmat.primitives.asymmetric import rsa  # , dsa, ec
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
-from tabulate import tabulate
-
-from .base import raise_parse_exception, suppress_exit, Command
-from .. import api
-from ..attachment import prepare_attachment_download, KeeperRecord, TypedRecord, PasswordRecord, FileRecord
+from .base import Command
+from .record import find_record, RecordListCommand
+from ..attachment import TypedRecord
 from ..params import KeeperParams
-from ..subfolder import try_resolve_path, find_folders, get_folder_path
+from ..vault_extensions import SshKeysFacade, ServerCredentialsFacade, DatabaseCredentialsFacade
 
-connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
-connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
-                            help='display help on command format and template parameters')
-connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'],
-                            help='sort output')
-connect_parser.add_argument('-f', '--filter', dest='filter_by', action='store', help='filter output')
-connect_parser.add_argument('endpoint', nargs='?', action='store', type=str,
-                            help='endpoint name or full record path to endpoint')
-connect_parser.error = raise_parse_exception
-connect_parser.exit = suppress_exit
+ssh_parser = argparse.ArgumentParser(prog='ssh',
+                                     description='Establishes connection to external server using SSH. ')
+ssh_parser.add_argument('record', nargs='?', type=str, action='store',
+                        help='record path or UID. Record types: "SSH Key", "Server"')
+ssh_parser.add_argument('destination', nargs='?', type=str, action='store',
+                        metavar='LOGIN@HOST[:PORT]', help='Optional. SSH endpoint')
+
+mysql_parser = argparse.ArgumentParser(prog='mysql', description='Establishes connection to MySQL server.')
+mysql_parser.add_argument('record', nargs='?', type=str, action='store',
+                          help='record path or UID. Record types: "Database"')
+
+postgres_parser = argparse.ArgumentParser(prog='postgresql',
+                                          description='Establishes connection to Postgres/Redshift servers.')
+postgres_parser.add_argument('record', nargs='?', type=str, action='store',
+                             help='record path or UID. Record types: "Database"')
+postgres_parser.add_argument('database', nargs='?', type=str, action='store',
+                             help='Postgres database name.')
+
+rdp_parser = argparse.ArgumentParser(prog='rdp',
+                                     description='Establishes RDP connection to remote Windows servers.')
+rdp_parser.add_argument('record', nargs='?', type=str, action='store',
+                        help='record path or UID. Record types: "Server"')
 
 
-SSH_AGENT_FAILURE = 5
-SSH_AGENT_SUCCESS = 6
-SSH2_AGENTC_ADD_IDENTITY = 17
-SSH2_AGENTC_REMOVE_IDENTITY = 18
-SSH2_AGENTC_ADD_ID_CONSTRAINED = 25
-SSH_AGENT_CONSTRAIN_LIFETIME = 1
+mysql = ''
+postgresql = ''
 
 
-connect_command_description = '''
-Connect Command Syntax Description:
+def detect_clients():
+    global mysql, postgresql
+    if shutil.which('mysql'):
+        mysql = 'mysql'
+    if shutil.which('pgcli'):
+        postgresql = 'pgcli'
+    elif shutil.which('psql'):
+        postgresql = 'psql'
 
-This command reads the custom fields for names starting with "connect:"
 
-  connect:<name>                                    command 
-  connect:<name>:description                        command description
-  connect:<name>:ssh-key:<key-comment>              ssh private key to add to ssh-agent
-  connect:<name>:env:<Environment Variable To Set>  sets environment variable
+detect_clients()
 
-Connection command may contain template parameters.
-Parameter syntax is ${<parameter_name>}
 
-Supported parameters:
+def connect_commands(commands):
+    commands['ssh'] = ConnectSshCommand()
+    if mysql:
+        commands['mysql'] = ConnectMysqlCommand()
+    if postgresql:
+        commands['postgresql'] = ConnectPostgresCommand()
+    if sys.platform == 'win32':
+        commands['rdp'] = ConnectRdpCommand()
 
-    ${user_email}                   Keeper user email address
-    ${login}                        Record login
-    ${password}                     Record password
-    ${host}                         The content of the Hostname field. "hostname[:port]"
-    ${file:<attachment_name>}       stores attachment into temporary file. parameter is replaced with temp file name
-    ${body:<attachment_name>}       content of the attachment file.
-    ${<custom_field_name>}          custom field value
 
-SSH Example:
-
-Title: SSH to my Server via Gateway
-Custom Field 1 Name: connect:my_server:description
-Custom Field 1 Value: Production Server Inside Gateway
-Custom Field 2 Name: connect:my_server
-Custom Field 2 Value: ssh -o "ProxyCommand ssh -i ${file:gateway.pem} ec2-user@gateway.mycompany.com -W %h:%p" -i ${file:server.pem} ec2-user@server.company.com
-File Attachments:
-gateway.pem
-server.pem
-
-To initiate connection: "connect my_server"
-
-Connect to Postgres Example:
-Title:    Postgres
-Login:    PGuser
-Password: **************
-Custom Field 1 Name:  connect:postgres
-Custom Field 1 Value: psql --host=11.22.33.44 --port=3306 --username=${login} --dbname=postgres --no-password
-Custom Field 2 Name:  connect:postgres:env:PGPASSWORD
-Custom Field 2 Value: ${password}
-
-To initiate connection: "connect postgres"
-'''
-
-endpoint_pattern = re.compile(r'^connect:([^:]+)$')
-endpoint_desc_pattern = re.compile(r'^connect:([^:]+):description$')
-endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
+def connect_command_info(aliases, command_info):
+    command_info[ssh_parser.prog] = ssh_parser.description
+    if mysql:
+        command_info['mysql'] = mysql_parser.description
+    if postgresql:
+        command_info['postgresql'] = postgres_parser.description
+        aliases['pg'] = 'postgresql'
+    if sys.platform == 'win32':
+        command_info['rdp'] = rdp_parser.description
 
 
 class ConnectSshAgent:
@@ -147,458 +131,369 @@ class ConnectSshAgent:
         raise Exception('SSH Agent Connect: Unsupported platform')
 
 
-class ConnectEndpoint:
-    def __init__(self, name, description, record_uid, record_title, paths):
-        # type: (str, str, str, str, list) -> None
-        self.name = name                    # type: str
-        self.description = description      # type: str
-        self.record_uid = record_uid        # type: str
-        self.record_title = record_title    # type: str
-        self.paths = paths                  # type: list
+SSH_AGENT_FAILURE = 5
+SSH_AGENT_SUCCESS = 6
+SSH2_AGENTC_ADD_IDENTITY = 17
+SSH2_AGENTC_REMOVE_IDENTITY = 18
+SSH2_AGENTC_ADD_ID_CONSTRAINED = 25
+SSH_AGENT_CONSTRAIN_LIFETIME = 1
 
 
-class ConnectRecord(object):
-    def __init__(self, record):   # type: (KeeperRecord) -> None
-        self.record = record
-
-    @property
-    def record_uid(self):
-        return self.record.record_uid
-
-    def get_value_by_name(self, name):  # type: (str) -> Optional[str]
-        if isinstance(self.record, PasswordRecord):
-            if name == 'login':
-                return self.record.login
-            if name == 'password':
-                return self.record.password
-            return next((x.value for x in self.record.custom
-                         if x.name.casefold() == name.casefold()), None)
-        if isinstance(self.record, TypedRecord):
-            field_type, sep, value_name = name.partition('.')
-            field = next((x for x in itertools.chain(self.record.fields, self.record.custom)
-                          if field_type == x.type), None)
-            if field:
-                value = field.get_default_value()
-                if isinstance(value, dict):
-                    if sep == '.':
-                        if value_name in value:
-                            return value[value_name]
-                    elif name == 'host':
-                        host_name = value.get('hostName', None)
-                        if host_name:
-                            port = value.get('port', None)
-                            if port:
-                                return f'{host_name}:{[port]}'
-                            return host_name
-                if isinstance(value, str):
-                    return value
-
-            return next((x.get_default_value() for x in self.record.custom
-                         if x.label and x.label.casefold() == name.casefold()), None)
-
-    def get_attachment_id(self, params, name):  # type: (KeeperParams, str) -> Optional[str]
-        attachment_id = None
-        if isinstance(self.record, PasswordRecord):
-            attachment_id = next((x.id for x in self.record.attachments if x.id == name), None)
-            if not attachment_id:
-                attachment_id = next((x.id for x in self.record.attachments
-                                      if x.title.casefold() == name.casefold()), None)
-            if not attachment_id:
-                attachment_id = next((x.id for x in self.record.attachments
-                                      if x.name.casefold() == name.casefold()), None)
-        if isinstance(self.record, TypedRecord):
-            file_ref = self.record.get_typed_field('fileRef')
-            if file_ref:
-                file_uids = file_ref.value
-                if isinstance(file_uids, list):
-                    attachment_id = next((x for x in file_uids if x == name), None)
-                    if not attachment_id:
-                        files = [KeeperRecord.load(params, x) for x in file_uids]
-                        files = [x for x in files if isinstance(x, FileRecord)]
-                        attachment_id = next((x.record_uid for x in files
-                                              if x.title.casefold() == name.casefold()), None)
-                        if not attachment_id:
-                            attachment_id = next((x.record_uid for x in files
-                                                  if x.name.casefold() == name.casefold()), None)
-        return attachment_id
-
-    def get_custom_value_by_name_prefix(self, name_prefix):   # type: (str) -> Iterable[Tuple[str, str]]
-        if isinstance(self.record, PasswordRecord):
-            for cf in (x for x in self.record.custom if x.name.startswith(name_prefix)):
-                value = cf.value
-                if value:
-                    yield cf.name[len(name_prefix)+1:], value
-
-        if isinstance(self.record, TypedRecord):
-            for cf in (x for x in self.record.custom
-                       if x.type in {None, '', 'text'} and x.label and x.label.startswith(name_prefix)):
-                value = cf.get_default_value()
-                if value:
-                    yield cf.label[len(name_prefix)+1:], value
+def delete_ssh_key(delete_request):
+    try:
+        ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
+        with ConnectSshAgent(ssh_socket_path) as fd:
+            recv_payload = fd.send(delete_request)
+            if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
+                logging.info('Failed to delete added ssh key')
+    except Exception as e:
+        logging.error(e)
 
 
-class ConnectCommand(Command):
-    LastRevision = 0        # type: int
-    Endpoints = []          # type: [ConnectEndpoint]
+def ssh_agent_encode_bytes(b):      # type: (bytes) -> bytes
+    return len(b).to_bytes(4, byteorder='big') + b
 
+
+def ssh_agent_encode_str(s):        # type: (str) -> bytes
+    return ssh_agent_encode_bytes(s.encode('utf-8'))
+
+
+def ssh_agent_encode_long(long_value):       # type: (int) -> bytes
+    length = (long_value.bit_length() + 7) // 8
+    b = long_value.to_bytes(length=length, byteorder='big')
+    if b[0] >= 0x80:
+        b = b'\x00' + b
+    return ssh_agent_encode_bytes(b)
+
+
+def add_ssh_key(private_key, passphrase, key_name):   # type: (str, str, str) -> Optional[Callable]
+    ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
+    header, _, _ = private_key.partition('\n')
+    if 'BEGIN OPENSSH PRIVATE KEY' in header:
+        private_key = serialization.load_ssh_private_key(
+            private_key.encode(), password=passphrase.encode() if passphrase else None)
+    else:
+        private_key = serialization.load_pem_private_key(
+            private_key.encode(), password=passphrase.encode() if passphrase else None)
+    if isinstance(private_key, rsa.RSAPrivateKey):
+        private_numbers = private_key.private_numbers()
+        public_numbers = private_key.public_key().public_numbers()
+
+        store_payload = SSH2_AGENTC_ADD_IDENTITY.to_bytes(1, byteorder='big')
+        store_payload += ssh_agent_encode_str('ssh-rsa')
+        store_payload += ssh_agent_encode_long(public_numbers.n)
+        store_payload += ssh_agent_encode_long(public_numbers.e)
+        store_payload += ssh_agent_encode_long(private_numbers.d)
+        store_payload += ssh_agent_encode_long(private_numbers.iqmp)
+        store_payload += ssh_agent_encode_long(private_numbers.p)
+        store_payload += ssh_agent_encode_long(private_numbers.q)
+        store_payload += ssh_agent_encode_str(key_name)
+        # windows ssh implementation does not support constrained identity
+        # store_payload += SSH_AGENT_CONSTRAIN_LIFETIME.to_bytes(1, byteorder='big')
+        # store_payload += int(10).to_bytes(4, byteorder='big')
+
+        remove_payload = ssh_agent_encode_str('ssh-rsa')
+        remove_payload += ssh_agent_encode_long(public_numbers.e)
+        remove_payload += ssh_agent_encode_long(public_numbers.n)
+        remove_payload = SSH2_AGENTC_REMOVE_IDENTITY.to_bytes(1, byteorder='big') + ssh_agent_encode_bytes(remove_payload)
+    elif isinstance(private_key, ec.EllipticCurvePrivateKey):
+        private_numbers = private_key.private_numbers()
+        curve_name = 'nistp256'
+        store_payload = SSH2_AGENTC_ADD_IDENTITY.to_bytes(1, byteorder='big')
+        store_payload += ssh_agent_encode_str(f'ecdsa-sha2-{curve_name}')
+        store_payload += ssh_agent_encode_str(curve_name)
+        public_key_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.X962, format=serialization.PublicFormat.UncompressedPoint)
+        store_payload += ssh_agent_encode_bytes(public_key_bytes)
+        store_payload += ssh_agent_encode_long(private_numbers.private_value)
+        store_payload += ssh_agent_encode_str(key_name)
+
+        remove_payload = ssh_agent_encode_str(f'ecdsa-sha2-{curve_name}')
+        remove_payload += ssh_agent_encode_str(curve_name)
+        remove_payload += ssh_agent_encode_bytes(public_key_bytes)
+        remove_payload = SSH2_AGENTC_REMOVE_IDENTITY.to_bytes(1, byteorder='big') + ssh_agent_encode_bytes(remove_payload)
+
+    elif isinstance(private_key, ed25519.Ed25519PrivateKey):
+        public_key_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+        private_key_bytes = private_key.private_bytes(
+            encoding=serialization.Encoding.Raw, format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption())
+
+        store_payload = SSH2_AGENTC_ADD_IDENTITY.to_bytes(1, byteorder='big')
+        store_payload += ssh_agent_encode_str('ssh-ed25519')
+        store_payload += ssh_agent_encode_bytes(public_key_bytes)
+        store_payload += ssh_agent_encode_bytes(private_key_bytes + public_key_bytes)
+        store_payload += ssh_agent_encode_str(key_name)
+
+        remove_payload = ssh_agent_encode_str('ssh-ed25519')
+        remove_payload += ssh_agent_encode_bytes(public_key_bytes)
+        remove_payload = SSH2_AGENTC_REMOVE_IDENTITY.to_bytes(1, byteorder='big') + ssh_agent_encode_bytes(remove_payload)
+    else:
+        if private_key:
+            key_type = type(private_key)
+            raise Exception(f'Add ssh-key. Key type \"{key_type.__name__}\" is not supported yet.')
+        else:
+            raise Exception('Cannot load SSH private key.')
+
+    if store_payload:
+        with ConnectSshAgent(ssh_socket_path) as fd:
+            recv_payload = fd.send(store_payload)
+            if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
+                raise Exception(f'Add ssh-key. Failed to add ssh key \"{key_name}\" to ssh-agent')
+        if remove_payload:
+            def remove_key():
+                delete_ssh_key(remove_payload)
+            return remove_key
+
+
+class BaseConnectCommand(Command):
+    def __init__(self):
+        super(BaseConnectCommand, self).__init__()
+        self.command = ''
+        self.run_at_the_end = []
+
+    def execute_shell(self):
+        logging.debug('Executing "%s" ...', self.command)
+        try:
+            os.system(self.command)
+        finally:
+            self.command = ''
+            for cb in self.run_at_the_end:
+                try:
+                    cb()
+                except Exception as e:
+                    logging.debug(e)
+            self.run_at_the_end.clear()
+
+    @staticmethod
+    def get_record(params, record, types):  # type: (KeeperParams, str, Iterator[str]) -> Optional[TypedRecord]
+        if not record:
+            ls = RecordListCommand()
+            ls.execute(params, record_type=types, verbose=True)
+            return
+
+        try:
+            record = find_record(params, record)
+        except Exception as e:
+            logging.warning(e)
+            return
+
+        if not isinstance(record, TypedRecord):
+            logging.warning('Only typed records are supported')
+            return
+
+        if record.record_type not in types:
+            logging.warning('Command supports %s records only', ' and '.join(types))
+            return
+        return record
+
+
+class ConnectSshCommand(BaseConnectCommand):
     def get_parser(self):
-        return connect_parser
+        return ssh_parser
 
     def execute(self, params, **kwargs):
-        if kwargs.get('syntax_help'):
-            logging.info(connect_command_description)
+        name = kwargs['record'] if 'record' in kwargs else None
+        record = self.get_record(params, name, ['sshKeys', 'serverCredentials'])
+        if not record:
             return
 
-        ConnectCommand.find_endpoints(params)
+        facade = SshKeysFacade() if record.record_type == 'sshKeys' else ServerCredentialsFacade()
+        facade.assign_record(record)
 
-        endpoint = kwargs.get('endpoint')
-        if endpoint:
-            endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
-            if not endpoints:
-                rpos = endpoint.rfind(':')
-                if rpos > 0:
-                    try_path = endpoint[:rpos]
-                    endpoint_name = endpoint[rpos+1:]
-                else:
-                    try_path = endpoint
-                    endpoint_name = ''
-                record_uid = ''
-                if try_path in params.record_cache:
-                    record_uid = try_path
-                else:
-                    rs = try_resolve_path(params, try_path)
-                    if rs is not None:
-                        folder, title = rs
-                        if folder is not None and title is not None:
-                            folder_uid = folder.uid or ''
-                            if folder_uid in params.subfolder_record_cache:
-                                for uid in params.subfolder_record_cache[folder_uid]:
-                                    r = api.get_record(params, uid)
-                                    if r.title.lower() == title.lower():
-                                        record_uid = uid
-                                        break
-                if record_uid:
-                    endpoints = [x for x in ConnectCommand.Endpoints
-                                 if x.record_uid == record_uid and endpoint_name in {'', x.name}]
+        self.command = ''
+        self.run_at_the_end.clear()
 
-            if len(endpoints) > 0:
-                if len(endpoints) == 1:
-                    keeper_record = KeeperRecord.load(params, endpoints[0].record_uid)
-                    if keeper_record:
-                        record = ConnectRecord(keeper_record)
-                        ConnectCommand.connect_endpoint(params, endpoints[0].name, record)
-                else:
-                    logging.warning(f"Connect endpoint '{endpoint}' is not unique")
-                    ConnectCommand.dump_endpoints(endpoints)
-                    logging.info("Use full endpoint path: /<Folder>/<Title>[:<Endpoint>]")
-                    folder = endpoints[0].paths[0] if len(endpoints[0].paths) > 0 else '/'
-                    logging.info(f'Example: connect "{folder}/{endpoints[0].record_title}:{endpoints[0].name}"')
+        dst = kwargs.get('destination', '')
+        if dst:
+            l, at, d = dst.partition('@')
+            if at == '@':
+                login = l
+                host_name, _, port = d.partition(':')
             else:
-                logging.info(f"Connect endpoint '{endpoint}' not found")
+                logging.warning('Destination parameter should be LOGIN@HOST[:PORT]')
+                return
         else:
-            if ConnectCommand.Endpoints:
-                sorted_by = kwargs['sort_by'] or 'endpoint'
-                filter_by = kwargs['filter_by'] or ''
-                logging.info("Available connect endpoints")
-                if filter_by:
-                    logging.info('Filtered by \"%s\"', filter_by)
-                    filter_by = filter_by.lower()
-                ConnectCommand.dump_endpoints(ConnectCommand.Endpoints, filter_by, sorted_by)
-            else:
-                logging.info("No connect endpoints found")
+            login = facade.login
+            if not login:
+                logging.warning('Record "%s" does not have user name.', record.title)
+                return
+            host_name = facade.host_name
+            if not host_name:
+                logging.warning('Record "%s" does not have host name.', record.title)
+                return
+            port = facade.port
+
+        self.command = f'ssh {login}@{host_name}'
+        if port:
+            self.command += f' -p {port}'
+
+        if isinstance(facade, SshKeysFacade):
+            private_key = facade.private_key
+            if not facade.private_key:
+                logging.warning('Record "%s" does not have private key.', record.title)
+                return
+            passphrase = facade.passphrase
+            if not passphrase:
+                passphrase = None
+            to_remove = add_ssh_key(private_key=private_key, passphrase=passphrase, key_name=record.title)
+            if to_remove:
+                self.run_at_the_end.append(to_remove)
+        elif isinstance(facade, ServerCredentialsFacade):
+            password = facade.password
+            if password:
+                if shutil.which('sshpass'):
+                    self.command = 'sshpass -e ' + self.command
+                    os.putenv('SSHPASS', password)
+
+                    def clear_env():
+                        os.putenv('SSHPASS', '')
+                    self.run_at_the_end.append(clear_env)
+                else:
+                    self.command += ' -o PubkeyAuthentication=no'
+                    try:
+                        import pyperclip
+                        pyperclip.copy(password)
+                        logging.info('\nPassword is copied to clipboard\n')
+
+                        def clear_clipboard():
+                            txt = pyperclip.paste()
+                            if txt == password:
+                                pyperclip.copy('')
+                        self.run_at_the_end.append(clear_clipboard)
+                    except Exception as e:
+                        logging.debug(e)
+                        logging.info('Failed to copy password to clipboard')
+
+        logging.info('Connecting to "%s" ...', record.title)
+        self.execute_shell()
+
+
+class ConnectMysqlCommand(BaseConnectCommand):
+    def get_parser(self):
+        return mysql_parser
+
+    def execute(self, params, **kwargs):
+        name = kwargs['record'] if 'record' in kwargs else None
+        record = self.get_record(params, name, ['databaseCredentials', 'serverCredentials'])
+        if not record:
             return
 
-    @staticmethod
-    def dump_endpoints(endpoints, filter_by='', sorted_by=''):
-        logging.info('')
-        headers = ["#", 'Endpoint', 'Description', 'Record Title', 'Folder(s)']
-        table = []
-        for endpoint in endpoints:
-            title = endpoint.record_title
-            folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
-            if filter_by:
-                if not any([x for x in [endpoint.name.lower(), title.lower(), folder.lower()] if x.find(filter_by) >= 0]):
-                    continue
-            if len(title) > 23:
-                title = title[:20] + '...'
-            table.append([0, endpoint.name, endpoint.description or '', title, folder])
-        table.sort(key=lambda x: x[4] if sorted_by == 'folder' else x[3] if sorted_by == 'title' else x[1])
-        for i in range(len(table)):
-            table[i][0] = i + 1
-        print(tabulate(table, headers=headers))
-        print('')
+        facade = DatabaseCredentialsFacade()
+        facade.assign_record(record)
 
-    @staticmethod
-    def delete_ssh_keys(delete_requests):
-        try:
-            ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
-            with ConnectSshAgent(ssh_socket_path) as fd:
-                for rq in delete_requests:
-                    recv_payload = fd.send(rq)
-                    if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
-                        logging.info('Failed to delete added ssh key')
-        except Exception as e:
-            logging.error(e)
+        login = facade.login
+        if not login:
+            logging.warning('Record "%s" does not have user name.', record.title)
+            return
+        host_name = facade.host_name
+        if not host_name:
+            logging.warning('Record "%s" does not have host name.', record.title)
+            return
+        port = facade.port
 
-    @staticmethod
-    def add_environment_variables(params, endpoint, record, temp_files):
-        # type: (KeeperParams, str, ConnectRecord, [str]) -> [str]
-        rs = []         # type: [str]
-        key_prefix = f'connect:{endpoint}:env'
-        for key_name, value in record.get_custom_value_by_name_prefix(key_prefix):
-            if not key_name:
-                continue
-            while True:
-                m = endpoint_parameter_pattern.search(value)
-                if not m:
-                    break
-                p = m.group(1)
-                val = ConnectCommand.get_parameter_value(params, record, p, temp_files)
-                if not val:
-                    raise Exception(f'Add environment variable. Failed to resolve key parameter: {p}')
-                value = value[:m.start()] + val + value[m.end():]
-            if value:
-                rs.append(key_name)
-                os.putenv(key_name, value)
-        return rs
+        self.command = f'mysql -h {host_name} -u {login}'
+        if port:
+            self.command += f' -P {port}'
+        self.run_at_the_end.clear()
 
-    @staticmethod
-    def get_private_key(record):   # type: (KeeperRecord) -> Optional[Tuple[str, str]]
-        if isinstance(record, TypedRecord):
-            field = record.get_typed_field('keyPair')
-            if field:
-                key_pair = field.get_default_value()
-                if isinstance(key_pair, dict) and 'privateKey' in key_pair:
-                    private_key = key_pair['privateKey']
-                    if private_key:
-                        passphrase = record.get_typed_field('password', 'passphrase')
-                        if not passphrase:
-                            passphrase = record.get_typed_field('password')
-                        return private_key, passphrase.get_default_value() if passphrase else None
+        password = facade.password
+        if password:
+            os.putenv('MYSQL_PWD', password)
 
-    @staticmethod
-    def add_ssh_keys(params, endpoint, record, temp_files):
-        # type: (KeeperParams, str, ConnectRecord, [str]) -> [bytes]
-        rs = []
-        ssh_socket_path = os.environ.get('SSH_AUTH_SOCK')
-        key_prefix = f'connect:{endpoint}:ssh-key'
-        for key_name, value in record.get_custom_value_by_name_prefix(key_prefix):
-            key_data = None
-            passphrase = None
-            if value in params.record_cache:
-                ssh_key_record = KeeperRecord.load(params, value)
-                if ssh_key_record:
-                    if not key_name:
-                        key_name = ssh_key_record.title
-                    key_data, passphrase = ConnectCommand.get_private_key(ssh_key_record)
-            else:
-                parsed_values = []
-                while True:
-                    m = endpoint_parameter_pattern.search(value)
-                    if not m:
-                        break
-                    p = m.group(1)
-                    val = ConnectCommand.get_parameter_value(params, record, p, temp_files)
-                    if not val:
-                        raise Exception(f'Add ssh-key. Failed to resolve key parameter: {p}')
-                    parsed_values.append(val.strip())
-                    value = value[m.end():]
-                if len(parsed_values) > 0:
-                    value = value.strip()
-                    if value:
-                        parsed_values.append(value)
-                if len(parsed_values) > 0:
-                    key_data = parsed_values[0]
-                if len(parsed_values) > 1 and parsed_values[1]:
-                    passphrase = parsed_values[1]
-            if not key_data:
-                continue
-            if not key_name:
-                key_name = 'Commander'
+            def clear_env():
+                os.putenv('MYSQL_PWD', '')
+            self.run_at_the_end.append(clear_env)
 
-            """
-            private_key = RSA.importKey(key_data, passphrase)
-            """
-            private_key = load_pem_private_key(key_data.encode(), password=passphrase.encode() if passphrase else None)
-            if isinstance(private_key, rsa.RSAPrivateKey):
-                private_numbers = private_key.private_numbers()
-                public_numbers = private_key.public_key().public_numbers()
+        logging.info('Connecting to "%s" ...', record.title)
+        self.execute_shell()
 
-                store_payload = SSH2_AGENTC_ADD_IDENTITY.to_bytes(1, byteorder='big')
-                store_payload += ConnectCommand.ssh_agent_encode_str('ssh-rsa')
-                store_payload += ConnectCommand.ssh_agent_encode_long(public_numbers.n)
-                store_payload += ConnectCommand.ssh_agent_encode_long(public_numbers.e)
-                store_payload += ConnectCommand.ssh_agent_encode_long(private_numbers.d)
-                store_payload += ConnectCommand.ssh_agent_encode_long(private_numbers.iqmp)
-                store_payload += ConnectCommand.ssh_agent_encode_long(private_numbers.p)
-                store_payload += ConnectCommand.ssh_agent_encode_long(private_numbers.q)
-                store_payload += ConnectCommand.ssh_agent_encode_str(key_name)
-                # windows ssh implementation does not support constrained identity
-                # store_payload += SSH_AGENT_CONSTRAIN_LIFETIME.to_bytes(1, byteorder='big')
-                # store_payload += int(10).to_bytes(4, byteorder='big')
 
-                remove_payload = ConnectCommand.ssh_agent_encode_str('ssh-rsa')
-                remove_payload += ConnectCommand.ssh_agent_encode_long(public_numbers.e)
-                remove_payload += ConnectCommand.ssh_agent_encode_long(public_numbers.n)
-                remove_payload = SSH2_AGENTC_REMOVE_IDENTITY.to_bytes(1, byteorder='big') + ConnectCommand.ssh_agent_encode_bytes(remove_payload)
-            else:
-                raise Exception(f'Add ssh-key. Key \"{key_name}\" is not supported yet.')
+class ConnectPostgresCommand(BaseConnectCommand):
+    def get_parser(self):
+        return postgres_parser
 
-            if store_payload:
-                with ConnectSshAgent(ssh_socket_path) as fd:
-                    recv_payload = fd.send(store_payload)
-                    if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
-                        raise Exception(f'Add ssh-key. Failed to add ssh key \"{key_name}\" to ssh-agent')
-                if remove_payload:
-                    rs.append(remove_payload)
-        return rs
+    def execute(self, params, **kwargs):
+        name = kwargs['record'] if 'record' in kwargs else None
+        record = self.get_record(params, name, ['databaseCredentials', 'serverCredentials'])
+        if not record:
+            return
 
-    @staticmethod
-    def ssh_agent_encode_bytes(b):      # type: (bytes) -> bytes
-        return len(b).to_bytes(4, byteorder='big') + b
+        facade = DatabaseCredentialsFacade()
+        facade.assign_record(record)
 
-    @staticmethod
-    def ssh_agent_encode_long(long_value):       # type: (int) -> bytes
-        length = (long_value.bit_length() + 7) // 8
-        b = long_value.to_bytes(length=length, byteorder='big')
-        if b[0] >= 0x80:
-            b = b'\x00' + b
-        return ConnectCommand.ssh_agent_encode_bytes(b)
+        login = facade.login
+        if not login:
+            logging.warning('Record "%s" does not have user name.', record.title)
+            return
+        host_name = facade.host_name
+        if not host_name:
+            logging.warning('Record "%s" does not have host name.', record.title)
+            return
+        port = facade.port
 
-    @staticmethod
-    def ssh_agent_encode_str(s):        # type: (str) -> bytes
-        return ConnectCommand.ssh_agent_encode_bytes(s.encode('utf-8'))
+        database = kwargs.get('database')
+        if not database:
+            db_field = record.get_typed_field('text', 'database')
+            if db_field:
+                database = db_field.get_default_value()
+        if not database:
+            database = 'template1'
+            logging.info(f'\nConnecting to the default database: {database}\n')
 
-    @staticmethod
-    def find_endpoints(params):
-        # type: (KeeperParams) -> None
-        if ConnectCommand.LastRevision < params.revision:
-            ConnectCommand.LastRevision = params.revision
-            ConnectCommand.Endpoints.clear()
-            for record_uid in params.record_cache:
-                record = KeeperRecord.load(params, record_uid)  # type: Optional[KeeperRecord]
-                endpoints = []
-                endpoints_desc = {}
-                if isinstance(record, PasswordRecord):
-                    for field in record.custom:
-                        m = endpoint_pattern.match(field.name)
-                        if m:
-                            endpoints.append(m[1])
-                        else:
-                            m = endpoint_desc_pattern.match(field.name)
-                            if m:
-                                endpoints_desc[m[1]] = field.value or ''
-                elif isinstance(record, TypedRecord):
-                    for field in record.custom:
-                        if field.label and field.type in {None, '', 'text'}:
-                            m = endpoint_pattern.match(field.label)
-                            if m:
-                                endpoints.append(m[1])
-                            else:
-                                m = endpoint_desc_pattern.match(field.label)
-                                if m:
-                                    endpoints_desc[m[1]] = field.get_default_value() or ''
-                if endpoints:
-                    paths = []
-                    for folder_uid in find_folders(params, record_uid):
-                        path = '/' + get_folder_path(params, folder_uid, '/')
-                        paths.append(path)
-                    for endpoint in endpoints:
-                        epoint = ConnectEndpoint(endpoint, endpoints_desc.get(endpoint) or '',
-                                                 record_uid, record.title, paths)
-                        ConnectCommand.Endpoints.append(epoint)
-            ConnectCommand.Endpoints.sort(key=lambda x: x.name)
+        self.command = f'{postgresql} -h {host_name}'
+        if port:
+            self.command += f' -p {port}'
+        self.command += f' -U {login} -w {database}'
+        self.run_at_the_end.clear()
 
-    attachment_cache = {}
+        password = facade.password
+        if password:
+            os.putenv('PGPASSWORD', password)
 
-    @staticmethod
-    def get_command_string(params, record, template, temp_files, **kwargs):
-        # type: (KeeperParams, ConnectRecord, str, list, ...) -> str or None
-        command = template
-        while True:
-            m = endpoint_parameter_pattern.search(command)
-            if not m:
-                break
-            p = m.group(1)
-            pv = ConnectCommand.get_parameter_value(params, record, p, temp_files, **kwargs)
-            command = command[:m.start()] + (pv or '') + command[m.end():]
-        logging.debug(command)
-        return command
+            def clear_env():
+                os.putenv('PGPASSWORD', '')
+            self.run_at_the_end.append(clear_env)
 
-    @staticmethod
-    def get_parameter_value(params, record, parameter, temp_files, **kwargs):
-        # type: (KeeperParams, ConnectRecord, str, list, ...) -> str or None
-        if parameter.startswith('file:') or parameter.startswith('body:'):
-            file_name = parameter[5:]
-            if file_name not in ConnectCommand.attachment_cache:
-                attachment_id = record.get_attachment_id(params, file_name)
-                if not attachment_id:
-                    logging.error('Attachment file \"%s\" not found', file_name)
-                    return None
-                download = next(prepare_attachment_download(params, record.record_uid, attachment_id), None)
-                if not download:
-                    logging.error('Attachment file \"%s\" can not be downloaded', file_name)
-                    return None
-                with io.BytesIO() as stream:
-                    download.download_to_stream(params, stream)
-                    stream.flush()
-                    body = stream.getvalue()
-                if body:
-                    ConnectCommand.attachment_cache[file_name] = body
-            if file_name not in ConnectCommand.attachment_cache:
-                logging.error('Attachment file \"%s\" not found', file_name)
-                return None
-            body = ConnectCommand.attachment_cache[file_name]      # type: bytes
-            prefix = (kwargs.get('endpoint') or file_name) + '.'
-            if parameter.startswith('file:'):
-                tf = tempfile.NamedTemporaryFile(delete=False, prefix=prefix)
-                tf.write(body)
-                tf.flush()
-                temp_files.append(tf.name)
-                tf.close()
-                return tf.name
-            else:
-                return body.decode('utf-8')
-        elif parameter == 'user_email':
-            return params.user
-        else:
-            value = record.get_value_by_name(parameter)
-            if value:
-                return value
-        logging.error('Parameter \"%s\" cannot be resolved', parameter)
+        logging.info('Connecting to "%s" ...', record.title)
+        self.execute_shell()
 
-    @staticmethod
-    def connect_endpoint(params, endpoint, record):
-        # type: (KeeperParams, str, ConnectRecord) -> None
-        temp_files = []
 
-        try:
-            command = record.get_value_by_name(f'connect:{endpoint}:pre')
-            if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
-                if command:
-                    os.system(command)
+class ConnectRdpCommand(BaseConnectCommand):
+    def get_parser(self):
+        return rdp_parser
 
-            command = record.get_value_by_name(f'connect:{endpoint}')
-            if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
-                if command:
-                    added_keys = ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files)
-                    added_envs = ConnectCommand.add_environment_variables(params, endpoint, record, temp_files)
-                    logging.info('Connecting to %s...', endpoint)
-                    os.system(command)
-                    if added_keys:
-                        ConnectCommand.delete_ssh_keys(added_keys)
-                    if added_envs:
-                        for name in added_envs:
-                            os.putenv(name, '')
+    def execute(self, params, **kwargs):
+        name = kwargs['record'] if 'record' in kwargs else None
+        record = self.get_record(params, name, ['serverCredentials'])
+        if not record:
+            return
 
-            command = record.get_value_by_name(f'connect:{endpoint}:post')
-            if command:
-                command = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
-                if command:
-                    os.system(command)
+        facade = ServerCredentialsFacade()
+        facade.assign_record(record)
 
-        finally:
-            for file in temp_files:
-                os.remove(file)
+        login = facade.login
+        if not login:
+            logging.warning('Record "%s" does not have user name.', record.title)
+            return
+        host_name = facade.host_name
+        if not host_name:
+            logging.warning('Record "%s" does not have host name.', record.title)
+            return
+        port = facade.port
+        password = facade.password
+
+        if password:
+            os.system(f'cmdkey /generic:{host_name} /user:{login} /pass:{password} > NUL')
+
+            def clear_password():
+                os.system(f'cmdkey /delete:{host_name} > NUL')
+            self.run_at_the_end.append(clear_password)
+
+        self.command = f'mstsc /v:{host_name}'
+        if port:
+            self.command += ':' + port
+
+        logging.info('Connecting to "%s" ...', record.title)
+        self.execute_shell()

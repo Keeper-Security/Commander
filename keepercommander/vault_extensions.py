@@ -8,21 +8,23 @@
 # Contact: ops@keepersecurity.com
 #
 
+import abc
 import re
-from typing import Optional, Union, List, Iterator
+from typing import Optional, Union, Iterator
 
 from . import utils, vault
 from .params import KeeperParams
+from .vault import TypedRecord, TypedField
 
 
 def find_records(params, search_str=None, record_type=None):
-    # type: (KeeperParams, Optional[str], Optional[Union[str, List[str]]]) -> Iterator[vault.KeeperRecord]
+    # type: (KeeperParams, Optional[str], Optional[Union[str, Iterator[str]]]) -> Iterator[vault.KeeperRecord]
     pattern = re.compile(search_str, re.IGNORECASE) if search_str else None
 
     type_filter = None
     if record_type:
         type_filter = set()
-        if isinstance(record_type, list):
+        if hasattr(record_type, '__iter__'):
             type_filter.update(record_type)
         elif isinstance(record_type, str):
             type_filter.add(record_type)
@@ -126,3 +128,126 @@ def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[s
     if isinstance(record, vault.FileRecord):
         comps.extend((record.name, utils.size_to_str(record.size)))
         return ', '.join((str(x) for x in comps if x))
+
+
+class TypedRecordFacade(abc.ABC):
+    def __init__(self):
+        self.record = None  # type: Optional[TypedRecord]
+
+    @abc.abstractmethod
+    def _get_facade_type(self):
+        pass
+
+    def assign_record(self, record):  # type: (TypedRecord) -> None
+        if self._get_facade_type() != record.record_type:
+            raise Exception(f'Incorrect record type: expected {self._get_facade_type()}, got {record.record_type}')
+        self.record = record
+
+
+class ServerFacade(TypedRecordFacade, abc.ABC):
+    def __init__(self):
+        TypedRecordFacade.__init__(self)
+        self.host_field = None   # type: Optional[TypedField]
+        self.login_field = None
+
+    def assign_record(self, record):
+        super(ServerFacade, self).assign_record(record)
+        self.host_field = self.record.get_typed_field('host')
+        self.login_field = self.record.get_typed_field('login')
+
+    @property
+    def host_name(self):
+        if self.host_field:
+            host_value = self.host_field.get_default_value(value_type=dict)
+            if host_value:
+                host = host_value.get('hostName')
+                if isinstance(host, str):
+                    return host
+
+    @property
+    def port(self):
+        if self.host_field:
+            host_value = self.host_field.get_default_value(value_type=dict)
+            if host_value:
+                port = host_value.get('port')
+                if isinstance(port, str):
+                    return port
+
+    @property
+    def login(self):
+        if self.login_field:
+            return self.login_field.get_default_value(value_type=str)
+
+
+class SshKeysFacade(ServerFacade):
+    def __init__(self):
+        ServerFacade.__init__(self)
+        self.passphrase_field = None  # type: Optional[TypedField]
+        self.key_pair_field = None    # type: Optional[TypedField]
+
+    def _get_facade_type(self):
+        return 'sshKeys'
+
+    def assign_record(self, record):
+        super(SshKeysFacade, self).assign_record(record)
+        self.passphrase_field = self.record.get_typed_field('password', 'passphrase')
+        self.key_pair_field = self.record.get_typed_field('keyPair')
+
+    @property
+    def private_key(self):
+        if self.key_pair_field:
+            field_value = self.key_pair_field.get_default_value(value_type=dict)
+            if field_value:
+                key = field_value.get('privateKey')
+                if isinstance(key, str):
+                    return key
+
+    @property
+    def public_key(self):
+        if self.key_pair_field:
+            field_value = self.key_pair_field.get_default_value(value_type=dict)
+            if field_value:
+                key = field_value.get('publicKey')
+                if isinstance(key, str):
+                    return key
+
+    @property
+    def passphrase(self):
+        if self.passphrase_field:
+            return self.passphrase_field.get_default_value(value_type=str)
+
+
+class ServerCredentialsFacade(ServerFacade):
+    def __init__(self):
+        ServerFacade.__init__(self)
+        self.password_field = None  # type: Optional[TypedField]
+
+    def _get_facade_type(self):
+        return 'serverCredentials'
+
+    def assign_record(self, record):
+        super(ServerCredentialsFacade, self).assign_record(record)
+        self.password_field = self.record.get_typed_field('password')
+
+    @property
+    def password(self):
+        if self.password_field:
+            return self.password_field.get_default_value(value_type=str)
+
+
+class DatabaseCredentialsFacade(ServerCredentialsFacade):
+    def __init__(self):
+        ServerCredentialsFacade.__init__(self)
+        self.database_type_field = None   # type: Optional[TypedField]
+
+    def _get_facade_type(self):
+        return 'databaseCredentials'
+
+    def assign_record(self, record):
+        super(DatabaseCredentialsFacade, self).assign_record(record)
+        self.database_type_field = self.record.get_typed_field('text', 'type')
+
+    @property
+    def database_type(self):
+        if self.database_type_field:
+            return self.database_type_field.get_default_value(value_type=str)
