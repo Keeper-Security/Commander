@@ -17,7 +17,6 @@ from prompt_toolkit.completion import Completion, Completer
 
 from .params import KeeperParams
 from .commands.folder import mv_parser
-from .commands.utils import ConnectCommand
 from .commands import commands, enterprise_commands
 from . import api
 from .subfolder import try_resolve_path as sf_try_resolve_path
@@ -249,20 +248,6 @@ class CommandCompleter(Completer):
                         for c in itertools.chain(commands.keys(), enterprise_commands.keys()):
                             if c.startswith(cmd):
                                 yield Completion(c, display=c, start_position=-len(cmd))
-                    elif context == 'connect':
-                        ConnectCommand.find_endpoints(self.params)
-                        cmd = extra['prefix']
-                        comp = cmd.casefold()
-                        names = []
-                        unique_names = set()
-                        for x in ConnectCommand.Endpoints:
-                            name = (x.name or '').casefold()
-                            if name not in unique_names:
-                                unique_names.add(name)
-                                if name.startswith(comp):
-                                    names.append(x.name)
-                        for name in names:
-                            yield Completion(text=name, display=name, start_position=-len(cmd))
 
         except Exception as e:
             pass

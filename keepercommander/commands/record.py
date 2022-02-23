@@ -12,9 +12,12 @@
 import argparse
 import logging
 
-from ..team import Team
 from .base import dump_report_data, Command
-from .. import vault, api, display, vault_extensions
+from .. import api, display, vault, vault_extensions
+from ..team import Team
+
+from ..params import KeeperParams
+from ..subfolder import try_resolve_path
 
 
 def register_commands(commands):
@@ -66,6 +69,28 @@ list_team_parser.add_argument('--format', dest='format', action='store', choices
                               default='table', help='output format')
 list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
+
+
+def find_record(params, record_name):  # type: (KeeperParams, str) -> vault.KeeperRecord
+    record_uid = None
+    if record_name in params.record_cache:
+        record_uid = record_name
+    else:
+        rs = try_resolve_path(params, record_name)
+        if rs is not None:
+            folder, record_name = rs
+            if folder is not None and record_name is not None:
+                folder_uid = folder.uid or ''
+                if folder_uid in params.subfolder_record_cache:
+                    for uid in params.subfolder_record_cache[folder_uid]:
+                        r = api.get_record(params, uid)
+                        if r.title.lower() == record_name.lower():
+                            record_uid = uid
+                            break
+    if not record_uid:
+        raise Exception(f'Record "{record_name}" not found.')
+
+    return vault.KeeperRecord.load(params, record_uid)
 
 
 class SearchCommand(Command):

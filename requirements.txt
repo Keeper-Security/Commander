@@ -1,6 +1,7 @@
 wheel
 colorama
 cryptography>=3.4.8
+bcrypt
 pycryptodomex
 requests
 tabulate
