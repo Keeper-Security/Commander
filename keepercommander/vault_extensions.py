@@ -52,78 +52,77 @@ def find_records(params, search_str=None, record_type=None):
 
 
 def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[str]
+    comps = []
+
     if isinstance(record, vault.PasswordRecord):
-        comps = [(record.login or '').strip(), (record.link or '').strip()]
-        return ' @ '.join((x for x in comps if x))
+        comps.extend((record.login or '', record.link or ''))
+        return ' @ '.join((str(x) for x in comps if x))
 
     if isinstance(record, vault.TypedRecord):
         field = next((x for x in record.fields if x.type == 'login'), None)
         if field:
-            comp = [(field.get_default_value() or '').strip()]
+            comps.append(field.get_default_value() or '')
             field = next((x for x in record.fields if x.type == 'url'), None)
-            address = ''
             if field:
-                address = field.get_default_value()
+                comps.append(field.get_default_value())
             else:
                 field = next((x for x in record.fields if x.type == 'host'), None)
                 if field:
                     host = field.get_default_value()
                     if isinstance(host, dict):
-                        address = host.get('hostName', '')
+                        address = host.get('hostName')
                         if address:
                             port = host.get('port')
                             if port:
                                 address = f'{address}:{port}'
-            comp.append((address or '').strip())
-            return ' @ '.join((x for x in comp if x))
+                            comps.append(address)
+            return ' @ '.join((str(x) for x in comps if x))
 
         field = next((x for x in record.fields if x.type == 'name'), None)
         if field:
-            name = ''
             value = field.get_default_value()
             if isinstance(value, dict):
-                comps = [value.get('first', ''), value.get('middle', ''), value.get('last', '')]
-                name = ' '.join((x for x in comps if x))
-            return name
+                comps.extend((value.get('first', ''), value.get('middle', ''), value.get('last', '')))
+            return ' '.join((str(x) for x in comps if x))
 
         field = next((x for x in record.fields if x.type == 'address'), None)
         if field:
-            address = ''
             value = field.get_default_value()
             if isinstance(value, dict):
-                comp = [f'{value.get("street1", "")} {value.get("street2", "")}'.strip(),
-                        value.get("city", ""),
-                        f'{value.get("state", "")} {value.get("zip", "")}'.strip(),
-                        value.get("country", "")]
-                address = ', '.join((x for x in comp if x))
-            return address
+                comps.extend((
+                    f'{value.get("street1", "")} {value.get("street2", "")}'.strip(),
+                    f'{value.get("city", "")}',
+                    f'{value.get("state", "")} {value.get("zip", "")}'.strip(),
+                    f'{value.get("country", "")}'))
+            return ', '.join((str(x) for x in comps if x))
 
         field = next((x for x in record.fields if x.type == 'paymentCard'), None)
         if field:
-            number = ''
             value = field.get_default_value()
             if isinstance(value, dict):
                 number = value.get('cardNumber', '')
-                if len(number) > 4:
-                    number = 'x' + number[-4:]
+                if isinstance(number, str):
+                    if len(number) > 4:
+                        number = 'x' + number[-4:]
+                        comps.append(number)
+
             field = next((x for x in record.fields if x.type == 'text' and x.label == 'cardholderName'), None)
             if field:
                 name = field.get_default_value()
-                if name:
-                    number = f'{number} / {name}'.strip()
-            return number
+                if name and isinstance(name, str):
+                    comps.append(name.upper())
+            return ' / '.join((str(x) for x in comps if x))
 
         field = next((x for x in record.fields if x.type == 'keyPair'), None)
         if field:
-            info = ''
             value = field.get_default_value()
             if isinstance(value, dict):
-                info = '<Private Key>' if value.get('privateKey') else ''
-                public = value.get('publicKey')
-                if public:
-                    info = info + ' / <Public Key>'
-            return info
+                if value.get('privateKey'):
+                    comps.append('<Private Key>')
+                if value.get('publicKey'):
+                    comps.append('<Public Key>')
+            return ' / '.join((str(x) for x in comps if x))
 
     if isinstance(record, vault.FileRecord):
-        comp = [record.name, utils.size_to_str(record.size)]
-        return ', '.join((x for x in comp if x))
+        comps.extend((record.name, utils.size_to_str(record.size)))
+        return ', '.join((str(x) for x in comps if x))

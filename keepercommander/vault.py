@@ -189,9 +189,13 @@ class TypedField(object):
         self.value = typed_field.get('value', [])
 
     def get_default_value(self):
+        value = None
         if isinstance(self.value, list):
-            return next((x for x in self.value if x), None)
-        return self.value
+            if len(self.value) > 0:
+                value = self.value[0]
+        else:
+            value = self.value
+        return value
 
     def get_field_name(self):
         return f'({self.type}.{self.label})' if self.type and self.label else \
