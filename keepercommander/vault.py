@@ -10,7 +10,7 @@
 
 import abc
 import json
-from typing import Optional, List, Tuple, Iterable
+from typing import Optional, List, Tuple, Iterable, Type
 
 import itertools
 
@@ -188,13 +188,16 @@ class TypedField(object):
         self.label = typed_field.get('label', '')
         self.value = typed_field.get('value', [])
 
-    def get_default_value(self):
+    def get_default_value(self, value_type=None):  # type: (Optional[Type]) -> any
         value = None
         if isinstance(self.value, list):
             if len(self.value) > 0:
                 value = self.value[0]
         else:
             value = self.value
+        if isinstance(value_type, type):
+            if not isinstance(value, value_type):
+                return
         return value
 
     def get_field_name(self):

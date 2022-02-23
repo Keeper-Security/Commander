@@ -57,6 +57,10 @@ def register_commands(commands, aliases, command_info):
     register_commands(commands)
     register_command_info(aliases, command_info)
 
+    from . import connect
+    connect.connect_commands(commands)
+    connect.connect_command_info(aliases, command_info)
+
     from . import breachwatch
     breachwatch.register_commands(commands)
     breachwatch.register_command_info(aliases, command_info)
