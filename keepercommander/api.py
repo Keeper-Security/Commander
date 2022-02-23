@@ -1484,9 +1484,10 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
 
             if params.enterprise_ec_key:
                 fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
-                url = next((u.get('value')[0] for u in fields if u.get('type') == 'url' and u.get('value')), '')
-                if url:
-                    url = utils.url_strip(url)
+                url_field = next((u.get('value') for u in fields if u.get('type') == 'url' and u.get('value')), None)
+                url = ''
+                if url_field and isinstance(url_field, list):
+                    url = utils.url_strip(url_field[0])
 
                 adata = {
                     'title': d.get('title', ''),
@@ -1887,9 +1888,11 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
     audit = None
     if params.enterprise_ec_key:
         fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
-        url = next((u.get('value')[0] for u in fields if u.get('type') == 'url' and u.get('value')), '')
-        if url:
-            url = utils.url_strip(url)
+        url_field = next((u.get('value') for u in fields if u.get('type') == 'url' and u.get('value')), None)
+        url = ''
+        if url_field and isinstance(url_field, list):
+            if len(url_field) > 0:
+                url = utils.url_strip(str(url_field[0]))
 
         adata = {
             'title': d.get('title', ''),

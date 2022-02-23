@@ -1268,6 +1268,7 @@ class RecordV3:
                                 fv = {'type': fname, 'value': []}
                                 r[forc].append(fv)
                             if 'value' not in fv: fv['value'] = []
+                            elif not isinstance(fv['value'], list): fv['value'] = []
                             if fvname:
                                 # NB! required:true/false comes from RT definition and should not be re/set here
                                 if fvname.lower() == 'required':
@@ -1610,13 +1611,10 @@ class RecordV3:
             flab = c.get('label') or ''
             flds = c.get('value') or []
             fval = flds
-            if len(flds) == 1 and flds[0]:
+            if isinstance(flds, list) and len(flds) == 1 and flds[0]:
                 if isinstance(flds[0], dict):
-                    if ftyp.lower() == 'name':
-                        fval = ' '.join(flds[0].values())
-                    else:
-                        fval = ' | '.join(flds[0].values())
-                elif RecordV3.get_field_type(ftyp).get('type') == 'date' and flds[0] and bool(
+                    fval = (' ' if ftyp.lower() == 'name' else ' | ').join((str(x) for x in flds[0].values()))
+                elif RecordV3.get_field_type(ftyp).get('type') == 'date' and bool(
                         re.match('^[+-]?[0-9]+$', str(flds[0]).strip())):
                     dt = datetime.datetime.fromtimestamp(flds[0] / 1000.0)
                     fval = str(dt)
@@ -1629,11 +1627,13 @@ class RecordV3:
                     fkey = '{} ({})'.format(flab, ftyp)
                     print('{0:>20s}: {1:<s}'.format(str(fkey), str(fval)))
 
-        totp = next((t.get('value') for t in fields if t['type'] == 'oneTimeCode'), None)
-        totp = totp[0] if totp else totp
+        totp = next((t.get('value') for t in fields if t.get('type', '') == 'oneTimeCode'), None)
+        totp = totp[0] if isinstance(totp, list) else totp
         if totp:
-            code, remain, _ = get_totp_code(totp)
-            if code: print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
+            result = get_totp_code(totp)
+            if result:
+                code, remain, _ = result
+                if code: print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
 
         if params is not None:
             if record_uid in params.record_cache:
