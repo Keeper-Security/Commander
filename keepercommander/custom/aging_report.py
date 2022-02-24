@@ -278,14 +278,13 @@ if __name__ == '__main__':
                 continue
             if enterprise_user_id > 0 and user_id != enterprise_user_id:
                 continue
-            if created is None and modified is None:
-                continue
-            if modified:
-                if modified >= date_ts:
-                    continue
-            else:
-                if created >= date_ts:
-                    continue
+            if created or modified:
+                if modified:
+                    if modified >= date_ts:
+                        continue
+                else:
+                    if created >= date_ts:
+                        continue
             try:
                 audit_json = crypto.decrypt_ec(utils.base64_url_decode(encrypted_data), ec_private_key)
                 audit = json.loads(audit_json.decode())
