@@ -759,7 +759,7 @@ Event properties
 --columns:              Defines break down report properties.
                         can be any event property except: id, created
 
---aggregates:           Defines the aggregate value:
+--aggregate:            Defines the aggregate value:
      occurrences        number of events. COUNT(*)
    first_created        starting date. MIN(created)
     last_created        ending date. MAX(created)
@@ -1014,7 +1014,7 @@ class AuditReportCommand(Command):
             logging.info(audit_report_description)
             if kwargs.get('syntax_help'):
                 events = AuditReportCommand.load_audit_dimension(params, 'audit_event_type')
-                event_types = [(et['id'], et['name']) for et in events['audit_event_type']]
+                event_types = [(et['id'], et['name']) for et in events]
                 logging.info('The following are possible event type id and event type name values:')
                 for event_id, event_name in event_types:
                     logging.info('{0:>10d}:  {1}'.format(event_id, event_name))
@@ -1096,7 +1096,7 @@ class AuditReportCommand(Command):
             rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'
 
         audit_filter = {}
-        if 'created' in kwargs and ['created']:
+        if 'created' in kwargs and kwargs['created']:
             if kwargs['created'] in ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']:
                 audit_filter['created'] = kwargs['created']
             else:
@@ -1218,7 +1218,9 @@ class AuditReportCommand(Command):
 
     @staticmethod
     def convert_date(value):
-        if not value.isdigit():
+        try:
+            value = float(value)
+        except:
             if len(value) <= 10:
                 value = datetime.datetime.strptime(value, '%Y-%m-%d')
             else:
