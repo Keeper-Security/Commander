@@ -151,8 +151,8 @@ def prepare_database(params):
                 print(f'{loaded}      \r', end='')
                 if len(data) == 1000:
                     last_event = data[-1]
-                    from_date = datetime.datetime.strptime(last_event['last_created'], '%Y-%m-%dT%H:%M:%S%z')
-                    last_created_time = from_date.timestamp()
+                    created_date = datetime.datetime.strptime(last_event['last_created'], '%Y-%m-%dT%H:%M:%S%z')
+                    last_created_time = created_date.timestamp()
                     has_more = True
 
                 def get_date_created():
@@ -185,8 +185,8 @@ def prepare_database(params):
             print(f'{loaded}      \r', end='')
             if len(data) == 1000:
                 last_event = data[-1]
-                from_date = datetime.datetime.strptime(last_event['last_created'], '%Y-%m-%dT%H:%M:%S%z')
-                last_audit_time = from_date.timestamp()
+                modified_date = datetime.datetime.strptime(last_event['last_created'], '%Y-%m-%dT%H:%M:%S%z')
+                last_audit_time = modified_date.timestamp()
                 has_more = True
 
             def get_password_data():
