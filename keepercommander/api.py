@@ -1128,7 +1128,6 @@ def get_record(params, record_uid):
 
     cached_rec = params.record_cache[record_uid]
     version = cached_rec.get('version', 2)
-    rec = Record()
 
     try:
         rec = Record(record_uid)

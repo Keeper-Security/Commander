@@ -803,7 +803,6 @@ class RecordUploadAttachmentCommand(Command):
                     raise CommandError('upload-attachment', 'File "{0}" does not exists'.format(name))
         if len(files) == 0:
             raise CommandError('upload-attachment', 'No files to upload')
-            return
 
         rq = {
             'command': 'request_upload',
