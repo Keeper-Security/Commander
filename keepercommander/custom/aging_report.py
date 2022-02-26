@@ -8,11 +8,25 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: commander@keepersecurity.com
 #
+# Password Aging Report example
+#
+# This script generates a password aging report
+# using Keeper's reporting engine and compliance 
+# reporting data.
+#
 # This example also pulls configuration
 # from config.json or writes the config file if it does not exist.
 #
-# Usage:
-#    python aging_report.py
+# usage: aging-report [-h] [--format {table,csv,json}] [--output OUTPUT] [--period PERIOD] [--username USERNAME]
+#
+# optional arguments:
+#  -h, --help            show this help message and exit
+#  --format {table,csv,json}
+#                        output format.
+#  --output OUTPUT       output file name. (ignored for table format)
+#  --period PERIOD       Period the password has not been modified
+#  --username USERNAME   Report expired passwords for specific record owner
+#
 
 import argparse
 import base64
