@@ -1628,7 +1628,8 @@ class RecordV3:
                     print('{0:>20s}: {1:<s}'.format(str(fkey), str(fval)))
 
         totp = next((t.get('value') for t in fields if t.get('type', '') == 'oneTimeCode'), None)
-        totp = totp[0] if isinstance(totp, list) else totp
+        if totp:
+            totp = totp[0] if isinstance(totp, list) else totp
         if totp:
             result = get_totp_code(totp)
             if result:
