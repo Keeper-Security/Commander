@@ -260,7 +260,7 @@ keepalive_parser.exit = suppress_exit
 generate_parser = argparse.ArgumentParser(prog='generate', description='Generate a new password')
 generate_parser.add_argument('--clipboard', '-cc', dest='clipboard', action='store_true', help='Copy to clipboard')
 generate_parser.add_argument(
-    '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=16
+    '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=20
 )
 generate_parser.add_argument(
     '--symbols', '-s', type=int, dest='symbols', action='store', default=1,
