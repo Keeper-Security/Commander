@@ -91,7 +91,11 @@ def generate(length=64):
 
 
 def generate_keeper_password(length: int, symbols: int, digits: int, caps: int, lower: int) -> str:
-    sum_categories = sum((symbols, digits, caps, lower))
+    sum_categories = sum(
+        (symbols if symbols > 0 else 0, digits if digits > 0 else 0, caps if caps > 0 else 0, lower if lower > 0 else 0)
+    )
+    if sum_categories == 0:
+        symbols, digits, caps, lower, sum_categories = 1, 1, 1, 1, 4
     extra_count = length - sum_categories if length > sum_categories else 0
     category_map = [
         (symbols, PW_SPECIAL_CHARACTERS),
@@ -100,8 +104,7 @@ def generate_keeper_password(length: int, symbols: int, digits: int, caps: int, 
         (lower, string.ascii_lowercase),
     ]
     extra_chars = ''.join(c[1] for c in category_map if c[0] > 0)
-    if len(extra_chars) > 0:
-        category_map.append((extra_count, extra_chars))
+    category_map.append((extra_count, extra_chars))
 
     password_list = []
     for count, chars in category_map:
