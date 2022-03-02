@@ -41,6 +41,7 @@ from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
+from ..generator import generate_keeper_password
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2 as ssocloud
@@ -73,16 +74,18 @@ def register_commands(commands):
     commands['secrets-manager'] = KSMCommand()
     commands['version'] = VersionCommand()
     commands['keep-alive'] = KeepAliveCommand()
+    commands['generate'] = GenerateCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['d'] = 'sync-down'
     aliases['delete_all'] = 'delete-all'
+    aliases['gen'] = 'generate'
     aliases['v'] = 'version'
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
     for p in [whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
-              version_parser, ksm_parser, keepalive_parser
+              version_parser, ksm_parser, keepalive_parser, generate_parser
               ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
@@ -252,6 +255,31 @@ version_parser.exit = suppress_exit
 keepalive_parser = argparse.ArgumentParser(prog='keep-alive', description='Tell the server we are here, forestalling a timeout.')
 keepalive_parser.error = raise_parse_exception
 keepalive_parser.exit = suppress_exit
+
+
+generate_parser = argparse.ArgumentParser(prog='generate', description='Generate a new password')
+generate_parser.add_argument('--clipboard', '-cc', dest='clipboard', action='store_true', help='Copy to clipboard')
+generate_parser.add_argument(
+    '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=20
+)
+generate_parser.add_argument(
+    '--symbols', '-s', type=int, dest='symbols', action='store', default=1,
+    help='Minimum number of symbols in password or 0 for none'
+)
+generate_parser.add_argument(
+    '--digits', '-d', type=int, dest='digits', action='store', default=1,
+    help='Minimum number of digits in password or 0 for none'
+)
+generate_parser.add_argument(
+    '--uppercase', '-u', type=int, dest='uppercase', action='store', default=1,
+    help='Minimum number of uppercase letters in password or 0 for none'
+)
+generate_parser.add_argument(
+    '--lowercase', '-l', type=int, dest='lowercase', action='store', default=1,
+    help='Minimum number of lowercase letters in password or 0 for none'
+)
+generate_parser.error = raise_parse_exception
+generate_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
@@ -1717,3 +1745,19 @@ class DeleteCorruptedCommand(Command):
                     logging.warning("%s records failed to delete", len(failures))
         else:
             logging.info('No corrupted records are found.')
+
+
+class GenerateCommand(Command):
+    def get_parser(self):
+        return generate_parser
+
+    def execute(self, params, **kwargs):
+        password = generate_keeper_password(
+            kwargs['length'], kwargs['symbols'], kwargs['digits'], kwargs['uppercase'], kwargs['lowercase']
+        )
+        if kwargs['clipboard']:
+            import pyperclip
+            pyperclip.copy(password)
+            logging.info('New password copied to clipboard')
+        else:
+            print(password)
