@@ -90,24 +90,26 @@ def generate(length=64):
     return rules(increment, increment, increment, lastincrement)
 
 
-def generate_keeper_password(length: int, symbols: int, digits: int, caps: int, lower: int) -> str:
-    sum_categories = sum(
-        (symbols if symbols > 0 else 0, digits if digits > 0 else 0, caps if caps > 0 else 0, lower if lower > 0 else 0)
-    )
-    if sum_categories == 0:
-        symbols, digits, caps, lower, sum_categories = 1, 1, 1, 1, 4
-    extra_count = length - sum_categories if length > sum_categories else 0
-    category_map = [
-        (symbols, PW_SPECIAL_CHARACTERS),
-        (digits, string.digits),
-        (caps, string.ascii_uppercase),
-        (lower, string.ascii_lowercase),
-    ]
-    extra_chars = ''.join(c[1] for c in category_map if c[0] > 0)
-    category_map.append((extra_count, extra_chars))
+class KeeperPasswordGenerator:
+    def __init__(self, length: int, symbols: int, digits: int, caps: int, lower: int):
+        sum_categories = sum(
+            (symbols if symbols > 0 else 0, digits if digits > 0 else 0, caps if caps > 0 else 0, lower if lower > 0 else 0)
+        )
+        if sum_categories == 0:
+            symbols, digits, caps, lower, sum_categories = 1, 1, 1, 1, 4
+        extra_count = length - sum_categories if length > sum_categories else 0
+        self.category_map = [
+            (symbols, PW_SPECIAL_CHARACTERS),
+            (digits, string.digits),
+            (caps, string.ascii_uppercase),
+            (lower, string.ascii_lowercase),
+        ]
+        extra_chars = ''.join(c[1] for c in self.category_map if c[0] > 0)
+        self.category_map.append((extra_count, extra_chars))
 
-    password_list = []
-    for count, chars in category_map:
-        password_list.extend(choice(chars) for i in range(count))
-    shuffle(password_list)
-    return ''.join(password_list)
+    def generate(self) -> str:
+        password_list = []
+        for count, chars in self.category_map:
+            password_list.extend(choice(chars) for i in range(count))
+        shuffle(password_list)
+        return ''.join(password_list)
