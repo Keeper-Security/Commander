@@ -41,7 +41,7 @@ from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
-from ..generator import generate_keeper_password
+from ..generator import KeeperPasswordGenerator
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2 as ssocloud
@@ -259,6 +259,13 @@ keepalive_parser.exit = suppress_exit
 
 generate_parser = argparse.ArgumentParser(prog='generate', description='Generate a new password')
 generate_parser.add_argument('--clipboard', '-cc', dest='clipboard', action='store_true', help='Copy to clipboard')
+generate_parser.add_argument(
+    '--no-breachwatch', '-nb', dest='no_breachwatch', action='store_true',
+    help='Skip breachwatch detection if breachwatch is enabled for this account'
+)
+generate_parser.add_argument(
+    '--number', '-n', type=int, dest='number', action='store', help='Number of passwords', default=1
+)
 generate_parser.add_argument(
     '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=20
 )
@@ -1752,12 +1759,29 @@ class GenerateCommand(Command):
         return generate_parser
 
     def execute(self, params, **kwargs):
-        password = generate_keeper_password(
+        kpg = KeeperPasswordGenerator(
             kwargs['length'], kwargs['symbols'], kwargs['digits'], kwargs['uppercase'], kwargs['lowercase']
         )
+        get_new_password_count = kwargs['number']
+        passwords = []
+        while len(passwords) < get_new_password_count:
+            passwords += [kpg.generate() for i in range(get_new_password_count - len(passwords))]
+            if not kwargs['no_breachwatch'] and getattr(params, 'breach_watch', None) is not None:
+                euids = []
+                for breach_result in params.breach_watch.scan_passwords(params, passwords):
+                    if breach_result[1].euid:
+                        euids.append(breach_result[1].euid)
+                    if breach_result[1].breachDetected:
+                        passwords.remove(breach_result[0])
+                params.breach_watch.delete_euids(params, euids)
+
+                if len(passwords) == get_new_password_count:
+                    logging.info('Successfully scanned new passwords with Keeper BreachWatch')
+
+        password_result = '\n'.join(passwords)
         if kwargs['clipboard']:
             import pyperclip
-            pyperclip.copy(password)
-            logging.info('New password copied to clipboard')
+            pyperclip.copy(password_result)
+            logging.info('New passwords copied to clipboard')
         else:
-            print(password)
+            print(password_result)
