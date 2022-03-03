@@ -160,7 +160,13 @@ enterprise_user_parser.exit = suppress_exit
 enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Manage an enterprise role(s).')
 #enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
+enterprise_role_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                                    default='table', help='output format.')
+enterprise_role_parser.add_argument('--output', dest='output', action='store',
+                                    help='output file name. (ignored for table format)')
 enterprise_role_parser.add_argument('--add', dest='add', action='store_true', help='create role')
+enterprise_role_parser.add_argument('--copy', dest='copy', action='store_true', help='copy role with enforcements')
+enterprise_role_parser.add_argument('--clone', dest='clone', action='store_true', help='copy role with users and enforcements')
 enterprise_role_parser.add_argument('--visible-below', dest='visible_below', action='store', choices=['on', 'off'], help='visible to all nodes. \'add\' only')
 enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store', choices=['on', 'off'], help='assign this role to new users. \'add\' only')
 enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
@@ -1875,6 +1881,73 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                                 "tree_key": utils.base64_url_encode(encrypted_tree_key)
                                             })
                         request_batch.append(rq)
+            elif kwargs.get('copy') or kwargs.get('clone'):
+                role_name = kwargs.get('name')
+                role = matched_roles[0]
+                if not role_name:
+                    role_name = role['data'].get('displayname')
+                if not node_id:
+                    node_id = role['node_id']
+                dt = { "displayname": role_name }
+                role_id = self.get_enterprise_id(params)
+                rq = {
+                    "command": "role_add",
+                    "role_id": role_id,
+                    "node_id": node_id,
+                    "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    "visible_below": role.get('visible_below') or False,
+                    "new_user_inherit": role.get('new_user_inherit') or False
+                }
+                request_batch.append(rq)
+                if 'role_enforcements' in params.enterprise:
+                    lookup = {x['role_id']: x['enforcements'] for x in params.enterprise['role_enforcements']}
+                    enforcements = {}
+                    for r in matched_roles:
+                        enf = lookup.get(r.get('role_id'))
+                        if isinstance(enf, dict):
+                            for k, v in enf.items():
+                                if k not in enforcements:
+                                    enforcements[k] = v
+                    for k, v in enforcements.items():
+                        rq = {
+                            'command': 'role_enforcement_add',
+                            'role_id': role_id,
+                            'enforcement': k
+                        }
+                        if v is not None:
+                            enforcement_type = constants.ENFORCEMENTS.get(k)
+                            if enforcement_type == 'boolean':
+                                if not isinstance(v, bool):
+                                    v = True
+                            elif enforcement_type == 'long':
+                                if not isinstance(v, int):
+                                    try:
+                                        v = int(v)
+                                    except:
+                                        continue
+                            elif enforcement_type in {'json', 'record_types', 'jsonarray'}:
+                                if not isinstance(v, dict):
+                                    try:
+                                        v = json.loads(v)
+                                    except:
+                                        continue
+                            rq['value'] = v
+                        request_batch.append(rq)
+                if kwargs.get('clone'):
+                    if 'role_users' in params.enterprise:
+                        roles = {x['role_id'] for x in matched_roles}
+                        users = set()
+                        for x in params.enterprise['role_users']:
+                            if x['role_id'] in roles:
+                                users.add(x['enterprise_user_id'])
+                        for user_id in users:
+                            rq = {
+                                'command': 'role_user_add',
+                                'role_id': role_id,
+                                'enterprise_user_id': user_id,
+                            }
+                            request_batch.append(rq)
+
             elif node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name'):
                 if kwargs.get('name') and len(matched_roles) > 1:
                     logging.warning('Cannot assign the same name to %s roles', len(matched_roles))
@@ -1952,11 +2025,98 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         if rs['result'] != 'success':
                             logging.warning('Error: %s', rs['message'])
             api.query_enterprise(params)
-        elif not skip_display:
-            for role in matched_roles:
-                print('\n')
-                self.display_role(params, role, kwargs.get('verbose'))
-            print('\n')
+        else:
+            if kwargs.get('format') == 'json':
+                json_roles = []
+                for role in matched_roles:
+                    json_roles.append(self.dump_role_json(params, role))
+                if len(json_roles) == 1:
+                    json_roles = json_roles[0]
+                file_name = kwargs.get('output')
+                if file_name:
+                    with open(file_name, 'w') as f:
+                        json.dump(json_roles, f, indent=4)
+                else:
+                    return json.dumps(json_roles, indent=4)
+            else:
+                if not skip_display:
+                    for role in matched_roles:
+                        print('\n')
+                        self.display_role(params, role, kwargs.get('verbose'))
+                    print('\n')
+
+    def dump_role_json(self, params, role):
+        role_id = role['role_id']
+        ret = {
+            'role_id': role_id,
+            'name': role['data'].get('displayname'),
+            'node_id':  role['node_id'],
+            'node_name': self.get_node_path(params, role['node_id']),
+            'cascade': role.get('visible_below', False),
+            'new_user_inherit': role.get('new_user_inherit', False),
+            'users': []
+        }
+        if 'role_users' in params.enterprise:
+            user_ids = [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]
+            if len(user_ids) > 0:
+                users = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
+                ret['users'] = [{
+                    'user_id': x,
+                    'username': users[x]
+                } for x in user_ids if x in users]
+
+        if 'managed_nodes' in params.enterprise:
+            node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
+            if len(node_ids) > 0:
+                nodes = {x['node_id']: x['data'].get('displayname') or params.enterprise['enterprise_name'] for x in params.enterprise['nodes']}
+                ret['managed_nodes'] = [{
+                    'node_id': x,
+                    'node_name': nodes[x]
+                } for x in node_ids if x in nodes]
+
+        if 'role_enforcements' in params.enterprise:
+            enforcements = next((x for x in params.enterprise['role_enforcements'] if role_id == x['role_id']), None)
+            if isinstance(enforcements, dict):
+                ret['enforcements'] = {}
+                for k, v in enforcements.get('enforcements', {}).items():
+                    enforcement_type = constants.ENFORCEMENTS.get(k)
+                    if enforcement_type == 'boolean':
+                        if not isinstance(v, bool):
+                            v = True
+                    elif enforcement_type == 'long':
+                        if not isinstance(v, int):
+                            try:
+                                v = int(v)
+                            except:
+                                continue
+                    elif enforcement_type in {'json', 'jsonarray'}:
+                        if not isinstance(v, dict):
+                            try:
+                                v = json.loads(v)
+                            except:
+                                continue
+                    elif enforcement_type == 'record_types':
+                        try:
+                            rto = v if isinstance(v, dict) else json.loads(v)
+                            if params.record_type_cache:
+                                record_types = []
+                                for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
+                                    if record_type_id in params.record_type_cache:
+                                        rtc = json.loads(params.record_type_cache[record_type_id])
+                                        if '$id' in rtc:
+                                            record_types.append(rtc['$id'])
+                                v = ', '.join(record_types)
+                        except:
+                            v = 'Error'
+                    elif enforcement_type == 'two_factor_duration':
+                        value = [x.strip() for x in v.split(',')]
+                        value = ['login' if x == '0' else
+                                 '30_days' if x == '30' else
+                                 'forever' if x == '9999' else x for x in value]
+                        v = ', '.join(value)
+
+                    ret['enforcements'][k] = v
+        return ret
 
     def display_role(self, params, role, is_verbose=False):
         role_id = role['role_id']
@@ -2008,7 +2168,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         value_type = e[2]
                         if value_type == 'record_types':
                             try:
-                                rto = value
+                                rto = value if isinstance(value, dict) else json.loads(value)
                                 if params.record_type_cache:
                                     record_types = []
                                     for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
