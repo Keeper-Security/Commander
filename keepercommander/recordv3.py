@@ -1037,33 +1037,24 @@ class RecordV3:
 
         rt = copy.deepcopy(r)
         newf = newrtd.get('fields') or []
-        newf = [x.get('$ref') for x in newf if isinstance(x, dict)]
-        flds = rt.get('fields') or []
-        cust = rt.get('custom') or []
+        # newf = [x.get('$ref') for x in newf if isinstance(x, dict)]
 
-        keep = [x for x in flds if isinstance(x, dict) and x.get('type') in newf]
-        move = [x for x in flds if isinstance(x, dict) and x.get('type') not in newf]
-        del flds[:]
-        flds.extend(keep)
-        cust.extend(move)
-
-        cmove = [x for x in cust if isinstance(x, dict) and x.get('type') in newf]
-        ckeep = [x for x in cust if isinstance(x, dict) and x.get('type') not in newf]
-        cset = {x.get('type') for x in cmove if isinstance(x, dict) and x.get('type')}
-        # move only first/one instance per field type
-        cmoved = []
-        for x in cmove:
-            if x.get('type') in cset:
-                cmoved.append(x)
-                cset.remove(x.get('type'))
+        existing_fields = (rt.get('fields') or []) + (rt.get('custom') or [])
+        new_fields = []
+        for fld in newf:
+            index = next((i for i, x in enumerate(existing_fields)
+                          if fld.get('$ref', '') == x.get('type', '') and fld.get('label', '') == x.get('label', '')), -1)
+            if index >= 0:
+                new_fields.append(existing_fields.pop(index))
             else:
-                ckeep.append(x)
-        del cust[:]
-        flds.extend(cmoved)
-        cust.extend(ckeep)
+                f = {'type': fld['$ref'], 'value': []}
+                if 'label' in fld:
+                    f['label'] = fld['label']
+                new_fields.append(f)
+        new_custom = [x for x in existing_fields if isinstance(x.get('value'), list) and len(x.get('value')) > 0]
 
-        rt['fields'] = flds
-        rt['custom'] = cust
+        rt['fields'] = new_fields
+        rt['custom'] = new_custom
         rt['type'] = new_rt_name
 
         if not result['errors']:
