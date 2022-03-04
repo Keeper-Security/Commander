@@ -1765,16 +1765,20 @@ class GenerateCommand(Command):
         get_new_password_count = kwargs['number']
         passwords = []
         while len(passwords) < get_new_password_count:
-            passwords += [kpg.generate() for i in range(get_new_password_count - len(passwords))]
-            if not kwargs['no_breachwatch'] and getattr(params, 'breach_watch', None) is not None:
+            new_passwords = [kpg.generate() for i in range(get_new_password_count - len(passwords))]
+            if kwargs['no_breachwatch'] or getattr(params, 'breach_watch', None) is None:
+                passwords.extend(new_passwords)
+
+            else:
                 euids = []
-                for breach_result in params.breach_watch.scan_passwords(params, passwords):
+                for breach_result in params.breach_watch.scan_passwords(params, new_passwords):
                     if breach_result[1].euid:
                         euids.append(breach_result[1].euid)
                     if breach_result[1].breachDetected:
-                        passwords.remove(breach_result[0])
+                        new_passwords.remove(breach_result[0])
                 params.breach_watch.delete_euids(params, euids)
 
+                passwords.extend(new_passwords)
                 if len(passwords) == get_new_password_count:
                     logging.info('Successfully scanned new passwords with Keeper BreachWatch')
 
