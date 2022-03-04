@@ -44,8 +44,9 @@ import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='s
                            help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',
                            help='display Keeper JSON import instructions')
-import_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass'], required=True,
-                           help='file format')
+import_parser.add_argument(
+    '--format', dest='format', choices=['json', 'csv', 'keepass', 'lastpass', 'myki'], required=True, help='file format'
+)
 import_parser.add_argument('--folder', dest='folder', action='store',
                            help='import into a separate folder.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
