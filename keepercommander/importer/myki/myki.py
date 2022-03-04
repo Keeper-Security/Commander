@@ -50,7 +50,7 @@ class MyKiCsvImporter(BaseFileImporter):
                 record.login_url = row.get('url', '').strip()
                 record.notes = row.get('additionalInfo', '').strip()
 
-                totp_secret = row.get('twofaSecret', '').strip()
+                totp_secret = row.get('twofaSecret', '').strip().replace(' ', '')
                 if len(totp_secret) > 0:
                     totp_query_string = urlencode([('secret', totp_secret)] + TOTP_URL_QUERY_MAPPING)
                     totp_url = urlunsplit((TOTP_URL_SCHEME, TOTP_URL_NETLOC, TOTP_URL_PATH, totp_query_string, ''))
