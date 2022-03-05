@@ -47,7 +47,7 @@ from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest,
 from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
                                     SecurityReportResponse)
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
-from .aram import audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
+from . import aram    # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
 from .scim import ScimCommand
 
 
@@ -64,8 +64,9 @@ def register_commands(commands):
     commands['scim'] = ScimCommand()
     commands['transfer-user'] = EnterpriseTransferUserCommand()
 
-    commands['audit-log'] = AuditLogCommand()
-    commands['audit-report'] = AuditReportCommand()
+    commands['audit-log'] = aram.AuditLogCommand()
+    commands['audit-report'] = aram.AuditReportCommand()
+    commands['aging-report'] = aram.AgingReportCommand()
     commands['security-audit-report'] = SecurityAuditReportCommand()
     commands['user-report'] = UserReportCommand()
 
@@ -84,7 +85,8 @@ def register_command_info(aliases, command_info):
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
-              audit_log_parser, audit_report_parser, security_audit_report_parser, user_report_parser]:
+              aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser,
+              security_audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
 
