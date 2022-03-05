@@ -167,7 +167,7 @@ class Record:
             return
         field = next((x for x in self.custom_fields if x.get('name', '') == name), None)
         if not field:
-            field = {'name': name}
+            field = {'type': 'text', 'name': name}
             self.custom_fields.append(field)
         field_value = field.get('value', None)
         if field_value:
@@ -189,7 +189,7 @@ class Record:
                 found = True
                 break
         if not found:
-            self.custom_fields.append({'name': name, 'value': value})
+            self.custom_fields.append({'type': 'text', 'name': name, 'value': value})
 
     def remove_field(self, name):
         if self.custom_fields:
