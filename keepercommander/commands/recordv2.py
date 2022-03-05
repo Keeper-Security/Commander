@@ -258,6 +258,7 @@ class RecordAddCommand(Command, RecordUtils):
                         value = c.get('value')
                         if name and value:
                             custom.append({
+                                'type': 'text',
                                 'name': name,
                                 'value': self.custom_field_value(value)
                             })
@@ -407,6 +408,7 @@ class RecordEditCommand(Command, RecordUtils):
                         custom_json = json.loads(custom_list)
                         for k,v in custom_json.items():
                             custom.append({
+                                'type': 'text',
                                 'name': k,
                                 'value': self.custom_field_value(v)
                             })

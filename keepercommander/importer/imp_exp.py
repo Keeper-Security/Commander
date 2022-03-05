@@ -1482,6 +1482,7 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
         else:
             name = field.label or field.type or ''
             custom_fields.append({
+                'type': 'text',
                 'name': name,
                 'value': value
             })
