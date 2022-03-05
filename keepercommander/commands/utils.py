@@ -51,9 +51,12 @@ from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationSha
 from ..proto.record_pb2 import ApplicationAddRequest
 from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
-from ..utils import json_to_base64
+from ..utils import json_to_base64, password_score
 from ..versioning import is_binary_app, is_up_to_date_version
 from .connect import ConnectSshCommand
+
+
+BREACHWATCH_MAX = 5
 
 
 def register_commands(commands):
@@ -259,9 +262,23 @@ keepalive_parser.exit = suppress_exit
 
 generate_parser = argparse.ArgumentParser(prog='generate', description='Generate a new password')
 generate_parser.add_argument('--clipboard', '-cc', dest='clipboard', action='store_true', help='Copy to clipboard')
+generate_parser.add_argument('--quiet', '-q', dest='quiet', action='store_true', help='Only print password list')
+generate_parser.add_argument(
+    '--password-list', '-p', dest='password_list', action='store_true',
+    help='Also print password list apart from table, csv, json'
+)
+generate_parser.add_argument('--output', '-o', dest='output', action='store', help='Output to file')
+generate_parser.add_argument(
+    '--format', '-f', dest='format', action='store', choices=['table', 'json'],
+    default='table', help='Output format for displaying password, strength, and BreachWatch if available'
+)
+generate_parser.add_argument(
+    '--json-indent', '-i', dest='json_indent', action='store', default=2, type=int,
+    help='JSON format indent (0 for compact, >0 for pretty print)'
+)
 generate_parser.add_argument(
     '--no-breachwatch', '-nb', dest='no_breachwatch', action='store_true',
-    help='Skip breachwatch detection if breachwatch is enabled for this account'
+    help='Skip BreachWatch detection if BreachWatch is enabled for this account'
 )
 generate_parser.add_argument(
     '--number', '-n', type=int, dest='number', action='store', help='Number of passwords', default=1
@@ -1763,29 +1780,64 @@ class GenerateCommand(Command):
             kwargs['length'], kwargs['symbols'], kwargs['digits'], kwargs['uppercase'], kwargs['lowercase']
         )
         get_new_password_count = kwargs['number']
+        no_breachwatch = kwargs['no_breachwatch'] or getattr(params, 'breach_watch', None) is None
+
         passwords = []
+        breachwatch_count = 0
         while len(passwords) < get_new_password_count:
             new_passwords = [kpg.generate() for i in range(get_new_password_count - len(passwords))]
-            if kwargs['no_breachwatch'] or getattr(params, 'breach_watch', None) is None:
-                passwords.extend(new_passwords)
+            if no_breachwatch:
+                passwords = [{'password': p, 'strength': password_score(p)} for p in new_passwords]
 
             else:
                 euids = []
+                breachwatch_count += 1
+                breachwatch_maxed = breachwatch_count >= BREACHWATCH_MAX
                 for breach_result in params.breach_watch.scan_passwords(params, new_passwords):
+                    pw = breach_result[0]
                     if breach_result[1].euid:
                         euids.append(breach_result[1].euid)
                     if breach_result[1].breachDetected:
-                        new_passwords.remove(breach_result[0])
+                        if breachwatch_maxed:
+                            passwords.append(
+                                {'password': pw, 'strength': password_score(pw), 'breach_watch': 'Failed'}
+                            )
+                    else:
+                        passwords.append(
+                            {'password': pw, 'strength': password_score(pw), 'breach_watch': 'Passed'}
+                        )
                 params.breach_watch.delete_euids(params, euids)
 
-                passwords.extend(new_passwords)
-                if len(passwords) == get_new_password_count:
-                    logging.info('Successfully scanned new passwords with Keeper BreachWatch')
+        if kwargs['quiet']:
+            format_output = ''
+        else:
+            if kwargs['format'] == 'table':
+                breach_watch = '' if no_breachwatch else '{breach_watch:13}'
+                format_template = '{count:<5}{strength:<13}' + breach_watch + '{password}'
+                header = format_template.format(
+                    count='', strength='Strength(%)', breach_watch='BreachWatch', password='Password'
+                )
+                password_output = [format_template.format(count=i + 1, **p) for i, p in enumerate(passwords)]
+                format_output = header + '\n' + '\n'.join(password_output)
+            elif kwargs['format'] == 'json':
+                format_output = json.dumps(passwords, indent=kwargs['json_indent'] or None)
 
-        password_result = '\n'.join(passwords)
+        if kwargs['quiet'] or kwargs['password_list']:
+            skip_line = '\n\n' if kwargs['password_list'] else ''
+            format_output += skip_line + '\n'.join(p['password'] for p in passwords)
+
         if kwargs['clipboard']:
             import pyperclip
-            pyperclip.copy(password_result)
+            pyperclip.copy(format_output)
             logging.info('New passwords copied to clipboard')
-        else:
-            print(password_result)
+        elif not kwargs['output']:
+            print(format_output)
+
+        if kwargs['output']:
+            try:
+                with open(kwargs['output'], 'w') as f:
+                    f.write(format_output)
+            except Exception as e:
+                logging.warning('Error writing to file {}: {}'.format(kwargs['output'], str(e)))
+            else:
+                logging.info('Wrote to file {}'.format(kwargs['output']))
