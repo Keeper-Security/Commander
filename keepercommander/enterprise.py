@@ -184,7 +184,7 @@ class _EnterpriseLoader(object):
                 for rk1 in rs.roleKey:
                     params.enterprise['role_keys'].append({
                         'role_id': rk1.roleId,
-                        'encrypted_key': rk1.encryptedKey,
+                        'encrypted_key': utils.base64_url_encode(rk1.encryptedKey),
                         'key_type': _to_key_type(rk1.keyType)
                     })
 
@@ -194,7 +194,7 @@ class _EnterpriseLoader(object):
                 for rk2 in rs.reEncryptedRoleKey:
                     params.enterprise['role_keys2'].append({
                         'role_id': rk2.role_id,
-                        'role_key': rk2.encryptedRoleKey,
+                        'role_key': utils.base64_url_encode(rk2.encryptedRoleKey),
                     })
 
 
