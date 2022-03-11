@@ -144,7 +144,7 @@ class PasswordRecord(KeeperRecord):
         return 2
 
     def get_record_type(self):
-        return 'general'
+        return ''
 
     def load_record_data(self, data, extra=None):
         self.title = data.get('title', '')

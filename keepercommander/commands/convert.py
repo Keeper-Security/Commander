@@ -42,6 +42,9 @@ convert_parser.add_argument(
     '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
 )
 convert_parser.add_argument(
+    '--ignore-ownership', dest='ignore_owner', action='store_true', help="Convert all records including not owned"
+)
+convert_parser.add_argument(
     '-f', '--force', dest='force', action='store_true',
     help='Convert all records including records with attachments. '
          'Please note that file attachments may not be decrypted by Keeper clients.'
@@ -62,15 +65,16 @@ convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
 
 
-def get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments=False):
+def get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments=False, ignore_owner=False):
     records = []
     if folder_uid in params.subfolder_record_cache:
         for uid in params.subfolder_record_cache[folder_uid]:
-            if uid not in params.meta_data_cache:
-                continue
-            md = params.meta_data_cache[uid]
-            if not md.get('owner', False):
-                continue
+            if not ignore_owner:
+                if uid not in params.meta_data_cache:
+                    continue
+                md = params.meta_data_cache[uid]
+                if not md.get('owner', False):
+                    continue
             if uid not in params.record_cache:
                 continue
             rv = params.record_cache[uid].get('version', 0)
@@ -90,8 +94,8 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex, attac
     return records
 
 
-def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse, attachments=False):
-    folder_records = get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments)
+def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse, attachments=False, ignore_owner=False):
+    folder_records = get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments, ignore_owner)
     if len(folder_records) > 0:
         if folder_uid not in folder_path:
             folder_path[folder_uid] = get_folder_path(params, folder_uid)
@@ -101,7 +105,7 @@ def recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, ur
     if recurse:
         folder = params.folder_cache[folder_uid] if folder_uid else params.root_folder
         for subfolder_uid in folder.subfolders:
-            recurse_folder(params, subfolder_uid, folder_path, records_by_folder, regex, url_regex, recurse, attachments)
+            recurse_folder(params, subfolder_uid, folder_path, records_by_folder, regex, url_regex, recurse, attachments, ignore_owner)
 
 
 class ConvertCommand(Command):
@@ -134,6 +138,9 @@ class ConvertCommand(Command):
         attachments = kwargs.get('force', False)
         if not isinstance(attachments, bool):
             attachments = False
+        ignore_owner = kwargs.get('ignore_owner', False)
+        if not isinstance(ignore_owner, bool):
+            ignore_owner = False
 
         pattern_list = kwargs.get('record-uid-name-patterns', [])
         if len(pattern_list) == 0:
@@ -160,7 +167,7 @@ class ConvertCommand(Command):
 
             folder_uid = folder.uid or ''
             recurse_folder(params, folder_uid, folder_path, records_by_folder, regex, url_regex, recurse,
-                           attachments=attachments)
+                           attachments=attachments, ignore_owner=ignore_owner)
 
         if len(records_by_folder) == 0:
             patterns = ', '.join(pattern_list)
@@ -187,7 +194,7 @@ class ConvertCommand(Command):
                 f' and would be converted to records with type "login":'
             )
 
-            print('\n'.join(f'{v} ({k})' for k, v in record_names.items()))
+            print('\n'.join(f' {k}  {v}' for k, v in record_names.items()))
         else:
             rq = record_pb2.RecordsConvertToV3Request()
             for record_uid in record_uids:
@@ -266,14 +273,14 @@ class ConvertCommand(Command):
                                                          rs_type=record_pb2.RecordsModifyResponse)
                 if not quiet:
                     converted_record_names = [
-                        record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)]
+                        f' {utils.base64_url_encode(r.record_uid)}  {record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)]}'
                         for r in records_modify_rs.records if r.status == record_pb2.RS_SUCCESS
                     ]
                     if len(converted_record_names) > 0:
                         logging.info(f'Successfully converted the following {len(converted_record_names)} record(s):')
                         logging.info('\n'.join(converted_record_names))
 
-                    convert_errors = [(record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(x.record_uid)], x.message)
+                    convert_errors = [(f' {utils.base64_url_encode(x.record_uid)}  {record_names[loginv3.CommonHelperMethods.bytes_to_url_safe_str(x.record_uid)]}', x.message)
                                       for x in records_modify_rs.records if x.status != record_pb2.RS_SUCCESS]
                     if len(convert_errors) > 0:
                         logging.warning(f'Failed to convert the following {len(convert_errors)} record(s):')
