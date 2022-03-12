@@ -1775,12 +1775,43 @@ class GenerateCommand(Command):
     def get_parser(self):
         return generate_parser
 
-    def execute(self, params, **kwargs):
+    def execute(self, params, number=None, no_breachwatch=None,
+                length=None, symbols=None, digits=None, uppercase=None, lowercase=None,
+                format=None, output=None, json_indent=None, **kwargs):
+        """
+        Executes "generate" command
+
+        Parameters
+        ----------
+        params : KeeperParams
+            Connected KeeperParams instance
+        number : int
+            Number of passwords. Default: 1
+        length : int
+            Length of password. Default: 20
+        symbols : int
+            Minimum number of symbols in password or 0 for none. Default: 1
+        digits : int
+            Minimum number of digits in password or 0 for none. Default: 1
+        uppercase : int
+            Minimum number of uppercase letters in password or 0 for none. Default: 1
+        lowercase : int
+            Minimum number of lowercase letters in password or 0 for none. Default: 1
+        no_breachwatch : bool
+            Skip BreachWatch detection if BreachWatch is enabled for this account
+        format : str
+            Output format for displaying password, strength, and BreachWatch if available. 'table' or 'json'
+        output : str
+            File name to store result. stdout is omitted
+        json_indent : int
+            JSON format indent (0 for compact, >0 for pretty print). Default: 2
+        """
+
         kpg = KeeperPasswordGenerator(
-            kwargs['length'], kwargs['symbols'], kwargs['digits'], kwargs['uppercase'], kwargs['lowercase']
+            length, symbols, digits, uppercase, lowercase
         )
-        get_new_password_count = kwargs['number']
-        no_breachwatch = kwargs['no_breachwatch'] or getattr(params, 'breach_watch', None) is None
+        get_new_password_count = number
+        no_breachwatch = no_breachwatch or getattr(params, 'breach_watch', None) is None
 
         passwords = []
         breachwatch_count = 0
@@ -1811,7 +1842,7 @@ class GenerateCommand(Command):
         if kwargs['quiet']:
             format_output = ''
         else:
-            if kwargs['format'] == 'table':
+            if format == 'table':
                 breach_watch = '' if no_breachwatch else '{breach_watch:13}'
                 format_template = '{count:<5}{strength:<13}' + breach_watch + '{password}'
                 header = format_template.format(
@@ -1819,8 +1850,8 @@ class GenerateCommand(Command):
                 )
                 password_output = [format_template.format(count=i + 1, **p) for i, p in enumerate(passwords)]
                 format_output = header + '\n' + '\n'.join(password_output)
-            elif kwargs['format'] == 'json':
-                format_output = json.dumps(passwords, indent=kwargs['json_indent'] or None)
+            elif format == 'json':
+                format_output = json.dumps(passwords, indent=json_indent or None)
 
         if kwargs['quiet'] or kwargs['password_list']:
             skip_line = '\n\n' if kwargs['password_list'] else ''
@@ -1830,14 +1861,14 @@ class GenerateCommand(Command):
             import pyperclip
             pyperclip.copy(format_output)
             logging.info('New passwords copied to clipboard')
-        elif not kwargs['output']:
+        elif not output:
             print(format_output)
 
-        if kwargs['output']:
+        if output:
             try:
-                with open(kwargs['output'], 'w') as f:
+                with open(output, 'w') as f:
                     f.write(format_output)
             except Exception as e:
-                logging.warning('Error writing to file {}: {}'.format(kwargs['output'], str(e)))
+                logging.warning('Error writing to file {}: {}'.format(output, str(e)))
             else:
-                logging.info('Wrote to file {}'.format(kwargs['output']))
+                logging.info('Wrote to file {}'.format(output))
