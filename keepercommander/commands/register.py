@@ -1084,7 +1084,7 @@ class RecordPermissionCommand(Command):
                                  '"Can Edit"' if change_edit else '',
                                  '"Can Share"' if change_share else '',
                                  ' & ' if change_edit and change_share else '',
-                                 folder_name,
+                                 folder.name,
                                  'recursively' if kwargs.get('recursive') else 'only'))
 
         uids = set()
@@ -1161,22 +1161,35 @@ class RecordPermissionCommand(Command):
                             for sft in shared_folder['teams']:
                                 uid = sft['team_uid']
                                 if sft.get('manage_records') and uid in params.team_cache:
-                                    t = api.get_team(params, uid)
-                                    if not t.restrict_share:
-                                        team_uid = uid
-                                        has_manage_records_permission = True
-                                        break
+                                    team_uid = uid
+                                    has_manage_records_permission = True
+                                    break
 
                     if 'records' in shared_folder:
                         for rp in shared_folder['records']:
                             record_uid = rp['record_uid']
                             has_record_share_permissions = False
+                            has_record_edit_permissions = False
                             if record_uid in params.meta_data_cache:
                                 md = params.meta_data_cache[record_uid]
-                                has_record_share_permissions = md['can_share']
+                                has_record_share_permissions = md.get('can_share', False)
+                                has_record_edit_permissions = md.get('can_edit', False)
+                            if has_manage_records_permission:
+                                if not has_record_share_permissions or not has_record_edit_permissions:
+                                    if not has_record_edit_permissions:
+                                        has_record_edit_permissions = rp.get('can_edit', False)
+                                    if not has_record_share_permissions:
+                                        has_record_share_permissions = rp.get('can_share', False)
 
-                            container = shared_folder_update \
-                                if has_record_share_permissions and has_manage_records_permission else shared_folder_skip
+                            if not has_manage_records_permission:
+                                container = shared_folder_skip
+                            elif change_edit and not has_record_edit_permissions:
+                                container = shared_folder_skip
+                            elif change_share and not has_record_share_permissions:
+                                container = shared_folder_skip
+                            else:
+                                container = shared_folder_update
+
                             if shared_folder_uid not in container:
                                 container[shared_folder_uid] = {}
                             record_permissions = container[shared_folder_uid]
