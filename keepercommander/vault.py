@@ -152,8 +152,10 @@ class PasswordRecord(KeeperRecord):
         self.password = data.get('secret2', '')
         self.link = data.get('link', '')
         self.notes = data.get('notes', '')
-        self.custom.extend((CustomField(x) for x in data.get('custom', [])))
-        if extra:
+        custom = data.get('custom')
+        if isinstance(custom, list):
+            self.custom.extend((CustomField(x) for x in custom if isinstance(x, dict) and 'name' in x))
+        if isinstance(extra, dict):
             if 'files' in extra:
                 self.attachments = [AttachmentFile(x) for x in extra['files']]
 
