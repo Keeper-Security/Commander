@@ -208,7 +208,7 @@ def convert_keeper_record(record, has_attachments=False):
         rec.password = data.get('secret2') or ''
         rec.login_url = data.get('link')
         if 'custom' in data:
-            for custom in data['custom']:
+            for custom in data['custom'] or []:
                 rf = ImportRecordField()
                 rf.label = custom.get('name') or ''
                 rf.value = custom.get('value') or ''
