@@ -196,7 +196,7 @@ class ConvertCommand(Command):
 
             print('\n'.join(f' {k}  {v}' for k, v in record_names.items()))
         else:
-            rq = record_pb2.RecordsConvertToV3Request()
+            records = []
             for record_uid in record_uids:
                 convert_result = ConvertCommand.convert_to_record_type_data(record_uid, params, type_info)
                 if not convert_result:
@@ -260,13 +260,22 @@ class ConvertCommand(Command):
                         audit_data['url'] = utils.url_strip(record.login_url)
                     rc.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
 
-                rq.records.append(rc)
+                records.append(rc)
 
             quiet = kwargs.get('quiet', False)
             if not quiet:
                 logging.info(f'Matched {len(record_uids)} record(s)')
 
-            if len(rq.records) > 0:
+            if len(records) == 0:
+                if not quiet:
+                    logging.info('No records successfully converted')
+                return
+
+            while len(records) > 0:
+                rq = record_pb2.RecordsConvertToV3Request()
+                rq.records.extend(records[:999])
+                records = records[999:]
+
                 params.sync_data = True
                 rq.client_time = api.current_milli_time()
                 records_modify_rs = api.communicate_rest(params, rq, 'vault/records_convert3',
@@ -285,8 +294,6 @@ class ConvertCommand(Command):
                     if len(convert_errors) > 0:
                         logging.warning(f'Failed to convert the following {len(convert_errors)} record(s):')
                         logging.warning('\n'.join((f'{x[0]} : {x[1]}' for x in convert_errors)))
-            elif not quiet:
-                logging.info('No records successfully converted')
 
     @staticmethod
     def get_v3_field_type(field_value):
