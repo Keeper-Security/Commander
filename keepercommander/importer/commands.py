@@ -102,7 +102,7 @@ apply_membership_parser.exit = suppress_exit
 csv_instructions = '''CSV Import Instructions
 
 File Format:
-Folder,Title,Login,Password,Website Address,Notes,Custom Fields
+Folder,Title,Login,Password,Website Address,Notes,Shared Folder,Custom Fields
 
 • To specify subfolders, use backslash "\\" between folder names
 • To make a shared folder specify the name or path to it in the 7th field

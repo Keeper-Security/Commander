@@ -319,7 +319,7 @@ def export(params, file_format, filename, **kwargs):
     v3_enabled = params.settings.get('record_types_enabled') if params.settings else False
     force = kwargs.get('force', False)
     if not force and v3_enabled and not exporter.supports_v3_record():
-        answer = base.user_choice(f'Export to {file_format} does not support typed records\n\n'
+        answer = base.user_choice(f'Export to {file_format} does not fully support typed records\n\n'
                                   'Do you want to continue?', 'yn', 'n')
         if answer.lower() != 'y':
             return
