@@ -1,11 +1,11 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -19,8 +19,9 @@ import functools
 import os
 import json
 from collections import OrderedDict
+from typing import Tuple, List, Optional
 
-from .. import api, display
+from .. import api, display, vault
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..record import Record
 from .base import user_choice, suppress_exit, raise_parse_exception, Command
@@ -92,7 +93,8 @@ mv_parser = argparse.ArgumentParser(prog='mv', description='Move a record or fol
 mv_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 mv_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 mv_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
-mv_parser.add_argument('src', nargs='?', type=str, action='store', help='source path to folder/record or UID')
+mv_parser.add_argument('src', nargs='?', type=str, action='store',
+                       help='source path to folder/record, search pattern or record UID')
 mv_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder or UID')
 mv_parser.error = raise_parse_exception
 mv_parser.exit = suppress_exit
@@ -102,7 +104,8 @@ ln_parser = argparse.ArgumentParser(prog='ln', description='Create a link betwee
 ln_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 ln_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
 ln_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
-ln_parser.add_argument('src', nargs='?', type=str, action='store', help='source path to folder/record or UID')
+ln_parser.add_argument('src', nargs='?', type=str, action='store',
+                       help='source path to folder/record, search pattern or record UID')
 ln_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder or UID')
 ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
@@ -153,7 +156,8 @@ class FolderListCommand(Command):
                 if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))) if regex is not None else True:
                     folders.append(f)
 
-        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
+        v3_enabled = params.settings.get('record_types_enabled') \
+            if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         if show_records:
             folder_uid = folder.uid or ''
             if folder_uid in params.subfolder_record_cache:
@@ -162,7 +166,7 @@ class FolderListCommand(Command):
                     if rv == 4 or rv == 5:
                         continue    # skip fileRef and application records - they use file-report command
                     if not v3_enabled and rv in (3, 4):
-                        continue # skip record types when not enabled
+                        continue    # skip record types when not enabled
                     r = api.get_record(params, uid)
                     if any(filter(lambda x: regex(x) is not None, FolderListCommand.record_match_strings(r))) if regex is not None else True:
                         records.append(r)
@@ -320,7 +324,7 @@ class FolderMakeCommand(Command):
             else:
                 request['folder_type'] = 'user_folder'
 
-        folder_uid =  api.generate_record_uid()
+        folder_uid = api.generate_record_uid()
         request['folder_uid'] = folder_uid
 
         folder_key = os.urandom(32)
@@ -468,6 +472,7 @@ class FolderRemoveCommand(Command):
 
         shared_folder_count = len(shared_folder_requests)
         user_folder_count = len(user_folder_objects)
+        np = 'n'
         if shared_folder_count > 0:
             if not quiet or not force:
                 user_folder_msg = f' and {user_folder_count} user folder(s)' if user_folder_count > 0 else ''
@@ -513,7 +518,6 @@ class FolderRemoveCommand(Command):
 
 
 class FolderMoveCommand(Command):
-
     @staticmethod
     def get_transition_key(record, encryption_key):
         # transition key is the key of the object being moved
@@ -525,7 +529,6 @@ class FolderMoveCommand(Command):
         else:
             transition_key = api.encrypt_aes(record['record_key_unencrypted'], encryption_key)
         return transition_key
-
 
     @staticmethod
     def prepare_transition_keys(params, folder, keys, encryption_key):
@@ -563,22 +566,28 @@ class FolderMoveCommand(Command):
             parser.print_help()
             return
 
-        src_record_uid = None
-        src_folder = None
+        source = []    # type: List[Tuple[BaseFolderNode, Optional[str]]]   # (folder, record_uid)
 
-        if src_path in params.record_cache:
-            src_record_uid = src_path
-            if '' in params.subfolder_record_cache:
-                if src_record_uid in params.subfolder_record_cache['']:
-                    src_folder = params.root_folder
-            if src_folder is None:
-                for folder_uid in find_folders(params, src_record_uid):
-                    src_folder = params.folder_cache[folder_uid]
-                    break
-            if src_folder is None:
+        if src_path in params.record_cache:    # record UID
+            record_uid = src_path
+            src_folder = None
+            folder_uids = list(find_folders(params, record_uid))
+            if folder_uids:
+                if params.current_folder:
+                    if params.current_folder in folder_uids:
+                        src_folder = params.folder_cache[params.current_folder]
+                else:
+                    if '' in params.subfolder_record_cache:
+                        if record_uid in params.subfolder_record_cache['']:
+                            src_folder = params.root_folder
+                if not src_folder:
+                    src_folder = params.folder_cache[folder_uids[0]]
+            else:
                 src_folder = params.root_folder
-        elif src_path in params.folder_cache:
+            source.append((src_folder, record_uid))
+        elif src_path in params.folder_cache:   # folder UID
             src_folder = params.folder_cache[src_path]
+            source.append((src_folder, None))
         else:
             src = try_resolve_path(params, src_path)
             if src is None:
@@ -586,18 +595,21 @@ class FolderMoveCommand(Command):
 
             src_folder, name = src
             if len(name) > 0:
+                regex = re.compile(fnmatch.translate(name)).match
                 src_folder_uid = src_folder.uid or ''
                 if src_folder_uid in params.subfolder_record_cache:
-                    for uid in params.subfolder_record_cache[src_folder_uid]:
-                        rec = api.get_record(params, uid)
-                        if name in {rec.title, rec.record_uid}:
-                            src_record_uid = rec.record_uid
-                            break
+                    for record_uid in params.subfolder_record_cache[src_folder_uid]:
+                        if record_uid == name:
+                            source.append((src_folder, record_uid))
+                        else:
+                            record = vault.KeeperRecord.load(params, record_uid)
+                            if isinstance(record, vault.PasswordRecord) or isinstance(record, vault.TypedRecord):
+                                if regex(record.title):
+                                    source.append((src_folder, record_uid))
 
-                if src_record_uid is None:
+                if len(source) == 0:
                     raise CommandError('mv', 'Record "{0}" not found'.format(name))
 
-        dst_folder = None
         if dst_path in params.folder_cache:
             dst_folder = params.folder_cache[dst_path]
         else:
@@ -619,93 +631,95 @@ class FolderMoveCommand(Command):
             rq['to_type'] = dst_folder.type
             rq['to_uid'] = dst_folder.uid
 
-        if src_record_uid is None:
-            ''' folder '''
-            if src_folder.type == BaseFolderNode.RootFolderType:
-                raise CommandError('mv', 'Root folder cannot be a source folder')
-            dp = set()
-            f = dst_folder
-            while f is not None and f.uid is not None:
-                if len(f.uid) > 0:
-                    dp.add(f.uid)
-                f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
-            if src_folder.uid in dp:
-                raise CommandError('mv', 'Cannot move/link folder to self or a child')
+        for src_folder, record_uid in source:
+            if not record_uid:   # move folder
+                if src_folder.type == BaseFolderNode.RootFolderType:
+                    raise CommandError('mv', 'Root folder cannot be a source folder')
 
-            parent_folder = params.folder_cache[src_folder.parent_uid] if src_folder.parent_uid is not None else None
-            move = {
-                'uid': src_folder.uid,
-                'type': src_folder.type,
-                'cascade': True
-            }
-            if parent_folder is None:
-                move['from_type'] = BaseFolderNode.UserFolderType
-            else:
-                move['from_type'] = parent_folder.type
-                move['from_uid'] = parent_folder.uid
+                dp = set()
+                f = dst_folder
+                while f is not None and f.uid is not None:
+                    if len(f.uid) > 0:
+                        dp.add(f.uid)
+                    f = params.folder_cache.get(f.parent_uid) if f.parent_uid is not None else None
+                if src_folder.uid in dp:
+                    raise CommandError('mv', 'Cannot move/link folder to self or a child')
 
-            rq['move'].append(move)
-            transition_keys = []
-            if src_folder.type == BaseFolderNode.UserFolderType:
-                if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    shf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
-                    shf = params.shared_folder_cache[shf_uid]
-                    FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, shf['shared_folder_key_unencrypted'])
-
-            elif src_folder.type == BaseFolderNode.SharedFolderFolderType:
-                if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
-
-                    ssf_uid = src_folder.shared_folder_uid
-                    if ssf_uid != dsf_uid:
-                        dsf = params.shared_folder_cache[dsf_uid]
-                        FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, dsf['shared_folder_key_unencrypted'])
+                parent_folder = params.folder_cache[src_folder.parent_uid] if src_folder.parent_uid is not None else None
+                move = {
+                    'uid': src_folder.uid,
+                    'type': src_folder.type,
+                    'cascade': True
+                }
+                if parent_folder is None:
+                    move['from_type'] = BaseFolderNode.UserFolderType
                 else:
-                    FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, params.data_key)
+                    move['from_type'] = parent_folder.type
+                    move['from_uid'] = parent_folder.uid
 
-            rq['transition_keys'] = transition_keys
-        else:
-            move = {
-                'uid': src_record_uid,
-                'type': 'record',
-                'cascade': False
-            }
-            if src_folder.type == BaseFolderNode.RootFolderType:
-                move['from_type'] = BaseFolderNode.UserFolderType
+                rq['move'].append(move)
+                transition_keys = []
+                if src_folder.type == BaseFolderNode.UserFolderType:
+                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        shf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
+                        shf = params.shared_folder_cache[shf_uid]
+                        FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, shf['shared_folder_key_unencrypted'])
+
+                elif src_folder.type == BaseFolderNode.SharedFolderFolderType:
+                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
+
+                        if hasattr(src_folder, 'shared_folder_uid'):
+                            ssf_uid = src_folder.shared_folder_uid
+                            if ssf_uid != dsf_uid:
+                                dsf = params.shared_folder_cache[dsf_uid]
+                                FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, dsf['shared_folder_key_unencrypted'])
+                    else:
+                        FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, params.data_key)
+
+                rq['transition_keys'] = transition_keys
             else:
-                move['from_type'] = src_folder.type
-                move['from_uid'] = src_folder.uid
-            if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                for flag in ['can_reshare', 'can_edit']:
-                    if flag in kwargs and kwargs[flag]:
-                        move[flag] = True
-            rq['move'].append(move)
-
-            transition_key = None
-            rec = params.record_cache[src_record_uid]
-            if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                move = {
+                    'uid': record_uid,
+                    'type': 'record',
+                    'cascade': False
+                }
+                if src_folder.type == BaseFolderNode.RootFolderType:
+                    move['from_type'] = BaseFolderNode.UserFolderType
+                else:
+                    move['from_type'] = src_folder.type
+                    move['from_uid'] = src_folder.uid
                 if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else src_folder.shared_folder_uid
-                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
-                    if ssf_uid != dsf_uid:
+                    for flag in ['can_reshare', 'can_edit']:
+                        if flag in kwargs and kwargs[flag]:
+                            move[flag] = True
+                rq['move'].append(move)
+
+                transition_key = None
+                rec = params.record_cache[record_uid]
+                if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else src_folder.shared_folder_uid
+                        dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
+                        if ssf_uid != dsf_uid:
+                            shf = params.shared_folder_cache[dsf_uid]
+                            transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
+                    else:
+                        transition_key = FolderMoveCommand.get_transition_key(rec, params.data_key)
+                else:
+                    if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
+                        dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
+                            dst_folder.shared_folder_uid
                         shf = params.shared_folder_cache[dsf_uid]
                         transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
-                else:
-                    transition_key = FolderMoveCommand.get_transition_key(rec, params.data_key)
-            else:
-                if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                    dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
-                        dst_folder.shared_folder_uid
-                    shf = params.shared_folder_cache[dsf_uid]
-                    transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
 
-            transition_keys = []
-            if transition_key is not None:
-                transition_keys.append({
-                    'uid': src_record_uid,
-                    'key': transition_key
-                })
-            rq['transition_keys'] = transition_keys
+                transition_keys = []
+                if transition_key is not None:
+                    transition_keys.append({
+                        'uid': record_uid,
+                        'key': transition_key
+                    })
+                rq['transition_keys'] = transition_keys
 
         api.communicate(params, rq)
         params.sync_data = True
@@ -717,4 +731,3 @@ class FolderLinkCommand(FolderMoveCommand):
 
     def get_parser(self):
         return ln_parser
-
