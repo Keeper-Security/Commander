@@ -7,7 +7,7 @@ from testfixtures import log_capture
 from keepercommander.commands.helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
-from keepercommander.constants import TIMEOUT_DEFAULT, TIMEOUT_MAX
+from keepercommander.constants import TIMEOUT_DEFAULT
 
 
 @pytest.mark.parametrize(
@@ -43,16 +43,6 @@ class TestParseTimeout(TestCase):
 
 
 class TestEnforceTimeoutRange(TestCase):
-    @log_capture()
-    def test_greater_than_max(self, capture):
-        timeout_delta = timedelta(days=100)
-        expect_delta = TIMEOUT_MAX
-        expect_warning = 'The maximum device timeout value is 30 days. The device timeout has been set to the maximum.'
-
-        new_timeout_delta = enforce_timeout_range(timeout_delta)
-        self.assertEqual(expect_delta, new_timeout_delta)
-        capture.check(('root', 'WARNING', expect_warning))
-
     @log_capture()
     def test_less_than_min(self, capture):
         timeout_delta = timedelta(0)
