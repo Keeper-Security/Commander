@@ -68,6 +68,8 @@ class KeeperCsvImporter(BaseFileImporter):
                                 if key and value:
                                     if key == '$record_uid':
                                         record.uid = value
+                                    elif key == '$type':
+                                        record.type = value
                                     else:
                                         field = RecordField()
                                         if key == TWO_FACTOR_CODE:
@@ -102,6 +104,11 @@ class KeeperCsvExporter(BaseExporter):
                                 domain = domain + '#reshare'
                         break
                 row = [path, r.title or '', r.login or '', r.password or '', r.login_url or '', r.notes or '', domain]
+                row.append('$record_uid')
+                row.append(r.uid)
+                if r.type:
+                    row.append('$type')
+                    row.append(r.type)
                 if r.fields:
                     for cf in r.fields:
                         if cf.type == FIELD_TYPE_ONE_TIME_CODE:
@@ -110,8 +117,6 @@ class KeeperCsvExporter(BaseExporter):
                         elif cf.label:
                             row.append(cf.label)
                             row.append(str(cf.value))
-                row.append('$record_uid')
-                row.append(r.uid)
                 writer.writerow(row)
         if filename:
             csvfile.flush()

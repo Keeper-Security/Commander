@@ -969,7 +969,7 @@ def execute_records_update(params, records):  # type: (KeeperParams, List[record
         rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)
         rs_record.extend(rs.records)
 
-    report_statuses('record', (x.status for x in rs_record))
+    report_statuses('record', (record_status_to_str(x.status) for x in rs_record))
 
     return rs_record
 
