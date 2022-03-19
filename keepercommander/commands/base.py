@@ -381,7 +381,7 @@ class GroupCommand(CliCommand):
 
         if command:
             kwargs['action'] = verb
-            command.execute_args(params, args, **kwargs)
+            return command.execute_args(params, args, **kwargs)
 
     def validate(self, params):  # type: (KeeperParams) -> None
         pass

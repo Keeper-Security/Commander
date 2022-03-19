@@ -19,12 +19,13 @@ import functools
 import os
 import json
 from collections import OrderedDict
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict, Set
 
 from .. import api, display, vault
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
+from ..params import KeeperParams
 from ..record import Record
-from .base import user_choice, suppress_exit, raise_parse_exception, Command
+from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..error import CommandError
 
@@ -37,6 +38,7 @@ def register_commands(commands):
     commands['rmdir'] = FolderRemoveCommand()
     commands['mv'] = FolderMoveCommand()
     commands['ln'] = FolderLinkCommand()
+    commands['shortcut'] = ShortcutCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -109,6 +111,16 @@ ln_parser.add_argument('src', nargs='?', type=str, action='store',
 ln_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder or UID')
 ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
+
+
+shortcut_list_parser = argparse.ArgumentParser(prog='shortcut-list')
+shortcut_list_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
+                                  default='table', help='output format')
+shortcut_list_parser.add_argument('--output', dest='output', action='store',
+                                  help='output file name. (ignored for table format)')
+
+shortcut_keep_parser = argparse.ArgumentParser(prog='shortcut-keep')
+shortcut_keep_parser.add_argument('target', nargs='?', help='Full record or folder path')
 
 
 class FolderListCommand(Command):
@@ -699,8 +711,10 @@ class FolderMoveCommand(Command):
                 rec = params.record_cache[record_uid]
                 if src_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                     if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                        ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType else src_folder.shared_folder_uid
-                        dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
+                        ssf_uid = src_folder.uid \
+                            if src_folder.type == BaseFolderNode.SharedFolderType else src_folder.shared_folder_uid
+                        dsf_uid = dst_folder.uid \
+                            if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
                         if ssf_uid != dsf_uid:
                             shf = params.shared_folder_cache[dsf_uid]
                             transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
@@ -731,3 +745,182 @@ class FolderLinkCommand(FolderMoveCommand):
 
     def get_parser(self):
         return ln_parser
+
+
+class ShortcutCommand(GroupCommand):
+    def __init__(self):
+        super(ShortcutCommand, self).__init__()
+        self.register_command('list', ShortcutListCommand(), 'Displays a list of record shortcuts')
+        self.register_command('keep', ShortcutKeepCommand(), 'Removes shortcuts except one')
+        self.default_verb = 'list'
+
+    @staticmethod
+    def get_record_shortcuts(params):    # type: (KeeperParams) -> Dict[str, Set[str]]
+        records = {}
+        for folder_uid in params.subfolder_record_cache:
+            for record_uid in params.subfolder_record_cache[folder_uid]:
+                if record_uid in params.record_cache:
+                    if params.record_cache[record_uid].get('version') in {2, 3}:
+                        if record_uid not in records:
+                            records[record_uid] = set()
+                        records[record_uid].add(folder_uid)
+
+        shortcuts = [k for k, v in records.items() if len(v) <= 1]
+        for record_uid in shortcuts:
+            del records[record_uid]
+
+        return records
+
+
+class ShortcutListCommand(Command):
+    def get_parser(self):
+        return shortcut_list_parser
+
+    def execute(self, params, **kwargs):
+        records = ShortcutCommand.get_record_shortcuts(params)
+
+        table = []
+        json_headers = ['record_uid', 'record_title', 'folder']
+        headers = ['Record UID', 'Record Title', 'Folder']
+        fmt = kwargs.get('format')
+        for record_uid in records:
+            record = vault.KeeperRecord.load(params, record_uid)
+            if record:
+                folders = [params.folder_cache.get(x, params.root_folder) for x in records[record_uid]]
+                folders.sort(key=lambda x: x.name)
+                f = []
+                for x in folders:
+                    is_shared = True if x.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType} else False
+                    folder_path = get_folder_path(params, x.uid)
+                    if fmt == 'json':
+                        f.append({
+                            'folder_uid': x.uid,
+                            'path': f'/{folder_path}',
+                            'shared': is_shared
+                        })
+                    else:
+                        f.append(f'{("[Shared]" if is_shared else "[ User ]")} /{folder_path}')
+                table.append([record.record_uid, record.title, f])
+
+        return dump_report_data(table, json_headers if fmt == 'json' else headers,
+                                fmt=fmt, filename=kwargs.get('output'))
+
+
+class ShortcutKeepCommand(Command):
+    def get_parser(self):
+        return shortcut_keep_parser
+
+    def execute(self, params, **kwargs):
+        target = kwargs.get('target')
+        if not target:
+            parser = self.get_parser()
+            parser.print_help()
+            return
+
+        records = ShortcutCommand.get_record_shortcuts(params)
+        to_keep = {}    # type: Dict[str, str]   # (record_uid, folder_uid)
+
+        if target in params.record_cache:    # record UID
+            record_uid = target
+            if record_uid not in records:
+                raise CommandError('shortcut-keep', f'Record UID {record_uid} does not have shortcuts')
+            if params.current_folder:
+                if params.current_folder in records[params.current_folder]:
+                    to_keep[record_uid] = params.current_folder
+            else:
+                if '' in records[params.current_folder]:
+                    to_keep[record_uid] = record_uid
+        elif target in params.record_cache:    # folder UID
+            folder_uid = target
+            for record_uid in records:
+                if folder_uid in records[record_uid]:
+                    to_keep[record_uid] = folder_uid
+        else:
+            path = try_resolve_path(params, target)
+            if path is None:
+                raise CommandError('shortcut-keep', 'Target path should be existing record or folder')
+            folder, name = path
+            if name:
+                regex = re.compile(fnmatch.translate(name)).match
+                folder_uid = folder.uid or ''
+                if folder_uid in params.subfolder_record_cache:
+                    for record_uid in params.subfolder_record_cache[folder_uid]:
+                        if record_uid == name:
+                            if record_uid in records:
+                                if folder_uid in records[record_uid]:
+                                    to_keep[record_uid] = folder_uid
+                        else:
+                            record = vault.KeeperRecord.load(params, record_uid)
+                            if isinstance(record, vault.PasswordRecord) or isinstance(record, vault.TypedRecord):
+                                if regex(record.title):
+                                    if record_uid in records:
+                                        if folder_uid in records[record_uid]:
+                                            to_keep[record_uid] = folder_uid
+            else:
+                folder_uid = folder.uid or ''
+                if folder_uid in params.subfolder_record_cache:
+                    for record_uid in params.subfolder_record_cache[folder_uid]:
+                        if record_uid in records:
+                            if folder_uid in records[record_uid]:
+                                to_keep[record_uid] = folder_uid
+
+            if len(to_keep) == 0:
+                raise CommandError('shortcut-keep', f'There are no shortcut for path "{target}" not found')
+
+        unlink_records = []
+        for record_uid, keep_folder_uid in to_keep.items():
+            if record_uid not in records:
+                continue
+            if keep_folder_uid not in records[record_uid]:
+                continue
+
+            for folder_uid in records[record_uid]:
+                if folder_uid == keep_folder_uid:
+                    continue
+                folder = params.folder_cache.get(folder_uid) if folder_uid else params.root_folder
+
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': record_uid,
+                    'object_type': 'record'
+                }
+
+                if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                    del_obj['from_type'] = 'user_folder'
+                    if folder.type == BaseFolderNode.UserFolderType:
+                        del_obj['from_uid'] = folder.uid
+                else:
+                    del_obj['from_type'] = 'shared_folder_folder'
+                    del_obj['from_uid'] = folder.uid
+
+                unlink_records.append(del_obj)
+
+        if not unlink_records:
+            return
+
+        while unlink_records:
+            rq = {
+                'command': 'pre_delete',
+                'objects': unlink_records[:999]
+            }
+            unlink_records = unlink_records[999:]
+
+            rs = api.communicate(params, rq)
+            if rs['result'] == 'success':
+                pdr = rs['pre_delete_response']
+
+                force = kwargs['force'] if 'force' in kwargs else None
+                np = 'y'
+                if not force:
+                    summary = pdr['would_delete']['deletion_summary']
+                    for x in summary:
+                        print(x)
+                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                if np.lower() == 'y':
+                    rq = {
+                        'command': 'delete',
+                        'pre_delete_token': pdr['pre_delete_token']
+                    }
+                    api.communicate(params, rq)
+                    params.sync_data = True
+
