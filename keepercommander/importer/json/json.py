@@ -155,7 +155,7 @@ class KeeperJsonExporter(BaseExporter):
                 shared_folders.append(item)
             elif isinstance(item, Record):
                 records.append(item)
-
+        """
         external_uids = {}
         external_id = 1
         for record in records:
@@ -168,7 +168,7 @@ class KeeperJsonExporter(BaseExporter):
             if record.references:
                 for ref in record.references:
                     ref.uids = [external_uids[x] for x in ref.uids if x in external_uids]
-
+        """
         sfs = []
         for sf in shared_folders:
             sfo = {
