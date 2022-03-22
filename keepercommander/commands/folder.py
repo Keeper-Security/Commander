@@ -45,6 +45,8 @@ def register_command_info(aliases, command_info):
     for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser, ln_parser]:
         command_info[p.prog] = p.description
 
+    command_info['shortcut'] = 'Manage record shortcuts'
+
 
 ls_parser = argparse.ArgumentParser(prog='ls', description='List folder contents.')
 ls_parser.add_argument('-l', '--list', dest='detail', action='store_true', help='show detailed list')
@@ -643,6 +645,7 @@ class FolderMoveCommand(Command):
             rq['to_type'] = dst_folder.type
             rq['to_uid'] = dst_folder.uid
 
+        transition_keys = []
         for src_folder, record_uid in source:
             if not record_uid:   # move folder
                 if src_folder.type == BaseFolderNode.RootFolderType:
@@ -670,7 +673,6 @@ class FolderMoveCommand(Command):
                     move['from_uid'] = parent_folder.uid
 
                 rq['move'].append(move)
-                transition_keys = []
                 if src_folder.type == BaseFolderNode.UserFolderType:
                     if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                         shf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else dst_folder.shared_folder_uid
@@ -689,7 +691,6 @@ class FolderMoveCommand(Command):
                     else:
                         FolderMoveCommand.prepare_transition_keys(params, src_folder, transition_keys, params.data_key)
 
-                rq['transition_keys'] = transition_keys
             else:
                 move = {
                     'uid': record_uid,
@@ -727,13 +728,13 @@ class FolderMoveCommand(Command):
                         shf = params.shared_folder_cache[dsf_uid]
                         transition_key = FolderMoveCommand.get_transition_key(rec, shf['shared_folder_key_unencrypted'])
 
-                transition_keys = []
                 if transition_key is not None:
                     transition_keys.append({
                         'uid': record_uid,
                         'key': transition_key
                     })
-                rq['transition_keys'] = transition_keys
+        if transition_keys:
+            rq['transition_keys'] = transition_keys
 
         api.communicate(params, rq)
         params.sync_data = True
