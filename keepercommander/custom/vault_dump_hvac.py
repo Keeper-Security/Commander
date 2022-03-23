@@ -2,6 +2,9 @@
 
 # Dumps HashiCorp Vault secrets to a Keeper JSON file ready for import.
 
+# Requirements:
+# pip install hvac
+
 # Reads env vars:
 #  VAULT_ADDR  which points to desired Hashicorp Vault instance, default http://localhost:8200
 #  VAULT_TOKEN vault access token, no default - if empty get token from already-authenticated session
