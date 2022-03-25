@@ -8,7 +8,7 @@
 # Copyright 2018 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
+import logging
 
 def get_folder_path(params, folder_uid, delimiter='/'):
     uid = folder_uid
@@ -30,6 +30,44 @@ def find_folders(params, record_uid):
         if record_uid in params.subfolder_record_cache[fuid]:
             if fuid:
                 yield fuid
+
+
+def find_parent_top_folder(params, record_uid):
+
+    """
+    Find all top Shared Folders that will contain this record.
+    Record can be in more than two folders by having a "link" which
+    will present a record as a record with the same UID in more than
+    one folder.
+    """
+    contained_folder_uids = []
+
+    # Get all folders that might contain the given record
+    for fuid in params.subfolder_record_cache:
+        if fuid:    # record is in root folder
+            if record_uid in params.subfolder_record_cache[fuid]:
+                contained_folder_uids.append(fuid)
+
+    shared_folders_containing_record = []
+
+    # if records that belong to folder are found then go
+    # through each one of them to get the share folder
+    for cfuid in contained_folder_uids:
+        if cfuid:
+            folder = params.folder_cache[cfuid]
+
+            # folder is already a shared folder
+            if isinstance(folder, SharedFolderNode):
+                shared_folders_containing_record.append(folder)
+            # folder is a sub-folder, let's get its pared shared folder
+            elif isinstance(folder, SharedFolderFolderNode):
+                shared_folder_uid = folder.shared_folder_uid
+                shared_folder = params.folder_cache[shared_folder_uid]
+                shared_folders_containing_record.append(shared_folder)
+            else:
+                logging.debug("Folder UID={} is not a shared folder".format(cfuid))
+
+    return shared_folders_containing_record
 
 
 def contained_folder(params, folder, component):

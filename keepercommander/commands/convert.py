@@ -23,7 +23,7 @@ from .folder import get_folder_path
 from .. import api, crypto, loginv3, utils
 from ..params import KeeperParams
 from ..proto import record_pb2
-from ..subfolder import try_resolve_path, find_folders
+from ..subfolder import try_resolve_path, find_parent_top_folder
 
 
 def register_commands(commands):
@@ -243,13 +243,15 @@ class ConvertCommand(Command):
                         rc.record_file.append(rf)
                 rc.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(v3_data), record_key)
 
-                for folder_uid in find_folders(params, record_uid):
-                    if folder_uid in params.shared_folder_cache:
-                        sf = params.shared_folder_cache[folder_uid]
-                        folder_key = record_pb2.RecordFolderForConversion()
-                        folder_key.folder_uid = utils.base64_url_decode(folder_uid)
-                        folder_key.record_folder_key = crypto.encrypt_aes_v2(record_key, sf['shared_folder_key_unencrypted'])
-                        rc.folder_key.append(folder_key)
+                # Get share folder of the record so that we can convert the Record Folder Key
+                shared_folders = find_parent_top_folder(params, record_uid)
+
+                for shared_folder in shared_folders:
+                    sf = params.shared_folder_cache[shared_folder.uid]
+                    folder_key = record_pb2.RecordFolderForConversion()
+                    folder_key.folder_uid = utils.base64_url_decode(shared_folder.uid)
+                    folder_key.record_folder_key = crypto.encrypt_aes_v2(record_key, sf['shared_folder_key_unencrypted'])
+                    rc.folder_key.append(folder_key)
 
                 if params.enterprise_ec_key:
                     audit_data = {
