@@ -21,7 +21,7 @@ import json
 from collections import OrderedDict
 from typing import Tuple, List, Optional, Dict, Set
 
-from .. import api, display, vault
+from .. import api, display, vault, crypto, utils
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..params import KeeperParams
 from ..record import Record
@@ -538,11 +538,10 @@ class FolderMoveCommand(Command):
         # encrypted with the shared folder key if going to a shared folder,
         # or encrypted with the user's data key
         if record.get('version', -1) >= 3:
-            tkey = api.encrypt_aes_plain(record['record_key_unencrypted'], encryption_key)
-            transition_key = api.base64.urlsafe_b64encode(tkey).decode().rstrip('=')
+            tkey = crypto.encrypt_aes_v2(record['record_key_unencrypted'], encryption_key)
         else:
-            transition_key = api.encrypt_aes(record['record_key_unencrypted'], encryption_key)
-        return transition_key
+            tkey = crypto.encrypt_aes_v1(record['record_key_unencrypted'], encryption_key)
+        return utils.base64_url_encode(tkey)
 
     @staticmethod
     def prepare_transition_keys(params, folder, keys, encryption_key):
@@ -620,6 +619,8 @@ class FolderMoveCommand(Command):
                             if isinstance(record, vault.PasswordRecord) or isinstance(record, vault.TypedRecord):
                                 if regex(record.title):
                                     source.append((src_folder, record_uid))
+            else:
+                source.append((src_folder, None))
 
                 if len(source) == 0:
                     raise CommandError('mv', 'Record "{0}" not found'.format(name))

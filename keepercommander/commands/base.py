@@ -77,8 +77,9 @@ def register_commands(commands, aliases, command_info):
     misc_commands(commands)
     misc_command_info(aliases, command_info)
 
-    from .verify_records import VerifyRecordsCommand
+    from .verify_records import VerifyRecordsCommand, VerifySharedFoldersCommand
     commands['verify-records'] = VerifyRecordsCommand()
+    commands['verify-shared-folders'] = VerifySharedFoldersCommand()
 
     from .. import importer
     importer.register_commands(commands)

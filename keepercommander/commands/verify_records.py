@@ -10,15 +10,103 @@
 # Contact: ops@keepersecurity.com
 #
 
+import itertools
 import json
 import logging
-
-import itertools
+from typing import Tuple, List
 
 from .base import user_choice, Command
-from .. import api, crypto, utils
-from ..record import get_totp_code
+from .. import api, crypto, utils, vault
 from ..proto import record_pb2
+from ..record import get_totp_code
+
+
+class VerifySharedFoldersCommand(Command):
+    def execute(self, params, **kwargs):
+        rq = {
+            'command': 'sync_down',
+            'revision': 0,
+            'include': ['shared_folder', 'sfheaders', 'sfusers', 'sfrecords', 'explicit']
+        }
+        rs = api.communicate(params, rq)
+        sf_keys = []     # type: List[Tuple[str, str]]  # (record_uid, shared_folder_uid)
+        if 'shared_folders' in rs:
+            for sf in rs['shared_folders']:
+                shared_folder_uid = sf['shared_folder_uid']
+                if 'records' in sf:
+                    for rec in sf['records']:
+                        record_uid = rec['record_uid']
+                        record = params.record_cache.get(record_uid)
+                        if not record:
+                            continue
+                        if record.get('version', 0) != 3:
+                            continue
+                        if 'record_key' not in rec:
+                            continue
+                        record_key = utils.base64_url_decode(rec['record_key'])
+                        if len(record_key) == 60:
+                            continue
+                        sf_keys.append((record_uid, shared_folder_uid))
+
+        if not sf_keys:
+            return
+
+        sf_keys.sort(key=lambda x: x[0])
+
+        print(f'There are {len(sf_keys)} record key(s) to be corrected')
+        answer = user_choice('Do you want to proceed?', 'yn', 'n')
+        if answer.lower() == 'y':
+            while sf_keys:
+                chunk = sf_keys[:999]
+                sf_keys = sf_keys[999:]
+
+                record_convert = None
+                last_record_uid = ''
+                rq = record_pb2.RecordsConvertToV3Request()
+                for record_uid, shared_folder_uid in chunk:
+                    if shared_folder_uid not in params.shared_folder_cache:
+                        continue
+                    if record_uid not in params.record_cache:
+                        continue
+
+                    record = params.record_cache[record_uid]
+                    shared_folder = params.shared_folder_cache[shared_folder_uid]
+                    if last_record_uid != record_uid:
+                        if record_convert:
+                            rq.records.append(record_convert)
+                        last_record_uid = record_uid
+                        record_convert = record_pb2.RecordConvertToV3()
+                        record_convert.record_uid = utils.base64_url_decode(record_uid)
+                        record_convert.client_modified_time = utils.current_milli_time()
+                        record_convert.revision = record['revision']
+                        record_convert.data = utils.base64_url_decode(record['data'])
+                        if params.enterprise_ec_key:
+                            rec = vault.KeeperRecord.load(params, record_uid)
+                            if isinstance(rec, vault.TypedRecord):
+                                audit_data = {
+                                    'title': rec.title or '',
+                                    'record_type': rec.record_type,
+                                }
+                                field = rec.get_typed_field('url')
+                                if field:
+                                    default_value = field.get_default_value(str)
+                                    if default_value:
+                                        audit_data['url'] = utils.url_strip(default_value)
+                                record_convert.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
+
+                    fk = record_pb2.RecordFolderForConversion()
+                    fk.folder_uid = utils.base64_url_decode(shared_folder_uid)
+                    fk.record_folder_key = crypto.encrypt_aes_v2(record['record_key_unencrypted'], shared_folder['shared_folder_key_unencrypted'])
+                    record_convert.folder_key.append(fk)
+
+                if record_convert:
+                    rq.records.append(record_convert)
+
+                rs = api.communicate_rest(params, rq, 'vault/records_convert3', rs_type=record_pb2.RecordsModifyResponse)
+                if rs:
+                    pass
+
+            params.sync_data = True
 
 
 class VerifyRecordsCommand(Command):
