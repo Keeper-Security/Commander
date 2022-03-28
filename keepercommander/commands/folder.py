@@ -120,6 +120,7 @@ shortcut_list_parser.add_argument('--format', dest='format', action='store', cho
                                   default='table', help='output format')
 shortcut_list_parser.add_argument('--output', dest='output', action='store',
                                   help='output file name. (ignored for table format)')
+shortcut_list_parser.add_argument('target', nargs='?', help='Full record or folder path')
 
 shortcut_keep_parser = argparse.ArgumentParser(prog='shortcut-keep')
 shortcut_keep_parser.add_argument('target', nargs='?', help='Full record or folder path')
@@ -752,7 +753,7 @@ class FolderLinkCommand(FolderMoveCommand):
 class ShortcutCommand(GroupCommand):
     def __init__(self):
         super(ShortcutCommand, self).__init__()
-        self.register_command('list', ShortcutListCommand(), 'Displays a list of record shortcuts')
+        self.register_command('list', ShortcutListCommand(), 'Displays shortcuts')
         self.register_command('keep', ShortcutKeepCommand(), 'Removes shortcuts except one')
         self.default_verb = 'list'
 
@@ -780,12 +781,56 @@ class ShortcutListCommand(Command):
 
     def execute(self, params, **kwargs):
         records = ShortcutCommand.get_record_shortcuts(params)
+        target = kwargs.get('target')
+        to_show = set()
+        if target:
+            if target in params.record_cache:    # record UID
+                if target not in records:
+                    raise CommandError('shortcut-get', f'Record UID {target} does not have shortcuts')
+                to_show.add(target)
+
+            elif target in params.folder_cache:    # folder UID
+                for record_uid in records:
+                    if target in records[record_uid]:
+                        to_show.add(record_uid)
+
+            else:
+                path = try_resolve_path(params, target)
+                if path is None:
+                    raise CommandError('shortcut-keep', 'Target path should be existing record or folder')
+                folder, name = path
+                if name:
+                    regex = re.compile(fnmatch.translate(name)).match
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for record_uid in params.subfolder_record_cache[folder_uid]:
+                            if record_uid == name:
+                                if record_uid in records:
+                                    if folder_uid in records[record_uid]:
+                                        to_show.add(record_uid)
+                            else:
+                                record = vault.KeeperRecord.load(params, record_uid)
+                                if isinstance(record, vault.PasswordRecord) or isinstance(record, vault.TypedRecord):
+                                    if regex(record.title):
+                                        if record_uid in records:
+                                            if folder_uid in records[record_uid]:
+                                                to_show.add(record_uid)
+                else:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for record_uid in params.subfolder_record_cache[folder_uid]:
+                            if record_uid in records:
+                                if folder_uid in records[record_uid]:
+                                    to_show.add(record_uid)
+        else:
+            logging.info('Displaying all shortcuts')
+            to_show.update(records.keys())
 
         table = []
         json_headers = ['record_uid', 'record_title', 'folder']
         headers = ['Record UID', 'Record Title', 'Folder']
         fmt = kwargs.get('format')
-        for record_uid in records:
+        for record_uid in to_show:
             record = vault.KeeperRecord.load(params, record_uid)
             if record:
                 folders = [params.folder_cache.get(x, params.root_folder) for x in records[record_uid]]
@@ -832,7 +877,7 @@ class ShortcutKeepCommand(Command):
             else:
                 if '' in records[params.current_folder]:
                     to_keep[record_uid] = record_uid
-        elif target in params.record_cache:    # folder UID
+        elif target in params.folder_cache:    # folder UID
             folder_uid = target
             for record_uid in records:
                 if folder_uid in records[record_uid]:
