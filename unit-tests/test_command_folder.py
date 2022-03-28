@@ -185,5 +185,7 @@ class TestFolder(TestCase):
 
         with self.assertRaises(CommandError):
             cmd.execute(params, src='Invalid Record', dst=user_folder.uid)
+        with self.assertRaises(CommandError):
             cmd.execute(params, src=root_record_uid, dst='Invalid Folder')
+        with self.assertRaises(CommandError):
             cmd.execute(params, src=user_folder.uid, dst=user_folder.uid)

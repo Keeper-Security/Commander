@@ -253,10 +253,21 @@ class BaseConnectCommand(Command):
         self.command = ''
         self.run_at_the_end = []
 
+    SHELL_SUBSTITUTION = {
+        '`': r'\`',
+        '$': r'\$',
+        '?': r'\?',
+        '*': r'\*',
+        '^': r'\^',
+        '(': r'\(',
+        ')': r'\)'
+    }
+
     def execute_shell(self):
         logging.debug('Executing "%s" ...', self.command)
         try:
-            os.system(self.command)
+            command = self.command.translate(str.maketrans(BaseConnectCommand.SHELL_SUBSTITUTION))
+            os.system(command)
         finally:
             self.command = ''
             for cb in self.run_at_the_end:
