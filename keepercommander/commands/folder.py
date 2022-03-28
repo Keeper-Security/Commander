@@ -622,8 +622,8 @@ class FolderMoveCommand(Command):
             else:
                 source.append((src_folder, None))
 
-                if len(source) == 0:
-                    raise CommandError('mv', 'Record "{0}" not found'.format(name))
+            if len(source) == 0:
+                raise CommandError('mv', 'Record "{0}" not found'.format(name))
 
         if dst_path in params.folder_cache:
             dst_folder = params.folder_cache[dst_path]

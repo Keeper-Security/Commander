@@ -53,7 +53,16 @@ class VerifySharedFoldersCommand(Command):
 
         sf_keys.sort(key=lambda x: x[0])
 
-        print(f'There are {len(sf_keys)} record key(s) to be corrected')
+        record_uids = list({x[0] for x in sf_keys})
+        print(f'There are {len(record_uids)} record key(s) to be corrected')
+        try:
+            for record_uid in record_uids[:99]:
+                record = vault.KeeperRecord.load(params, record_uid)
+                print(f' {record_uid}  {record.title}')
+            if len(record_uids) > 99:
+                print(f' {(len(record_uids) - 99)} more ...')
+        except:
+            pass
         answer = user_choice('Do you want to proceed?', 'yn', 'n')
         if answer.lower() == 'y':
             while sf_keys:
