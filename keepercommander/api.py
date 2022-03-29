@@ -2093,10 +2093,11 @@ def resolve_record_access_path(params, record_uid, path=None):
                 break
 
     if path is None:
-        path = {}
+        path = {
+            'record_uid': record_uid
+        }
 
     if best_path:
-        path['record_uid'] = best_path['record_uid']
         if 'shared_folder_uid' in best_path:
             path['shared_folder_uid'] = best_path['shared_folder_uid']
         if 'team_uid' in best_path:
