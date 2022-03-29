@@ -2159,7 +2159,46 @@ def get_record_shares(params, record_uids):
         return False
 
     uids = [x for x in record_uids if need_share_info(x)]
+    """
+    try:
+        while len(uids) > 0:
+            chunk = uids[:999]
+            uids = uids[999:]
+            rq = records.GetRecordDataWithAccessInfoRequest()
+            rq.clientTime = utils.current_milli_time()
+            rq.recordUid.extend([utils.base64_url_decode(x) for x in chunk])
+            rq.recordDetailsInclude = records.SHARE_ONLY
+            rs = communicate_rest(params, rq, 'vault/get_records_details',
+                                  rs_type=records.GetRecordDataWithAccessInfoResponse)
+            for info in rs.recordDataWithAccessInfo:
+                record_uid = utils.base64_url_encode(info.recordUid)
+                rec = params.record_cache[record_uid]
+                if 'shares' not in rec:
+                    rec['shares'] = {}
 
+                rec['shares']['user_permissions'] = []
+                rec['shares']['shared_folder_permissions'] = []
+                for up in info.userPermission:
+                    rec['shares']['user_permissions'].append({
+                        'username': up.username,
+                        'owner': up.owner,
+                        'share_admin': up.shareAdmin,
+                        'sharable': up.sharable,
+                        'editable': up.editable,
+                        'awaiting_approval': up.awaitingApproval,
+                        'expiration': up.expiration,
+                    })
+                for sp in info.sharedFolderPermission:
+                    rec['shares']['shared_folder_permissions'].append({
+                        'shared_folder_uid': utils.base64_url_encode(sp.sharedFolderUid),
+                        'reshareable': sp.resharable,
+                        'editable': sp.editable,
+                        'revision': sp.revision,
+                        'expiration':sp.expiration,
+                    })
+    except Exception as e:
+        logging.error(e)
+    """
     while len(uids) > 0:
         records = []
         rq = {

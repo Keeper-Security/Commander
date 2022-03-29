@@ -10,19 +10,43 @@
 # Contact: ops@keepersecurity.com
 #
 
+import argparse
 import itertools
 import json
 import logging
-from typing import Tuple, List
+from typing import Tuple, List, Optional, Set
 
 from .base import user_choice, Command
-from .. import api, crypto, utils, vault
+from .. import api, crypto, utils, vault, error
 from ..proto import record_pb2
 from ..record import get_totp_code
 
 
+verify_shared_folders_parser = argparse.ArgumentParser(prog='verify-shared-folders')
+verify_shared_folders_parser.add_argument('target', nargs='*', help='Shared folder UID or name.')
+
+
 class VerifySharedFoldersCommand(Command):
+    def get_parser(self):
+        return verify_shared_folders_parser
+
     def execute(self, params, **kwargs):
+        shared_folders = None    # type: Optional[Set[str]]
+        target = kwargs.get('target')
+        if isinstance(target, list) and len(target) > 0:
+            shared_folders = set()
+            sf_names = {x['name_unencrypted'].lower(): x['shared_folder_uid']
+                        for x in params.shared_folder_cache.values()}
+            for name in target:
+                if name in params.shared_folder_cache:
+                    shared_folders.add(name)
+                else:
+                    sf_name = name.lower()
+                    if sf_name in sf_names:
+                        shared_folders.add(sf_names[sf_name])
+                    else:
+                        raise error.CommandError('shared_folders', f'Shared folder \"{name}\" not found')
+
         rq = {
             'command': 'sync_down',
             'revision': 0,
@@ -46,7 +70,8 @@ class VerifySharedFoldersCommand(Command):
                         record_key = utils.base64_url_decode(rec['record_key'])
                         if len(record_key) == 60:
                             continue
-                        sf_keys.append((record_uid, shared_folder_uid))
+                        if shared_folders is None or shared_folder_uid in shared_folders:
+                            sf_keys.append((record_uid, shared_folder_uid))
 
         if not sf_keys:
             return
