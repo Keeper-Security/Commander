@@ -69,6 +69,10 @@ def register_commands(commands, aliases, command_info):
     convert.register_commands(commands)
     convert.register_command_info(aliases, command_info)
 
+    from . import kcm
+    kcm.register_commands(commands)
+    kcm.register_command_info(aliases, command_info)
+
     from . import scripting
     scripting.register_commands(commands)
     scripting.register_command_info(aliases, command_info)
