@@ -41,7 +41,10 @@ automator_edit_parser.add_argument('--url', dest='url', action='store', help='Au
 automator_edit_parser.add_argument('--skill', dest='skill', action='append', choices=['device', 'team'],
                                    help='Automator Skills.')
 automator_edit_parser.add_argument('--set', dest='setting', metavar="KEY=VALUE", action='append',
-                                   help='Automator Settings. Use value: ${file:filename} to load file content.')
+                                   help='Automator Settings. Use value: '
+                                        '${file:filename} to load text file content. '
+                                        '${base64:filename} to load binary file content and encode it with base64url. '
+                                        '${env:environment_variable_name} to load the content of environment variable.')
 
 automator_delete_parser = argparse.ArgumentParser(prog='automator-delete')
 automator_delete_parser.add_argument('target', help='Automator ID or Name.')
@@ -314,6 +317,12 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
                                 if os.path.isfile(filename):
                                     with open(filename, 'r') as f:
                                         value = f.read()
+                            if parts[0].lower() == 'base64':
+                                filename = parts[1].strip()
+                                if os.path.isfile(filename):
+                                    with open(filename, 'rb') as f:
+                                        data = f.read()
+                                        value = utils.base64_url_encode(data)
                             elif parts[0].lower() == 'env':
                                 if parts[1] in os.environ:
                                     value = os.environ[parts[1]]
