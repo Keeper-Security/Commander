@@ -9,6 +9,10 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
+from typing import Optional, Tuple
+
+from .params import KeeperParams
+
 
 def get_folder_path(params, folder_uid, delimiter='/'):
     uid = folder_uid
@@ -117,7 +121,7 @@ def path_split(params, folder, path_string):
     return folder, components
 
 
-def try_resolve_path(params, path):
+def try_resolve_path(params, path):     # type: (KeeperParams, str) -> Tuple[BaseFolderNode, Optional[str]]
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
 
