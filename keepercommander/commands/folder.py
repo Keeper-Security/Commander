@@ -124,16 +124,17 @@ shortcut_list_parser.add_argument('target', nargs='?', help='Full record or fold
 
 shortcut_keep_parser = argparse.ArgumentParser(prog='shortcut-keep')
 shortcut_keep_parser.add_argument('target', nargs='?', help='Full record or folder path')
+shortcut_keep_parser.add_argument('folder', nargs='?', help='Optional. Folder name or UID. Overwrites current folder.')
 
 
 class FolderListCommand(Command):
     @staticmethod
     def folder_match_strings(folder):   # type: (BaseFolderNode) -> collections.Iterable[str]
-        return filter(lambda f: type(f) == str and len(f) > 0, [folder.name, folder.uid])
+        return filter(lambda f: isinstance(f, str) and len(f) > 0, [folder.name, folder.uid])
 
     @staticmethod
     def record_match_strings(record):     # type: (Record) -> collections.Iterable[str]
-        return filter(lambda f: type(f) == str and len(f) > 0, [record.title, record.record_uid, record.login, record.login_url, record.notes])
+        return filter(lambda f: isinstance(f, str) and len(f) > 0, [record.title, record.record_uid, record.login, record.login_url, record.notes])
 
     @staticmethod
     def chunk_list(l, n):
@@ -864,6 +865,20 @@ class ShortcutKeepCommand(Command):
             parser.print_help()
             return
 
+        folder_override = kwargs.get('folder')
+        folder_override_uid = None
+        if folder_override:
+            if folder_override in params.folder_cache:
+                folder_override_uid = folder_override
+            else:
+                path = try_resolve_path(params, folder_override)
+                if path is None:
+                    raise CommandError('shortcut-keep', 'Folder parameter should be folder name or UID')
+                folder, name = path
+                if name:
+                    raise CommandError('shortcut-keep', 'Folder parameter should be folder name or UID')
+                folder_override_uid = folder.uid
+
         records = ShortcutCommand.get_record_shortcuts(params)
         to_keep = {}    # type: Dict[str, str]   # (record_uid, folder_uid)
 
@@ -871,19 +886,23 @@ class ShortcutKeepCommand(Command):
             record_uid = target
             if record_uid not in records:
                 raise CommandError('shortcut-keep', f'Record UID {record_uid} does not have shortcuts')
-            if params.current_folder:
-                if params.current_folder in records[params.current_folder]:
-                    to_keep[record_uid] = params.current_folder
-            else:
-                if '' in records[params.current_folder]:
-                    to_keep[record_uid] = record_uid
+            record_folder = folder_override_uid or params.current_folder or ''
+            if record_folder:
+                if record_folder in records[record_uid]:
+                    to_keep[record_uid] = record_folder
         elif target in params.folder_cache:    # folder UID
             folder_uid = target
             for record_uid in records:
                 if folder_uid in records[record_uid]:
                     to_keep[record_uid] = folder_uid
         else:
-            path = try_resolve_path(params, target)
+            saved_wd = params.current_folder
+            try:
+                if folder_override_uid:
+                    params.current_folder = folder_override_uid
+                path = try_resolve_path(params, target)
+            finally:
+                params.current_folder = saved_wd
             if path is None:
                 raise CommandError('shortcut-keep', 'Target path should be existing record or folder')
             folder, name = path
@@ -911,8 +930,11 @@ class ShortcutKeepCommand(Command):
                             if folder_uid in records[record_uid]:
                                 to_keep[record_uid] = folder_uid
 
-            if len(to_keep) == 0:
-                raise CommandError('shortcut-keep', f'There are no shortcut for path "{target}" not found')
+        if len(to_keep) == 0:
+            if folder_override:
+                raise CommandError('shortcut-keep', f'There are no shortcut for record "{target}" in folder {folder_override} found')
+            else:
+                raise CommandError('shortcut-keep', f'There are no shortcut for path "{target}" found')
 
         unlink_records = []
         for record_uid, keep_folder_uid in to_keep.items():
