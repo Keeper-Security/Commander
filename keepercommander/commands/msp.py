@@ -323,7 +323,7 @@ class MSPAddCommand(EnterpriseCommand):
         }
         rs = api.communicate(params, rq)
         if rs:
-            logging.info('Managed company \"%s\" created. ID=%d', name, rs.get('enterprise_id', -1))
+            logging.info('Managed company \"%s\" added. ID=%d', name, rs.get('enterprise_id', -1))
         api.query_enterprise(params)
 
 
@@ -348,7 +348,9 @@ class MSPRemoveCommand(EnterpriseCommand):
                 'command': 'enterprise_remove_by_msp',
                 'enterprise_id': current_mc['mc_enterprise_id']
             }
-            api.communicate(params, rq)
+            rs = api.communicate(params, rq)
+            if rs:
+                logging.info('Managed company \"%s\" removed. ID=%d', current_mc['mc_enterprise_name'], current_mc['mc_enterprise_id'])
             api.query_enterprise(params)
 
 
