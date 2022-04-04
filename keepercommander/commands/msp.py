@@ -5,25 +5,30 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2020 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
 import argparse
+import json
+import logging
 import os
 import string
 from datetime import datetime, timedelta
 import calendar
 
-from .base import suppress_exit, raise_parse_exception, dump_report_data
+from .base import suppress_exit, raise_parse_exception, dump_report_data, user_choice
 from .enterprise import EnterpriseCommand
-from .. import api, loginv3
-from ..display import format_managed_company, format_msp_licenses
+from .. import api, crypto, utils, loginv3, error
+from ..display import format_managed_company, format_msp_licenses, bcolors
 from ..error import CommandError
 
 
 def register_commands(commands):
     commands['msp-down'] = GetMSPDataCommand()
     commands['msp-info'] = MSPInfoCommand()
+    commands['msp-add'] = MSPAddCommand()
+    commands['msp-remove'] = MSPRemoveCommand()
     commands['msp-license'] = MSPLicenseCommand()
     commands['msp-license-report'] = MSPLicensesReportCommand()
 
@@ -31,11 +36,12 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     aliases['md'] = 'msp-down'
     aliases['mi'] = 'msp-info'
+    aliases['ma'] = 'msp-add'
+    aliases['mrm'] = 'msp-remove'
     aliases['ml'] = 'msp-license'
     aliases['mlr'] = 'msp-license-report'
-    aliases['mltm'] = 'msp-login-to-mc'
 
-    for p in [msp_data_parser, msp_info_parser, msp_license_parser, msp_license_report_parser]:
+    for p in [msp_data_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_license_parser, msp_license_report_parser]:
         command_info[p.prog] = p.description
 
 
@@ -70,25 +76,29 @@ msp_license_report_parser.add_argument('--type',
                                        choices=['allocation', 'audit'],
                                        help='Type of the report',
                                        default='allocation')
-msp_license_report_parser.add_argument('--format', dest='report_format', choices=['table', 'csv', 'json'], help='Format of the report output', default='table')
-msp_license_report_parser.add_argument('--range',
-                                       dest='range',
-                                       choices=ranges,
-                                       help="Pre-defined data ranges to run the report.",
-                                       default='last_30_days')
+msp_license_report_parser.add_argument('--format', dest='report_format', choices=['table', 'csv', 'json'],
+                                       help='Format of the report output', default='table')
+msp_license_report_parser.add_argument('--range', dest='range', choices=ranges, default='last_30_days',
+                                       help="Pre-defined data ranges to run the report.")
 msp_license_report_parser.add_argument('--from', dest='from_date',
                                        help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only applicable to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
-msp_license_report_parser.add_argument('--to',
-                                       dest='to_date',
+msp_license_report_parser.add_argument('--to', dest='to_date',
                                        help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only applicable to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
 msp_license_report_parser.add_argument('--output', dest='output', action='store', help='Output file name. (ignored for table format)')
 msp_license_report_parser.error = raise_parse_exception
 msp_license_report_parser.exit = suppress_exit
 
+msp_add_parser = argparse.ArgumentParser(prog='msp-add', description='Add Managed Company.')
+msp_add_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
+msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', required=True, type=int,
+                            help='Number of seats')
+msp_add_parser.add_argument('-p', '--plan', dest='plan', action='store', required=True,
+                            choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
+                            help='License Plan')
+msp_add_parser.add_argument('name', action='store', help='Managed Company name')
 
-
-msp_login_to_mc_parser = argparse.ArgumentParser(prog='msp-login-to_mc_parser',
-                                                    description='MSP License Reports. Use pre-defined data ranges or custom date range')
+msp_remove_parser = argparse.ArgumentParser(prog='msp-remove', description='Remove Managed Company.')
+msp_remove_parser.add_argument('mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 
 
 class GetMSPDataCommand(EnterpriseCommand):
@@ -273,6 +283,75 @@ class MSPLicensesReportCommand(EnterpriseCommand):
             print()
 
         return output
+
+
+class MSPAddCommand(EnterpriseCommand):
+    def get_parser(self):
+        return msp_add_parser
+
+    def execute(self, params, **kwargs):
+        node_id = None
+        node_name = kwargs.get('node')
+        if node_name:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                logging.warning('Node \"%s\" is not found', node_name)
+                return
+            if len(nodes) > 1:
+                logging.warning('More than one nodes \"%s\" are found', node_name)
+                return
+            node_id = nodes[0]['node_id']
+        if node_id is None:
+            root_nodes = list(self.get_user_root_nodes(params))
+            if len(root_nodes) == 0:
+                raise CommandError('msp-create', 'No root nodes were detected. Specify --node parameter')
+            node_id = root_nodes[0]
+        name = kwargs['name']
+        tree_key = utils.generate_aes_key()
+        rq = {
+            'command': 'enterprise_registration_by_msp',
+            'node_id': node_id,
+            'seats': kwargs['seats'],
+            'product_id': kwargs['plan'],
+            'enterprise_name': name,
+            'encrypted_tree_key': utils.base64_url_encode(
+                crypto.encrypt_aes_v2(tree_key, params.enterprise['unencrypted_tree_key'])),
+            'role_data': utils.base64_url_encode(
+                crypto.encrypt_aes_v1(json.dumps({'displayname': 'Keeper Administrator'}).encode(), tree_key)),
+            'root_node': utils.base64_url_encode(
+                crypto.encrypt_aes_v1(json.dumps({'displayname': 'root'}).encode(), tree_key))
+        }
+        rs = api.communicate(params, rq)
+        if rs:
+            logging.info('Managed company \"%s\" added. ID=%d', name, rs.get('enterprise_id', -1))
+        api.query_enterprise(params)
+
+
+class MSPRemoveCommand(EnterpriseCommand):
+    def get_parser(self):
+        return msp_remove_parser
+
+    def execute(self, params, **kwargs):
+        mc_input = kwargs.get('mc', '')
+        if not mc_input:
+            raise error.CommandError('msp-remove', 'Managed Company name or id is required')
+        managed_companies = params.enterprise.get('managed_companies', [])
+        current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
+        if not current_mc:
+            raise error.CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
+        answer = user_choice(bcolors.FAIL + bcolors.BOLD + 'ALERT!\n' + bcolors.ENDC + 'Remove Managed Company.\n\n' +
+                             'Removing will expire the licences for the managed company and your admin access for the account.\n' +
+                             f'Managed Company Name: \"{current_mc["mc_enterprise_name"]}\", Licences: {current_mc["number_of_seats"]}\n\n' +
+                             'I want to remove these licences managed vault folder and my access to the admin console from my MSP account.', 'yn', 'n')
+        if answer.lower() == 'y':
+            rq = {
+                'command': 'enterprise_remove_by_msp',
+                'enterprise_id': current_mc['mc_enterprise_id']
+            }
+            rs = api.communicate(params, rq)
+            if rs:
+                logging.info('Managed company \"%s\" removed. ID=%d', current_mc['mc_enterprise_name'], current_mc['mc_enterprise_id'])
+            api.query_enterprise(params)
 
 
 def get_mc_by_name_or_id(msc, name_or_id):
