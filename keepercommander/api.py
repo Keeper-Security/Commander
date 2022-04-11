@@ -1822,17 +1822,21 @@ def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterabl
     for record_uid in uids:
         record = get_record(params, record_uid)
         if record:
-            audit = records.RecordAddAuditData()
-            audit.record_uid = utils.base64_url_decode(record_uid)
-            audit.revision = record.revision
-            data = {
-                'title': record.title or '',
-                'record_type': record.record_type,
-            }
-            if record.login_url:
-                data['url'] = utils.url_strip(record.login_url)
-            audit.data = crypto.encrypt_ec(json.dumps(data).encode('utf-8'), params.enterprise_ec_key)
-            audit_data.append(audit)
+            if record.title:
+                title = record.title
+                if len(title) > 900:
+                    title = title[:900]
+                audit = records.RecordAddAuditData()
+                audit.record_uid = utils.base64_url_decode(record_uid)
+                audit.revision = record.revision
+                data = {
+                    'title': title,
+                    'record_type': record.record_type,
+                }
+                if record.login_url:
+                    data['url'] = utils.url_strip(record.login_url)
+                audit.data = crypto.encrypt_ec(json.dumps(data).encode('utf-8'), params.enterprise_ec_key)
+                audit_data.append(audit)
 
     if audit_data:
         rq = records.AddAuditDataRequest()

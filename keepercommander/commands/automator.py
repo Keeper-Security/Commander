@@ -352,6 +352,9 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
         rq.automatorState = automator_proto.NEEDS_CRYPTO_STEP_1
         rs = api.communicate_rest(params, rq, 'automator/automator_setup',
                                   rs_type=automator_proto.AdminSetupAutomatorResponse)
+        if not rs.success:
+            logging.warning('Automator \"%s\" setup step #1 error: %s', automator.name, rs.message)
+            return
         rq = automator_proto.AdminSetupAutomatorRequest()
         rq.automatorId = automator.automatorId
         rq.automatorState = automator_proto.NEEDS_CRYPTO_STEP_2
@@ -374,7 +377,7 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
         if rs.success:
             logging.info('Automator \"%s\" is setup', automator.name)
         else:
-            logging.warning(rs.message)
+            logging.warning('Automator \"%s\" setup step #2 error: %s', automator.name, rs.message)
 
 
 class AutomatorDeleteCommand(EnterpriseCommand, AutomatorMixin):
