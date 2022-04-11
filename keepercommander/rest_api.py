@@ -26,7 +26,7 @@ from . import __version__
 
 LEGACY_CLIENT_VERSION = 'c14.0.0'
 # CLIENT_VERSION = 'c' + __version__
-CLIENT_VERSION = 'c16.5.6'
+CLIENT_VERSION = 'c16.6.0'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(

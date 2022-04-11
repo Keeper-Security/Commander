@@ -1373,9 +1373,13 @@ def prepare_record_audit(params, uids):
         if uid in params.record_cache:
             keeper_record = params.record_cache[uid]
             import_record = convert_keeper_record(keeper_record)
-            if import_record:
+            if import_record and import_record.title:
+                title = import_record.title
+                if len(title) > 900:
+                    title = title[:900]
+                record_type = import_record.type
                 audit_data = {
-                    'title': import_record.title,
+                    'title': title,
                     'record_type': import_record.type
                 }
                 if import_record.login_url:
