@@ -35,7 +35,7 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    for p in [import_parser, export_parser]:
+    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser]:
         command_info[p.prog] = p.description
 
 
