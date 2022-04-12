@@ -143,6 +143,9 @@ class TypedRecordFacade(abc.ABC):
             raise Exception(f'Incorrect record type: expected {self._get_facade_type()}, got {record.record_type}')
         self.record = record
 
+    def get_custom_field(self, name):
+        return next((x.get_default_value(str) for x in self.record.custom if x.label.lower() == name.lower()), '')
+
 
 class ServerFacade(TypedRecordFacade, abc.ABC):
     def __init__(self):

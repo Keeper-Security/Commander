@@ -21,7 +21,7 @@ from .proto import record_pb2
 from .vault import KeeperRecord, PasswordRecord, TypedRecord, FileRecord, AttachmentFile
 
 
-def prepare_attachment_download(params, record_uid, attachment_id=None):
+def prepare_attachment_download(params, record_uid, attachment_name=None):
     # type: (KeeperParams, str, Optional[str]) -> Iterator['AttachmentDownloadRequest']
     record = KeeperRecord.load(params, record_uid)
     if not record:
@@ -34,12 +34,14 @@ def prepare_attachment_download(params, record_uid, attachment_id=None):
             rq.record_uids.append(utils.base64_url_decode(record.record_uid))
         elif isinstance(record, TypedRecord):
             typed_field = record.get_typed_field('fileRef')
-            if typed_field and typed_field.value:
+            if typed_field and isinstance(typed_field.value, list):
                 for file_uid in typed_field.value:
-                    if attachment_id and attachment_id != file_uid:
-                        continue
                     file_record = KeeperRecord.load(params, file_uid)
                     if isinstance(file_record, FileRecord):
+                        if attachment_name:
+                            if attachment_name != file_uid and file_record.title.lower() != attachment_name.lower() and \
+                                    file_record.name.lower() != attachment_name.lower():
+                                continue
                         rq.record_uids.append(utils.base64_url_decode(file_uid))
 
         if len(rq.record_uids) > 0:
@@ -62,8 +64,10 @@ def prepare_attachment_download(params, record_uid, attachment_id=None):
         attachments = []   # type: List[AttachmentFile]
         if isinstance(record, PasswordRecord):
             for atta in (record.attachments or []):
-                if attachment_id and attachment_id != atta.id:
-                    continue
+                if attachment_name:
+                    if attachment_name != atta.id and attachment_name.lower() != atta.title.lower() and \
+                            attachment_name.lower() != atta.name.lower():
+                        continue
                 attachments.append(atta)
         if len(attachments) > 0:
             rq = {
