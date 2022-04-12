@@ -13,18 +13,22 @@
 import argparse
 import logging
 import os
+import re
 import shutil
+import sys
+import tempfile
+
 from typing import Optional, Callable, Iterator
 
-import sys
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 
 from .base import Command
 from .record import find_record, RecordListCommand
-from ..attachment import TypedRecord
+from ..vault import TypedRecord
+from ..attachment import prepare_attachment_download
 from ..params import KeeperParams
-from ..vault_extensions import SshKeysFacade, ServerCredentialsFacade, DatabaseCredentialsFacade
+from ..vault_extensions import SshKeysFacade, ServerCredentialsFacade, DatabaseCredentialsFacade, TypedRecordFacade
 
 ssh_parser = argparse.ArgumentParser(prog='ssh',
                                      description='Establishes connection to external server using SSH. ')
@@ -53,6 +57,7 @@ rdp_parser.add_argument('record', nargs='?', type=str, action='store',
 mysql = ''
 postgresql = ''
 
+endpoint_parameter_pattern = re.compile(r'\${(.+?)}')
 
 def detect_clients():
     global mysql, postgresql
@@ -253,6 +258,9 @@ class BaseConnectCommand(Command):
         self.command = ''
         self.run_at_the_end = []
 
+    def support_extra_parameters(self):
+        return True
+
     SHELL_SUBSTITUTION = {
         '`': r'\`',
         '$': r'\$',
@@ -277,6 +285,24 @@ class BaseConnectCommand(Command):
                     logging.debug(e)
             self.run_at_the_end.clear()
 
+    def get_extra_options(self, params, facade, application):
+        record_options = facade.get_custom_field(f'{application}:option')
+        if record_options:
+            temp_files = []
+            record_options = BaseConnectCommand.get_command_string(params, facade, record_options, temp_files)
+            if temp_files:
+                def remove_files():
+                    for file in temp_files:
+                        os.remove(file)
+                self.run_at_the_end.append(remove_files)
+
+        options = ''
+        if record_options:
+            options += f' {record_options}'
+        if self.extra_parameters:
+            options += f' {self.extra_parameters}'
+        return options
+
     @staticmethod
     def get_record(params, record, types):  # type: (KeeperParams, str, Iterator[str]) -> Optional[TypedRecord]
         if not record:
@@ -299,6 +325,41 @@ class BaseConnectCommand(Command):
             return
         return record
 
+    @staticmethod
+    def get_parameter_value(params, facade, parameter, temp_files):
+        # type: (KeeperParams, TypedRecordFacade, str, list) -> Optional[str]
+        if parameter.startswith('file:'):
+            file_name = parameter[5:]
+            attachments = list(prepare_attachment_download(params, facade.record.record_uid, file_name))
+            if len(attachments) == 0:
+                logging.warning('Attachment file \"%s\" not found', file_name)
+                return None
+            if len(attachments) > 1:
+                logging.warning('More than one attachment file \"%s\" found', file_name)
+                return None
+
+            tf = tempfile.NamedTemporaryFile(delete=False)
+            attachments[0].download_to_stream(params, tf)
+            temp_files.append(tf.name)
+            tf.close()
+            return tf.name
+        else:
+            return facade.get_custom_field(parameter)
+
+    @staticmethod
+    def get_command_string(params, record, template, temp_files):
+        # type: (KeeperParams, TypedRecordFacade, str, list) -> str or None
+        command = template
+        while True:
+            m = endpoint_parameter_pattern.search(command)
+            if not m:
+                break
+            p = m.group(1)
+            pv = BaseConnectCommand.get_parameter_value(params, record, p, temp_files)
+            command = command[:m.start()] + (pv or '') + command[m.end():]
+        logging.debug(command)
+        return command
+
 
 class ConnectSshCommand(BaseConnectCommand):
     def get_parser(self):
@@ -312,9 +373,6 @@ class ConnectSshCommand(BaseConnectCommand):
 
         facade = SshKeysFacade() if record.record_type == 'sshKeys' else ServerCredentialsFacade()
         facade.assign_record(record)
-
-        self.command = ''
-        self.run_at_the_end.clear()
 
         dst = kwargs.get('destination', '')
         if dst:
@@ -336,7 +394,10 @@ class ConnectSshCommand(BaseConnectCommand):
                 return
             port = facade.port
 
-        self.command = f'ssh {login}@{host_name}'
+        self.run_at_the_end.clear()
+
+        options = self.get_extra_options(params, facade, 'ssh')
+        self.command = f'ssh{options} {login}@{host_name}'
         if port:
             self.command += f' -p {port}'
 
@@ -391,7 +452,7 @@ class ConnectMysqlCommand(BaseConnectCommand):
         if not record:
             return
 
-        facade = DatabaseCredentialsFacade()
+        facade = DatabaseCredentialsFacade() if record.record_type == 'databaseCredentials' else ServerCredentialsFacade()
         facade.assign_record(record)
 
         login = facade.login
@@ -404,10 +465,13 @@ class ConnectMysqlCommand(BaseConnectCommand):
             return
         port = facade.port
 
-        self.command = f'mysql -h {host_name} -u {login}'
-        if port:
-            self.command += f' -P {port}'
         self.run_at_the_end.clear()
+
+        options = self.get_extra_options(params, facade, 'mysql')
+        self.command = f'mysql{options}'
+        self.command += f' --host {host_name} --user {login}'
+        if port:
+            self.command += f' --port {port}'
 
         password = facade.password
         if password:
@@ -431,7 +495,7 @@ class ConnectPostgresCommand(BaseConnectCommand):
         if not record:
             return
 
-        facade = DatabaseCredentialsFacade()
+        facade = DatabaseCredentialsFacade() if record == 'databaseCredentials' else ServerCredentialsFacade()
         facade.assign_record(record)
 
         login = facade.login
@@ -453,7 +517,7 @@ class ConnectPostgresCommand(BaseConnectCommand):
             database = 'template1'
             logging.info(f'\nConnecting to the default database: {database}\n')
 
-        self.command = f'{postgresql} -h {host_name}'
+        self.command = f'{postgresql} {self.extra_parameters} -h {host_name}'
         if port:
             self.command += f' -p {port}'
         self.command += f' -U {login} -w {database}'

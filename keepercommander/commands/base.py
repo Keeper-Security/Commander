@@ -274,8 +274,12 @@ class CliCommand(abc.ABC):
 
 
 class Command(CliCommand):
+    def __init__(self):
+        super(Command, self).__init__()
+        self.extra_parameters = ''
+
     def execute(self, params, **kwargs):     # type: (KeeperParams, any) -> any
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def execute_args(self, params, args, **kwargs):
         # type: (Command, KeeperParams, str, dict) -> any
@@ -284,6 +288,7 @@ class Command(CliCommand):
         try:
             d = {}
             d.update(kwargs)
+            self.extra_parameters = ''
             parser = self._get_parser_safe()
             if parser is not None:
                 if args:
@@ -302,11 +307,19 @@ class Command(CliCommand):
                             pos = m.end() + 1
                     args = value
 
-                opts = parser.parse_args(shlex.split(args))
+                if self.support_extra_parameters():
+                    opts, extra_args = parser.parse_known_args(shlex.split(args))
+                    if extra_args:
+                        self.extra_parameters = ' '.join(extra_args)
+                else:
+                    opts = parser.parse_args(shlex.split(args))
                 d.update(opts.__dict__)
             return self.execute(params, **d)
         except ParseError as e:
             logging.error(e)
+
+    def support_extra_parameters(self):   # type: () -> bool
+        return False
 
     def get_parser(self):   # type: () -> Optional[argparse.ArgumentParser]
         return None
