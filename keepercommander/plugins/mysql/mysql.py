@@ -43,9 +43,9 @@ def rotate(record, newpassword):
                     is_old_version = vn < 5007006
 
             if is_old_version:
-                sql = f'set password for \'{user}\'@\'{user_host}\' = password(\'{pymysql.escape_string(newpassword)}\')'
+                sql = f'set password for \'{user}\'@\'{user_host}\' = password(\'{pymysql.converters.escape_string(newpassword)}\')'
             else:
-                sql = f'alter user \'{user}\'@\'{user_host}\' identified by \'{pymysql.escape_string(newpassword)}\''
+                sql = f'alter user \'{user}\'@\'{user_host}\' identified by \'{pymysql.converters.escape_string(newpassword)}\''
             cursor.execute(sql)
             record.password = newpassword
             return True
