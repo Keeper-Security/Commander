@@ -8,8 +8,11 @@
 # Contact: ops@keepersecurity.com
 #
 import json
+import os
 
-from colorama import init
+from typing import Tuple, List, Optional, Union
+
+from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 from asciitree import LeftAligned
 from collections import OrderedDict as OD
@@ -32,15 +35,44 @@ class bcolors:
 
 
 def welcome():
-    print('\n')
-    print(bcolors.OKBLUE,' _  __  ' + bcolors.ENDC)
-    print(bcolors.OKBLUE,'| |/ /___ ___ _ __  ___ _ _ ' + bcolors.ENDC)
-    print(bcolors.OKBLUE,'| \' </ -_) -_) \'_ \\/ -_) \'_|' + bcolors.ENDC)
-    print(bcolors.OKBLUE,'|_|\\_\\___\\___| .__/\\___|_|' + bcolors.ENDC)
-    print(bcolors.OKBLUE + ' v{0:<12}|_|'.format(__version__) + bcolors.ENDC)
-    print('')
-    print(bcolors.FAIL, 'password manager & digital vault' + bcolors.ENDC)
-    print('')
+    lines = []    # type: List[Union[str, Tuple[str, str]]]
+
+    lines.append( r'           ___________    /#. ')
+    lines.append( r'         /###########/   /###\ ')
+    lines.append( r'        /###########/   /#####\      _    __  _______  _______  ______   _______  ______ (R)')
+    lines.append( r'       /###########/    \######\    | |  / / |  ____/ |  ____/ |  ___ \ |  ____/ |  ___ \ ')
+    lines.append( r'      /######/           \######\   | | / /  | |____  | |____  | | __| || |____  | | __| | ')
+    lines.append( r'     /######/             \######\  | |< <   |  ___/  |  ___/  | |/___/ |  ___/  | |/_  / ')
+    lines.append( r'    /######/               \######\ | | \ \  | |_____ | |_____ | |      | |_____ | |  \ \ ')
+    lines.append( r'    \######\               /######/ |_|  \_\ |_______||_______||_|      |_______||_|   \_\ ')
+    lines.append((r'     \######\             /######/', r'     ____                                          _ '))
+    lines.append((r'      \######\           /######/ ', r'   /  ___|___  _ __ ___  _ __ ___   __ _ _ __   __| | ___ _ __ '))
+    lines.append((r'       \#############\   \#####/  ', r"  /  /   / _ \| '_ ` _ \| '_ ` _ \ / _` | '_ \ / _` |/ _ \ '__| "))
+    lines.append((r'        \#############\   \###/   ', r'  \  \__| (_) | | | | | | | | | | | (_| | | | | (_| |  __/ | '))
+    lines.append((r'         \#############\   \#.    ', r'   \_____\___/|_| |_| |_|_| |_| |_|\__,_|_| |_|\__,_|\___|_| '))
+    lines.append('')
+
+    width = os.get_terminal_size().columns
+    print(Style.RESET_ALL)
+    print(Back.BLACK + Style.BRIGHT + '\n')
+    for line in lines:
+        if isinstance(line, str):
+            if len(line) > width:
+                line = line[:width]
+            print('\033[2K' + Fore.LIGHTYELLOW_EX + line)
+        elif isinstance(line, tuple):
+            yellow_line = line[0] if len(line) > 0 else ''
+            white_line = line[1] if len(line) > 1 else ''
+            if len(yellow_line) > width:
+                yellow_line = yellow_line[:width]
+            if len(yellow_line) + len(white_line) > width:
+                if len(yellow_line) < width:
+                    white_line = white_line[:width - len(yellow_line)]
+                else:
+                    white_line = ''
+            print('\033[2K' + Fore.LIGHTYELLOW_EX + yellow_line + Fore.LIGHTWHITE_EX + white_line)
+
+    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}\n' + Style.RESET_ALL)
 
 
 def formatted_records(records, **kwargs):
