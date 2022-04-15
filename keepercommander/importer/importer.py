@@ -5,19 +5,17 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 import abc
-import io
-import os.path
-import importlib
-import logging
 import collections
-
-from typing import List, Optional, Union
-
+import importlib
+import io
+import logging
+import os.path
 from contextlib import contextmanager
+from typing import List, Optional, Union
 
 from ..error import CommandError
 
@@ -262,6 +260,167 @@ class BaseImporter(abc.ABC):
     def extension(self):
         return ''
 
+    @staticmethod
+    def import_host_field(value):    # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            host, _, port = value.partition(':')
+            return {
+                'hostName': host.strip(),
+                'port': port.strip()
+            }
+
+    @staticmethod
+    def import_phone_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            region = ''
+            number = ''
+            ext = ''
+            phone_type, _, rest = value.partition(':')
+            if not rest:
+                rest = phone_type
+                phone_type = ''
+            comps = rest.strip().split(' ')
+            for comp in comps:
+                comp = comp.strip()
+                if comp.isalpha():
+                    if len(comp) == 2:
+                        if not region:
+                            region = comp
+                    elif not phone_type:
+                        phone_type = comp
+                elif len(comp) >= 6:
+                    if not number:
+                        number = comp
+                elif not ext:
+                    ext = comp
+            result = {
+                'number': number.strip(),
+                'ext': ext.strip()
+            }
+            phone_type = phone_type.strip()
+            region = region.strip()
+            if phone_type:
+                result['type'] = phone_type
+            if region:
+                result['region'] = region
+            return result
+
+    @staticmethod
+    def import_name_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            first = ''
+            middle = ''
+            last = ''
+            comma_pos = value.find(',')
+            if comma_pos >= 0:
+                last = value[:comma_pos]
+                rest = value[comma_pos+1:]
+            else:
+                space_pos = value.rfind(' ')
+                if space_pos >= 0:
+                    last = value[space_pos+1:]
+                    rest = value[:space_pos]
+                else:
+                    last = value
+                    rest = ''
+            rest = rest.strip()
+            if rest:
+                space_pos = rest.rfind(' ')
+                if space_pos >= 0:
+                    middle = rest[space_pos+1:]
+                    first = rest[:space_pos]
+                else:
+                    middle = ''
+                    first = rest
+
+            return {
+                'first': first.strip(),
+                'middle': middle.strip(),
+                'last': last.strip(),
+            }
+
+    @staticmethod
+    def import_address_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            comps = value.split(',')
+            street1 = comps[0].strip() if len(comps) > 0 else ''
+            city = comps[1].strip() if len(comps) > 1 else ''
+            state, _, zip_code = comps[2].strip().partition(' ') if len(comps) > 2 else ('', '', '')
+            country = comps[3].strip() if len(comps) > 3 else ''
+
+            return {
+                'street1': street1,
+                'street2': '',
+                'city': city,
+                'state': state,
+                'zip': zip_code,
+                'country': country
+            }
+
+    @staticmethod
+    def import_q_and_a_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            q, sign, a = value.partition('?')
+            return {
+                'question': q.strip(),
+                'answer': a.strip(),
+            }
+
+    @staticmethod
+    def import_card_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            comps = value.split(' ')
+            number = ''
+            expiration = ''
+            cvv = ''
+            for comp in comps:
+                comp = comp.strip()
+                if comp:
+                    if len(comp) > 10:
+                        number = comp
+                    elif comp.find('/') >= 0:
+                        expiration = comp
+                    elif len(comp) <= 6:
+                        cvv = comp
+            if number or expiration or cvv:
+                return {
+                    'cardNumber': number,
+                    'cardExpirationDate': expiration,
+                    'cardSecurityCode':  cvv,
+                }
+
+    @staticmethod
+    def import_account_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            account_type = ''
+            routing = ''
+            account_number = ''
+            comps = value.split()
+            for comp in comps:
+                comp = comp.strip()
+                if comp.isnumeric():
+                    if not routing:
+                        routing = comp
+                    elif not account_number:
+                        account_number = comp
+                else:
+                    if not account_type:
+                        account_type = comp
+            if routing or account_number:
+                return {
+                    'accountType': account_type,
+                    'routingNumber': routing,
+                    'accountNumber': account_number
+                }
+
+    @staticmethod
+    def import_ssh_key_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str):
+            return {
+                'privateKey': value,
+                'publicKey': ''
+            }
+
 
 class BaseFileImporter(BaseImporter, abc.ABC):
     def __init__(self):
@@ -319,6 +478,118 @@ class BaseExporter(abc.ABC):
 
     def supports_v3_record(self):
         return True
+
+    @staticmethod
+    def export_host_field(value):    # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            host = value.get('hostName', '')
+            port = value.get('port', '')
+            if host or port:
+                if port:
+                    host += ':' + port
+            return host
+
+    @staticmethod
+    def export_phone_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            phone = value.get('type', '')
+            if phone:
+                phone += ':'
+            region = value.get('region', '')
+            if region:
+                if len(region) == 2 and region.isalpha():
+                    pass
+                elif region.isnumeric():
+                    region = '+' + region
+                else:
+                    region = ''
+                if region:
+                    phone += '  ' + region
+            number = value.get('number', '').replace(' ', '-')
+            if number:
+                phone += ' ' + number
+            ext = value.get('ext', '').replace(' ', '-')
+            if ext:
+                phone += ' ' + ext
+            return phone
+
+    @staticmethod
+    def export_name_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            first_name = value.get('first', '')
+            middle_name = value.get('middle', '')
+            name = value.get('last', '')
+            if first_name or middle_name or name:
+                name = f'{name}, {first_name}'
+                if middle_name:
+                    name += ' ' + middle_name
+            return name
+
+    @staticmethod
+    def export_address_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            address = value.get('street1', '').replace(',', '.')
+            street2 = value.get('street2', '').replace(',', '.')
+            if street2:
+                address += ' ' + street2
+            city = value.get('city', '').replace(',', '.')
+            if city:
+                address += ', ' + city
+                state = value.get('state', '').replace(',', '.')
+                zip_code = value.get('zip', '').replace(',', '.')
+                if state or zip_code:
+                    address += ', ' + state + ' ' + zip_code
+                    country = value.get('country', '').replace(',', '.')
+                    if country:
+                        address += ', ' + country
+            return address
+
+    @staticmethod
+    def export_q_and_a_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            q = value.get('question', '').replace('?', '')
+            a = value.get('answer', '')
+            if q or a:
+                return f'{q}? {a}'
+            return q
+
+    @staticmethod
+    def export_card_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            comps = []
+            number = value.get('cardNumber')
+            if number:
+                comps.append(number)
+            expiration = value.get('cardExpirationDate')
+            if expiration:
+                comps.append(expiration)
+            cvv = value.get('cardSecurityCode')
+            if cvv:
+                comps.append(cvv)
+            if comps:
+                return ' '.join(comps)
+
+    @staticmethod
+    def export_account_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            account_type = value.get('accountType', '').replace(' ', '')
+            routing = value.get('routingNumber', '').replace(' ', '')
+            account_number = value.get('accountNumber', '').replace(' ', '')
+            if routing or account_number:
+                comps = []
+                if account_type:
+                    comps.append(account_type)
+                if routing:
+                    comps.append(routing)
+                if account_number:
+                    comps.append(account_number)
+                if comps:
+                    return ' '.join(comps)
+
+    @staticmethod
+    def export_ssh_key_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            return value.get('privateKey', '')
 
 
 class BytesAttachment(Attachment):

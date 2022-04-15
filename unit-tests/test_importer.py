@@ -3,7 +3,7 @@ from unittest import TestCase, mock
 from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
 from keepercommander.importer import importer, commands
-
+from keepercommander.recordv3 import RecordV3
 
 class TestImporterUtils(TestCase):
     def setUp(self):
@@ -68,3 +68,87 @@ class TestImporterUtils(TestCase):
             }
             with mock.patch('os.path.isfile', return_value=True):
                 cmd_import.execute(param_import, format='json', name='json')
+
+    def test_host_serialization(self):
+        host = {
+            'hostName': 'keepersecurity.com',
+            'port': '222'
+        }
+        host_str = importer.BaseExporter.export_host_field(host)
+        self.assertIsNotNone(host_str)
+        host1 = importer.BaseImporter.import_host_field(host_str)
+        self.assertEqual(host, host1)
+
+    def test_phone_serialization(self):
+        dict_value = {
+            'region': 'US',
+            'number': '(555)123-4567',
+            'ext': '',
+            'type': 'Movie'
+        }
+        str_value = importer.BaseExporter.export_phone_field(dict_value)
+        self.assertIsNotNone(str_value)
+        dict_value1 = importer.BaseImporter.import_phone_field(str_value)
+        self.assertEqual(dict_value, dict_value1)
+
+    def test_name_serialization(self):
+        dict_value = {
+            'first': 'Joe',
+            'middle': 'Jr.',
+            'last': 'Doe'
+        }
+        str_value = importer.BaseExporter.export_name_field(dict_value)
+        self.assertIsNotNone(str_value)
+        dict_value1 = importer.BaseImporter.import_name_field(str_value)
+        self.assertEqual(dict_value, dict_value1)
+
+    def test_address_serialization(self):
+        dict_value = {
+            'street1': '100 Main st.',
+            'street2': '',
+            'city': 'El Dorado Hills',
+            'state': 'CA',
+            'zip': '95762',
+            'country': 'US'
+        }
+        str_value = importer.BaseExporter.export_address_field(dict_value)
+        self.assertIsNotNone(str_value)
+        dict_value1 = importer.BaseImporter.import_address_field(str_value)
+        self.assertEqual(dict_value, dict_value1)
+
+    def test_q_and_a_serialization(self):
+        dict_value = {
+            'question': 'What is the best password management application',
+            'answer': 'keeper'
+        }
+        str_value = importer.BaseExporter.export_q_and_a_field(dict_value)
+        self.assertIsNotNone(str_value)
+        dict_value1 = importer.BaseImporter.import_q_and_a_field(str_value)
+        self.assertEqual(dict_value, dict_value1)
+
+    def test_card_serialization(self):
+        dict_value = {
+            'cardNumber': '4111111111111111',
+            'cardExpirationDate': '05/2025',
+            'cardSecurityCode': '123'
+        }
+        str_value = importer.BaseExporter.export_card_field(dict_value)
+        self.assertIsNotNone(str_value)
+        dict_value1 = importer.BaseImporter.import_card_field(str_value)
+        self.assertEqual(dict_value, dict_value1)
+        dict_value1 = importer.BaseImporter.import_card_field(
+            f'{dict_value["cardNumber"]}  {dict_value["cardSecurityCode"]}  {dict_value["cardExpirationDate"]}')
+        self.assertEqual(dict_value, dict_value1)
+
+    def test_bank_account_serialization(self):
+        ee = RecordV3.get_field_type('securityQuestion')
+
+        dict_value = {
+            'accountType': 'Checking',
+            'routingNumber': '123456789',
+            'accountNumber': '98765432109876'
+        }
+        str_value = importer.BaseExporter.export_account_field(dict_value)
+        self.assertIsNotNone(str_value)
+        dict_value1 = importer.BaseImporter.import_account_field(str_value)
+        self.assertEqual(dict_value, dict_value1)

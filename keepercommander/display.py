@@ -8,16 +8,17 @@
 # Contact: ops@keepersecurity.com
 #
 import json
-import os
+import shutil
 
-from typing import Tuple, List, Optional, Union
+from collections import OrderedDict as OD
+from typing import Tuple, List, Union
 
+from asciitree import LeftAligned
 from colorama import init, Fore, Back, Style
 from tabulate import tabulate
-from asciitree import LeftAligned
-from collections import OrderedDict as OD
-from .subfolder import BaseFolderNode
+
 from keepercommander import __version__
+from .subfolder import BaseFolderNode
 
 init()
 
@@ -52,7 +53,10 @@ def welcome():
     lines.append((r'         \#############\   \#.    ', r'   \_____\___/|_| |_| |_|_| |_| |_|\__,_|_| |_|\__,_|\___|_| '))
     lines.append('')
 
-    width = os.get_terminal_size().columns
+    try:
+        width = shutil.get_terminal_size(fallback=(160, 50)).columns
+    except:
+        width = 160
     print(Style.RESET_ALL)
     print(Back.BLACK + Style.BRIGHT + '\n')
     for line in lines:
