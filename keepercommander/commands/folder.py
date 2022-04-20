@@ -67,6 +67,7 @@ cd_parser.exit = suppress_exit
 
 
 tree_parser = argparse.ArgumentParser(prog='tree', description='Display the folder structure.')
+tree_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 tree_parser.error = raise_parse_exception
 tree_parser.exit = suppress_exit
@@ -259,16 +260,17 @@ class FolderTreeCommand(Command):
 
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else None
+        verbose = kwargs.get('verbose', False)
         if folder_name in params.folder_cache:
-            display.formatted_tree(params, params.folder_cache[folder_name])
+            display.formatted_tree(params, params.folder_cache[folder_name], verbose=verbose)
         else:
             rs = try_resolve_path(params, folder_name)
             if rs is not None:
                 folder, pattern = rs
                 if len(pattern) == 0:
-                    display.formatted_tree(params, folder)
+                    display.formatted_tree(params, folder, verbose=verbose)
                 else:
-                    raise CommandError('tree', 'Folder {} not found'.format(folder_name))
+                    raise CommandError('tree', f'Folder {folder_name} not found')
 
 
 class FolderMakeCommand(Command):

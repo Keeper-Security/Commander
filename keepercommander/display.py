@@ -18,7 +18,7 @@ from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
 from keepercommander import __version__
-from .subfolder import BaseFolderNode
+from .subfolder import BaseFolderNode, SharedFolderNode
 
 init()
 
@@ -187,9 +187,15 @@ def formatted_folders(folders):
         print('')
 
 
-def formatted_tree(params, folder):
+def formatted_tree(params, folder, verbose=False):
     def tree_node(node):
-        name = node.name
+        if verbose and node.uid:
+            name = f'{node.name} ({node.uid})'
+        else:
+            name = node.name
+
+        if isinstance(node, SharedFolderNode):
+            name += ' ' + Style.BRIGHT + '[Shared]' + Style.NORMAL
 
         sfs = [params.folder_cache[sfuid] for sfuid in node.subfolders]
 

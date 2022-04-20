@@ -32,7 +32,7 @@ from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto.enterprise_pb2 import SharedRecordResponse
 from ..record import Record, get_totp_code
-from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path, SharedFolderFolderNode
 
 
 def register_commands(commands):
@@ -635,6 +635,10 @@ class RecordGetUidCommand(Command):
                     'type': f.type,
                     'name': f.name
                 }
+                if isinstance(f, SharedFolderFolderNode):
+                    fo['shared_folder_uid'] = f.shared_folder_uid
+                if f.parent_uid:
+                    fo['parent_folder_uid'] = f.parent_uid
                 print(json.dumps(fo, indent=2))
             else:
                 f.display(params=params)

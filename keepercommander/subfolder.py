@@ -192,6 +192,11 @@ class BaseFolderNode:
         print('{0:>20s}: {1:<20s}'.format('Folder UID', self.uid))
         print('{0:>20s}: {1:<20s}'.format('Folder Type', self.get_folder_type()))
         print('{0:>20s}: {1}'.format('Name', self.name))
+        if self.parent_uid:
+            print('{0:>20s}: {1:<20s}'.format('Parent Folder UID', self.parent_uid))
+        if isinstance(self, SharedFolderFolderNode):
+            print('{0:>20s}: {1:<20s}'.format('Shared Folder UID', self.shared_folder_uid))
+
 
 
 class UserFolderNode(BaseFolderNode):
