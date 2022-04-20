@@ -35,7 +35,7 @@ from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import record_pb2 as records
 from ..record import Record, get_totp_code
-from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path, SharedFolderFolderNode
 from ..attachment import prepare_attachment_download
 
 
@@ -2217,8 +2217,12 @@ class RecordGetUidCommand(Command):
             raise CommandError('get', 'UID parameter is required')
 
         is_v2 = bool(kwargs.get('legacy'))
-        version = params.record_cache[uid]['version'] if (uid in params.record_cache and 'version' in params.record_cache[uid]) else 0 or 0
-        if is_v2 or version < 3:
+        if is_v2 or uid not in params.record_cache:
+            recordv2.RecordGetUidCommand().execute(params, **kwargs)
+            return
+
+        version = params.record_cache[uid].get('version', 0)
+        if version < 3:
             recordv2.RecordGetUidCommand().execute(params, **kwargs)
             return
 
@@ -2230,70 +2234,6 @@ class RecordGetUidCommand(Command):
             raise CommandError('get', 'Record is not version 3 (record type)')
 
         fmt = kwargs.get('format') or 'detail'
-
-        if api.is_shared_folder(params, uid):
-            sf = api.get_shared_folder(params, uid)
-            if fmt == 'json':
-                sfo = {
-                    "shared_folder_uid": sf.shared_folder_uid,
-                    "name": sf.name,
-                    "manage_users": sf.default_manage_users,
-                    "manage_records": sf.default_manage_records,
-                    "can_edit": sf.default_can_edit,
-                    "can_share": sf.default_can_share
-                }
-                if sf.records:
-                    sfo['records'] = [{
-                        'record_uid': r['record_uid'],
-                        'can_edit': r['can_edit'],
-                        'can_share': r['can_share']
-                    } for r in sf.records]
-                if sf.users:
-                    sfo['users'] = [{
-                        'username': u['username'],
-                        'manage_records': u['manage_records'],
-                        'manage_users': u['manage_users']
-                    } for u in sf.users]
-                if sf.teams:
-                    sfo['teams'] = [{
-                        'name': t['name'],
-                        'manage_records': t['manage_records'],
-                        'manage_users': t['manage_users']
-                    } for t in sf.teams]
-
-                print(json.dumps(sfo, indent=2))
-            else:
-                sf.display()
-            return
-
-        if api.is_team(params, uid):
-            team = api.get_team(params, uid)
-            if fmt == 'json':
-                to = {
-                    'team_uid': team.team_uid,
-                    'name': team.name,
-                    'restrict_edit': team.restrict_edit,
-                    'restrict_view': team.restrict_view,
-                    'restrict_share': team.restrict_share
-                }
-                print(json.dumps(to, indent=2))
-            else:
-                team.display()
-            return
-
-        if uid in params.folder_cache:
-            f = params.folder_cache[uid]
-            if fmt == 'json':
-                fo = {
-                    'folder_uid': f.uid,
-                    'type': f.type,
-                    'name': f.name
-                }
-                print(json.dumps(fo, indent=2))
-            else:
-                f.display(params=params)
-            return
-
         if uid in params.record_cache:
             api.get_record_shares(params, [uid])
             r = get_record(params, uid)
@@ -2328,31 +2268,6 @@ class RecordGetUidCommand(Command):
                 else:
                     recordv3.RecordV3.display(r, **{'params': params, 'format': fmt})
                 return
-
-        if params.available_team_cache is None:
-            api.load_available_teams(params)
-
-        if params.available_team_cache:
-            for team in params.available_team_cache:
-                if team.get('team_uid') == uid:
-                    team_uid = team['team_uid']
-                    team_name = team['team_name']
-                    if fmt == 'json':
-                        fo = {
-                            'team_uid': team_uid,
-                            'name': team_name
-                        }
-                        print(json.dumps(fo, indent=2))
-                    else:
-                        print('')
-                        print('User {0} does not belong to team {1}'.format(params.user, team_name))
-                        print('')
-                        print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
-                        print('{0:>20s}: {1}'.format('Name', team_name))
-                        print('')
-                    return
-
-        raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 
 
 def get_record(params, record_uid):
