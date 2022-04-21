@@ -16,13 +16,15 @@ import json
 import logging
 from typing import Tuple, List, Optional, Set
 
-from .base import user_choice, Command
+from .base import user_choice, dump_report_data, Command
 from .. import api, crypto, utils, vault, error
 from ..proto import record_pb2
 from ..record import get_totp_code
 
 
 verify_shared_folders_parser = argparse.ArgumentParser(prog='verify-shared-folders')
+verify_shared_folders_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                                          help='Display the the found problems without fixing')
 verify_shared_folders_parser.add_argument('target', nargs='*', help='Shared folder UID or name.')
 
 
@@ -53,7 +55,8 @@ class VerifySharedFoldersCommand(Command):
             'include': ['shared_folder', 'sfheaders', 'sfusers', 'sfrecords', 'explicit']
         }
         rs = api.communicate(params, rq)
-        sf_keys = []     # type: List[Tuple[str, str]]  # (record_uid, shared_folder_uid)
+        sf_v3_keys = []     # type: List[Tuple[str, str]]  # (record_uid, shared_folder_uid)
+        sf_v2_keys = []     # type: List[Tuple[str, str]]  # (record_uid, shared_folder_uid)
         if 'shared_folders' in rs:
             for sf in rs['shared_folders']:
                 shared_folder_uid = sf['shared_folder_uid']
@@ -63,36 +66,57 @@ class VerifySharedFoldersCommand(Command):
                         record = params.record_cache.get(record_uid)
                         if not record:
                             continue
-                        if record.get('version', 0) != 3:
-                            continue
                         if 'record_key' not in rec:
                             continue
                         record_key = utils.base64_url_decode(rec['record_key'])
-                        if len(record_key) == 60:
-                            continue
-                        if shared_folders is None or shared_folder_uid in shared_folders:
-                            sf_keys.append((record_uid, shared_folder_uid))
+                        version = record.get('version', 0)
+                        if version == 3:
+                            if len(record_key) != 60:
+                                if shared_folders is None or shared_folder_uid in shared_folders:
+                                    sf_v3_keys.append((record_uid, shared_folder_uid))
+                        elif version == 2:
+                            if len(record_key) == 60:
+                                if shared_folders is None or shared_folder_uid in shared_folders:
+                                    sf_v2_keys.append((record_uid, shared_folder_uid))
 
-        if not sf_keys:
+        if not sf_v3_keys and not sf_v2_keys:
+            if kwargs.get('dry_run'):
+                print(f'There are no record keys to be corrected')
             return
 
-        sf_keys.sort(key=lambda x: x[0])
+        if len(sf_v3_keys) > 0:
+            record_uids = list({x[0] for x in sf_v3_keys})
+            print(f'There {("are" if len(record_uids) > 1 else "is")} {len(record_uids)} V3 record key(s) to be corrected')
+            try:
+                for record_uid in record_uids[:99]:
+                    record = vault.KeeperRecord.load(params, record_uid)
+                    print(f' {record_uid}  {record.title}')
+                if len(record_uids) > 99:
+                    print(f' {(len(record_uids) - 99)} more ...')
+            except:
+                pass
 
-        record_uids = list({x[0] for x in sf_keys})
-        print(f'There are {len(record_uids)} record key(s) to be corrected')
-        try:
-            for record_uid in record_uids[:99]:
-                record = vault.KeeperRecord.load(params, record_uid)
-                print(f' {record_uid}  {record.title}')
-            if len(record_uids) > 99:
-                print(f' {(len(record_uids) - 99)} more ...')
-        except:
-            pass
+        if len(sf_v2_keys) > 0:
+            record_uids = list({x[0] for x in sf_v2_keys})
+            print(f'There {("are" if len(record_uids) > 1 else "is")} {len(record_uids)} V2 record key(s) to be corrected')
+            try:
+                for record_uid in record_uids[:99]:
+                    record = vault.KeeperRecord.load(params, record_uid)
+                    print(f' {record_uid}  {record.title}')
+                if len(record_uids) > 99:
+                    print(f' {(len(record_uids) - 99)} more ...')
+            except:
+                pass
+
+        if kwargs.get('dry_run'):
+            return
+
         answer = user_choice('Do you want to proceed?', 'yn', 'n')
         if answer.lower() == 'y':
-            while sf_keys:
-                chunk = sf_keys[:999]
-                sf_keys = sf_keys[999:]
+            sf_v3_keys.sort(key=lambda x: x[0])
+            while sf_v3_keys:
+                chunk = sf_v3_keys[:999]
+                sf_v3_keys = sf_v3_keys[999:]
 
                 record_convert = None
                 last_record_uid = ''
@@ -139,6 +163,60 @@ class VerifySharedFoldersCommand(Command):
                 rs = api.communicate_rest(params, rq, 'vault/records_convert3', rs_type=record_pb2.RecordsModifyResponse)
                 if rs:
                     pass
+
+            if sf_v2_keys:
+                sf_v2_keys.sort(key=lambda x: x[1])
+                rqs = []
+                rq = None
+                for record_uid, shared_folder_uid in sf_v2_keys:
+                    record = params.record_cache[record_uid]
+                    record_key = record['record_key_unencrypted']
+                    shared_folder = params.shared_folder_cache[shared_folder_uid]
+                    shared_folder_key = shared_folder['shared_folder_key_unencrypted']
+                    if not rq or rq['shared_folder_uid'] != shared_folder_uid or len(rq['add_records']) > 95:
+                        if rq and len(rq['add_records']) > 0:
+                            rqs.append(rq)
+                        rq = {
+                            'command': 'shared_folder_update',
+                            'pt': 'Commander',
+                            'operation': 'update',
+                            'shared_folder_uid': shared_folder_uid,
+                            'name': shared_folder['name'],
+                            'revision': shared_folder['revision'],
+                            'add_records': []
+                        }
+                    rq['add_records'].append({
+                        'record_uid': record_uid,
+                        'record_key': utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, shared_folder_key)),
+                        'can_edit': False,
+                        'can_share': False,
+                    })
+                if rq:
+                    rqs.append(rq)
+
+                rss = api.execute_batch(params, rqs)
+                results = []
+                for i, rs in enumerate(rss):
+                    shared_folder_uid = rqs[i].get('shared_folder_uid')
+                    if rs.get('result') != 'success':
+                        results.append([shared_folder_uid, '', '', rs.get('result_code')])
+                    elif 'add_records' in rs:
+                        if shared_folder_uid:
+                            for status in rs['add_records']:
+                                if status.get('status') != 'success':
+                                    record_uid = status.get('record_uid')
+                                    if record_uid:
+                                        api.get_record_shares(params, [record_uid])
+                                        owner = ''
+                                        rec = params.record_cache.get(record_uid)
+                                        if rec and 'shares' in rec:
+                                            shares = rec['shares']
+                                            if 'user_permissions' in shares:
+                                                owner = next((x.get('username') for x in shares['user_permissions'] if x.get('owner')))
+                                        results.append([shared_folder_uid, record_uid, owner, status.get('status')])
+                if results:
+                    headers = ['Shared Folder UID', 'Record UID', 'Record Owner', 'Error code']
+                    dump_report_data(results, headers=headers, title='V2 Record key errors')
 
             params.sync_data = True
 
