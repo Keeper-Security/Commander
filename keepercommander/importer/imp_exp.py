@@ -602,10 +602,13 @@ def _import(params, file_format, filename, **kwargs):
                                 field.value = copy.deepcopy(type_value)
 
             if existing_record:
-                if import_record.type:   # V3
+                version = existing_record.get('version', 0)
+                if version == 3:   # V3
                     if not v3_enabled:
                         continue
                     orig_data = json.loads(existing_record['data_unencrypted'])
+                    if not import_record.type:
+                        import_record.type = orig_data.get('type', 'login')
                     v3_upd_rq = record_pb2.RecordUpdate()
                     v3_upd_rq.record_uid = utils.base64_url_decode(import_record.uid)
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'update'}
@@ -639,7 +642,7 @@ def _import(params, file_format, filename, **kwargs):
                         v3_upd_rq.record_links_add.append(link)
 
                     records_v3_to_update.append(v3_upd_rq)
-                else:
+                elif version == 2:
                     orig_extra = json.loads(existing_record['extra_unencrypted']) if 'extra_unencrypted' in existing_record else None
 
                     data, extra = _construct_record_v2(import_record, orig_extra)
