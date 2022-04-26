@@ -14,7 +14,7 @@ from Cryptodome.Util.asn1 import DerSequence
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToJson
 from sys import platform as _platform
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
@@ -541,7 +541,14 @@ class LoginV3Flow:
             rq_payload.payload = sso_rq.SerializeToString()
             api_rq = proto.ApiRequest()
             api_rq.locale = params.rest_context.locale or 'en_US'
-            api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
+
+            server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+            if isinstance(server_public_key, rsa.RSAPublicKey):
+                api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, server_public_key)
+            elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
+                api_rq.encryptedTransmissionKey = crypto.encrypt_ec(transmission_key, server_public_key)
+            else:
+                raise ValueError('Invalid server public key')
             api_rq.publicKeyId = params.rest_context.server_key_id
             api_rq.encryptedPayload = crypto.encrypt_aes_v2(rq_payload.SerializeToString(), transmission_key)
 

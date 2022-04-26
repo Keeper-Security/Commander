@@ -14,19 +14,20 @@ import os
 import json
 import logging
 
-from typing import Union
+from typing import Union, Dict
 
 from .params import RestApiContext
 from .error import KeeperApiError, CommunicationError
 from .proto import APIRequest_pb2 as proto
 from . import crypto, utils
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 from . import __version__
 
 
 LEGACY_CLIENT_VERSION = 'c14.0.0'
 # CLIENT_VERSION = 'c' + __version__
-CLIENT_VERSION = 'c16.6.0'
+CLIENT_VERSION = 'c16.6.2'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(
@@ -76,7 +77,40 @@ SERVER_PUBLIC_KEYS = {
         '_JvAKt4axY9RGUtBbv0NmpkBCjLZri5AaTMgjLdu8XBXCqoLx7qZL-Bwiv4njw-' +
         'ZAI4jIszJTdGzMtoQ0zL7LBj_TDUBI4Qhf2bZTZlUSL3xeDWOKmd8Frksw3oKyJ' +
         '17oCQK-EGau6EaJRGyasBXl8uOEWmYYgqOWirNwIDAQAB')),
-}
+
+    7: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BK9w6TZFxE6nFNbMfIpULCup2a8xc6w2tUTABjxny7yFmxW0dAEojwC6j6zb5nTlmb1dAx8nwo3qF7RPYGmloRM')),
+
+    8: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BKnhy0obglZJK-igwthNLdknoSXRrGB-mvFRzyb_L-DKKefWjYdFD2888qN1ROczz4n3keYSfKz9Koj90Z6w_tQ')),
+
+    9: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BAsPQdCpLIGXdWNLdAwx-3J5lNqUtKbaOMV56hUj8VzxE2USLHuHHuKDeno0ymJt-acxWV1xPlBfNUShhRTR77g')),
+
+    10: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BNYIh_Sv03nRZUUJveE8d2mxKLIDXv654UbshaItHrCJhd6cT7pdZ_XwbdyxAOCWMkBb9AZ4t1XRCsM8-wkEBRg')),
+
+    11: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BA6uNfeYSvqagwu4TOY6wFK4JyU5C200vJna0lH4PJ-SzGVXej8l9dElyQ58_ljfPs5Rq6zVVXpdDe8A7Y3WRhk')),
+
+    12: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BMjTIlXfohI8TDymsHxo0DqYysCy7yZGJ80WhgOBR4QUd6LBDA6-_318a-jCGW96zxXKMm8clDTKpE8w75KG-FY')),
+
+    13: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BJBDU1P1H21IwIdT2brKkPqbQR0Zl0TIHf7Bz_OO9jaNgIwydMkxt4GpBmkYoprZ_DHUGOrno2faB7pmTR7HhuI')),
+
+    14: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BJFF8j-dH7pDEw_U347w2CBM6xYM8Dk5fPPAktjib-opOqzvvbsER-WDHM4ONCSBf9O_obAHzCyygxmtpktDuiE')),
+
+    15: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BDKyWBvLbyZ-jMueORl3JwJnnEpCiZdN7yUvT0vOyjwpPBCDf6zfL4RWzvSkhAAFnwOni_1tQSl8dfXHbXqXsQ8')),
+
+    16: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BDXyZZnrl0tc2jdC5I61JjwkjK2kr7uet9tZjt8StTiJTAQQmnVOYBgbtP08PWDbecxnHghx3kJ8QXq1XE68y8c')),
+
+    17: crypto.load_ec_public_key(utils.base64_url_decode(
+        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),
+}   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]]
 
 
 def encrypt_aes(data, key):
@@ -100,7 +134,13 @@ def execute_rest(context, endpoint, payload):
         run_request = False
 
         api_request = proto.ApiRequest()
-        api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, SERVER_PUBLIC_KEYS[context.server_key_id])
+        server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
+        if isinstance(server_public_key, rsa.RSAPublicKey):
+            api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, server_public_key)
+        elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
+            api_request.encryptedTransmissionKey = crypto.encrypt_ec(context.transmission_key, server_public_key)
+        else:
+            raise ValueError('Invalid server public key')
         api_request.publicKeyId = context.server_key_id
         api_request.locale = context.locale or 'en_US'
 
