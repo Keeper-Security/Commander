@@ -26,6 +26,7 @@ from distutils.util import strtobool
 from time import time
 
 from google.protobuf.json_format import MessageToDict
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 import keepercommander
 from . import aliases, commands, enterprise_commands
@@ -1664,7 +1665,14 @@ class LogoutCommand(Command):
                 rq_payload.payload = sso_rq.SerializeToString()
                 api_rq = ApiRequest()
                 api_rq.locale = params.rest_context.locale or 'en_US'
-                api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id])
+
+                server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+                if isinstance(server_public_key, rsa.RSAPublicKey):
+                    api_rq.encryptedTransmissionKey = crypto.encrypt_rsa(transmission_key, server_public_key)
+                elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
+                    api_rq.encryptedTransmissionKey = crypto.encrypt_ec(transmission_key, server_public_key)
+                else:
+                    raise ValueError('Invalid server public key')
                 api_rq.publicKeyId = params.rest_context.server_key_id
                 api_rq.encryptedPayload = crypto.encrypt_aes_v2(rq_payload.SerializeToString(), transmission_key)
                 sp_url_query.append(('payload', utils.base64_url_encode(api_rq.SerializeToString())))
