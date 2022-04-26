@@ -17,18 +17,21 @@ import requests
 import hashlib
 import time
 from tabulate import tabulate
+from urllib.parse import urlparse, urlunparse
 
 from Cryptodome.PublicKey import RSA
 from typing import Optional
 
-from .. import api
+from .. import api, utils, crypto
 from .base import dump_report_data, user_choice
 from ..recordv3 import RecordV3
 from ..params import KeeperParams
+from ..proto import APIRequest_pb2
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from .base import raise_parse_exception, suppress_exit, Command
+from .helpers.timeout import parse_timeout
 
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
@@ -40,15 +43,17 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['find-duplicate'] = FindDuplicateCommand()
+    commands['external-record-share'] = ExternalRecordShareCommand()
     # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
+    aliases['ers'] = 'external-record-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
-              find_duplicate_parser]:
+              find_duplicate_parser, external_record_share_parser]:
         command_info[p.prog] = p.description
 
 
@@ -139,6 +144,15 @@ find_duplicate_parser.add_argument('--url', dest='url', action='store_true', hel
 find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
+
+external_record_share_parser = argparse.ArgumentParser(prog='external-record-share', description='Creates One-Time Share URL')
+external_record_share_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
+                                          action='store', help='password output destination')
+external_record_share_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                                          help='Time period record share URL is valid.')
+external_record_share_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+external_record_share_parser.error = raise_parse_exception
+external_record_share_parser.exit = suppress_exit
 
 
 class ShareFolderCommand(Command):
@@ -1585,3 +1599,66 @@ class FindDuplicateCommand(Command):
             print(tabulate(table, headers=headers))
         else:
             logging.info('No duplicates found.')
+
+
+class ExternalRecordShareCommand(Command):
+    def get_parser(self):
+        return external_record_share_parser
+
+    def execute(self, params, **kwargs):
+        period_str = kwargs.get('expire')
+        if not period_str:
+            raise CommandError('external-record-share', 'URL expiration period parameter is required.')
+        period = parse_timeout(period_str)
+        if period.total_seconds() > 182 * 24 * 60 * 60:
+            raise CommandError('external-record-share', 'URL expiration period cannot be greater than 6 months.')
+
+        name = kwargs['record'] if 'record' in kwargs else None
+        if not name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            raise CommandError('external-record-share', 'Enter name or uid of existing record')
+
+        record_key = params.record_cache[record_uid]['record_key_unencrypted']
+
+        client_key = utils.generate_aes_key()
+        client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+        rq = APIRequest_pb2.AddExternalShareRequest()
+        rq.recordUid = utils.base64_url_decode(record_uid)
+        rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+        rq.clientId = client_id
+        rq.accessExpireOn = utils.current_milli_time() + int(period.total_seconds() * 1000)
+
+        api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+
+        comps = urlparse(params.rest_context.server_base)
+        comps = comps._replace(path='/vault/share', fragment=utils.base64_url_encode(client_key), query='')
+        url = urlunparse(comps)
+
+        if params.batch_mode:
+            return url
+        else:
+            if kwargs.get('output', '') == 'clipboard':
+                import pyperclip
+                pyperclip.copy(url)
+                logging.info('Record Share is copied to clipboard')
+            else:
+                print('{0:>10s} : {1}'.format('URL', url))
