@@ -2475,8 +2475,9 @@ Column Name       Description
 '''
 
 
-class SecurityAuditReportCommand(Command):
+class SecurityAuditReportCommand(EnterpriseCommand):
     def __init__(self):
+        super(SecurityAuditReportCommand, self).__init__()
         self.user_lookup = None
 
     def get_parser(self):
@@ -2501,7 +2502,13 @@ class SecurityAuditReportCommand(Command):
                             if (username is None or not username.strip()) and 'encrypted_data' in user and 'key_type' in user:
                                 username = user['encrypted_data'] if user['key_type'] == 'no_key' else None
                             username = email if username is None or not username.strip() else username
-                            self.user_lookup[user['enterprise_user_id']] = { 'username': username, 'email': email }
+                            node_id = user.get('node_id', 0)
+                            self.user_lookup[user['enterprise_user_id']] = \
+                                {
+                                    'username': username,
+                                    'email': email,
+                                    'node_id': node_id
+                                }
 
         info = {
             'username': enterprise_user_id,
@@ -2530,10 +2537,13 @@ class SecurityAuditReportCommand(Command):
             user_info = self.resolve_user_info(params, sr.enterpriseUserId)
             user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
             email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
+            node_id = user_info.get('node_id', 0)
+            node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
             twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
             row = {
                 'username': user,
                 'email': email,
+                'node_path': node_path,
                 'total': 0,
                 'weak': 0,
                 'medium': 0,
@@ -2573,7 +2583,7 @@ class SecurityAuditReportCommand(Command):
             rows.append(row)
 
         fields = ('username', 'email', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
-            ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel')
+            ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel', 'node_path')
         field_descriptions = fields
         if format == 'table':
             field_descriptions = (self.get_title_for_field(x) for x in fields)
@@ -2592,6 +2602,8 @@ class SecurityAuditReportCommand(Command):
             return 'User'
         elif field == 'email':
             return 'E-Mail'
+        elif field == 'node_path':
+            return 'Node'
         elif field == 'securityScore':
             return 'Security Score'
         elif field == 'twoFactorChannel':
