@@ -157,6 +157,16 @@ def is_json_value_field(obj):
     return True
 
 
+WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip'}
+
+
+def field_to_title(field):   # type: (str) -> str
+    words = field.split('_')
+    words = [x.capitalize() for x in words if x]
+    words = [x.upper() if x in WORDS_TO_CAPITALIZE else x for x in words]
+    return ' '.join(words)
+
+
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
     # type: (Sequence[Sequence], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
@@ -399,6 +409,10 @@ class GroupCommand(CliCommand):
 
     def validate(self, params):  # type: (KeeperParams) -> None
         pass
+
+    @property
+    def subcommands(self):
+        return self._commands
 
 
 class RecordMixin:
