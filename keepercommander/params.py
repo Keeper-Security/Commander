@@ -8,6 +8,9 @@
 # Contact: ops@keepersecurity.com
 #
 
+import warnings
+from urllib3.exceptions import InsecureRequestWarning
+
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime
 
@@ -27,6 +30,7 @@ class RestApiContext:
         self.__device_id = device_id
         self.__store_server_key = False
         self.proxies = None
+        self._certificate_check = True
 
     def __get_server_base(self):
         return self.__server_base
@@ -63,10 +67,22 @@ class RestApiContext:
         else:
             self.proxies = None
 
+    def get_certificate_check(self):
+        return self._certificate_check
+
+    def set_certificate_check(self, value):
+        if isinstance(value, bool):
+            self._certificate_check = value
+            if value:
+                warnings.simplefilter('default', InsecureRequestWarning)
+            else:
+                warnings.simplefilter('ignore', InsecureRequestWarning)
+
     server_base = property(__get_server_base, __set_server_base)
     device_id = property(__get_device_id, __set_device_id)
     server_key_id = property(__get_server_key_id, __set_server_key_id)
     store_server_key = property(__get_store_server_key)
+    certificate_check = property(get_certificate_check, set_certificate_check)
 
 
 class KeeperParams:
@@ -188,7 +204,7 @@ class KeeperParams:
         self.breach_watch_records = None
         self.sso_login_info = None
 
-    def __get_rest_context(self):
+    def __get_rest_context(self):   # type: () -> RestApiContext
         return self.__rest_context
 
     def __get_server(self):
