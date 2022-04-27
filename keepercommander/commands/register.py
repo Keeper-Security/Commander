@@ -5,11 +5,12 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 import argparse
+import datetime
 import re
 import base64
 import logging
@@ -17,18 +18,21 @@ import requests
 import hashlib
 import time
 from tabulate import tabulate
+from urllib.parse import urlparse, urlunparse
 
 from Cryptodome.PublicKey import RSA
 from typing import Optional
 
-from .. import api
-from .base import dump_report_data, user_choice
+from .. import api, utils, crypto
+from .base import dump_report_data, user_choice, field_to_title
 from ..recordv3 import RecordV3
 from ..params import KeeperParams
+from ..proto import APIRequest_pb2
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
-from .base import raise_parse_exception, suppress_exit, Command
+from .base import raise_parse_exception, suppress_exit, Command, GroupCommand
+from .helpers.timeout import parse_timeout
 
 
 EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
@@ -40,16 +44,20 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['find-duplicate'] = FindDuplicateCommand()
+    commands['external-share'] = ExternalShareCommand()
     # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
+    aliases['ers'] = 'external-record-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
               find_duplicate_parser]:
         command_info[p.prog] = p.description
+
+    command_info['external-share'] = 'Manage External Shares'
 
 
 share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change the sharing permissions of an individual record')
@@ -139,6 +147,27 @@ find_duplicate_parser.add_argument('--url', dest='url', action='store_true', hel
 find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
+
+external_share_create_parser = argparse.ArgumentParser(prog='external-share-create', description='Creates external share URL for a record')
+external_share_create_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
+                                          action='store', help='password output destination')
+external_share_create_parser.add_argument('--name', dest='share_name', action='store', help='external share name')
+external_share_create_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                                          help='Time period record share URL is valid.')
+external_share_create_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+
+external_share_list_parser = argparse.ArgumentParser(prog='external-share-list', description='Displays a list of external shares for a records')
+external_share_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output.')
+external_share_list_parser.add_argument('-a', '--all', dest='show_all', action='store_true', help='show all external shares including expired.')
+external_share_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+                                        default='table', help='output format.')
+external_share_list_parser.add_argument('--output', dest='output', action='store',
+                                        help='output file name. (ignored for table format)')
+external_share_list_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+
+external_share_remove_parser = argparse.ArgumentParser(prog='external-share-remove', description='Removes external share URL for a record')
+external_share_remove_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+external_share_remove_parser.add_argument('share', nargs='?', type=str, action='store', help='external share name or ID')
 
 
 class ShareFolderCommand(Command):
@@ -928,7 +957,7 @@ class ShareReportCommand(Command):
         try:
             rs = api.communicate(params, rq)
 
-        except Exception as e:
+        except KeeperApiError as e:
 
             if e.result_code == 'not_an_enterprise_user':
                 # logging.warning("In order to see shared time details, user must be part of the Keeper account.")
@@ -1585,3 +1614,201 @@ class FindDuplicateCommand(Command):
             print(tabulate(table, headers=headers))
         else:
             logging.info('No duplicates found.')
+
+
+class ExternalShareCommand(GroupCommand):
+    def __init__(self):
+        super(ExternalShareCommand, self).__init__()
+        self.register_command('list', ExternalShareListCommand(), 'Displays a list of external shares for a records.')
+        self.register_command('create', ExternalShareCreateCommand(), 'Creates external share URL for a record.')
+        self.register_command('remove', ExternalShareRemoveCommand(), 'Removes external share URL for a record.')
+
+    @staticmethod
+    def resolve_record(params, name):
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            raise CommandError('external-share', 'Enter name or uid of existing record')
+        return record_uid
+
+    @staticmethod
+    def get_external_shares(params, record_uid):
+        rq = APIRequest_pb2.GetAppInfoRequest()
+        rq.appRecordUid.append(utils.base64_url_decode(record_uid))
+        rs = api.communicate_rest(params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
+        return rs.appInfo
+
+
+class ExternalShareRemoveCommand(Command):
+    def get_parser(self):
+        return external_share_remove_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = ExternalShareCommand.resolve_record(params, record_name)
+        applications = ExternalShareCommand.get_external_shares(params, record_uid)
+        if len(applications) == 0:
+            logging.info('There are no external shares for record \"%s\"', record_name)
+            return
+
+        share_name = kwargs.get('share')    # type: str
+        if not share_name:
+            self.get_parser().print_help()
+            return
+        if share_name.endswith('...'):
+            share_name = share_name[:-3]
+
+        client_id = None
+        client_ids = []
+        for app_info in applications:
+            if client_id:
+                break
+            if not app_info.isExternalShare:
+                continue
+            for client in app_info.clients:
+                if client.id.lower() == share_name.lower():
+                    client_id = client.clientId
+                    break
+                enc_client_id = utils.base64_url_encode(client.clientId)
+                if enc_client_id == share_name:
+                    client_id = client.clientId
+                    break
+                if enc_client_id.startswith(share_name):
+                    client_ids.append(client.clientId)
+
+        if not client_id:
+            if len(client_ids) == 1:
+                client_id = client_ids[0]
+                client_ids.clear()
+
+        if not client_id:
+            if len(client_ids) > 1:
+                logging.warning('There are more than one external shares \"%s\"', share_name)
+            else:
+                logging.warning('There is no external share \"%s\"', share_name)
+            return
+        rq = APIRequest_pb2.RemoveAppClientsRequest()
+        rq.appRecordUid = utils.base64_url_decode(record_uid)
+        rq.clients.append(client_id)
+
+        api.communicate_rest(params, rq, 'vault/app_client_remove')
+        logging.info('External share \"%s\" is removed from record \"%s\"', share_name, record_name)
+
+
+class ExternalShareListCommand(Command):
+    def get_parser(self):
+        return external_share_list_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = ExternalShareCommand.resolve_record(params, record_name)
+        applications = ExternalShareCommand.get_external_shares(params, record_uid)
+
+        show_all = kwargs.get('show_all', False)
+        verbose = kwargs.get('verbose', False)
+        now = utils.current_milli_time()
+        fields = ['record_uid', 'name', 'share_link_id', 'generated', 'opened', 'expires']
+        if show_all:
+            fields.append('status')
+        table = []
+        output_format = kwargs.get('format')
+        for app_info in applications:
+            if not app_info.isExternalShare:
+                continue
+            for client in app_info.clients:
+                if not show_all and now > client.accessExpireOn:
+                    continue
+                link = {
+                    'record_uid': record_uid,
+                    'name': client.id,
+                    'share_link_id': utils.base64_url_encode(client.clientId),
+                    'generated': datetime.datetime.fromtimestamp(client.createdOn / 1000),
+                    'expires': datetime.datetime.fromtimestamp(client.accessExpireOn / 1000),
+                }
+                if output_format == 'table' and not verbose:
+                    link['share_link_id'] = utils.base64_url_encode(client.clientId[:16]) + '...'
+                else:
+                    link['share_link_id'] = utils.base64_url_encode(client.clientId)
+
+                if client.firstAccess > 0:
+                    link['opened'] = datetime.datetime.fromtimestamp(client.firstAccess / 1000)
+                    link['accessed'] = datetime.datetime.fromtimestamp(client.lastAccess / 1000)
+
+                link['status'] = 'Expired' if now > client.accessExpireOn else 'Opened' if client.firstAccess > 0 else 'Generated'
+
+                table.append([link.get(x, '') for x in fields])
+        if output_format == 'table':
+            fields = [field_to_title(x) for x in fields]
+        return dump_report_data(table, fields, fmt=output_format, filename=kwargs.get('output'))
+
+
+class ExternalShareCreateCommand(Command):
+    def get_parser(self):
+        return external_share_create_parser
+
+    def execute(self, params, **kwargs):
+        period_str = kwargs.get('expire')
+        if not period_str:
+            logging.warning('URL expiration period parameter \"--expire\" is required.')
+            self.get_parser().print_help()
+            return
+        period = parse_timeout(period_str)
+        if period.total_seconds() > 182 * 24 * 60 * 60:
+            raise CommandError('external-record-share', 'URL expiration period cannot be greater than 6 months.')
+
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = ExternalShareCommand.resolve_record(params, record_name)
+        record_key = params.record_cache[record_uid]['record_key_unencrypted']
+
+        client_key = utils.generate_aes_key()
+        client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+        rq = APIRequest_pb2.AddExternalShareRequest()
+        rq.recordUid = utils.base64_url_decode(record_uid)
+        rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+        rq.clientId = client_id
+        rq.accessExpireOn = utils.current_milli_time() + int(period.total_seconds() * 1000)
+        share_name = kwargs.get('share_name')
+        if share_name:
+            rq.id = share_name
+
+        api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+
+        comps = urlparse(params.rest_context.server_base)
+        comps = comps._replace(path='/vault/share', fragment=utils.base64_url_encode(client_key), query='')
+        url = urlunparse(comps)
+
+        if params.batch_mode:
+            return url
+        else:
+            if kwargs.get('output', '') == 'clipboard':
+                import pyperclip
+                pyperclip.copy(url)
+                logging.info('Record Share is copied to clipboard')
+            else:
+                print('{0:>10s} : {1}'.format('URL', url))

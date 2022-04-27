@@ -11,12 +11,14 @@
 
 import argparse
 import itertools
+import logging
 import shlex
 
 from prompt_toolkit.completion import Completion, Completer
 
 from .params import KeeperParams
 from .commands.folder import mv_parser
+from .commands.base import GroupCommand, Command
 from .commands import commands, enterprise_commands
 from . import api
 from .subfolder import try_resolve_path as sf_try_resolve_path
@@ -153,17 +155,39 @@ class CommandCompleter(Completer):
                     raw_input = document.text[pos+1:].lstrip()
                     extra['have_initial_double_quote'] = bool(raw_input) and raw_input[0] == '"'
                     context = ''
+
+                    cmd_parser = None
+                    if cmd in commands:
+                        command = commands[cmd]
+                        if isinstance(command, Command):
+                            cmd_parser = command.get_parser()
+                        elif isinstance(command, GroupCommand):
+                            c, sep, rest = raw_input.partition(' ')
+                            if sep == ' ':
+                                cmd = f'{cmd}-{c.lower()}'
+                                raw_input = rest.strip()
+                                if c in command.subcommands:
+                                    sub_command = command.subcommands[c]
+                                    if isinstance(sub_command, Command):
+                                        cmd_parser = sub_command.get_parser()
+                            else:
+                                grp_cmd = commands[cmd]   # type: GroupCommand
+                                for subcommand in grp_cmd.subcommands:
+                                    if subcommand.startswith(c):
+                                        yield Completion(subcommand, display=subcommand, start_position=-len(c))
+                                return
+
                     if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
-                               'rm', 'ls', 'clipboard-copy', 'find-password'}:
+                               'rm', 'ls', 'clipboard-copy', 'find-password', 'external-share-list', 'external-share-create'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            opts, _ = record_parser.parse_known_args(shlex.split(args))
+                            opts, _ = (cmd_parser or record_parser).parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
                     elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            opts, _ = folder_parser.parse_known_args(shlex.split(args))
+                            opts, _ = (cmd_parser or folder_parser).parse_known_args(shlex.split(args))
                             extra['prefix'] = opts.folder or ''
                             context = 'folder'
                     elif cmd in {'mv', 'ln'}:
@@ -232,6 +256,8 @@ class CommandCompleter(Completer):
                                 if folder_uid in self.params.subfolder_record_cache:
                                     for uid in self.params.subfolder_record_cache[folder_uid]:
                                         r = self.params.record_cache[uid]
+                                        if r.get('version', 0) not in {2, 3}:
+                                            continue
                                         if 'display_name' not in r:
                                             rec = api.get_record(self.params, uid)
                                             r['display_name'] = rec.title or rec.record_uid
@@ -250,5 +276,5 @@ class CommandCompleter(Completer):
                                 yield Completion(c, display=c, start_position=-len(cmd))
 
         except Exception as e:
-            pass
+            logging.debug('Completion exception: %s', e)
 
