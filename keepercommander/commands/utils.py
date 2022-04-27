@@ -24,6 +24,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 from distutils.util import strtobool
 from time import time
+from typing import Optional
 
 from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -48,7 +49,7 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..proto import ssocloud_pb2 as ssocloud
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
-    RemoveAppSharesRequest
+    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest
 from ..proto.record_pb2 import ApplicationAddRequest
 from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
@@ -79,6 +80,7 @@ def register_commands(commands):
     commands['version'] = VersionCommand()
     commands['keep-alive'] = KeepAliveCommand()
     commands['generate'] = GenerateCommand()
+    commands['reset-password'] = ResetPasswordCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -89,7 +91,7 @@ def register_command_info(aliases, command_info):
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
     for p in [whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
-              version_parser, ksm_parser, keepalive_parser, generate_parser
+              version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser
               ]:
         command_info[p.prog] = p.description
     command_info['sync-down|d'] = 'Download & decrypt data'
@@ -305,6 +307,12 @@ generate_parser.add_argument(
 )
 generate_parser.error = raise_parse_exception
 generate_parser.exit = suppress_exit
+
+reset_password_parser = argparse.ArgumentParser(prog='reset-password', description='Reset Master Password')
+reset_password_parser.add_argument('--delete-sso', dest='delete_alternate', action='store_true',
+                                   help='deletes SSO master password')
+reset_password_parser.add_argument('--current', '-c', dest='current_password', action='store', help='current password')
+reset_password_parser.add_argument('--new', '-n', dest='new_password', action='store', help='new password')
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
@@ -706,11 +714,6 @@ class LoginCommand(Command):
                 user = input('... {0:>16}: '.format('User(Email)')).strip()
             if not user:
                 return
-
-            if not password and not params.login_v3:
-                password = getpass.getpass(prompt='... {0:>16}: '.format('Password'), stream=None).strip()
-                if not password:
-                    return
         except KeyboardInterrupt as e:
             logging.info('Canceled')
             return
@@ -1880,3 +1883,147 @@ class GenerateCommand(Command):
                 logging.warning('Error writing to file {}: {}'.format(output, str(e)))
             else:
                 logging.info('Wrote to file {}'.format(output))
+
+
+class ResetPasswordCommand(Command):
+    def get_parser(self):
+        return reset_password_parser
+
+    def execute(self, params, **kwargs):
+        current_password = kwargs.get('current_password')
+        current_alternates = []    # type: list[dict]
+        current_master = None      # type: Optional[Salt]
+        is_sso_user = params.settings.get('sso_user', False)
+        if is_sso_user:
+            allow_alternate_passwords = False
+            if 'booleans' in params.enforcements:
+                allow_alternate_passwords = next((x.get('value') for x in params.enforcements['booleans']
+                                                  if x.get('key') == 'allow_alternate_passwords'), False)
+            if not allow_alternate_passwords:
+                logging.warning('You do not have the required privilege to perform this operation.')
+                return
+
+            sync_rq = {
+                'command': 'sync_down',
+                'revision': 0,
+                'include': ['user_auth'] + api.EXPLICIT
+            }
+            sync_rs = api.communicate(params, sync_rq)
+            if 'user_auth' in sync_rs:
+                current_alternates = [x for x in sync_rs['user_auth'] if x['login_type'] == 'ALTERNATE']
+        else:
+            current_master = api.communicate_rest(params, None, 'authentication/get_salt_and_iterations', rs_type=Salt)
+
+        is_delete_alternate = kwargs.get('delete_alternate')
+        if is_delete_alternate:
+            if is_sso_user:
+                logging.info('Deleting SSO Master Password for \"%s\"', params.user)
+            else:
+                logging.warning('\"%s\" in not SSO account', params.user)
+                return
+        else:
+            if is_sso_user:
+                logging.info('%s SSO Master Password for \"%s\"',
+                             'Changing' if len(current_alternates) > 0 else 'Setting', params.user)
+            else:
+                logging.info('Changing Master Password for \"%s\"', params.user)
+
+        if current_master or len(current_alternates) > 0:
+            if not current_password:
+                current_password = getpass.getpass(prompt='{0:>24}: '.format('Current Password'), stream=None).strip()
+                if not current_password:
+                    return
+            if current_master:
+                current_salt = current_master.salt
+                current_iterations = current_master.iterations
+            else:
+                current_salt = utils.base64_url_decode(current_alternates[0]['salt'])
+                current_iterations = current_alternates[0]['iterations']
+
+            auth_hash = crypto.derive_keyhash_v1(current_password, current_salt, current_iterations)
+            rq = MasterPasswordReentryRequest()
+            rq.pbkdf2Password = utils.base64_url_encode(auth_hash)
+            rq.action = UNMASK
+            try:
+                api.communicate_rest(params, rq, 'authentication/validate_master_password')
+            except:
+                logging.warning('Current password incorrect')
+                return
+        else:
+            current_password = ''
+
+        if is_delete_alternate:
+            if len(current_alternates) > 0:
+                uid_rq = UidRequest()
+                uid_rq.uid.extend((utils.base64_url_decode(x['uid']) for x in current_alternates))
+                api.communicate_rest(params, uid_rq, 'authentication/delete_v2_alternate_password')
+                logging.info('SSO Master Password has been deleted')
+            else:
+                logging.info('SSO Master password is not found')
+            return
+
+        new_password = kwargs.get('new_password')
+        if not new_password:
+            password1 = getpass.getpass(prompt='{0:>24}: '.format('New Password'), stream=None).strip()
+            password2 = getpass.getpass(prompt='{0:>24}: '.format('Re-enter New Password'), stream=None).strip()
+            print('')
+            if password1 != password2:
+                logging.warning('New password does not match')
+                return
+            if current_password and password1 == current_password:
+                logging.warning('Please choose a different password')
+                return
+            new_password = password1
+
+        rules = params.settings['rules']
+        failed_rules = []
+        for rule in rules:
+            is_match = re.match(rule['pattern'], new_password)
+            if not rule.get('match', True):
+                is_match = not is_match
+            if not is_match:
+                failed_rules.append(rule['description'])
+        if failed_rules:
+            logging.warning('\n%s\n%s', params.settings.get('password_rules_intro', 'Password rules:'), '\n'.join((f'  {x}' for x in failed_rules)))
+            return
+
+        if params.breach_watch:
+            euids = []
+            for result in params.breach_watch.scan_passwords(params, [new_password]):
+                if result[1].euid:
+                    euids.append(result[1].euid)
+                logging.info('Breachwatch password scan result: %s', 'WEAK' if result[1].breachDetected else 'GOOD')
+            if euids:
+                params.breach_watch.delete_euids(params, euids)
+        else:
+            score = utils.password_score(new_password)
+            logging.info('Password strength: %s', 'WEAK' if score < 40 else 'FAIR' if score < 60 else 'MEDIUM' if score < 80 else 'STRONG')
+
+        iterations = current_master.iterations if current_master else \
+            max((x['iterations'] for x in current_alternates)) if len(current_alternates) > 0 else 100000
+
+        auth_salt = crypto.get_random_bytes(16)
+        if is_sso_user:
+            ap_rq = UserAuthRequest()
+            ap_rq.uid = utils.base64_url_decode(current_alternates[0]['uid']) if len(current_alternates) > 0 else crypto.get_random_bytes(16)
+            ap_rq.salt = auth_salt
+            ap_rq.iterations = iterations
+            ap_rq.authHash = crypto.derive_keyhash_v1(new_password, auth_salt, iterations)
+            key = crypto.derive_keyhash_v2('data_key', new_password, auth_salt, iterations)
+            ap_rq.encryptedDataKey = crypto.encrypt_aes_v2(params.data_key, key)
+            ap_rq.encryptedClientKey = crypto.encrypt_aes_v2(params.client_key, key)
+            ap_rq.loginType = ALTERNATE
+            ap_rq.name = current_alternates[0]['name'] if len(current_alternates) > 0 else 'alternate'
+            api.communicate_rest(params, ap_rq, 'authentication/set_v2_alternate_password')
+            logging.info(f'SSO Master Password has been {("changed" if len(current_alternates) > 0 else "set")}')
+        else:
+            data_salt = crypto.get_random_bytes(16)
+            mp_rq = {
+                'command': 'change_master_password',
+                'auth_verifier': utils.create_auth_verifier(new_password, auth_salt, iterations),
+                'encryption_params': utils.create_encryption_params(new_password, data_salt, iterations, params.data_key)
+            }
+            api.communicate(params, mp_rq)
+            logging.info('Master Password has been changed')
+
+

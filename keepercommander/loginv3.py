@@ -46,7 +46,7 @@ class LoginV3Flow:
     @staticmethod
     def login(params, new_device=False):   # type: (KeeperParams, bool) -> None
 
-        logging.debug("Login v3 Start as '%s'" % params.user)
+        logging.debug("Login v3 Start as '%s'", params.user)
 
         CommonHelperMethods.startup_check(params)
 
@@ -333,6 +333,12 @@ class LoginV3Flow:
     def populateAccountSummary(params: KeeperParams):
 
         acct_summary = LoginV3API.accountSummary(params)
+
+        if acct_summary.clientKey:
+            try:
+                params.client_key = crypto.decrypt_aes_v1(acct_summary.clientKey, params.data_key)
+            except Exception as e:
+                logging.debug('Decrypt client key error: %s', e)
 
         # Loading summary as dictionary for backwards compatibility
         acct_summary_json = MessageToJson(acct_summary, preserving_proto_field_name=False)

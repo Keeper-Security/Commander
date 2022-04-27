@@ -96,9 +96,6 @@ def get_params_from_config(config_filename):
                     if 'logout_timer' in params.config:
                         params.logout_timer = params.config['logout_timer']
 
-                    if 'login_v3' in params.config:
-                        params.login_v3 = params.config['login_v3']
-
                     if 'private_key' in params.config:
                         params.device_private_key = params.config['private_key']
 
@@ -136,7 +133,6 @@ parser.add_argument('--version', dest='version', action='store_true', help='Disp
 parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', dest='debug', action='store_true', help='Turn on debug mode')
 parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help='Run commander in batch or basic UI mode.')
-parser.add_argument('--login-v3', '-lv3', dest='login_v3', action='store', help='Use Login v3 to login to Keeper.')
 parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
                     help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
                          'Windows Start Menu.')
@@ -174,9 +170,6 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO, format='%(message)s')
-
-    if opts.login_v3:
-        params.login_v3 = 'TRUE'.startswith(str(opts.login_v3).upper())
 
     if opts.proxy:
         params.proxy = opts.proxy
