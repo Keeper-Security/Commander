@@ -82,237 +82,12 @@ def auth_verifier(password, salt, iterations):
 def login(params):
     # type: (KeeperParams) -> None
 
-    if params.login_v3:
-        logging.info('Logging in to Keeper Commander')
-        try:
-            loginv3.LoginV3Flow.login(params)
-        except loginv3.InvalidDeviceToken:
-            logging.warning('Registering new device')
-            loginv3.LoginV3Flow.login(params, new_device=True)
-        return
-
-    logging.info("Logging in...")
-
-    global should_cancel_u2f
-    global u2f_response
-    global warned_on_fido_package
-
-    success = False
-    store_config = False
-
-    while not success:
-        if not params.auth_verifier:
-            if not params.user or not params.password:
-                return
-
-            logging.debug('No auth verifier, sending pre-auth request')
-            try:
-                pre_login_rs = rest_api.pre_login(params.rest_context, params.user)
-                auth_params = get_correct_salt(pre_login_rs.salt)
-                params.iterations = auth_params.iterations
-                params.salt = auth_params.salt
-                params.auth_verifier = auth_verifier(params.password, params.salt, params.iterations)
-            except KeeperApiError as e:
-                params.auth_verifier = None
-                if e.result_code == 'user_does_not_exist':
-                    email = params.user
-                    params.user = ''
-                    params.password = ''
-                    raise AuthenticationError('User account [{0}] not found.'.format(email))
-                raise
-
-        rq = {
-            'command': 'login',
-            'include': ['keys', 'license', 'settings', 'enforcements', 'is_enterprise_admin'],
-            'version': 2,
-            'auth_response': params.auth_verifier,
-            'username': params.user.lower(),
-            'platform_device_token': base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
-        }
-
-        if params.enterprise_id > 0:
-            rq['enterprise_id'] = params.enterprise_id
-
-        if params.mfa_token:
-            rq['2fa_token'] = params.mfa_token
-            rq['2fa_type'] = params.mfa_type or 'device_token'
-            if params.mfa_type == 'one_time':
-                expire_token = params.config.get('device_token_expiration') or False
-                expire_days = 0 if expire_token else 9999
-                rq['device_token_expire_days'] = expire_days
-
-        rq['client_version'] = rest_api.LEGACY_CLIENT_VERSION   # this login only supports up to v14 clients.
-
-        response_json = run_command(params, rq)
-
-        if 'device_token' in response_json:
-            logging.debug('params.mfa_token=%s', params.mfa_token)
-            params.mfa_token = response_json['device_token']
-            params.mfa_type = 'device_token'
-            if response_json.get('dt_scope') == 'expiration':
-                store_config = True
-                params.config['mfa_token'] = params.mfa_token
-
-        if 'keys' in response_json:
-            keys = response_json['keys']
-            if 'encryption_params' in keys:
-                params.data_key = decrypt_encryption_params(keys['encryption_params'], params.password)
-            elif 'encrypted_data_key' in keys:
-                encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
-                key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
-                params.data_key = crypto.decrypt_aes_v2(encrypted_data_key, key)
-
-            params.rsa_key = decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
-
-        if 'session_token' in response_json:
-            params.session_token = response_json['session_token']
-
-        if response_json['result_code'] == 'auth_success' and response_json['result'] == 'success':
-            success = True
-            logging.debug('Auth Success')
-            store_config = not params.config or params.config.get('user') != params.user
-
-            params.session_token = response_json['session_token']
-
-            device_id = base64.urlsafe_b64encode(params.rest_context.device_id).decode('utf-8').rstrip('=')
-            if params.config.get('device_id') != device_id:
-                store_config = True
-                params.config['device_id'] = device_id
-                url1 = urllib.parse.urlsplit(params.server)
-                url2 = urllib.parse.urlsplit(params.rest_context.server_base)
-                if url1.netloc != url2.netloc:
-                    params.config['server'] = params.rest_context.server_base
-
-            params.license = response_json.get('license')
-            params.enforcements = response_json.get('enforcements')
-            if params.enforcements:
-                if 'logout_timer_desktop' in params.enforcements:
-                    logout_timer = params.enforcements['logout_timer_desktop']
-                    if logout_timer > 0:
-                        if params.logout_timer == 0 or logout_timer < params.logout_timer:
-                            params.logout_timer = logout_timer
-            params.settings = response_json.get('settings')
-
-            if response_json.get('is_enterprise_admin'):
-                query_enterprise(params)
-
-            params.sync_data = True
-            params.prepare_commands = True
-
-            if store_config:    # save token to config file if the file exists
-                params.config['user'] = params.user
-
-                if params.config_filename:
-                    try:
-                        with open(params.config_filename, 'w') as f:
-                            json.dump(params.config, f, ensure_ascii=False, indent=2)
-                            logging.info('Updated %s', params.config_filename)
-                    except Exception as e:
-                        logging.debug('Unable to update %s. %s', params.config_filename, e)
-
-        elif response_json['result_code'] in ['need_totp', 'invalid_device_token', 'invalid_totp']:
-            try:
-                params.mfa_token = ''
-                params.mfa_type = 'one_time'
-
-                if 'u2f_challenge' in response_json:
-                    try:
-                        from .yubikey import u2f_authenticate
-                        challenge = json.loads(response_json['u2f_challenge'])
-                        u2f_request = challenge['authenticateRequests']
-                        u2f_response = u2f_authenticate(u2f_request)
-                        if u2f_response:
-                            signature = json.dumps(u2f_response)
-                            params.mfa_token = signature
-                            params.mfa_type = 'u2f'
-                    except ImportError as e:
-                        logging.error(e)
-                        if not warned_on_fido_package:
-                            warned_on_fido_package = True
-                    except Exception as e:
-                        logging.error(e)
-
-                while not params.mfa_token:
-                    try:
-                        params.mfa_token = getpass.getpass(prompt='Two-Factor Code: ', stream=None)
-                    except KeyboardInterrupt as e:
-                        print('')
-                        params.clear_session()
-                        return
-
-            except (EOFError, KeyboardInterrupt, SystemExit):
-                return
-
-        elif response_json['result_code'] == 'auth_expired':
-            try:
-                params.password = ''
-                params.auth_verifier = None
-                logging.warning(response_json['message'])
-                if not change_master_password(params):
-                    raise AuthenticationError('')
-            finally:
-                params.session_token = None
-
-        elif response_json['result_code'] == 'auth_expired_transfer':
-            share_account_to = response_json['settings']['share_account_to']
-            logging.warning(response_json['message'])
-            try:
-                if not accept_account_transfer_consent(params, share_account_to):
-                    raise AuthenticationError('')
-            finally:
-                params.session_token = None
-
-        elif response_json['result_code'] == 'auth_failed':
-            params.password = ''
-            params.auth_verifier = None
-            raise AuthenticationError('Authentication failed.')
-
-        elif response_json['result_code']:
-            raise KeeperApiError(response_json['result_code'], response_json['message'])
-
-        else:
-            raise CommunicationError('Unknown problem')
-
-
-def change_master_password(params):
-    user_params = rest_api.get_new_user_params(params.rest_context, params.user)
+    logging.info('Logging in to Keeper Commander')
     try:
-        while True:
-            print('')
-            print('Please choose a new Master Password.')
-            password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'), stream=None).strip()
-            if not password:
-                raise KeyboardInterrupt()
-            password2 = getpass.getpass(prompt='... {0:>24}: '.format('Re-Enter Password'), stream=None).strip()
-
-            if password == password2:
-                failed_rules = []
-                for desc, regex in zip(user_params.passwordMatchDescription, user_params.passwordMatchRegex):
-                    pattern = re.compile(regex)
-                    if not re.match(pattern, password):
-                        failed_rules.append(desc)
-                if len(failed_rules) == 0:
-                    auth_salt = os.urandom(16)
-                    data_salt = os.urandom(16)
-                    rq = {
-                        'command': 'change_master_password',
-                        'auth_verifier': create_auth_verifier(password, auth_salt, params.iterations),
-                        'encryption_params': create_encryption_params(password, data_salt, params.iterations, params.data_key)
-                    }
-                    communicate(params, rq)
-                    params.password = password
-                    params.salt = auth_salt
-                    logging.info('Password changed')
-                    return True
-                else:
-                    for rule in failed_rules:
-                        logging.warning(rule)
-            else:
-                logging.warning('Passwords do not match.')
-    except KeyboardInterrupt:
-        logging.info('Canceled')
-
-    return False
+        loginv3.LoginV3Flow.login(params)
+    except loginv3.InvalidDeviceToken:
+        logging.warning('Registering new device')
+        loginv3.LoginV3Flow.login(params, new_device=True)
 
 
 def accept_account_transfer_consent(params):
@@ -469,7 +244,7 @@ def sync_down(params):
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': FOLDER_SCOPE + RECORD_SCOPE + EXPLICIT
+        'include': FOLDER_SCOPE + RECORD_SCOPE + ['user_auth'] + EXPLICIT
     }
     response_json = communicate(params, rq)
 
@@ -2259,7 +2034,6 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.password = params.password
     mc_params.enterprise_id = mc_id
     mc_params.session_token = params.session_token
-    mc_params.login_v3 = params.login_v3
     mc_params.data_key = params.data_key
     mc_params.rsa_key = params.rsa_key
     mc_params.ecc_key = params.ecc_key

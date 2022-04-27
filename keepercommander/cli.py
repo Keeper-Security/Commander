@@ -11,7 +11,6 @@
 
 import datetime
 import functools
-import getpass
 import logging
 import os
 import re
@@ -134,10 +133,7 @@ def check_if_running_as_mc(params, args):
         # Running commands as Managed Company admin via MSP
 
         if current_mc_id not in mc_params_dict:
-            if params.login_v3:
-                mc_params = api.login_and_get_mc_params_login_v3(params, current_mc_id)
-            else:
-                mc_params = api.login_and_get_mc_params(params, current_mc_id)
+            mc_params = api.login_and_get_mc_params_login_v3(params, current_mc_id)
             mc_params_dict[current_mc_id] = mc_params
 
         params = mc_params_dict[current_mc_id]
@@ -346,7 +342,6 @@ def do_command(params, command_line):
                 if command.is_authorised():
                     if not params.session_token:
                         try:
-                            prompt_for_credentials(params)
                             api.login(params)
                             api.sync_down(params)
                         except KeyboardInterrupt as e:
@@ -420,28 +415,6 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
                 time.sleep(timedelay)
             except KeyboardInterrupt:
                 keep_running = False
-
-
-def prompt_for_username_if_needed(params):
-    if not params.user:
-        params.user = getpass.getpass(prompt='User(Email): ', stream=None)
-
-        while not params.user:
-            params.user = getpass.getpass(prompt='User(Email): ', stream=None)
-
-
-def prompt_for_credentials(params):
-
-    if not params.login_v3:
-        prompt_for_username_if_needed(params)
-
-        while not params.password:
-            try:
-                params.password = getpass.getpass(prompt='Password: ', stream=None)
-            except KeyboardInterrupt:
-                print('')
-            except EOFError:
-                return 0
 
 
 def force_quit():
