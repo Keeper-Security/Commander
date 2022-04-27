@@ -102,6 +102,11 @@ def get_params_from_config(config_filename):
                     if 'proxy' in params.config:
                         params.proxy = params.config['proxy']
 
+                    if 'certificate_check' in params.config:
+                        check = params.config['certificate_check']
+                        if isinstance(check, bool):
+                            params.rest_context.certificate_check = check
+
             except Exception as e:
                 logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
                 answer = input('Do you want to delete it (y/N): ')
