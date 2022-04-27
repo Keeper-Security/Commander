@@ -82,6 +82,8 @@ def contained_folder(params, folder, component):
         if folder.parent_uid is None:
             return params.root_folder
         return params.folder_cache[folder.parent_uid]
+    if component in params.folder_cache:
+        return params.folder_cache[component]
     for subfolder_uid in folder.subfolders:
         subfolder = params.folder_cache[subfolder_uid]
         if subfolder.name == component:
