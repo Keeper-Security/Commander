@@ -693,6 +693,7 @@ class LoginV3Flow:
             selection = input('Selection: ')
             if selection == 'q':
                 raise KeyboardInterrupt()
+            assert selection.isnumeric()
             idx = 1 if not selection else int(selection)
             assert 1 <= idx <= len(channels)
             channel = channels[idx-1]
