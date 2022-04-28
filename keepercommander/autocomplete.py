@@ -178,7 +178,7 @@ class CommandCompleter(Completer):
                                 return
 
                     if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
-                               'rm', 'ls', 'clipboard-copy', 'find-password', 'external-share-list', 'external-share-create'}:
+                               'rm', 'ls', 'clipboard-copy', 'find-password', 'one-time-share-list', 'one-time-share-create'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             opts, _ = (cmd_parser or record_parser).parse_known_args(shlex.split(args))

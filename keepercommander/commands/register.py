@@ -44,20 +44,20 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['find-duplicate'] = FindDuplicateCommand()
-    commands['external-share'] = ExternalShareCommand()
+    commands['one-time-share'] = OneTimeShareCommand()
     # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
-    aliases['ers'] = 'external-record-share'
+    aliases['ots'] = 'one-time-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
               find_duplicate_parser]:
         command_info[p.prog] = p.description
 
-    command_info['external-share'] = 'Manage External Shares'
+    command_info['one-time-share'] = 'Manage One-Time Shares'
 
 
 share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change the sharing permissions of an individual record')
@@ -148,26 +148,26 @@ find_duplicate_parser.add_argument('--full', dest='full', action='store_true', h
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
 
-external_share_create_parser = argparse.ArgumentParser(prog='external-share-create', description='Creates external share URL for a record')
-external_share_create_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
+one_time_share_create_parser = argparse.ArgumentParser(prog='one-time-share-create', description='Creates one-time share URL for a record')
+one_time_share_create_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
                                           action='store', help='password output destination')
-external_share_create_parser.add_argument('--name', dest='share_name', action='store', help='external share name')
-external_share_create_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+one_time_share_create_parser.add_argument('--name', dest='share_name', action='store', help='one-time share URL name')
+one_time_share_create_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
                                           help='Time period record share URL is valid.')
-external_share_create_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+one_time_share_create_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
-external_share_list_parser = argparse.ArgumentParser(prog='external-share-list', description='Displays a list of external shares for a records')
-external_share_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output.')
-external_share_list_parser.add_argument('-a', '--all', dest='show_all', action='store_true', help='show all external shares including expired.')
-external_share_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records')
+one_time_share_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output.')
+one_time_share_list_parser.add_argument('-a', '--all', dest='show_all', action='store_true', help='show all one-time shares including expired.')
+one_time_share_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                         default='table', help='output format.')
-external_share_list_parser.add_argument('--output', dest='output', action='store',
+one_time_share_list_parser.add_argument('--output', dest='output', action='store',
                                         help='output file name. (ignored for table format)')
-external_share_list_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+one_time_share_list_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
-external_share_remove_parser = argparse.ArgumentParser(prog='external-share-remove', description='Removes external share URL for a record')
-external_share_remove_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-external_share_remove_parser.add_argument('share', nargs='?', type=str, action='store', help='external share name or ID')
+one_time_share_remove_parser = argparse.ArgumentParser(prog='one-time-share-remove', description='Removes one-time share URL for a record')
+one_time_share_remove_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+one_time_share_remove_parser.add_argument('share', nargs='?', type=str, action='store', help='one-time share name or ID')
 
 
 class ShareFolderCommand(Command):
@@ -1616,12 +1616,12 @@ class FindDuplicateCommand(Command):
             logging.info('No duplicates found.')
 
 
-class ExternalShareCommand(GroupCommand):
+class OneTimeShareCommand(GroupCommand):
     def __init__(self):
-        super(ExternalShareCommand, self).__init__()
-        self.register_command('list', ExternalShareListCommand(), 'Displays a list of external shares for a records.')
-        self.register_command('create', ExternalShareCreateCommand(), 'Creates external share URL for a record.')
-        self.register_command('remove', ExternalShareRemoveCommand(), 'Removes external share URL for a record.')
+        super(OneTimeShareCommand, self).__init__()
+        self.register_command('list', OneTimeShareListCommand(), 'Displays a list of one-time shares for a records.')
+        self.register_command('create', OneTimeShareCreateCommand(), 'Creates one-time share URL for a record.')
+        self.register_command('remove', OneTimeShareRemoveCommand(), 'Removes one-time share URL for a record.')
 
     @staticmethod
     def resolve_record(params, name):
@@ -1642,7 +1642,7 @@ class ExternalShareCommand(GroupCommand):
                                 break
 
         if record_uid is None:
-            raise CommandError('external-share', 'Enter name or uid of existing record')
+            raise CommandError('one-time-share', 'Enter name or uid of existing record')
         return record_uid
 
     @staticmethod
@@ -1653,9 +1653,9 @@ class ExternalShareCommand(GroupCommand):
         return rs.appInfo
 
 
-class ExternalShareRemoveCommand(Command):
+class OneTimeShareRemoveCommand(Command):
     def get_parser(self):
-        return external_share_remove_parser
+        return one_time_share_remove_parser
 
     def execute(self, params, **kwargs):
         record_name = kwargs.get('record')
@@ -1663,10 +1663,10 @@ class ExternalShareRemoveCommand(Command):
             self.get_parser().print_help()
             return
 
-        record_uid = ExternalShareCommand.resolve_record(params, record_name)
-        applications = ExternalShareCommand.get_external_shares(params, record_uid)
+        record_uid = OneTimeShareCommand.resolve_record(params, record_name)
+        applications = OneTimeShareCommand.get_external_shares(params, record_uid)
         if len(applications) == 0:
-            logging.info('There are no external shares for record \"%s\"', record_name)
+            logging.info('There are no one-time shares for record \"%s\"', record_name)
             return
 
         share_name = kwargs.get('share')    # type: str
@@ -1701,21 +1701,21 @@ class ExternalShareRemoveCommand(Command):
 
         if not client_id:
             if len(client_ids) > 1:
-                logging.warning('There are more than one external shares \"%s\"', share_name)
+                logging.warning('There are more than one one-time shares \"%s\"', share_name)
             else:
-                logging.warning('There is no external share \"%s\"', share_name)
+                logging.warning('There is no one-time share \"%s\"', share_name)
             return
         rq = APIRequest_pb2.RemoveAppClientsRequest()
         rq.appRecordUid = utils.base64_url_decode(record_uid)
         rq.clients.append(client_id)
 
         api.communicate_rest(params, rq, 'vault/app_client_remove')
-        logging.info('External share \"%s\" is removed from record \"%s\"', share_name, record_name)
+        logging.info('One-time share \"%s\" is removed from record \"%s\"', share_name, record_name)
 
 
-class ExternalShareListCommand(Command):
+class OneTimeShareListCommand(Command):
     def get_parser(self):
-        return external_share_list_parser
+        return one_time_share_list_parser
 
     def execute(self, params, **kwargs):
         record_name = kwargs['record'] if 'record' in kwargs else None
@@ -1723,8 +1723,8 @@ class ExternalShareListCommand(Command):
             self.get_parser().print_help()
             return
 
-        record_uid = ExternalShareCommand.resolve_record(params, record_name)
-        applications = ExternalShareCommand.get_external_shares(params, record_uid)
+        record_uid = OneTimeShareCommand.resolve_record(params, record_name)
+        applications = OneTimeShareCommand.get_external_shares(params, record_uid)
 
         show_all = kwargs.get('show_all', False)
         verbose = kwargs.get('verbose', False)
@@ -1748,7 +1748,7 @@ class ExternalShareListCommand(Command):
                     'expires': datetime.datetime.fromtimestamp(client.accessExpireOn / 1000),
                 }
                 if output_format == 'table' and not verbose:
-                    link['share_link_id'] = utils.base64_url_encode(client.clientId[:16]) + '...'
+                    link['share_link_id'] = utils.base64_url_encode(client.clientId)[:20] + '...'
                 else:
                     link['share_link_id'] = utils.base64_url_encode(client.clientId)
 
@@ -1764,9 +1764,9 @@ class ExternalShareListCommand(Command):
         return dump_report_data(table, fields, fmt=output_format, filename=kwargs.get('output'))
 
 
-class ExternalShareCreateCommand(Command):
+class OneTimeShareCreateCommand(Command):
     def get_parser(self):
-        return external_share_create_parser
+        return one_time_share_create_parser
 
     def execute(self, params, **kwargs):
         period_str = kwargs.get('expire')
@@ -1776,14 +1776,14 @@ class ExternalShareCreateCommand(Command):
             return
         period = parse_timeout(period_str)
         if period.total_seconds() > 182 * 24 * 60 * 60:
-            raise CommandError('external-record-share', 'URL expiration period cannot be greater than 6 months.')
+            raise CommandError('one-time-share', 'URL expiration period cannot be greater than 6 months.')
 
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             self.get_parser().print_help()
             return
 
-        record_uid = ExternalShareCommand.resolve_record(params, record_name)
+        record_uid = OneTimeShareCommand.resolve_record(params, record_name)
         record_key = params.record_cache[record_uid]['record_key_unencrypted']
 
         client_key = utils.generate_aes_key()
@@ -1809,6 +1809,6 @@ class ExternalShareCreateCommand(Command):
             if kwargs.get('output', '') == 'clipboard':
                 import pyperclip
                 pyperclip.copy(url)
-                logging.info('Record Share is copied to clipboard')
+                logging.info('One-Time record share URL is copied to clipboard')
             else:
                 print('{0:>10s} : {1}'.format('URL', url))
