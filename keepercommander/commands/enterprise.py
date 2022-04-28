@@ -146,7 +146,8 @@ enterprise_user_parser.add_argument('--extend', dest='extend', action='store_tru
 enterprise_user_parser.add_argument('--lock', dest='lock', action='store_true', help='lock user')
 enterprise_user_parser.add_argument('--unlock', dest='unlock', action='store_true', help='unlock user. Supports the following pseudo users: @all')
 enterprise_user_parser.add_argument('--disable-2fa', dest='disable_2fa', action='store_true', help='disable 2fa for user')
-enterprise_user_parser.add_argument('--add', dest='add', action='store_true', help='invite user')
+enterprise_user_parser.add_argument('--add', dest='add', action='store_true', help='invite user. same as --invite')
+enterprise_user_parser.add_argument('--invite', dest='invite', action='store_true', help='invite user')
 enterprise_user_parser.add_argument('--delete', dest='delete', action='store_true', help='delete user')
 enterprise_user_parser.add_argument('--name', dest='displayname', action='store', help='set user display name')
 enterprise_user_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
@@ -1112,25 +1113,21 @@ class EnterpriseUserCommand(EnterpriseCommand):
         request_batch = []
         disable_2fa_users = []
 
-        if kwargs.get('add'):
+        if kwargs.get('add') or kwargs.get('invite'):
             if node_id is None:
                 root_nodes = list(self.get_user_root_nodes(params))
                 if len(root_nodes) == 0:
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
 
-            for user in matched_users:
-                logging.warning('User %s already exists: Skipping', user['username'])
-
-            if not unmatched_emails:
-                raise CommandError('enterprise-user', 'No email address to add.')
-
-            dt = {}
-            if user_name:
-                dt['displayname'] = user_name
-            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+            if not unmatched_emails and not matched_users:
+                raise CommandError('enterprise-user', 'No email address to invite.')
 
             for email in unmatched_emails:
+                dt = {}
+                if user_name:
+                    dt['displayname'] = user_name
+                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
                 rq = {
                     'command': 'enterprise_user_add',
                     'enterprise_user_id': self.get_enterprise_id(params),
@@ -1139,6 +1136,15 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     'enterprise_user_username': email
                 }
                 request_batch.append(rq)
+            for user in matched_users:
+                if user.get('status') == 'invited':
+                    rq = {
+                        'command': 'resend_enterprise_invite',
+                        'enterprise_user_id': user['enterprise_user_id'],
+                    }
+                    request_batch.append(rq)
+                else:
+                    logging.warning('%s has already accepted invitation. Skipping', user['username'])
         else:
             for email in unmatched_emails:
                 logging.warning('User %s is not found: Skipping', email)
@@ -1380,6 +1386,11 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 logging.info('%s password expired', user['username'])
                             else:
                                 logging.warning('%s failed to expire password: %s', user['username'], rs['message'])
+                        elif command == 'resend_enterprise_invite':
+                            if rs['result'] == 'success':
+                                logging.info('Invitation has been re-sent to %s', user['username'])
+                            else:
+                                logging.warning('Failed to re-send invitation to %s: %s', user['username'], rs['message'])
                         elif command == 'extend_account_share_expiration':
                             if rs['result'] == 'success':
                                 logging.info('%s vault transfer consent expiration extended by 7 days', user['username'])
