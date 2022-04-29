@@ -9,41 +9,37 @@
 # Contact: ops@keepersecurity.com
 #
 
-import itertools
-import json
 import base64
 import collections
-import re
-import getpass
-import google
-import time
-import os
 import hashlib
+import json
 import logging
-import math
-import urllib.parse
+import os
+import re
+from datetime import datetime
 from typing import Optional, Tuple, Iterable, List
 
-from datetime import datetime
-
-from . import constants, rest_api, loginv3, utils, crypto
-from .proto import client_pb2 as client_proto, APIRequest_pb2 as proto, record_pb2 as records
-from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
-from .record import Record
-from .shared_folder import SharedFolder
-from .team import Team
-from .error import AuthenticationError, CommunicationError, CryptoError, KeeperApiError
-from .params import KeeperParams, LAST_RECORD_UID
-from .display import bcolors
-from .recordv3 import RecordV3
-from .ttk import TTK
-
+import google
+import itertools
+import math
+import time
 from Cryptodome import Random
+from Cryptodome.Cipher import AES, PKCS1_v1_5
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
-from Cryptodome.Cipher import AES, PKCS1_v1_5
 
+from . import constants, rest_api, loginv3, utils, crypto
+from .display import bcolors
 from .enterprise import query_enterprise as qe
+from .error import CryptoError, KeeperApiError
+from .params import KeeperParams, LAST_RECORD_UID
+from .proto import client_pb2 as client_proto, APIRequest_pb2 as proto, record_pb2 as records
+from .record import Record
+from .recordv3 import RecordV3
+from .shared_folder import SharedFolder
+from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
+from .team import Team
+from .ttk import TTK
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
@@ -233,7 +229,7 @@ NON_SHARED_DATA_SCOPE = ['non_shared_data']
 EXPLICIT = ['explicit']
 
 
-def sync_down(params):
+def sync_down(params, record_types=False):
     """Sync full or partial data down to the client"""
 
     params.sync_data = False
@@ -766,17 +762,7 @@ def sync_down(params):
             except Exception as e:
                 logging.debug('Decrypt bw data: %s', e)
 
-    if 'full_sync' in response_json:
-        if params.breach_watch:
-            weak_count = 0
-            for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
-                weak_count += 1
-            if weak_count > 0:
-                logging.info(bcolors.WARNING +
-                             f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
-                             '\nUse \"breachwatch list\" command to get more details' +
-                             bcolors.ENDC)
-
+    if 'full_sync' in response_json or record_types:
         # Record V3 types cache population
         v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
         if v3_enabled:
@@ -788,8 +774,28 @@ def sync_down(params):
 
             if len(record_types_rs.recordTypes) > 0:
                 params.record_type_cache = {}
+                conflict_type_id = 1000000
                 for rt in record_types_rs.recordTypes:
-                    params.record_type_cache[rt.recordTypeId] = rt.content
+                    type_id = rt.recordTypeId
+                    if rt.scope == records.RT_ENTERPRISE:
+                        type_id += 1000
+                    elif rt.scope == records.RT_USER:
+                        continue
+                    while type_id in params.record_type_cache:
+                        conflict_type_id += 1
+                        type_id = conflict_type_id
+                    params.record_type_cache[type_id] = rt.content
+
+    if 'full_sync' in response_json:
+        if params.breach_watch:
+            weak_count = 0
+            for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
+                weak_count += 1
+            if weak_count > 0:
+                logging.info(bcolors.WARNING +
+                             f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
+                             '\nUse \"breachwatch list\" command to get more details' +
+                             bcolors.ENDC)
 
         record_count = 0
         valid_versions = {2, 3}
@@ -1627,7 +1633,6 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
-    from .commands.recordv3 import RecordTypeInfo
 
     record_rq = record
     if record_rq is None:

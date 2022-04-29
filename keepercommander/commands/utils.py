@@ -324,7 +324,7 @@ def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
 
 class SyncDownCommand(Command):
     def execute(self, params, **kwargs):
-        api.sync_down(params)
+        api.sync_down(params, record_types=True)
 
         accepted = False
         if len(params.pending_share_requests) > 0:
