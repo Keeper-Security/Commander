@@ -2043,7 +2043,7 @@ class RecordRecordType(Command):
             return
 
         changed = False
-        scope = records.RecordTypeScope.DESCRIPTOR.values_by_name['RT_ENTERPRISE'].number
+        scope = records.RT_ENTERPRISE
 
         rtid = kwargs.get('record_type_id')
         data = kwargs.get('data')
@@ -2073,30 +2073,39 @@ class RecordRecordType(Command):
             rs = api.communicate_rest(params, rq, 'vault/record_type_add')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
-            changed = True
             print('Record type added - new record type ID: ' + str(record_type_rs.recordTypeId))
+            api.sync_down(params, record_types=True)
+            return
 
-        elif action == 'remove':
-            # remove requires RTID and no --data
-            if not rtid:
-                logging.error('To remove a record type - please provide the record type ID')
-                return
+        if not rtid:
+            logging.error(f'record type \'{action}\': please provide the record type ID')
+            return
+
+        if 1000 < rtid < 1000000:
+            real_type_id = rtid - 1000
+        else:
+            logging.error('Only custom record types can be modified or removed')
+            return
+
+        if action == 'remove':
+            # remove requires no --data
             if data:
-                logging.error('Option --data cannot be used with --action=add')
+                logging.error('Option --data cannot be used with --action=remove')
                 return
 
             rq = records.RecordType()
-            rq.recordTypeId = rtid
+            rq.recordTypeId = real_type_id
             rq.scope = scope
             rs = api.communicate_rest(params, rq, 'vault/record_type_delete')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
-            changed = True
-            print('Record type deleted - record type ID: ' + str(record_type_rs.recordTypeId))
+            logging.info('Record type deleted - record type ID: %d', rtid)
+            if rtid in params.record_type_cache:
+                del params.record_type_cache[rtid]
 
         elif action == 'update':
-            # update requires --data and RTID
-            if not rtid or not data:
+            # update requires --data
+            if not data:
                 logging.error("To update a record type - please provide both record type ID and new content in --data option")
                 return
 
@@ -2108,19 +2117,16 @@ class RecordRecordType(Command):
             # TODO: is it ok to change $id - ex. #41 from "$id": "rt1" to "rt2" == delete rt1 and insert rt2 at #41
             # is there a record type definition (change) history ~ like record history
             rq = records.RecordType()
-            rq.recordTypeId = rtid
+            rq.recordTypeId = real_type_id
             rq.content = data
             rq.scope = scope
             rs = api.communicate_rest(params, rq, 'vault/record_type_update')
             record_type_rs = records.RecordTypeModifyResponse()
             record_type_rs.ParseFromString(rs)
-            changed = True
-            print('Record type updated - record type ID: ' + str(record_type_rs.recordTypeId))
+            logging.info('Record type updated - record type ID: %d', rtid)
+            api.sync_down(params, record_types=True)
         else:
             logging.error('Unknown argument "' + action + '" for -a/--action (choose from "add", "update", "remove")')
-
-        if changed:
-            params.sync_data = True
 
 
 class RecordFileReportCommand(Command):
