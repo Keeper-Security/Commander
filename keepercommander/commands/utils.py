@@ -826,7 +826,7 @@ class KSMCommand(Command):
         if ksm_obj in ['app', 'apps'] and ksm_action == 'get':
 
             if len(ksm_command) != 3:
-                print(f"{bcolors.WARNING}Application name is required.\n  Example: {bcolors.OKGREEN}secrets-manager get app {bcolors.OKBLUE}MyApp{bcolors.ENDC}")
+                print(f"{bcolors.WARNING}Application name is required.\n  Example: {bcolors.OKGREEN}secrets-manager app get {bcolors.OKBLUE}MyApp{bcolors.ENDC}")
                 return
 
             ksm_app_uid_or_name = ksm_command[2]
