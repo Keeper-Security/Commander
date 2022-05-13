@@ -21,13 +21,13 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Callable
 
 from tabulate import tabulate
 
 from .. import api
 from ..params import KeeperParams
-from ..subfolder import try_resolve_path
+from ..subfolder import try_resolve_path, BaseFolderNode
 
 aliases = {}        # type: {str, str}
 commands = {}       # type: {str, Command}
@@ -434,3 +434,24 @@ class RecordMixin:
                             r = api.get_record(params, uid)
                             if r.title.casefold() == record_name.casefold():
                                 yield uid
+
+
+class FolderMixin:
+    @staticmethod
+    def traverse_folder_tree(params, folder_uid, callback):
+        # type: (KeeperParams, str, Callable[[BaseFolderNode], None]) -> None
+        folders = []
+        if folder_uid:
+            folders.append(folder_uid)
+        else:
+            folders.extend(params.root_folder.subfolders)
+            callback(params.root_folder)
+        pos = 0
+        while pos < len(folders):
+            f_uid = folders[pos]
+            pos += 1
+            if f_uid in params.folder_cache:
+                folder = params.folder_cache[f_uid]   # type: BaseFolderNode
+                if folder.subfolders:
+                    folders.extend(folder.subfolders)
+                callback(folder)
