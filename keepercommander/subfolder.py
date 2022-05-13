@@ -123,7 +123,8 @@ def path_split(params, folder, path_string):
     return folder, components
 
 
-def try_resolve_path(params, path):     # type: (KeeperParams, str) -> Tuple[BaseFolderNode, Optional[str]]
+def try_resolve_path(params, path):
+    # type: (KeeperParams, str) -> Tuple[BaseFolderNode, Optional[str]]
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
 
@@ -198,7 +199,6 @@ class BaseFolderNode:
             print('{0:>20s}: {1:<20s}'.format('Parent Folder UID', self.parent_uid))
         if isinstance(self, SharedFolderFolderNode):
             print('{0:>20s}: {1:<20s}'.format('Shared Folder UID', self.shared_folder_uid))
-
 
 
 class UserFolderNode(BaseFolderNode):

@@ -9,41 +9,39 @@
 # Contact: ops@keepersecurity.com
 #
 
+from typing import Iterator, List, Optional, Union, Dict, Tuple, Set
+
 """Import and export functionality."""
 import abc
 import base64
 import collections
 import copy
 import hashlib
-import itertools
 import json
 import logging
 import os
 import re
-import time
-from typing import Iterator, List, Optional, Union, Dict, Tuple
-from contextlib import contextmanager
-
+import itertools
 import math
 import requests
-from Cryptodome.Cipher import AES
+import time
 
-from keepercommander import api
-from keepercommander.display import bcolors
-from keepercommander.rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
+from .. import api
 from .. import utils, crypto
 from ..commands import base
-from ..proto import record_pb2, folder_pb2
+from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
+from ..proto import record_pb2, folder_pb2
 from ..recordv3 import RecordV3
-from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders
+from ..rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
+from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders, try_resolve_path
 
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
@@ -62,66 +60,6 @@ def get_record_data_json_bytes(data):
         data_str = data_str.ljust(padding)
     return data_str.encode('utf-8')
 
-"""
-def exceed_max_data_len(data, import_record, map_data_custom_to_rec_fields):
-    data_json = api.get_record_data_json_bytes(data)
-    data_size = len(data_json) + 28
-    if data_size > RECORD_MAX_DATA_LEN:
-        field_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['fields']]
-        custom_sizes = [len(f['value'][0]) if len(f['value']) > 0 else 0 for f in data['custom']]
-        note_size = len(data['notes'])
-        attachment_filenames = [a.name for a in import_record.attachments or []]
-        while data_size > RECORD_MAX_DATA_LEN:
-            max_field_size = max(field_sizes) if field_sizes else 0
-            max_custom_size = max(custom_sizes) if custom_sizes else 0
-            max_size = max(note_size, max_field_size, max_custom_size)
-            title = data['title']
-            if max_size == 0:
-                logging.warning(RECORD_MAX_DATA_WARN.format(title, data_size, RECORD_MAX_DATA_LEN))
-                return True
-
-            atta = ImportAttachment()
-            if note_size == max_size:
-                atta.name = f'{title}_notes_field.txt'
-                atta_data = data['notes'].encode('utf-8')
-                data['notes'] = LARGE_FIELD_MSG.format(atta.name)
-                import_record.notes = data['notes']
-                note_size = 0
-            elif max_custom_size == max_size:
-                custom_index = custom_sizes.index(max_size)
-                field = data['custom'][custom_index]
-                field_name = field.get('label', field.get('type', 'custom'))
-                atta.name = f'{title}_{field_name}_field.txt'
-                atta_data = field['value'][0].encode('utf-8')
-                field['value'][0] = LARGE_FIELD_MSG.format(atta.name)
-                import_record_field = import_record.fields[map_data_custom_to_rec_fields[custom_index]]
-                import_record_field.value = field['value'][0]
-                custom_sizes[custom_index] = 0
-            else:
-                logging.warning(RECORD_MAX_DATA_WARN.format(title, data_size, RECORD_MAX_DATA_LEN))
-                return True
-
-            def atta_open():
-                return io.BytesIO(atta_data)
-
-            atta.open = atta_open
-            atta.size = len(atta_data)
-
-            i = 1
-            original_name = atta.name[:-4]
-            while atta.name in attachment_filenames:
-                atta.name = f'{original_name}({i}).txt'
-                i += 1
-            attachment_filenames.append(atta.name)
-
-            if import_record.attachments:
-                import_record.attachments.append(atta)
-            else:
-                import_record.attachments = [atta]
-            data_json = api.get_record_data_json_bytes(data)
-            data_size = len(data_json) + 28
-    return False
-"""
 
 def get_import_folder(params, folder_uid, record_uid):
     """Get a folder name from a folder uid (?)."""
@@ -277,6 +215,7 @@ def convert_keeper_record(record, has_attachments=False):
 
 
 def export(params, file_format, filename, **kwargs):
+    # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
     api.sync_down(params)
 
@@ -284,11 +223,37 @@ def export(params, file_format, filename, **kwargs):
     if 'max_size' in kwargs:
         exporter.max_size = int(kwargs['max_size'])
 
+    folder_filter = None      # type: Optional[Set[str]]
+    record_filter = None      # type: Optional[Set[str]]
+    folder_path = kwargs.get('folder')
+    if folder_path:
+        folder = None    # type: Optional[BaseFolderNode]
+        rs = try_resolve_path(params, folder_path)
+        if rs:
+            f, rest = rs
+            if not rest:
+                folder = f
+        if not folder:
+            logging.warning('Folder \"%s\" not found', folder_path)
+            return
+        folder_filter = set()
+        record_filter = set()
+
+        def on_folder(base_folder):   # type: (BaseFolderNode) -> None
+            folder_filter.add(base_folder.uid)
+            if base_folder.uid in params.subfolder_record_cache:
+                record_filter.update(params.subfolder_record_cache[base_folder.uid])
+        base.FolderMixin.traverse_folder_tree(params, folder.uid, on_folder)
+
     to_export = []
     if exporter.has_shared_folders():
         shfolders = [api.get_shared_folder(params, sf_uid) for sf_uid in params.shared_folder_cache]
         shfolders.sort(key=lambda x: x.name.lower(), reverse=False)
         for f in shfolders:
+            if folder_filter:
+                if f.shared_folder_uid not in folder_filter:
+                    continue
+
             fol = ImportSharedFolder()
             fol.uid = f.shared_folder_uid
             fol.path = get_folder_path(params, f.shared_folder_uid)
@@ -332,6 +297,10 @@ def export(params, file_format, filename, **kwargs):
     #     external_ids[record_uid] = ext_id
 
     for record_uid in params.record_cache:
+        if record_filter:
+            if record_uid not in record_filter:
+                continue
+
         record = params.record_cache[record_uid]
         record_version = record.get('version') or 0
         if record_version == 2 or record_version == 3:
@@ -380,11 +349,14 @@ def export(params, file_format, filename, **kwargs):
                                         rec.attachments.append(atta)
 
             for folder_uid in find_folders(params, record_uid):
+                if folder_filter:
+                    if folder_uid not in folder_filter:
+                        continue
                 if folder_uid in params.folder_cache:
-                    folder = get_import_folder(params, folder_uid, record_uid)
+                    export_folder = get_import_folder(params, folder_uid, record_uid)
                     if rec.folders is None:
                         rec.folders = []
-                    rec.folders.append(folder)
+                    rec.folders.append(export_folder)
 
             to_export.append(rec)
         # elif record_version == 4:
