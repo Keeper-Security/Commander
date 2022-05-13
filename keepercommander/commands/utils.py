@@ -1127,8 +1127,10 @@ class KSMCommand(Command):
                                 editable_status]
                         elif sht == 'SHARE_TYPE_FOLDER':
                             if uid_str not in params.shared_folder_cache:
-                                logging.warning("Shared folder '%s' is not in the cache. Try to perform the `sync-down` "
-                                                "to download latest data to local cache." % sht)
+                                # logging.warning(f"Shared folder uid {uid_str} is not present in the cache. Looks like "
+                                #                 f"it was removed or was not sync to this client yet. Try to perform "
+                                #                 f"the `sync-down` to download latest data to local cache." % sht)
+                                continue
                             cached_sf = params.shared_folder_cache[uid_str]
                             shf_name = cached_sf.get('name_unencrypted')
                             # shf_num_of_records = len(cached_sf.get('records'))
