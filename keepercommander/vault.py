@@ -230,7 +230,7 @@ class TypedRecord(KeeperRecord):
     def get_record_type(self):
         return self.type_name
 
-    def get_typed_field(self, field_type, label=None):    # type: (str, Optional[str]) -> Optional['TypedField']
+    def get_typed_field(self, field_type, label=None):    # type: (str, Optional[str]) -> Optional[TypedField]
         return next((x for x in itertools.chain(self.fields, self.custom)
                      if field_type == x.type and (not label or (x.label and label.casefold() == x.label.casefold()))),
                     None)
