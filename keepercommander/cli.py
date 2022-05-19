@@ -30,6 +30,7 @@ from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
+from .commands.base import expand_cmd_args
 from .commands.msp import get_mc_by_name_or_id
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import AuthenticationError, CommunicationError, CommandError
@@ -273,6 +274,7 @@ def do_command(params, command_line):
             raise CommandError('switch-to-mc', "Already switched to Managed Company id=%s" % current_mc_id)
 
         cmd, args = command_and_args_from_cmd(command_line)
+        args = expand_cmd_args(args, params.environment_variables)
 
         if not args or not loginv3.CommonHelperMethods.check_int(args):
             raise CommandError('switch-to-mc', "Please provide Managed Company ID as integer. Your input was '%s'" % args)
