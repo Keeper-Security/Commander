@@ -321,11 +321,14 @@ class MSPAddCommand(EnterpriseCommand):
             'root_node': utils.base64_url_encode(
                 crypto.encrypt_aes_v1(json.dumps({'displayname': 'root'}).encode(), tree_key))
         }
+        company_id = -1
         rs = api.communicate(params, rq)
         if rs:
-            logging.info('Managed company \"%s\" added. ID=%d', name, rs.get('enterprise_id', -1))
+            company_id = rs.get('enterprise_id', -1)
+            params.environment_variables['last_mc_id'] = str(company_id)
+            logging.info('Managed company \"%s\" added. ID=%d', name, company_id)
         api.query_enterprise(params)
-
+        return company_id
 
 class MSPRemoveCommand(EnterpriseCommand):
     def get_parser(self):
