@@ -274,6 +274,22 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
 parameter_pattern = re.compile(r'\${(\w+)}')
 
 
+def expand_cmd_args(args, envvars, pattern=parameter_pattern):
+    pos = 0
+    while True:
+        m = pattern.search(args, pos)
+        if not m:
+            break
+        p = m.group(1)
+        if p in envvars:
+            pv = envvars[p]
+            args = args[:m.start()] + pv + args[m.end():]
+            pos = m.start() + len(pv)
+        else:
+            pos = m.end() + 1
+    return args
+
+
 class CliCommand(abc.ABC):
     @abc.abstractmethod
     def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, dict) -> any
@@ -302,20 +318,7 @@ class Command(CliCommand):
             parser = self._get_parser_safe()
             if parser is not None:
                 if args:
-                    pos = 0
-                    value = args
-                    while True:
-                        m = parameter_pattern.search(value, pos)
-                        if not m:
-                            break
-                        p = m.group(1)
-                        if p in params.environment_variables:
-                            pv = params.environment_variables[p]
-                            value = value[:m.start()] + pv + value[m.end():]
-                            pos = m.start() + len(pv)
-                        else:
-                            pos = m.end() + 1
-                    args = value
+                    args = expand_cmd_args(args, params.environment_variables, parameter_pattern)
 
                 if self.support_extra_parameters():
                     opts, extra_args = parser.parse_known_args(shlex.split(args))
