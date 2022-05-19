@@ -482,8 +482,8 @@ class BaseExporter(abc.ABC):
     @staticmethod
     def export_host_field(value):    # type: (dict) -> Optional[str]
         if isinstance(value, dict):
-            host = value.get('hostName', '')
-            port = value.get('port', '')
+            host = value.get('hostName') or ''
+            port = value.get('port') or ''
             if host or port:
                 if port:
                     host += ':' + port
@@ -492,10 +492,10 @@ class BaseExporter(abc.ABC):
     @staticmethod
     def export_phone_field(value):   # type: (dict) -> Optional[str]
         if isinstance(value, dict):
-            phone = value.get('type', '')
+            phone = value.get('type') or ''
             if phone:
                 phone += ':'
-            region = value.get('region', '')
+            region = value.get('region') or ''
             if region:
                 if len(region) == 2 and region.isalpha():
                     pass
@@ -505,10 +505,10 @@ class BaseExporter(abc.ABC):
                     region = ''
                 if region:
                     phone += '  ' + region
-            number = value.get('number', '').replace(' ', '-')
+            number = (value.get('number') or '').replace(' ', '-')
             if number:
                 phone += ' ' + number
-            ext = value.get('ext', '').replace(' ', '-')
+            ext = (value.get('ext') or '').replace(' ', '-')
             if ext:
                 phone += ' ' + ext
             return phone
@@ -516,9 +516,9 @@ class BaseExporter(abc.ABC):
     @staticmethod
     def export_name_field(value):   # type: (dict) -> Optional[str]
         if isinstance(value, dict):
-            first_name = value.get('first', '')
-            middle_name = value.get('middle', '')
-            name = value.get('last', '')
+            first_name = value.get('first') or ''
+            middle_name = value.get('middle') or ''
+            name = value.get('last') or ''
             if first_name or middle_name or name:
                 name = f'{name}, {first_name}'
                 if middle_name:
