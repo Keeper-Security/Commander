@@ -178,7 +178,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             if not ext:
                 filename += '.csv'
 
-        with open(filename, 'a' if append else 'w', newline='') if filename else io.StringIO() as fd:
+        with open(filename, 'a' if append else 'w', newline='', encoding='utf-8') if filename else io.StringIO() as fd:
             csv_writer = csv.writer(fd)
             if title:
                 csv_writer.writerow([])
