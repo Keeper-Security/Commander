@@ -35,12 +35,22 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate the password for a Keeper record from this Commander.')
-rotate_parser.add_argument('--print', dest='print', action='store_true', help='display the record content after rotation')
-rotate_parser.add_argument('--match', dest='match', action='store', help='regular expression to select records for password rotation')
+rotate_parser = argparse.ArgumentParser(
+    prog='rotate|r', description='Rotate the password for a Keeper record from this Commander.'
+)
+rotate_parser.add_argument(
+    '--print', dest='print', action='store_true', help='display the record content after rotation'
+)
+rotate_parser.add_argument(
+    '-m', '--match', dest='match', action='store', help='regular expression to select records for password rotation'
+)
 rotate_parser.add_argument('--password', dest='password', action='store', help='new password (optional)')
-rotate_parser.add_argument('--force', dest='force', action='store_true', help='force all matches to rotate without prompt')
-rotate_parser.add_argument('name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command')
+rotate_parser.add_argument(
+    '--force', dest='force', action='store_true', help='force all matches to rotate without prompt'
+)
+rotate_parser.add_argument(
+    'name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command'
+)
 rotate_parser.error = raise_parse_exception
 rotate_parser.exit = suppress_exit
 
@@ -114,13 +124,24 @@ def rotate_password(params, record_uid, name=None, new_password=None):
 
     if not new_password:
         # generate a new password with any specified rules
+        if hasattr(plugin, 'DISALLOW_SPECIAL_CHARACTERS'):
+            pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
+                str.maketrans('', '', plugin.DISALLOW_SPECIAL_CHARACTERS)
+            )
+        else:
+            pw_special_characters = generator.PW_SPECIAL_CHARACTERS
         rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
         if rules:
             logging.debug("Rules found for record")
-            new_password = generator.generateFromRules(rules)
+            upper, lower, digits, symbols = (int(n) for n in rules.split(','))
+            kpg = generator.KeeperPasswordGenerator(
+                length=upper + lower + digits + symbols, symbols=symbols, digits=digits, caps=upper, lower=lower,
+                special_characters=pw_special_characters
+            )
         else:
             logging.debug("No rules, just generate")
-            new_password = generator.generate()
+            kpg = generator.KeeperPasswordGenerator(32, 8, 8, 8, 8, special_characters=pw_special_characters)
+        new_password = kpg.generate()
 
         # ensure password starts with alpha numeric character
         new_password = adjust_password(new_password)
