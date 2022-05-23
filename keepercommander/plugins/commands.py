@@ -98,9 +98,21 @@ def update_v2_or_v3_password(params, record, new_password):
         return api.update_record(params, record)
 
 
+def check_share_editable(params, record_uid):
+    api.get_record_shares(params, [record_uid])
+    share_perm = params.record_cache.get(record_uid, {}).get('shares', {}).get('shared_folder_permissions', [])
+    if len(share_perm) > 0:
+        return share_perm[0].get('editable')
+    else:
+        return None
+
+
 def rotate_password(params, record_uid, name=None, new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
+    if check_share_editable(params, record_uid) is False:
+        logging.error('Target record is shared and not editable. Record for rotation must be editable.')
+        return False
     record = api.get_record(params, record_uid)
 
     # execute rotation plugin associated with this record
