@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 import argparse
@@ -154,6 +154,8 @@ enterprise_user_parser.add_argument('--node', dest='node', action='store', help=
 enterprise_user_parser.add_argument('--add-role', dest='add_role', action='append', help='role name or role ID')
 enterprise_user_parser.add_argument('--remove-role', dest='remove_role', action='append', help='role name or role ID')
 enterprise_user_parser.add_argument('--add-team', dest='add_team', action='append', help='team name or team UID')
+enterprise_user_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
+                                    choices=['on', 'off'], help='User does not see shared folders. --add-team only')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
 enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
@@ -193,6 +195,8 @@ enterprise_team_parser.add_argument('--add', dest='add', action='store_true', he
 enterprise_team_parser.add_argument('--approve', dest='approve', action='store_true', help='approve queued team')
 enterprise_team_parser.add_argument('--delete', dest='delete', action='store_true', help='delete team')
 enterprise_team_parser.add_argument('--add-user', dest='add_user', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
+                                    choices=['on', 'off'], help='User does not see shared folders. --add-user only')
 enterprise_team_parser.add_argument('--remove-user', dest='remove_user', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
 enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
@@ -404,8 +408,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
         if 'team_users' in params.enterprise:
             for tu in params.enterprise['team_users']:
+                team_uid = tu['team_uid']
                 if tu['team_uid'] in teams:
-                    teams[tu['team_uid']]['users'].append(tu['enterprise_user_id'])
+                    user_id = tu['enterprise_user_id']
+                    teams[team_uid]['users'].append(user_id)
 
         queued_teams = {}
         if 'queued_teams' in params.enterprise:
@@ -649,7 +655,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'team_count':
                             row.append(len([1 for t in teams.values() if t['users'] and user_id in t['users']]))
                         elif column == 'teams':
-                            team_names = [t['name'] for t in teams.values() if t['users'] and user_id in t['users']]
+                            team_names = [t["name"] for t in teams.values() if t['users'] and user_id in t['users']]
                             row.append(team_names)
                         elif column == 'role_count':
                             row.append(len([1 for r in roles.values() if r['users'] and user_id in r['users']]))
@@ -1318,19 +1324,37 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             is_add, team_name = teams[team_uid]
                             for user in matched_users:
                                 if is_add:
+                                    user_id = user['enterprise_user_id']
                                     if user['status'] == 'active':
-                                        rq = {
-                                            'command': 'team_enterprise_user_add',
-                                            'team_uid': team_uid,
-                                            'enterprise_user_id': user['enterprise_user_id'],
-                                        }
-                                        team_key = self.get_team_key(params, team_uid)
-                                        public_key = self.get_public_key(params, user['username'])
-                                        encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
-                                        if team_key and public_key:
-                                            rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
-                                            rq['user_type'] = 0
-                                            request_batch.append(rq)
+                                        hsf = kwargs.get('hide_shared_folders') or ''
+                                        is_added = False
+                                        if 'team_users' in params.enterprise:
+                                            is_added = \
+                                                any(1 for t in params.enterprise['team_users']
+                                                    if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
+                                        if is_added:
+                                            if not hsf:
+                                                continue
+                                            rq = {
+                                                'command': 'team_enterprise_user_update',
+                                                'team_uid': team_uid,
+                                                'enterprise_user_id': user_id,
+                                            }
+                                        else:
+                                            rq = {
+                                                'command': 'team_enterprise_user_add',
+                                                'team_uid': team_uid,
+                                                'enterprise_user_id': user_id,
+                                            }
+                                            team_key = self.get_team_key(params, team_uid)
+                                            public_key = self.get_public_key(params, user['username'])
+                                            encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
+                                            if team_key and public_key:
+                                                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                                rq['user_type'] = 0
+                                        if hsf:
+                                            rq['user_type'] = 0 if hsf == 'off' else 2
+                                        request_batch.append(rq)
                                     else:
                                         rq = {
                                             'command': 'team_queue_user',
@@ -1455,6 +1479,9 @@ class EnterpriseUserCommand(EnterpriseCommand):
         print('{0:>16s}: {1}'.format('User ID', user['enterprise_user_id']))
         print('{0:>16s}: {1}'.format('Email', user['username'] if 'username' in user else '[empty]'))
         print('{0:>16s}: {1}'.format('Display Name', user['data'].get('displayname') or ''))
+        node_id = user['node_id']
+        print('{0:>16s}: {1:<24s}{2}'.format(
+            'Node', self.get_node_path(params, node_id), f' [{node_id}]' if is_verbose else ''))
 
         status_dict = get_user_status_dict(user)
 
@@ -1486,11 +1513,16 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
         if 'team_users' in params.enterprise:
             user_id = user['enterprise_user_id']
-            ts = [t['team_uid'] for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
-            ts.sort(key=lambda x: team_nodes[x]['name'])
-            for i in range(len(ts)):
-                team_node = team_nodes[ts[i]]
-                print('{0:>16s}: {1:<22s} {2}'.format('Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
+            ts = [t for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
+            ts.sort(key=lambda x: team_nodes[x['team_uid']]['name'])
+            for i, tu in enumerate(ts):
+                team_node = team_nodes[tu['team_uid']]
+                user_type = tu['user_type']
+                print('{0:>16s}: {1:<24s}{2} {3}'.format(
+                    'Team' if i == 0 else '', team_node['name'],
+                    f' [{team_node["team_uid"]}]' if is_verbose else '',
+                    ' (No Shared Folders)' if user_type == 2 else '',
+                ))
 
         if 'queued_team_users' in params.enterprise:
             user_id = user['enterprise_user_id']
@@ -1498,7 +1530,9 @@ class EnterpriseUserCommand(EnterpriseCommand):
             ts.sort(key=lambda x: team_nodes[x]['name'])
             for i in range(len(ts)):
                 team_node = team_nodes[ts[i]]
-                print('{0:>16s}: {1:<22s} {2}'.format('Queued Team' if i == 0 else '', team_node['name'], team_node['team_uid'] if is_verbose else ''))
+                print('{0:>16s}: {1:<24s}{2}'.format(
+                    'Queued Team' if i == 0 else '', team_node['name'],
+                    f' [{team_node["team_uid"]}]' if is_verbose else ''))
 
 
 class EnterpriseRoleCommand(EnterpriseCommand):
@@ -2348,6 +2382,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
                 if len(users) > 0:
                     for team in matched_teams:
+                        team_uid = team['team_uid']
                         is_real_team = 'restrict_edit' in team
                         for user_id in users:
                             is_add, user = users[user_id]
@@ -2355,17 +2390,34 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                             if is_add:
                                 is_active_user = user['status'] == 'active'
                                 if is_real_team and is_active_user:
-                                    public_key = self.get_public_key(params, user['username'])
-                                    team_key = self.get_team_key(params, team['team_uid'])
-                                    encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
-                                    if public_key and team_key:
+                                    hsf = kwargs.get('hide_shared_folders') or ''
+                                    is_added = False
+                                    if 'team_users' in params.enterprise:
+                                        is_added = \
+                                            any(1 for t in params.enterprise['team_users']
+                                                if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
+                                    if is_added:
+                                        if not hsf:
+                                            continue
                                         rq = {
-                                            'command': 'team_enterprise_user_add',
-                                            'team_uid': team['team_uid'],
+                                            'command': 'team_enterprise_user_update',
+                                            'team_uid': team_uid,
                                             'enterprise_user_id': user_id,
-                                            'user_type': 0,
-                                            'team_key': utils.base64_url_encode(encrypted_team_key)
                                         }
+                                    else:
+                                        public_key = self.get_public_key(params, user['username'])
+                                        team_key = self.get_team_key(params, team['team_uid'])
+                                        encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
+                                        if public_key and team_key:
+                                            rq = {
+                                                'command': 'team_enterprise_user_add',
+                                                'team_uid': team['team_uid'],
+                                                'enterprise_user_id': user_id,
+                                                'user_type': 0,
+                                                'team_key': utils.base64_url_encode(encrypted_team_key)
+                                            }
+                                    if hsf:
+                                        rq['user_type'] = 2 if hsf == 'on' else 1
                                 else:
                                     rq = {
                                         'command': 'team_queue_user',
@@ -2437,23 +2489,31 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         team_uid = team['team_uid']
         is_queued_team = 'restrict_edit' not in team
 
-        print('{0:>24s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team UID', team_uid))
-        print('{0:>24s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team Name', team['name']))
-        print('{0:>24s}: {1:<32s} {2}'.format('Node', self.get_node_path(params, team['node_id']), str(team['node_id'])))
+        print('{0:>16s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team UID', team_uid))
+        print('{0:>16s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team Name', team['name']))
+        print('{0:>16s}: {1:<24s}{2}'.format(
+            'Node', self.get_node_path(params, team['node_id']),
+            f' [{team["node_id"]}]' if is_verbose else ''))
         if not is_queued_team:
-            print('{0:>24s}: {1}'.format('Restrict Edit?', 'Yes' if team['restrict_edit'] else 'No'))
-            print('{0:>24s}: {1}'.format('Restrict Share?', 'Yes' if team['restrict_sharing'] else 'No'))
-            print('{0:>24s}: {1}'.format('Restrict View?', 'Yes' if team['restrict_view'] else 'No'))
+            print('{0:>16s}: {1}'.format('Restrict Edit?', 'Yes' if team['restrict_edit'] else 'No'))
+            print('{0:>16s}: {1}'.format('Restrict Share?', 'Yes' if team['restrict_sharing'] else 'No'))
+            print('{0:>16s}: {1}'.format('Restrict View?', 'Yes' if team['restrict_view'] else 'No'))
 
         user_names = {}
         for u in params.enterprise['users']:
             user_names[u['enterprise_user_id']] = u['username'] if 'username' in u else '[empty]'
 
         if 'team_users' in params.enterprise:
-            user_ids = [x['enterprise_user_id'] for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
+            user_teams = [x for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
             # user_ids.sort(key=lambda x: user_names.get(x))
-            for i in range(len(user_ids)):
-                print('{0:>24s}: {1:<32s} {2}'.format('Active User(s)' if i == 0 else '', (user_names[user_ids[i]] if user_ids[i] in user_names else "(Unmanaged User id: " + user_ids[i] + ")"), user_ids[i] if is_verbose else ''))
+            for i, tu in enumerate(user_teams):
+                user_id = tu['enterprise_user_id']
+                print('{0:>16s}: {1:<24s}{2} {3}'.format(
+                    'Active User(s)' if i == 0 else '',
+                    user_names[user_id] if user_id in user_names else f'(Unmanaged User: {user_id})',
+                    f' [{user_id}]' if is_verbose else '',
+                    '(No Shared Folders)' if tu.get('user_type') == 2 else ''
+                ))
 
         if 'queued_team_users' in params.enterprise:
             user_ids = []
@@ -2462,7 +2522,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     user_ids.extend(qtu['users'])
             user_ids.sort(key=lambda x: user_names.get(x))
             for i in range(len(user_ids)):
-                print('{0:>24s}: {1:<32s} {2}'.format('Queued User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
+                print('{0:>16s}: {1:<24s} {2}'.format('Queued User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
 
 
 security_audit_report_description = '''
