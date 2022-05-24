@@ -39,6 +39,7 @@ def register_commands(commands):
     commands['mv'] = FolderMoveCommand()
     commands['ln'] = FolderLinkCommand()
     commands['shortcut'] = ShortcutCommand()
+    commands['arrange-folders'] = ArrangeFolderCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -96,8 +97,11 @@ mkdir_parser.exit = suppress_exit
 
 mv_parser = argparse.ArgumentParser(prog='mv', description='Move a record or folder to another folder.')
 mv_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-mv_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can reshare records')
+mv_parser.add_argument('-s', '--can-reshare', dest='can_reshare', action='store_true', help='anyone can re-share records')
 mv_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records')
+group = mv_parser.add_mutually_exclusive_group()
+group.add_argument('--shared-folder', dest='shared_folder', action='store_true', help='apply search pattern to shared folders')
+group.add_argument('--user-folder', dest='user_folder', action='store_true', help='apply search pattern to user folders')
 mv_parser.add_argument('src', nargs='?', type=str, action='store',
                        help='source path to folder/record, search pattern or record UID')
 mv_parser.add_argument('dst', nargs='?', type=str, action='store', help='destination folder or UID')
@@ -583,8 +587,17 @@ class FolderMoveCommand(Command):
             parser.print_help()
             return
 
-        source = []    # type: List[Tuple[BaseFolderNode, Optional[str]]]   # (folder, record_uid)
+        if dst_path in params.folder_cache:
+            dst_folder = params.folder_cache[dst_path]
+        else:
+            dst = try_resolve_path(params, dst_path)
+            if dst is None:
+                raise CommandError('mv', 'Destination path should be existing folder')
+            dst_folder, name = dst
+            if len(name) > 0:
+                raise CommandError('mv', 'Destination path should be existing folder')
 
+        source = []    # type: List[Tuple[BaseFolderNode, Optional[str]]]   # (folder, record_uid)
         if src_path in params.record_cache:    # record UID
             record_uid = src_path
             src_folder = None
@@ -601,9 +614,14 @@ class FolderMoveCommand(Command):
                     src_folder = params.folder_cache[folder_uids[0]]
             else:
                 src_folder = params.root_folder
+
+            if src_folder is dst_folder:
+                raise CommandError('mv', 'Source and Destination folders are the same')
             source.append((src_folder, record_uid))
         elif src_path in params.folder_cache:   # folder UID
             src_folder = params.folder_cache[src_path]
+            if src_folder is dst_folder:
+                raise CommandError('mv', 'Source and Destination folders are the same')
             source.append((src_folder, None))
         else:
             src = try_resolve_path(params, src_path)
@@ -611,33 +629,35 @@ class FolderMoveCommand(Command):
                 raise CommandError('mv', 'Source path should be existing record or folder')
 
             src_folder, name = src
+            if src_folder is dst_folder:
+                raise CommandError('mv', 'Source and Destination folders are the same')
+
             if len(name) > 0:
-                regex = re.compile(fnmatch.translate(name)).match
+                regex = re.compile(fnmatch.translate(name), re.IGNORECASE).match
                 src_folder_uid = src_folder.uid or ''
-                if src_folder_uid in params.subfolder_record_cache:
-                    for record_uid in params.subfolder_record_cache[src_folder_uid]:
-                        if record_uid == name:
-                            source.append((src_folder, record_uid))
-                        else:
-                            record = vault.KeeperRecord.load(params, record_uid)
-                            if isinstance(record, vault.PasswordRecord) or isinstance(record, vault.TypedRecord):
-                                if regex(record.title):
-                                    source.append((src_folder, record_uid))
+                if kwargs.get('shared_folder') or kwargs.get('user_folder'):
+                    for subfolder_uid in src_folder.subfolders or []:
+                        if subfolder_uid in params.folder_cache:
+                            is_shared = subfolder_uid in params.shared_folder_cache
+                            if (is_shared and kwargs.get('shared_folder')) or (not is_shared and kwargs.get('user_folder')):
+                                folder = params.folder_cache[subfolder_uid]
+                                if regex(folder.name):
+                                    source.append((folder, None))
+                else:
+                    if src_folder_uid in params.subfolder_record_cache:
+                        for record_uid in params.subfolder_record_cache[src_folder_uid]:
+                            if record_uid == name:
+                                source.append((src_folder, record_uid))
+                            else:
+                                record = vault.KeeperRecord.load(params, record_uid)
+                                if isinstance(record, vault.PasswordRecord) or isinstance(record, vault.TypedRecord):
+                                    if regex(record.title):
+                                        source.append((src_folder, record_uid))
             else:
                 source.append((src_folder, None))
 
             if len(source) == 0:
-                raise CommandError('mv', 'Record "{0}" not found'.format(name))
-
-        if dst_path in params.folder_cache:
-            dst_folder = params.folder_cache[dst_path]
-        else:
-            dst = try_resolve_path(params, dst_path)
-            if dst is None:
-                raise CommandError('mv', 'Destination path should be existing folder')
-            dst_folder, name = dst
-            if len(name) > 0:
-                raise CommandError('mv', 'Destination path should be existing folder')
+                raise CommandError('mv', f'Record "{name}" not found')
 
         rq = {
             'command': 'move',
@@ -652,6 +672,10 @@ class FolderMoveCommand(Command):
 
         transition_keys = []
         for src_folder, record_uid in source:
+            if len(rq['move']) > 990:
+                logging.info('The command limit has been reached. Please repeat this command to resume operation.')
+                break
+
             if not record_uid:   # move folder
                 if src_folder.type == BaseFolderNode.RootFolderType:
                     raise CommandError('mv', 'Root folder cannot be a source folder')
@@ -995,3 +1019,80 @@ class ShortcutKeepCommand(Command):
                     api.communicate(params, rq)
                     params.sync_data = True
 
+
+arrange_folders_parser = argparse.ArgumentParser(
+    prog='arrange-folders',  description='Moves shared folders from the root folder to sub-folders.')
+arrange_folders_parser.add_argument(
+    '--pattern', dest='pattern', action='store', help='Action to perform on the licenses', default=r'^([^-]*)-.+$')
+arrange_folders_parser.add_argument('--folder', dest='folder', action='store', help='Sub folder name or UID', default='Customers')
+arrange_folders_parser.add_argument('-f', '--force', dest='force', action='store_true', help='rearrange folder without prompting')
+
+
+class ArrangeFolderCommand(Command):
+    def get_parser(self):
+        return arrange_folders_parser
+
+    def execute(self, params, **kwargs):
+        pattern = kwargs.get('pattern')
+        regex = re.compile(pattern, re.IGNORECASE).match
+
+        group_folders = {}
+        for f_uid in params.root_folder.subfolders:
+            if f_uid in params.shared_folder_cache:
+                shared_folder = api.get_shared_folder(params, f_uid)
+                m = regex(shared_folder.name)
+                if m:
+                    sub_folder = m[1]
+                    logging.info('Shared folder \"%s\" will be moved to \"%s\"', shared_folder.name, sub_folder)
+                    if sub_folder.lower() not in group_folders:
+                        group_folders[sub_folder.lower()] = sub_folder
+                else:
+                    logging.info('Shared folder \"%s\" does not match pattern. Skipping', shared_folder.name)
+        if not group_folders:
+            logging.info('There are no shared folders found for pattern \"%s\"', pattern)
+
+        folder = kwargs.get('folder')
+        if not folder:
+            raise CommandError(self.get_parser().prog, 'Target path should be existing record or folder')
+        folder_uid = None
+        for f_uid in params.root_folder.subfolders:
+            if folder_uid:
+                f = params.folder_cache[folder_uid]
+                if f.type != 'user_folder':
+                    raise CommandError(self.get_parser().prog, f'\"{f.name}\" cannot be shared folder')
+                break
+            if f_uid == folder:
+                folder_uid = f_uid
+            elif f_uid in params.folder_cache:
+                f = params.folder_cache[f_uid]
+                if f.name.lower() == folder.lower():
+                    folder_uid = f.uid
+
+        cd_command = FolderCdCommand()
+        cd_command.execute(params, folder='/')
+
+        mkdir_command = FolderMakeCommand()
+        if not folder_uid:
+            mkdir_command.execute(params, folder=folder, user_folder=True)
+            folder_uid = params.environment_variables[LAST_FOLDER_UID]
+            api.sync_down(params)
+
+        cd_command.execute(params, folder=folder_uid)
+        subfolders = {x for x in params.folder_cache[folder_uid].subfolders if x in params.folder_cache}
+        for key in list(group_folders.keys()):
+            for f_uid in subfolders:
+                f = params.folder_cache[f_uid]
+                if f.name.lower() == key:
+                    group_folders[key] = f.uid
+                    break
+            if group_folders[key] not in params.folder_cache:
+                mkdir_command.execute(params, folder=group_folders[key], user_folder=True)
+                group_folders[key] = params.environment_variables[LAST_FOLDER_UID]
+            else:
+                subfolders.remove(group_folders[key])
+        if params.sync_data:
+            api.sync_down(params)
+
+        mv_command = FolderMoveCommand()
+        for key in group_folders:
+            mv_command.execute(params, shared_folder=True, src=f'/{key}*', dst=group_folders[key])
