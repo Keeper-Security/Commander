@@ -44,7 +44,7 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['bw'] = 'breachwatch'
-    command_info['breachwatch'] = 'Breach Watch.'
+    command_info['breachwatch'] = 'BreachWatch.'
 
 
 class BreachWatchCommand(GroupCommand):
@@ -197,7 +197,7 @@ class BreachWatchIgnoreCommand(Command):
                 logging.warning(f'Record UID "{record_uid}" not found. Skipping.')
                 continue
             if record_uid not in params.breach_watch_records:
-                logging.warning(f'Record UID "{record_uid}": Breach Watch information not found')
+                logging.warning(f'Record UID "{record_uid}": BreachWatch information not found')
                 continue
 
         if len(record_uids) == 0:

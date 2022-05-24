@@ -1696,7 +1696,7 @@ class RecordV3:
                         status = 'High-Risk Password'
                     elif status == 'IGNORE':
                         status = 'Ignored'
-                    print('{0:>20s}: {1:<20s}'.format('Breach Watch', status))
+                    print('{0:>20s}: {1:<20s}'.format('BreachWatch', status))
 
         print('')
 
