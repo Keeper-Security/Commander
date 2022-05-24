@@ -246,8 +246,10 @@ class Record:
                                                                              atta.get('id')))
 
         if self.totp:
+            print('{0:>20s}: {1}'.format('TOTP URL', self.totp))
             code, remain, _ = get_totp_code(self.totp)
-            if code: print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
+            if code:
+                print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
 
         if params is not None:
             if self.record_uid in params.record_cache:
@@ -311,7 +313,7 @@ class Record:
                         status = 'High-Risk Password'
                     elif status == 'IGNORE':
                         status = 'Ignored'
-                    print('{0:>20s}: {1:<20s}'.format('Breach Watch', status))
+                    print('{0:>20s}: {1:<20s}'.format('BreachWatch', status))
 
         print('')
 

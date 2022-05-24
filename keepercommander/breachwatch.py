@@ -124,7 +124,7 @@ class BreachWatch(object):
                 if status.reason:
                     raise Exception(status.reason)
             except Exception as e:
-                logging.warning('Breach Watch: %s', str(e))
+                logging.warning('BreachWatch: %s', str(e))
 
     def delete_euids(self, params, euids):
         self._ensure_init(params)

@@ -664,6 +664,8 @@ class RecordGetUidCommand(Command):
                         ro['notes'] = r.notes
                     if r.custom_fields:
                         ro['custom_fields'] = r.custom_fields
+                    if r.totp:
+                        ro['totp'] = r.totp
                     if r.attachments:
                         ro['attachments'] = [{
                             'id': a.get('id'),
