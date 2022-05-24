@@ -99,19 +99,25 @@ def update_v2_or_v3_password(params, record, new_password):
 
 
 def check_share_editable(params, record_uid):
-    api.get_record_shares(params, [record_uid])
-    share_perm = params.record_cache.get(record_uid, {}).get('shares', {}).get('shared_folder_permissions', [])
-    if len(share_perm) > 0:
-        return share_perm[0].get('editable')
+    """Check if shared record is editable
+
+    Returns None if record isn't shared. If record is shared, returns True if editable and False otherwise.
+    """
+    rwp = api.resolve_record_write_path(params, record_uid)
+    if isinstance(rwp, dict):
+        sf = api.get_shared_folder(params, rwp['shared_folder_uid']) if 'shared_folder_uid' in rwp else None
+        sf_rec = next((r for r in getattr(sf, 'records', []) if r['record_uid'] == record_uid), None)
+        editable = isinstance(sf_rec, dict) and sf_rec.get('can_edit', False)
     else:
-        return None
+        editable = None
+    return editable
 
 
 def rotate_password(params, record_uid, name=None, new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
     if check_share_editable(params, record_uid) is False:
-        logging.error('Target record is shared and not editable. Record for rotation must be editable.')
+        logging.error('Target record is not editable. Record for rotation must be editable.')
         return False
     record = api.get_record(params, record_uid)
 
