@@ -577,7 +577,8 @@ class _EnterpriseTeamUserEntity(_EnterpriseLink):
     def to_keeper_entity(self, proto_entity, keeper_entity):  # type: (proto.TeamUser, dict) -> None
         _set_or_remove(keeper_entity, 'team_uid', self.get_proto_entity1_id(proto_entity))
         _set_or_remove(keeper_entity, 'enterprise_user_id', proto_entity.enterpriseUserId)
-        _set_or_remove(keeper_entity, 'user_type', 0 if proto_entity.userType == 'USER' else 1)
+        user_type = 0 if proto_entity.userType == 'USER' else 1 if proto_entity.userType == 'ADMIN' else 2
+        _set_or_remove(keeper_entity, 'user_type', user_type)
 
     def get_keeper_entity1_id(self, entity):  # type: (dict) -> any
         return entity.get('team_uid')
