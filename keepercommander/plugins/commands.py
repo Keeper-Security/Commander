@@ -44,7 +44,11 @@ rotate_parser.add_argument(
 rotate_parser.add_argument(
     '-m', '--match', dest='match', action='store', help='regular expression to select records for password rotation'
 )
-rotate_parser.add_argument('--password', dest='password', action='store', help='new password (optional)')
+rotate_parser.add_argument('--plugin', dest='plugin', action='store', help='Force rotation plugin (optional)')
+rotate_parser.add_argument('--host', dest='host', action='store', help='Optional host (override record value)')
+rotate_parser.add_argument('--port', dest='port', action='store', help='Optional port (override record value)')
+rotate_parser.add_argument('--rules', dest='rules', action='store', help='Optional rules (override record value)')
+rotate_parser.add_argument('--password', dest='password', action='store', help='Optional new password')
 rotate_parser.add_argument(
     '--force', dest='force', action='store_true', help='force all matches to rotate without prompt'
 )
@@ -98,14 +102,15 @@ def update_v2_or_v3_password(params, record, new_password):
         return api.update_record(params, record)
 
 
-def get_new_password(record, plugin):
+def get_new_password(record, plugin, rules=None):
     if hasattr(plugin, 'disallow_special_characters'):
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
             str.maketrans('', '', plugin.disallow_special_characters)
         )
     else:
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS
-    rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
+    if rules is None:
+        rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
     if rules:
         logging.debug("Rules found for record")
         upper, lower, digits, symbols = (int(n) for n in rules.split(','))
@@ -129,7 +134,8 @@ def get_new_password(record, plugin):
     return new_password
 
 
-def rotate_password(params, record_uid, alt_identifier=None, new_password=None):
+def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host=None, port=None, rules=None,
+                    new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
     record = api.get_record(params, record_uid)
@@ -140,12 +146,12 @@ def rotate_password(params, record_uid, alt_identifier=None, new_password=None):
         )
         return False
 
-    plugin_name, plugin = plugin_manager.get_plugin(record, alt_identifier)
+    plugin_name, plugin = plugin_manager.get_plugin(record, rotate_name, plugin_name, host, port)
     if not plugin:
         return False
 
     if new_password is None:
-        new_password = get_new_password(record, plugin)
+        new_password = get_new_password(record, plugin, rules)
 
     api.sync_down(params)
     record = api.get_record(params, record_uid)
@@ -215,7 +221,11 @@ class RecordRotateCommand(Command):
                         logging.error('There are more than one rotation records with name %s. Please use record UID.', name)
                         return
             if record_uid:
-                rotate_password(params, record_uid, alt_identifier=rotate_name, new_password=kwargs.get('password'))
+                rotate_password(
+                    params, record_uid, rotate_name=rotate_name, plugin_name=kwargs.get('plugin'),
+                    host=kwargs.get('host'), port=kwargs.get('port'), rules=kwargs.get('rules'),
+                    new_password=kwargs.get('password')
+                )
                 if print_result:
                     record = api.get_record(params, record_uid)
                     record.display()
@@ -225,7 +235,10 @@ class RecordRotateCommand(Command):
             results = api.search_records(params, match)
             for r in results:
                 if force or confirm(f'Rotate password for record {r.title}?'):
-                    rotate_password(params, r.record_uid, new_password=kwargs.get('password'))
+                    rotate_password(
+                        params, r.record_uid, plugin_name=kwargs.get('plugin'), new_password=kwargs.get('password'),
+                        host=kwargs.get('host'), port=kwargs.get('port'), rules=kwargs.get('rules')
+                    )
                     if print_result:
                         record = api.get_record(params, r.record_uid)
                         record.display()
