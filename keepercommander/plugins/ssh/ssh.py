@@ -17,46 +17,38 @@ import logging
 import paramiko
 from paramiko_expect import SSHClientInteraction
 
-from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
 
-# These characters don't work for Windows ssh rotation
+# These characters don't work for Windows ssh password rotation
 DISALLOW_SPECIAL_CHARACTERS = '<>^'
 
 
-def rotate(record, newpassword):
-    """
-    Change a password over ssh.
+class Rotator:
+    def __init__(self, host, login, password, port=22, **kwargs):
+        self.host = host
+        self.login = login
+        self.password = password
+        self.port = port
+        self.disallow_special_characters = DISALLOW_SPECIAL_CHARACTERS
 
-    Grab any required fields from the record.
-    """
-    user = record.login
-    oldpassword = record.password
-
-    result = False
-
-    optional_port = get_v2_or_v3_custom_field_value(record, 'cmdr:port')
-    if not optional_port:
-        port = 22
-    else:
-        try:
-            port = int(optional_port)
-        except ValueError:
-            print('port {} could not be converted to int'.format(optional_port))
-            return result
-
-    host = get_v2_or_v3_custom_field_value(record, 'cmdr:host')
-
-    return rotate_ssh(host, user, oldpassword, newpassword)
+    def rotate(self, record, new_password):
+        """Change a password over ssh"""
+        return rotate_ssh(self.host, self.port, self.login, self.password, new_password)
 
 
-def rotate_ssh(host, user, old_password, new_password, timeout=5):
+def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
     rotate_success = False
     with paramiko.SSHClient() as ssh:
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(
-            hostname=host, username=user, password=old_password,
-            timeout=timeout, allow_agent=False, look_for_keys=False
-        )
+        try:
+            ssh.connect(
+                hostname=host, port=port, username=user, password=old_password,
+                timeout=timeout, allow_agent=False, look_for_keys=False
+            )
+        except paramiko.ssh_exception.AuthenticationException:
+            logging.error(
+                f"Can't SSH authenticate to host {host} on port {port} with user {user} and password in record."
+            )
+            return False
         stdin, stdout, stderr = ssh.exec_command('ver')
         if ''.join(stdout.readlines()).strip().startswith('Microsoft Windows'):
             try:

@@ -1,11 +1,11 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
 #              |_|
 #
 # Keeper Commander
-# Copyright 2019 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -98,85 +98,54 @@ def update_v2_or_v3_password(params, record, new_password):
         return api.update_record(params, record)
 
 
-def check_share_editable(params, record_uid):
-    """Check if shared record is editable
-
-    Returns None if record isn't shared. If record is shared, returns True if editable and False otherwise.
-    """
-    rwp = api.resolve_record_write_path(params, record_uid)
-    if isinstance(rwp, dict):
-        sf = api.get_shared_folder(params, rwp['shared_folder_uid']) if 'shared_folder_uid' in rwp else None
-        sf_rec = next((r for r in getattr(sf, 'records', []) if r['record_uid'] == record_uid), None)
-        editable = isinstance(sf_rec, dict) and sf_rec.get('can_edit', False)
+def get_new_password(record, plugin):
+    if hasattr(plugin, 'disallow_special_characters'):
+        pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
+            str.maketrans('', '', plugin.disallow_special_characters)
+        )
     else:
-        editable = None
-    return editable
+        pw_special_characters = generator.PW_SPECIAL_CHARACTERS
+    rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
+    if rules:
+        logging.debug("Rules found for record")
+        upper, lower, digits, symbols = (int(n) for n in rules.split(','))
+        kpg = generator.KeeperPasswordGenerator(
+            length=upper + lower + digits + symbols, symbols=symbols, digits=digits, caps=upper, lower=lower,
+            special_characters=pw_special_characters
+        )
+    else:
+        logging.debug("No rules, just generate")
+        kpg = generator.KeeperPasswordGenerator(32, 8, 8, 8, 8, special_characters=pw_special_characters)
+    new_password = kpg.generate()
+
+    # ensure password starts with alpha numeric character
+    new_password = adjust_password(new_password)
+
+    # Some plugins might need to change the password in the process of rotation
+    # f.e. windows plugin gets rid of certain characters.
+    if hasattr(plugin, "adjust"):
+        new_password = plugin.adjust(new_password)
+
+    return new_password
 
 
-def rotate_password(params, record_uid, name=None, new_password=None):
+def rotate_password(params, record_uid, alt_identifier=None, new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
-    if check_share_editable(params, record_uid) is False:
-        logging.error('Target record is not editable. Record for rotation must be editable.')
-        return False
     record = api.get_record(params, record_uid)
-
-    # execute rotation plugin associated with this record
-    plugin_name = None
-    plugins = [x for x in record.custom_fields if 'cmdr:plugin' in x.get('name', x.get('label', ''))]
-    if plugins:
-        if name:
-            plugins = [x for x in plugins if x.get('name', x.get('label')).endswith('cmdr:plugin:' + name)]
-    if plugins:
-        plugin_name = plugins[0]['value']
-    if isinstance(plugin_name, list):
-        plugin_name = plugin_name[0]
-    if not plugin_name:
-        logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
-                      'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
+    if api.resolve_record_write_path(params, record_uid) is None:
+        logging.error(
+            f'Password rotation failed for record "{record.title}" (uid=[{record.record_uid}]):\n'
+            'The target record is not editable but needs to be updated with the new password to complete the rotation.'
+        )
         return False
 
-    plugin = plugin_manager.get_plugin(plugin_name)
+    plugin_name, plugin = plugin_manager.get_plugin(record, alt_identifier)
     if not plugin:
         return False
 
-    if not new_password:
-        # generate a new password with any specified rules
-        if hasattr(plugin, 'DISALLOW_SPECIAL_CHARACTERS'):
-            pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
-                str.maketrans('', '', plugin.DISALLOW_SPECIAL_CHARACTERS)
-            )
-        else:
-            pw_special_characters = generator.PW_SPECIAL_CHARACTERS
-        rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
-        if rules:
-            logging.debug("Rules found for record")
-            upper, lower, digits, symbols = (int(n) for n in rules.split(','))
-            kpg = generator.KeeperPasswordGenerator(
-                length=upper + lower + digits + symbols, symbols=symbols, digits=digits, caps=upper, lower=lower,
-                special_characters=pw_special_characters
-            )
-        else:
-            logging.debug("No rules, just generate")
-            kpg = generator.KeeperPasswordGenerator(32, 8, 8, 8, 8, special_characters=pw_special_characters)
-        new_password = kpg.generate()
-
-        # ensure password starts with alpha numeric character
-        new_password = adjust_password(new_password)
-
-        # Some plugins might need to change the password in the process of rotation
-        # f.e. windows plugin gets rid of certain characters.
-        if hasattr(plugin, "adjust"):
-            new_password = plugin.adjust(new_password)
-
-    # log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
-    # if record.notes:
-    #     record.notes += '\n' + log_message
-    # else:
-    #     record.notes = log_message
-    #
-    # if not api.update_record(params, record, silent=True):
-    #     return False
+    if new_password is None:
+        new_password = get_new_password(record, plugin)
 
     api.sync_down(params)
     record = api.get_record(params, record_uid)
@@ -186,13 +155,20 @@ def rotate_password(params, record_uid, name=None, new_password=None):
     if success:
         logging.debug("Password rotation is successful for \"%s\".", plugin_name)
     else:
-        logging.warning("Password rotation failed for record uid=[%s], plugin \"%s\"." % (record.record_uid, plugin_name))
+        logging.warning(
+            f'Password rotation failed for record "{record.title}" (uid=[{record.record_uid}]), plugin "{plugin_name}".'
+        )
         return False
 
     if update_v2_or_v3_password(params, record, new_password):
         new_record = api.get_record(params, record_uid)
         logging.info('Rotation successful for record_uid=%s, revision=%d', new_record.record_uid, new_record.revision)
         return True
+    else:
+        logging.error(
+            f"Rotated to new password {new_password} but couldn't update the record "
+            f'"{record.title}" (uid=[{record.record_uid}]). The new password will be needed for access.'
+        )
 
     return False
 
@@ -239,7 +215,7 @@ class RecordRotateCommand(Command):
                         logging.error('There are more than one rotation records with name %s. Please use record UID.', name)
                         return
             if record_uid:
-                rotate_password(params, record_uid, name=rotate_name, new_password=kwargs.get('password'))
+                rotate_password(params, record_uid, alt_identifier=rotate_name, new_password=kwargs.get('password'))
                 if print_result:
                     record = api.get_record(params, record_uid)
                     record.display()
