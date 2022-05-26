@@ -34,6 +34,10 @@ class Rotator:
         """Change a password over ssh"""
         return rotate_ssh(self.host, self.port, self.login, self.password, new_password)
 
+    def revert(self, record, new_password):
+        """Revert password change over ssh"""
+        return rotate_ssh(self.host, self.port, self.login, new_password, self.password)
+
 
 def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
     rotate_success = False

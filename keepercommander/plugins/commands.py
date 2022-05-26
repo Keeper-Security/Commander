@@ -168,8 +168,15 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
 
     if update_v2_or_v3_password(params, record, new_password):
         new_record = api.get_record(params, record_uid)
-        logging.info('Rotation successful for record_uid=%s, revision=%d', new_record.record_uid, new_record.revision)
+        logging.info(
+            f'Rotation successful for record "{new_record.title}" (uid=[{new_record.record_uid}], '
+            f'revision={new_record.revision}).'
+        )
         return True
+    elif hasattr(plugin, 'revert') and plugin.revert(record, new_password):
+        logging.warning(
+            f'Couldn\'t update the record "{record.title}" (uid=[{record.record_uid}]), so the rotation was reverted.'
+        )
     else:
         logging.error(
             f"Rotated to new password {new_password} but couldn't update the record "
