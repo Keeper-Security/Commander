@@ -156,8 +156,13 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
     api.sync_down(params)
     record = api.get_record(params, record_uid)
 
-    logging.info("Rotating with plugin %s", plugin_name)
-    success = plugin.rotate(record, new_password)
+    if record.password == new_password:
+        logging.warning('Rotation aborted because the old and new passwords are the same.')
+        success = False
+    else:
+        logging.info("Rotating with plugin %s", plugin_name)
+        success = plugin.rotate(record, new_password)
+
     if success:
         logging.debug("Password rotation is successful for \"%s\".", plugin_name)
     else:
