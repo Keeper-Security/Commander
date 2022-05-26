@@ -21,7 +21,8 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable
+import sys
+from typing import List, Optional, Sequence, Callable
 
 from tabulate import tabulate
 
@@ -290,6 +291,11 @@ def expand_cmd_args(args, envvars, pattern=parameter_pattern):
     return args
 
 
+def split_cmd_args(args):
+    is_posix = not sys.platform.startswith('win')
+    return shlex.split(args, posix=is_posix)
+
+
 class CliCommand(abc.ABC):
     @abc.abstractmethod
     def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, dict) -> any
@@ -319,13 +325,13 @@ class Command(CliCommand):
             if parser is not None:
                 if args:
                     args = expand_cmd_args(args, params.environment_variables, parameter_pattern)
-
+                args_list = split_cmd_args(args)
                 if self.support_extra_parameters():
-                    opts, extra_args = parser.parse_known_args(shlex.split(args))
+                    opts, extra_args = parser.parse_known_args(args_list)
                     if extra_args:
                         self.extra_parameters = ' '.join(extra_args)
                 else:
-                    opts = parser.parse_args(shlex.split(args))
+                    opts = parser.parse_args(args_list)
                 d.update(opts.__dict__)
             return self.execute(params, **d)
         except ParseError as e:
