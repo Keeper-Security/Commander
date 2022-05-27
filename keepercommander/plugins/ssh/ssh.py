@@ -32,6 +32,10 @@ class Rotator:
         """Change a password over ssh"""
         return rotate_ssh(self.host, self.port, self.login, self.password, new_password)
 
+    def rotate_start_msg(self):
+        """Display msg before starting rotation"""
+        logging.info(f'Rotating with ssh plugin on host {self.host} and port {self.port} using login {self.login}...')
+
     def revert(self, record, new_password):
         """Revert password change over ssh"""
         return rotate_ssh(self.host, self.port, self.login, new_password, self.password)

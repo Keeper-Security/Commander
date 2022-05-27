@@ -161,7 +161,10 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         logging.warning('Rotation aborted because the old and new passwords are the same.')
         success = False
     else:
-        logging.info("Rotating with plugin %s", plugin_name)
+        if hasattr(plugin, 'rotate_start_msg'):
+            plugin.rotate_start_msg()
+        else:
+            logging.info(f'Rotating with plugin {plugin_name}')
         success = plugin.rotate(record, new_password)
 
     if success:
