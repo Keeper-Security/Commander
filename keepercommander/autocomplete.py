@@ -12,7 +12,6 @@
 import argparse
 import itertools
 import logging
-import shlex
 
 from prompt_toolkit.completion import Completion, Completer
 
