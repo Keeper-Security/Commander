@@ -1050,6 +1050,7 @@ class ArrangeFolderCommand(Command):
                     logging.info('Shared folder \"%s\" does not match pattern. Skipping', shared_folder.name)
         if not group_folders:
             logging.info('There are no shared folders found for pattern \"%s\"', pattern)
+            return
 
         folder = kwargs.get('folder')
         if not folder:
