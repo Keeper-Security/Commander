@@ -154,7 +154,7 @@ def get_enterprise_data(params):
             'user_type': 1
         },
         {
-            'team_uid': _TEAM1_UID,
+            'team_uid': _TEAM2_UID,
             'enterprise_user_id': _USER2_ID,
             'user_type': 1
         }

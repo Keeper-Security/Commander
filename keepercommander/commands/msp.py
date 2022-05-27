@@ -10,12 +10,12 @@
 #
 
 import argparse
+import calendar
 import json
 import logging
 import os
 import string
 from datetime import datetime, timedelta
-import calendar
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data, user_choice
 from .enterprise import EnterpriseCommand
