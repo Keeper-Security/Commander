@@ -62,22 +62,22 @@ def detect_plugin(record, host, port):
     """
     plugin_name = None
     kwargs = {}
-    if record.login_url:
-        url = urlparse(record.login_url)
-        if url.port in PORT_TO_PLUGIN:
-            plugin_name = PORT_TO_PLUGIN[url.port]
-            kwargs['host'] = url.netloc
-            kwargs['port'] = url.port
-        if url.scheme in URL_SCHEME_TO_PLUGIN:
-            plugin_name = URL_SCHEME_TO_PLUGIN[url.scheme]
-            kwargs['host'] = url.netloc
-    if not plugin_name and record.record_type:
+    if record.record_type:
         # Search for host field in v3 record
         host_field = get_host_field_dict(record)
         if host_field and host_field['port'].isnumeric() and int(host_field['port']) in PORT_TO_PLUGIN:
             kwargs['host'] = host_field['hostName']
             kwargs['port'] = int(host_field['port'])
             plugin_name = PORT_TO_PLUGIN[kwargs['port']]
+    if not plugin_name and record.login_url:
+        url = urlparse(record.login_url)
+        if url.port in PORT_TO_PLUGIN:
+            plugin_name = PORT_TO_PLUGIN[url.port]
+            kwargs['host'] = url.hostname
+            kwargs['port'] = url.port
+        if url.scheme in URL_SCHEME_TO_PLUGIN:
+            plugin_name = URL_SCHEME_TO_PLUGIN[url.scheme]
+            kwargs['host'] = url.hostname
     if host:
         kwargs['host'] = host
     if port:
