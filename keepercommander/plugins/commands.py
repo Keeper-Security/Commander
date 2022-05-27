@@ -92,8 +92,9 @@ def get_v2_or_v3_custom_field_value(record, custom_field_name, default_value=Non
 def update_v2_or_v3_password(params, record, new_password):
     if record.record_type:  # V3 record
         return_result = {}
+        option = [f'f.password={new_password}']
         recordv3.RecordEditCommand().execute(
-            params, command='edit', password=new_password, record=record.record_uid, return_result=return_result
+            params, command='edit', option=option, record=record.record_uid, return_result=return_result
         )
         return return_result.get('update_record_v3', False)
 
