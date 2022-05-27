@@ -35,7 +35,7 @@ def load_plugin(module_name):
     if module_name not in imported_plugins:
         full_name = 'keepercommander.plugins.' + module_name
         try:
-            logging.info('Importing %s', str(full_name))
+            logging.debug('Importing %s', str(full_name))
             imported_plugins[module_name] = importlib.import_module(full_name)
         except Exception as e:
             logging.error(e.args[0])

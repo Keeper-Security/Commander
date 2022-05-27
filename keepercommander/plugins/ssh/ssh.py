@@ -9,9 +9,7 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
 """Change a password over ssh."""
-
 
 import logging
 import paramiko
@@ -41,6 +39,8 @@ class Rotator:
 
 def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
     rotate_success = False
+    ssh_logger = logging.getLogger('paramiko')
+    ssh_logger.setLevel(logging.WARNING)
     with paramiko.SSHClient() as ssh:
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -62,7 +62,7 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
                 result = ''.join(stdout.readlines()).strip()
                 if result == 'The command completed successfully.':
                     rotate_success = True
-                    logging.info(result)
+                    logging.debug(result)
                 else:
                     logging.warning(f'Unrecognized result: "{result}"')
             except Exception as e:
