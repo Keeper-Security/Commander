@@ -18,7 +18,7 @@ from prompt_toolkit.completion import Completion, Completer
 
 from .params import KeeperParams
 from .commands.folder import mv_parser
-from .commands.base import GroupCommand, Command
+from .commands.base import GroupCommand, Command, split_cmd_args
 from .commands import commands, enterprise_commands
 from . import api
 from .subfolder import try_resolve_path as sf_try_resolve_path
@@ -181,19 +181,19 @@ class CommandCompleter(Completer):
                                'rm', 'ls', 'clipboard-copy', 'find-password', 'one-time-share-list', 'one-time-share-create'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            opts, _ = (cmd_parser or record_parser).parse_known_args(shlex.split(args))
+                            opts, _ = (cmd_parser or record_parser).parse_known_args(split_cmd_args(args))
                             extra['prefix'] = opts.record or ''
                             context = 'path'
                     elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            opts, _ = (cmd_parser or folder_parser).parse_known_args(shlex.split(args))
+                            opts, _ = (cmd_parser or folder_parser).parse_known_args(split_cmd_args(args))
                             extra['prefix'] = opts.folder or ''
                             context = 'folder'
                     elif cmd in {'mv', 'ln'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            opts, _ = mv_parser.parse_known_args(shlex.split(args))
+                            opts, _ = mv_parser.parse_known_args(split_cmd_args(args))
                             if opts.dst is None:
                                 word = document.get_word_under_cursor()
                                 if len(word) == 0 and len(opts.src or '') > 0:
