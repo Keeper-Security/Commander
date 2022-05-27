@@ -127,11 +127,11 @@ class TestEnterprise(TestCase):
 
         cmd = enterprise.EnterpriseUserCommand()
         TestEnterprise.expected_commands = ['team_enterprise_user_add']
-        cmd.execute(params, add_team=[ent_env.team2_uid], email=[ent_env.user2_email])
+        cmd.execute(params, add_team=[ent_env.team1_uid], email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
         TestEnterprise.expected_commands = ['team_enterprise_user_remove']
-        cmd.execute(params, remove_team=[ent_env.team2_uid], email=[ent_env.user2_email])
+        cmd.execute(params, remove_team=[ent_env.team1_uid], email=[ent_env.user2_email])
         self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
     def test_enterprise_role(self):
@@ -336,7 +336,7 @@ class TestEnterprise(TestCase):
             m_pk.side_effect = get_public_keys
 
             TestEnterprise.expected_commands = ['execute']
-            cmd.execute(params, file='template.json', team=[ent_env.team1_name])
+            cmd.execute(params, file='template.json', team=[ent_env.team2_name])
             self.assertEqual(len(TestEnterprise.expected_commands), 0)
 
             TestEnterprise.expected_commands = ['execute']
