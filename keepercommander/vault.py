@@ -10,7 +10,7 @@
 
 import abc
 import json
-from typing import Optional, List, Tuple, Iterable, Type
+from typing import Optional, List, Tuple, Iterable, Type, Union, Dict, Any
 
 import itertools
 
@@ -66,10 +66,17 @@ class KeeperRecord(abc.ABC):
         return record
 
     @staticmethod
-    def load(params, record_uid):  # type: (KeeperParams, str) -> Optional['KeeperRecord']
-        if record_uid not in params.record_cache:
+    def load(params, rec):
+        # type: (KeeperParams, Union[str, Dict[str, Any]]) -> Optional['KeeperRecord']
+        if isinstance(rec, str):
+            if rec not in params.record_cache:
+                return
+            record = params.record_cache[rec]
+        elif isinstance(rec, dict):
+            record = rec
+        else:
             return
-        record = params.record_cache[record_uid]
+
         if 'data_unencrypted' not in record:
             return
         version = record.get('version', 0)
