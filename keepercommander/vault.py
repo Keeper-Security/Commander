@@ -9,12 +9,14 @@
 #
 
 import abc
+import datetime
 import json
 from typing import Optional, List, Tuple, Iterable, Type, Union, Dict, Any
 
 import itertools
 
 from .params import KeeperParams
+from . import record_types
 
 
 class KeeperRecord(abc.ABC):
@@ -103,7 +105,7 @@ class KeeperRecord(abc.ABC):
 
         return keeper_record
 
-    def enumerate_fields(self):    # type: () -> Iterable[Tuple[str, any]]
+    def enumerate_fields(self):    # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         yield '(title)', self.title
 
 
@@ -169,7 +171,8 @@ class PasswordRecord(KeeperRecord):
             if 'fields' in extra:
                 self.fields = [ExtraField(x) for x in extra['fields']]
 
-    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, any]]
+    def enumerate_fields(self):
+        # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         for pair in super(PasswordRecord, self).enumerate_fields():
             yield pair
         yield '(login)', self.login
@@ -214,13 +217,100 @@ class TypedField(object):
                f'({self.type})' if self.type else \
                f'{self.label}'
 
-    def get_external_value(self):
-        if isinstance(self.value, list):
-            if len(self.value) == 0:
-                return None
-            if len(self.value) == 1:
-                return self.value[0]
-        return self.value
+    @staticmethod
+    def get_exported_value(field_type, field_value):
+        # type: (str, Any) -> Iterable[str]
+        if not field_value:
+            return
+
+        if isinstance(field_value, str):
+            yield field_value
+            return
+
+        rf = record_types.RecordFields.get(field_type)
+        ft = record_types.FieldTypes.get(rf.type) if rf else None
+        if isinstance(field_value, int):
+            if ft.name == 'date':
+                if field_value != 0:
+                    dt = datetime.datetime.fromtimestamp(int(field_value // 1000)).date()
+                    yield str(dt)
+            else:
+                yield str(field_value)
+        elif isinstance(field_value, list):
+            for elem in field_value:
+                for ev in TypedField.get_exported_value(field_type, elem):
+                    yield ev
+        elif isinstance(field_value, dict):
+            if ft.name == 'host':
+                hostname = field_value.get('hostname') or ''
+                port = field_value.get('port') or ''
+                if hostname or port:
+                    if port:
+                        hostname = f'{hostname}:{port}'
+                yield hostname
+            elif ft.name == 'phone':
+                phone = field_value.get('type') or ''
+                if phone:
+                    phone += ':'
+                for key in ('region', 'number', 'ext'):
+                    if key in field_value:
+                        value = field_value[key]
+                        if value:
+                            phone += f' {value}'
+                yield phone
+            elif ft.name == 'name':
+                last = field_value.get('last') or ''
+                first = field_value.get('first') or ''
+                middle = field_value.get('middle') or ''
+                if last or first or middle:
+                    name = f'{last},'
+                    if first:
+                        name += f' {first}'
+                    if middle:
+                        name += f' {middle}'
+                    yield name
+            elif ft.name == 'address':
+                street = ' '.join(x for x in (field_value.get('street1'), field_value.get('street1')) if x)
+                city = field_value.get('city') or ''
+                state = ' '.join(x for x in (field_value.get('state'), field_value.get('zip')) if x)
+                country = field_value.get('country') or ''
+                if street or city or state or country:
+                    address = ', '.join((street, city, state, country))
+                    while address.endswith(', '):
+                        address = address.rstrip(', ')
+                    yield address
+            elif ft.name == 'securityQuestion':
+                q = (field_value.get('question') or '').rstrip('?')
+                a = field_value.get('answer') or ''
+                if q or a:
+                    yield f'{q}? {a}'
+            elif ft.name == 'paymentCard':
+                number = field_value.get('cardNumber') or ''
+                expiration = field_value.get('cardExpirationDate') or ''
+                cvv = field_value.get('cardSecurityCode') or ''
+                if number or expiration or cvv:
+                    if expiration:
+                        number += f' EXP:{expiration}'
+                    if cvv:
+                        number += f' {cvv}'
+                    yield cvv
+            elif ft.name == 'bankAccount':
+                type = field_value.get('accountType') or ''
+                if type:
+                    type += ':'
+                for key in ('routingNumber', 'accountNumber'):
+                    if key in field_value:
+                        value = field_value[key]
+                        if value:
+                            type += f' {value}'
+            elif ft.name == 'privateKey':
+                private_key = field_value.get('privateKey') or ''
+                if private_key:
+                    yield private_key
+
+    def get_external_value(self):   # type: () -> Iterable[str]
+        for value in self.get_exported_value(self.type, self.value):
+            yield value
 
 
 class TypedRecord(KeeperRecord):
@@ -249,12 +339,14 @@ class TypedRecord(KeeperRecord):
         self.fields.extend((TypedField(x) for x in data.get('fields', [])))
         self.custom.extend((TypedField(x) for x in data.get('custom', [])))
 
-    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, any]]
+    def enumerate_fields(self):
+        # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         for pair in super(TypedRecord, self).enumerate_fields():
             yield pair
         yield '(notes)', self.notes
         for field in itertools.chain(self.fields, self.custom):
-            yield field.get_field_name(), field.get_external_value()
+            values = list(field.get_external_value())
+            yield field.get_field_name(), None if len(values) == 0 else values[0] if len(values) == 1 else values
 
 
 class FileRecord(KeeperRecord):
@@ -279,7 +371,7 @@ class FileRecord(KeeperRecord):
         self.mime_type = data.get('type', '')
         self.last_modified = data.get('lastModified')
 
-    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, any]]
+    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         for pair in super(FileRecord, self).enumerate_fields():
             yield pair
         yield 'File Name', self.name
@@ -300,18 +392,3 @@ class ApplicationRecord(KeeperRecord):
     def load_record_data(self, data, extra=None):
         self.title = data.get('title', '')
         self.type_name = data.get('type', 'app')
-
-
-def tokenize_typed_value(value):  # type: (any) -> Iterable[str]
-    if isinstance(value, list):
-        for v in value:
-            for token in tokenize_typed_value(v):
-                yield token
-    elif isinstance(value, dict):
-        for key in value:
-            v = value[key]
-            if v and isinstance(v, str):
-                yield v
-    elif isinstance(value, str):
-        if value:
-            yield value
