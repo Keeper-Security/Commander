@@ -423,3 +423,6 @@ class TrashRestoreCommand(Command, TrashMixin):
 
         api.execute_batch(params, batch)
         TrashMixin.last_revision = 0
+        params.sync_data = True
+        for record_uid in to_restore:
+            params.queue_audit_event('record_restored', record_uid=record_uid)
