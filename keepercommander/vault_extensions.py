@@ -43,12 +43,18 @@ def find_records(params, search_str=None, record_type=None):
                 is_match = pattern.search(record.record_type)
             if not is_match:
                 for _, value in record.enumerate_fields():
+                    if not value:
+                        continue
                     if is_match:
                         break
-                    for token in vault.tokenize_typed_value(value):
-                        if is_match:
-                            break
-                        is_match = pattern.search(token)
+                    if isinstance(value, str):
+                        is_match = pattern.search(value)
+                    elif isinstance(value, list):
+                        for token in value:
+                            if is_match:
+                                break
+                            if isinstance(token, str):
+                                is_match = pattern.search(token)
             if is_match:
                 yield record
 

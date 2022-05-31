@@ -210,7 +210,7 @@ class RecordListTeamCommand(Command):
             logging.info('No teams are found')
 
 
-trash_list_parser = argparse.ArgumentParser(prog='trash list', description='.')
+trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records.')
 trash_list_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
                                default='table', help='output format')
 trash_list_parser.add_argument('--output', dest='output', action='store',
@@ -219,7 +219,10 @@ trash_list_parser.add_argument('--reload', dest='reload', action='store_true', h
 trash_list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='.')
+trash_get_parser = argparse.ArgumentParser(prog='trash get', description='Get the details of a deleted record.')
+trash_get_parser.add_argument('record', action='store', help='Deleted record UID')
+
+trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='Restores deleted records.')
 trash_restore_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                   help='do not prompt for confirmation')
 trash_restore_parser.add_argument('records', nargs='+', type=str, action='store',
@@ -282,8 +285,9 @@ class TrashMixin:
 class TrashCommand(GroupCommand):
     def __init__(self):
         super(TrashCommand, self).__init__()
-        self.register_command('list', TrashListCommand(), 'Displays a list of deleted records.')
-        self.register_command('restore', TrashRestoreCommand(), 'Restores deleted records.')
+        self.register_command('list', TrashListCommand())
+        self.register_command('get', TrashGetCommand())
+        self.register_command('restore', TrashRestoreCommand())
         self.default_verb = 'list'
 
 
@@ -331,6 +335,40 @@ class TrashListCommand(Command, TrashMixin):
 
         return dump_report_data(table, headers, fmt=kwargs.get('format'),
                                 filename=kwargs.get('output'), row_number=True)
+
+
+class TrashGetCommand(Command, TrashMixin):
+    def get_parser(self):
+        return trash_get_parser
+
+    def execute(self, params, **kwargs):
+        deleted_records = self.get_deleted_records(params)
+        if len(deleted_records) == 0:
+            logging.info('Trash is empty')
+            return
+
+        record_uid = kwargs.get('record')
+        if not record_uid:
+            logging.info('Record UID parameter is required')
+            return
+
+        rec = deleted_records.get(record_uid)
+        if not rec:
+            logging.info('%s is not a valid deleted record UID', record_uid)
+            return
+
+        record = vault.KeeperRecord.load(params, rec)
+        if not record:
+            logging.info('Cannot restore record %s', record_uid)
+            return
+
+        for name, value in record.enumerate_fields():
+            if value:
+                if isinstance(value, list):
+                    value = '\n'.join(value)
+                if len(value) > 100:
+                    value = value[:99] + '...'
+                print('{0:>20s}: {1}'.format(name, value))
 
 
 class TrashRestoreCommand(Command, TrashMixin):
