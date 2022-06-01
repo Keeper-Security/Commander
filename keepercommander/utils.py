@@ -111,6 +111,8 @@ def is_email(test_str):
 
 
 def url_strip(url):   # type: (str) -> str
+    if not url:
+        return ''
     try:
         result = urlparse(url)
         return result.netloc + result.path
