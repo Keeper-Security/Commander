@@ -9,12 +9,12 @@
 #
 
 import abc
+import itertools
 import re
-from typing import Optional, Union, Iterator
+from typing import Optional, Union, Iterator, Dict, Set
 
-from . import utils, vault
+from . import crypto, utils, vault, record_types
 from .params import KeeperParams
-from .vault import TypedRecord, TypedField
 
 
 def find_records(params, search_str=None, record_type=None):
@@ -136,15 +136,161 @@ def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[s
         return ', '.join((str(x) for x in comps if x))
 
 
+def extract_password_record_data(record):  # type: (vault.PasswordRecord) -> dict
+    if isinstance(record, vault.PasswordRecord):
+        return {
+            'title': record.title or '',
+            'secret1': record.login or '',
+            'secret2': record.password or '',
+            'link': record.link or '',
+            'notes': record.notes or '',
+            'custom': [{
+                'name': x.name or '',
+                'value': x.value or '',
+                'type': x.type or 'text',
+            } for x in record.custom]
+        }
+    else:
+        raise ValueError('extract_password_record_data: V2 record is expected')
+
+
+def extract_password_record_extras(record, existing_extra=None):
+    # type: (vault.PasswordRecord, Optional[dict]) -> dict
+    if isinstance(record, vault.PasswordRecord):
+        extra = existing_extra if isinstance(existing_extra, dict) else {}
+
+        if 'fields' not in extra:
+            extra['fields'] = []
+
+        extra['files'] = []
+        if record.attachments:
+            for atta in record.attachments:
+                extra_file = {
+                    'id': atta.id,
+                    'key': atta.key,
+                    'name': atta.name,
+                    'size': atta.size,
+                    'type': atta.mime_type,
+                    'title': atta.title,
+                    'lastModified': atta.last_modified,
+                    'thumbs': [{'id': x.id, 'type': x.type, 'size': x.size} for x in atta.thumbnails or []]
+                }
+                extra['files'].append(extra_file)
+        totp_field = next((x for x in extra['fields'] if x.get('field_type') == 'totp'), None)
+        if record.totp:
+            if not totp_field:
+                totp_field = {
+                    'id': utils.base64_url_encode(crypto.get_random_bytes(8)),
+                    'field_type': 'totp',
+                    'field_title': ''
+                }
+                extra['fields'].append(totp_field)
+            totp_field['data'] = totp_field
+        else:
+            if totp_field:
+                extra['fields'].remove(totp_field)
+        return extra
+    else:
+        raise ValueError(f'extract_password_record_extra: V2 record type is expected')
+
+
+def extract_audit_data(record):      # type: (vault.KeeperRecord) -> Optional[dict]
+    url = ''
+    if isinstance(record, vault.PasswordRecord):
+        url = record.link
+    elif isinstance(record, vault.TypedRecord):
+        url_field = record.get_typed_field('url')
+        if url_field:
+            url = url_field.get_default_value(str)
+    else:
+        return
+
+    title = record.title
+    url = utils.url_strip(url)
+    if len(title) + len(url) > 900:
+        if len(title) > 900:
+            title = title[:900]
+        if len(url) > 900:
+            url = url[:900]
+    audit_data = {
+        'title': title,
+        'record_type': record.record_type
+    }
+    if url:
+        audit_data['url'] = utils.url_strip(url)
+    return audit_data
+
+
+def extract_typed_field(field):     # type: (vault.TypedField) -> dict
+    field_type = field.type or 'text'
+    field_values = []
+    default_value = None    # type: Union[None, str, int, Dict[str, str]]
+    if field_type in record_types.RecordFields:
+        rt = record_types.RecordFields[field_type]
+        if rt.type in record_types.FieldTypes:
+            ft = record_types.FieldTypes[rt.type]
+            default_value = ft.value
+    if field.value:
+        values = field.value
+        if isinstance(values, (str, int, dict)):
+            values = [values]
+        elif isinstance(values, (set, tuple)):
+            values = list(values)
+
+        if isinstance(values, list):
+            for value in values:
+                if not value:
+                    continue
+                if default_value is not None:
+                    if not isinstance(value, type(default_value)):
+                        continue
+                if isinstance(default_value, dict):
+                    for key in default_value:
+                        if key not in value:
+                            value[key] = ''
+                field_values.append(value)
+    return {
+        'type': field_type,
+        'label': field.label or '',
+        'value': field_values
+    }
+
+
+def extract_typed_record_data(record):      # type: (vault.TypedRecord) -> dict
+    data = {
+        'type': record.type_name or 'login',
+        'title': record.title or '',
+        'notes': record.notes or '',
+        'fields': [],
+        'custom': [],
+    }
+    for field in record.fields:
+        data['fields'].append(extract_typed_field(field))
+    for field in record.custom:
+        data['custom'].append(extract_typed_field(field))
+    return data
+
+
+def extract_typed_record_refs(record):  # type: (vault.TypedRecord) -> Set[str]
+    refs = set()
+    for field in itertools.chain(record.fields, record.custom):
+        if field.type in {'fileRef', 'addressRef', 'cardRef'}:
+            if isinstance(field.value, list):
+                for ref in refs:
+                    if isinstance(ref, str):
+                        refs.add(ref)
+    return refs
+
+
 class TypedRecordFacade(abc.ABC):
     def __init__(self):
-        self.record = None  # type: Optional[TypedRecord]
+        self.record = None  # type: Optional[vault.TypedRecord]
 
     @abc.abstractmethod
     def _get_facade_type(self):
         pass
 
-    def assign_record(self, record):  # type: (TypedRecord) -> None
+    def assign_record(self, record):  # type: (vault.TypedRecord) -> None
         if self._get_facade_type() != record.record_type:
             raise Exception(f'Incorrect record type: expected {self._get_facade_type()}, got {record.record_type}')
         self.record = record
@@ -156,7 +302,7 @@ class TypedRecordFacade(abc.ABC):
 class ServerFacade(TypedRecordFacade, abc.ABC):
     def __init__(self):
         TypedRecordFacade.__init__(self)
-        self.host_field = None   # type: Optional[TypedField]
+        self.host_field = None   # type: Optional[vault.TypedField]
         self.login_field = None
 
     def assign_record(self, record):
@@ -191,8 +337,8 @@ class ServerFacade(TypedRecordFacade, abc.ABC):
 class SshKeysFacade(ServerFacade):
     def __init__(self):
         ServerFacade.__init__(self)
-        self.passphrase_field = None  # type: Optional[TypedField]
-        self.key_pair_field = None    # type: Optional[TypedField]
+        self.passphrase_field = None  # type: Optional[vault.TypedField]
+        self.key_pair_field = None    # type: Optional[vault.TypedField]
 
     def _get_facade_type(self):
         return 'sshKeys'
@@ -229,7 +375,7 @@ class SshKeysFacade(ServerFacade):
 class ServerCredentialsFacade(ServerFacade):
     def __init__(self):
         ServerFacade.__init__(self)
-        self.password_field = None  # type: Optional[TypedField]
+        self.password_field = None  # type: Optional[vault.TypedField]
 
     def _get_facade_type(self):
         return 'serverCredentials'
@@ -247,7 +393,7 @@ class ServerCredentialsFacade(ServerFacade):
 class DatabaseCredentialsFacade(ServerCredentialsFacade):
     def __init__(self):
         ServerCredentialsFacade.__init__(self)
-        self.database_type_field = None   # type: Optional[TypedField]
+        self.database_type_field = None   # type: Optional[vault.TypedField]
 
     def _get_facade_type(self):
         return 'databaseCredentials'
