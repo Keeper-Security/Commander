@@ -12,6 +12,8 @@
 """Change a password over ssh."""
 
 import logging
+import socket
+
 import paramiko
 from paramiko_expect import SSHClientInteraction
 
@@ -53,9 +55,13 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
                 timeout=timeout, allow_agent=False, look_for_keys=False
             )
         except paramiko.ssh_exception.AuthenticationException:
-            logging.error(
-                f"Can't SSH authenticate to host {host} on port {port} with user {user} and password in record."
-            )
+            logging.error('SSH authentication was unsuccessful using current password in record.')
+            return False
+        except socket.timeout:
+            logging.error('Connection to host timed out.')
+            return False
+        except Exception as e:
+            logging.error(f'Unrecognized connection error: {e}')
             return False
         stdin, stdout, stderr = ssh.exec_command('ver')
         if ''.join(stdout.readlines()).strip().startswith('Microsoft Windows'):
