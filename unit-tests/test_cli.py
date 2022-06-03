@@ -26,7 +26,7 @@ class TestCommandLineInterface(TestCase):
             s = base.normalize_output_param(r'command d:\1\2\aaa')
             self.assertEqual(s, r'command d:\1\2\aaa')
 
-           s = base.normalize_output_param(r'command --output d:/1/2\ 3/aaa')
+            s = base.normalize_output_param(r'command --output d:/1/2\ 3/aaa')
             self.assertEqual(s, r'command --output d:/1/2\ 3/aaa')
 
         with mock.patch('sys.platform') as mock_os:
