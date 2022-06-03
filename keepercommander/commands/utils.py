@@ -30,7 +30,7 @@ from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 import keepercommander
-from . import aliases, commands, enterprise_commands
+from . import aliases, commands, enterprise_commands, msp_commands
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
@@ -1748,6 +1748,8 @@ class HelpCommand(Command):
                 parser = commands[cmd].get_parser()
             elif cmd in enterprise_commands:
                 parser = enterprise_commands[cmd].get_parser()
+            elif cmd in msp_commands:
+                parser = msp_commands[cmd].get_parser()
             if parser:
                 parser.print_help()
 

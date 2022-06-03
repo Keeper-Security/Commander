@@ -17,7 +17,7 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Optional, Tuple, Iterable, List
+from typing import Optional, Tuple, Iterable, List, Dict
 
 import google
 import itertools
@@ -1824,7 +1824,7 @@ def prepare_folder_tree(params):
 
 
 def resolve_record_permission_path(params, record_uid, permission):
-    # type: (KeeperParams, str, str) -> dict or None
+    # type: (KeeperParams, str, str) -> Optional[Dict]
 
     for ap in enumerate_record_access_paths(params, record_uid):
         if ap.get(permission):

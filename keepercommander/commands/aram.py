@@ -1326,21 +1326,15 @@ class AgingReportCommand(Command):
             logging.warning(f'Invalid period: {period}')
             return
 
-        if co == 'd':
-            dt = dt - datetime.timedelta(days=-va)
-        elif co == 'm':
-            month = dt.month
-            year = dt.year
-            month -= va
-            while month < 1:
-                month += 12
-                year -= 1
-            dt = dt.replace(month=month, year=year)
-        elif co == 'y':
-            dt = dt.replace(year=dt.year-va)
-        else:
-            logging.warning(f'Invalid period: {period}')
-            return
+        if co != 'd':
+            if co == 'm':
+                va *= 30
+            elif co == 'y':
+                va *= 365
+            else:
+                logging.warning(f'Invalid period: {period}')
+                return
+        dt = dt - datetime.timedelta(days=va)
 
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
         enterprise_user_id = 0

@@ -173,6 +173,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
     # kwargs:
     #           row_number: boolean     - Add row number. table only
     #           column_width: int       - Truncate long columns. table only
+    #           no_header: boolean      - Do not print header
     if fmt == 'csv':
         if filename:
             _, ext = os.path.splitext(filename)
@@ -269,7 +270,13 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                             value = value[:column_width-2] + '...'
                     rowi.append(value)
                 expanded_data.append(rowi)
-        print(tabulate(expanded_data, headers=headers))
+        tablefmt = 'simple'
+        colalign = None
+        if kwargs.get('no_header'):
+            headers = ()
+            tablefmt = 'plain'
+            colalign = ('right', )
+        print(tabulate(expanded_data, headers=headers, tablefmt=tablefmt, colalign=colalign))
 
 
 parameter_pattern = re.compile(r'\${(\w+)}')

@@ -16,9 +16,11 @@ import logging
 import os
 import string
 from datetime import datetime, timedelta
+from typing import Set, Dict, List
 
 from .base import suppress_exit, raise_parse_exception, dump_report_data, user_choice
 from .enterprise import EnterpriseCommand
+from ..proto import enterprise_pb2
 from .. import api, crypto, utils, loginv3, error
 from ..display import format_managed_company, format_msp_licenses, bcolors
 from ..error import CommandError
@@ -31,6 +33,7 @@ def register_commands(commands):
     commands['msp-remove'] = MSPRemoveCommand()
     commands['msp-license'] = MSPLicenseCommand()
     commands['msp-license-report'] = MSPLicensesReportCommand()
+    commands['msp-convert-node'] = MSPConvertNodeCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -99,6 +102,14 @@ msp_add_parser.add_argument('name', action='store', help='Managed Company name')
 
 msp_remove_parser = argparse.ArgumentParser(prog='msp-remove', description='Remove Managed Company.')
 msp_remove_parser.add_argument('mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
+
+msp_convert_node_parser = argparse.ArgumentParser(prog='msp-convert-node', description='Converts MSP node into Managed Company.')
+msp_convert_node_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
+                                     help='Number of seats')
+msp_convert_node_parser.add_argument('-p', '--plan', dest='plan', action='store',
+                                     choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
+                                     help='License Plan')
+msp_convert_node_parser.add_argument('node', action='store', help='node name or node ID')
 
 
 class GetMSPDataCommand(EnterpriseCommand):
@@ -446,3 +457,248 @@ def date_range_str_to_dates(range_str):
         end_date = today_start_dt.replace(year=(today_start_dt.year - 1), day=31, month=12, hour=11, minute=59, second=59)
 
     return start_date, end_date
+
+
+class MSPConvertNodeCommand(EnterpriseCommand):
+    def get_parser(self):
+        return msp_convert_node_parser
+
+    def execute(self, params, **kwargs):
+        msp_node_id = None
+        node_name = kwargs.get('node')
+        if node_name:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                logging.warning('Node \"%s\" is not found', node_name)
+                return
+            if len(nodes) > 1:
+                logging.warning('More than one nodes \"%s\" are found', node_name)
+                return
+            msp_node_id = nodes[0]['node_id']
+        if msp_node_id is None:
+            raise CommandError('msp-convert-node', 'node parameter is required')
+        root_nodes = list(self.get_user_root_nodes(params))
+        if msp_node_id in root_nodes:
+            raise CommandError('msp-convert-node', 'root node cannot be converted')
+
+        node_lookup = {x['node_id']: x for x in params.enterprise.get('nodes', [])}
+        role_lookup = {x['role_id']: x for x in params.enterprise.get('roles', [])}
+        team_lookup = {x['team_uid']: x for x in params.enterprise.get('teams', [])}
+        user_lookup = {x['enterprise_user_id']: x for x in params.enterprise.get('users', [])}
+
+        node_tree = {}    # type: Dict[int, Set[int]]
+        for node in node_lookup.values():
+            node_id = node['node_id']
+            parent_id = node.get('parent_id')
+            if isinstance(parent_id, int) and isinstance(node_id, int):
+                if parent_id not in node_tree:
+                    node_tree[parent_id] = set()
+                node_tree[parent_id].add(node_id)
+        all_subnodes = [msp_node_id]   # type: List[int]
+        pos = 0
+        while pos < len(all_subnodes):
+            node_id = all_subnodes[pos]
+            pos += 1
+            if node_id in node_tree:
+                all_subnodes.extend(node_tree[node_id])
+        nodes_to_move = set(all_subnodes)
+        roles_to_move = {x['role_id'] for x in role_lookup.values() if x['node_id'] in nodes_to_move}
+        teams_to_move = {x['team_uid'] for x in team_lookup.values() if x['node_id'] in nodes_to_move}
+        users_to_move = {x['enterprise_user_id'] for x in user_lookup.values() if x['node_id'] in nodes_to_move}
+
+        errors = []
+        for bridge in params.enterprise.get('bridges', []):
+            node_id = bridge.get('node_id', 0)
+            if node_id in nodes_to_move:
+                errors.append(f'Remove bridge provisioning before conversion from node {self.get_node_path(params, node_id)}')
+        for scim in params.enterprise.get('scims', []):
+            node_id = scim.get('node_id', 0)
+            if node_id in nodes_to_move:
+                errors.append(f'Remove SCIM provisioning before conversion from node {self.get_node_path(params, node_id)}')
+        for sso in params.enterprise.get('sso_services', []):
+            node_id = sso.get('node_id', 0)
+            if node_id in nodes_to_move:
+                errors.append(f'Remove SSO provisioning before conversion from node {self.get_node_path(params, node_id)}')
+        for email in params.enterprise.get('email_provision', []):
+            node_id = email.get('node_id', 0)
+            if node_id in nodes_to_move:
+                errors.append(f'Remove email provisioning before conversion from node {self.get_node_path(params, node_id)}')
+        for mc in params.enterprise.get('managed_companies', []):
+            node_id = mc.get('node_id', 0)
+            if node_id in nodes_to_move:
+                errors.append(f'Remove managed company before conversion from node {self.get_node_path(params, node_id)}')
+        for qt in params.enterprise.get('queued_teams', []):
+            node_id = qt['node_id']
+            if node_id in nodes_to_move:
+                errors.append(f'Remove queued team {qt["name"]} before conversion from node {self.get_node_path(params, node_id)}')
+
+        for user in (y for x, y in user_lookup.items() if x in users_to_move):
+            if user['status'] == 'invited':
+                errors.append(f'Pending user {user["username"]} must be removed')
+
+        for ru in params.enterprise.get('role_users', []):
+            user_id = ru['enterprise_user_id']
+            role_id = ru['role_id']
+            move_user = user_id in users_to_move
+            move_role = role_id in roles_to_move
+            if move_role != move_user:
+                user = user_lookup.get(user_id)
+                username = (user.get('username') if user else '') or str(user_id)
+                role = role_lookup.get(role_id)
+                rolename = (role['data'].get('displayname') if role else '') or str(role_id)
+                errors.append(f'Conflicting role membership: User: {username}, Role: {rolename}')
+
+        for rt in params.enterprise.get('role_teams', []):
+            team_uid = rt['team_uid']
+            role_id = rt['role_id']
+            move_team = team_uid in teams_to_move
+            move_role = role_id in roles_to_move
+            if move_role != move_team:
+                team = team_lookup.get(team_uid)
+                teamname = team.get('name', team_uid)
+                role = role_lookup.get(role_id)
+                rolename = (role['data'].get('displayname') if role else '') or str(role_id)
+                errors.append(f'Conflicting role membership: Team: {teamname}, Role: {rolename}')
+
+        for tu in params.enterprise.get('team_users', []):
+            user_id = tu['enterprise_user_id']
+            team_uid = tu['team_uid']
+            move_user = user_id in users_to_move
+            move_team = team_uid in teams_to_move
+            if move_team != move_user:
+                user = user_lookup.get(user_id)
+                username = (user['username'] if user else '') or str(user_id)
+                team = team_lookup.get(team_uid)
+                teamname = (team['name'] if team else '') or team_uid
+                errors.append(f'Conflicting team membership: User: {username}, Team: {teamname}')
+
+        for mn in params.enterprise.get('managed_nodes', []):
+            role_id = mn['role_id']
+            node_id = mn['managed_node_id']
+            move_role = role_id in roles_to_move
+            move_node = node_id in nodes_to_move
+            if move_role != move_node:
+                role = role_lookup.get(role_id)
+                rolename = (role['data'].get('displayname') if role else '') or str(role_id)
+                nodename = self.get_node_path(params, node_id)
+                errors.append(f'Conflicting admin role management: Node: {nodename}, Role: {rolename}')
+
+        msp_license_pool = params.enterprise['licenses'][0]['msp_pool']
+        seats = kwargs.get('seats') or 0
+        if seats < len(users_to_move):
+            seats = len(users_to_move)
+        if seats == 0:
+            seats = 1
+        plan = kwargs.get('plan')
+        if plan:
+            pool = next((x for x in msp_license_pool if x['product_id'] == plan), None)
+            if pool:
+                if pool['availableSeats'] < seats:
+                    errors.append(f'Not enough seats ({seats}) in the selected plan {plan}')
+            else:
+                errors.append(f'Invalid plan {plan}')
+
+        else:
+            plan = next((x['product_id'] for x in msp_license_pool if x['availableSeats'] >= seats), None)
+            if not plan:
+                errors.append(f'There is no plan with {seats} available seats')
+
+        if len(errors) > 0:
+            print('\n'.join(errors))
+            return
+
+        msp_node = node_lookup[msp_node_id]
+        msp_node_name = msp_node['data'].get('displayname')
+        mc = None
+        if msp_node_name:
+            mc = next(
+                (x for x in params.enterprise.get('managed_companies', []) if x['mc_enterprise_name'] == msp_node_name),
+                None)
+        tree_key = params.enterprise['unencrypted_tree_key']
+        if mc:
+            mc_id = mc['mc_enterprise_id']
+            encrypted_tree_key = mc.get('tree_key')
+            if not encrypted_tree_key:
+                login_rq = enterprise_pb2.LoginToMcRequest()
+                login_rq.mcEnterpriseId = mc_id
+                login_rq.messageSessionUid = utils.base64_url_decode(params.session_token)
+                login_rs = api.communicate_rest(
+                    params, login_rq, 'authentication/login_to_mc', rs_type=enterprise_pb2.LoginToMcResponse)
+                encrypted_tree_key = login_rs.encryptedTreeKey
+            mc_tree_key = crypto.decrypt_aes_v2(utils.base64_url_decode(encrypted_tree_key), tree_key)
+        else:
+            mc_tree_key = utils.generate_aes_key()
+            rq = {
+                'command': 'enterprise_registration_by_msp',
+                'node_id': root_nodes[0],
+                'seats': seats,
+                'product_id': plan,
+                'enterprise_name': msp_node_name,
+                'encrypted_tree_key': utils.base64_url_encode(
+                    crypto.encrypt_aes_v2(mc_tree_key, tree_key)),
+                'role_data': utils.base64_url_encode(
+                    crypto.encrypt_aes_v1(json.dumps({'displayname': 'Keeper Administrator'}).encode(), mc_tree_key)),
+                'root_node': utils.base64_url_encode(
+                    crypto.encrypt_aes_v1(json.dumps({'displayname': 'root'}).encode(), mc_tree_key))
+            }
+            rs = api.communicate(params, rq)
+            mc_id = rs['enterprise_id']
+
+        mc_rq = enterprise_pb2.NodeToManagedCompanyRequest()
+        mc_rq.companyId = mc_id
+        for node_id in all_subnodes:
+            node = node_lookup[node_id]
+            red = enterprise_pb2.ReEncryptedData()
+            red.id = node_id
+            data = json.dumps(node['data']).encode()
+            red.data = utils.base64_url_encode(crypto.encrypt_aes_v1(data, mc_tree_key))
+            mc_rq.nodes.append(red)
+
+        for role_id in roles_to_move:
+            role = role_lookup[role_id]
+            red = enterprise_pb2.ReEncryptedData()
+            red.id = role_id
+            data = json.dumps(role['data']).encode()
+            red.data = utils.base64_url_encode(crypto.encrypt_aes_v1(data, mc_tree_key))
+            mc_rq.roles.append(red)
+
+        for user_id in users_to_move:
+            user = user_lookup[user_id]
+            red = enterprise_pb2.ReEncryptedData()
+            red.id = user_id
+            if user.get('key_type') == 'no_key':
+                displayname = user['data'].get('displayname', '?')
+                red.data = displayname
+            else:
+                data = json.dumps(user['data']).encode()
+                red.data = utils.base64_url_encode(crypto.encrypt_aes_v1(data, mc_tree_key))
+            mc_rq.users.append(red)
+
+        for mn in params.enterprise.get('managed_nodes', []):
+            role_id = mn['role_id']
+            if role_id in roles_to_move:
+                role_key2 = next((x for x in params.enterprise.get('role_keys2', [])), None)
+                if role_key2:
+                    role_key = utils.base64_url_decode(role_key2['role_key'])
+                    role_key = crypto.decrypt_aes_v2(role_key, tree_key)
+                    rerk = enterprise_pb2.ReEncryptedRoleKey()
+                    rerk.role_id = role_id
+                    rerk.encryptedRoleKey = crypto.encrypt_aes_v2(role_key, mc_tree_key)
+                    mc_rq.roleKeys.append(rerk)
+
+        for team_uid, team in team_lookup.items():
+            if team_uid in teams_to_move:
+                etkr = enterprise_pb2.EncryptedTeamKeyRequest()
+                etkr.teamUid = utils.base64_url_decode(team_uid)
+                encrypted_team_key = team.get('encrypted_team_key')
+                if encrypted_team_key:
+                    team_key = utils.base64_url_decode(encrypted_team_key)
+                    team_key = crypto.decrypt_aes_v2(team_key, tree_key)
+                    etkr.encryptedTeamKey = crypto.encrypt_aes_v2(team_key, mc_tree_key)
+                else:
+                    etkr.force = True
+                mc_rq.teamKeys.append(etkr)
+
+        api.communicate_rest(params, mc_rq, 'enterprise/node_to_managed_company')
+        logging.info(f'Node \"{msp_node_name}\" was converted to Managed Company' )
+        api.query_enterprise(params)
