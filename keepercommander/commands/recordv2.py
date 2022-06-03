@@ -11,7 +11,6 @@
 
 import argparse
 import base64
-import datetime
 import json
 import logging
 import os
@@ -32,7 +31,8 @@ from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto.enterprise_pb2 import SharedRecordResponse
 from ..record import Record, get_totp_code
-from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path, SharedFolderFolderNode, SharedFolderNode
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path, SharedFolderFolderNode, \
+    SharedFolderNode
 
 
 def register_commands(commands):
@@ -45,7 +45,6 @@ def register_commands(commands):
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
     commands['delete-attachment'] = RecordDeleteAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
-    commands['record-history'] = RecordHistoryCommand()
     commands['totp'] = TotpCommand()
     commands['shared-records-report'] = SharedRecordsReport()
 
@@ -61,23 +60,9 @@ def register_command_info(aliases, command_info):
     aliases['rh'] = 'record-history'
     aliases['srr'] = 'shared-records-report'
 
-    for p in [get_info_parser, clipboard_copy_parser, record_history_parser, totp_parser,  add_parser, edit_parser, rm_parser,
+    for p in [get_info_parser, clipboard_copy_parser, totp_parser,  add_parser, edit_parser, rm_parser,
               append_parser, download_parser, upload_parser, delete_attachment_parser, shared_records_report_parser]:
         command_info[p.prog] = p.description
-
-
-record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Show the history of a record modifications.')
-record_history_parser.add_argument(
-    '-a', '--action',
-    dest='action',
-    choices=['list', 'diff', 'show', 'restore'],
-    action='store',
-    help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
-)
-record_history_parser.add_argument('-r', '--revision', dest='revision', type=int, action='store', help='only show the details for a specific revision')
-record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-record_history_parser.error = raise_parse_exception
-record_history_parser.exit = suppress_exit
 
 
 totp_parser = argparse.ArgumentParser(prog='totp', description='Display the Two Factor Code for a record.')
@@ -1056,278 +1041,6 @@ class ClipboardCommand(Command):
                 print(txt)
             if not kwargs.get('login'):
                 params.queue_audit_event('copy_password', record_uid=record_uid)
-
-
-class RecordHistoryCommand(Command):
-    def get_parser(self):
-        return record_history_parser
-
-    def execute(self, params, **kwargs):
-        record_name = kwargs['record'] if 'record' in kwargs else None
-        if not record_name:
-            self.get_parser().print_help()
-            return
-
-        record_uid = None
-        if record_name in params.record_cache:
-            record_uid = record_name
-        else:
-            rs = try_resolve_path(params, record_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder is not None and record_name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == record_name.lower():
-                                record_uid = uid
-                                break
-
-        if record_uid is None:
-            raise CommandError('history', 'Enter name or uid of existing record')
-
-        current_rec = params.record_cache[record_uid]
-        if record_uid in params.record_history:
-            _,revision = params.record_history[record_uid]
-            if revision < current_rec['revision']:
-                del params.record_history[record_uid]
-        if record_uid not in params.record_history:
-            rq = {
-                'command': 'get_record_history',
-                'record_uid': record_uid,
-                'client_time': api.current_milli_time
-            }
-            rs = api.communicate(params, rq)
-            params.record_history[record_uid] = (rs['history'], current_rec['revision'])
-
-        if record_uid in params.record_history:
-            action = kwargs.get('action') or 'list'
-            history,_ = params.record_history[record_uid]
-            history.sort(key=lambda x: x['revision'])
-            history.reverse()
-            length = len(history)
-            if length == 0:
-                logging.info('Record does not have history of edit')
-                return
-
-            if 'revision' in kwargs and kwargs['revision'] is not None:
-                revision = kwargs['revision']
-                if revision < 1 or revision > length+1:
-                    logging.error('Invalid revision %d: valid revisions 1..%d'.format(revision, length + 1))
-                    return
-                if not kwargs.get('action'):
-                    action = 'show'
-            else:
-                revision = 0
-
-            if action == 'list':
-                headers = ['Version', 'Modified By', 'Time Modified']
-                rows = []
-                for i, revision in enumerate(history):
-                    if 'client_modified_time' in revision:
-                        dt = datetime.datetime.fromtimestamp(revision['client_modified_time']/1000.0)
-                        tm = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        tm = ''
-                    rows.append(['V.{}'.format(length-i), revision.get('user_name') or '', tm])
-                print(tabulate(rows, headers=headers))
-            elif action == 'show':
-                if revision == 0:
-                    revision = length + 1
-                current_rec = params.record_cache[record_uid]
-                key = current_rec['record_key_unencrypted']
-                rev = history[length - revision]
-                rec = RecordHistoryCommand.load_revision(params, key, rev)
-                print('\n{0:>20s}: V.{1}'.format('Revision', revision))
-                rec.display()
-            elif action == 'diff':
-                if revision == 0:
-                    revision = 1
-                current_rec = params.record_cache[record_uid]
-                key = current_rec['record_key_unencrypted']
-                rev = history[0]
-                record_next = RecordHistoryCommand.load_revision(params, key, rev)
-                rows = []
-                for current_revision in range(length, revision-1, -1):
-                    current_rev = history[length - current_revision]
-                    record_current = RecordHistoryCommand.load_revision(params, key, current_rev)
-                    added = False
-                    for d in RecordHistoryCommand.get_record_diffs(record_next, record_current):
-                        rows.append(['V.{}'.format(current_revision+1) if not added else '', d[0], d[1], d[2]])
-                        added = True
-                    record_next = record_current
-                record_current = Record()
-                added = False
-                for d in RecordHistoryCommand.get_record_diffs(record_next, record_current):
-                    rows.append(['V.{}'.format(1) if not added else '', d[0], d[1], d[2]])
-                    added = True
-                headers = ('Version', 'Field', 'New Value', 'Old Value')
-                print(tabulate(rows, headers=headers))
-            elif action == 'restore':
-                ro = api.resolve_record_write_path(params, record_uid)    # type: dict
-                if not ro:
-                    raise CommandError('history', 'You do not have permission to modify this record')
-                if revision == 0:
-                    raise CommandError('history', 'Invalid revision to restore: Revisions: 1-{0}'.format(length))
-
-                rev = history[length - revision]
-                if rev['version'] in {1,2}:
-                    current_rec = params.record_cache[record_uid]
-                    ro.update({
-                        'version': rev['version'],
-                        'client_modified_time': api.current_milli_time(),
-                        'revision': current_rec['revision'],
-                        'data': rev['data']
-                    })
-                    udata = current_rec.get('udata') or {}
-                    extra = {}
-                    if 'extra_unencrypted' in current_rec:
-                        extra = json.loads(current_rec['extra_unencrypted'].decode('utf-8'))
-                    if 'udata' in rev:
-                        udata.update(rev['udata'])
-                    udata['file_ids'] = []
-                    if 'files' in extra:
-                        del extra['files']
-
-                    key = current_rec['record_key_unencrypted']
-                    if 'extra' in rev:
-                        decrypted_extra = api.decrypt_data(rev['extra'], key)
-                        extra_object = json.loads(decrypted_extra.decode('utf-8'))
-                        extra.update(extra_object)
-                        if 'files' in extra:
-                            for atta in extra_object['files']:
-                                udata['file_ids'].append(atta['id'])
-                                if 'thumbnails' in atta:
-                                    for thumb in atta['thumbnails']:
-                                        udata['file_ids'].append(thumb['id'])
-                    ro['extra'] = api.encrypt_aes(json.dumps(extra).encode('utf-8'), key)
-                    ro['udata'] = udata
-                    rq = {
-                        'command': 'record_update',
-                        'update_records': [ro]
-                    }
-                    rs = api.communicate(params, rq)
-                    if 'update_records' in rs:
-                        params.sync_data = True
-                        if rs['update_records']:
-                            status = rs['update_records'][0]
-                            if status['status'] == 'success':
-                                logging.info('Revision V.{0} is restored'.format(revision))
-                                params.queue_audit_event('revision_restored', record_uid=record_uid)
-                            else:
-                                raise CommandError('history', 'Failed to restore record revision: {0}'.format(status['status']))
-                else:
-                    raise CommandError('history', 'Cannot restore this revision')
-
-    @staticmethod
-    def load_revision(params, record_key, revision):
-        # type: (KeeperParams, bytes, dict) -> Record
-        data = json.loads(api.decrypt_data(revision['data'], record_key).decode('utf-8'))
-        if 'extra' in revision:
-            extra = json.loads(api.decrypt_data(revision['extra'], record_key).decode('utf-8'))
-        else:
-            extra = {}
-        rec = Record(revision['record_uid'])
-        rec.load(data, version=revision.get('version'), extra=extra)
-        return rec
-
-    @staticmethod
-    def get_diff_index(value1, value2):
-        length = min(len(value1), len(value2))
-        for i in range(length):
-            if value1[i] != value2[i]:
-                return i
-        return length
-
-    TargetValueLength = 32
-    @staticmethod
-    def to_diff_str(value, index=0):
-        if len(value) > RecordHistoryCommand.TargetValueLength:
-            if index > 6:
-                tail_len = len(value) - index
-                if tail_len >= RecordHistoryCommand.TargetValueLength - 6:
-                    value = '... ' + value[index-2:]
-                else:
-                    value = '... ' + value[-(RecordHistoryCommand.TargetValueLength - 6):]
-            if len(value) > RecordHistoryCommand.TargetValueLength:
-                value = value[:26] + ' ...'
-        return value
-
-    @staticmethod
-    def compare_values(value1, value2):
-        # type: (str, str) -> (str, str) or None
-        if not value1 and not value2:
-            return None
-        if value1 and value2:
-            if value1 == value2:
-                return None
-            idx = RecordHistoryCommand.get_diff_index(value1, value2)
-            return RecordHistoryCommand.to_diff_str(value1, idx), RecordHistoryCommand.to_diff_str(value2, idx)
-        else:
-            return RecordHistoryCommand.to_diff_str(value1 or ''), RecordHistoryCommand.to_diff_str(value2 or '')
-
-    @staticmethod
-    def to_attachment_str(attachment):
-        # type: (dict) -> str
-        value = ''
-        if attachment:
-            value += attachment.get('title') or attachment.get('name') or attachment.get('id')
-            size = attachment.get('size') or 0
-            scale = 'b'
-            if size > 0:
-                if size > 2000:
-                    size = size / 1024
-                    scale = 'Kb'
-                if size > 2000:
-                    size = size / 1024
-                    scale = 'Mb'
-                if size > 2000:
-                    size = size / 1024
-                    scale = 'Gb'
-                value += ': ' + '{0:.2f}'.format(size).rstrip('0').rstrip('.') + scale
-        return value
-
-    @staticmethod
-    def get_record_diffs(record1, record2):
-        # type: (Record, Record) -> [(str, str, str)]
-        d1 = record1.__dict__
-        d2 = record2.__dict__
-        for field in [('title', 'Title'), ('login', 'Login'), ('password', 'Password'), ('login_url', 'URL'), ('notes', 'Notes'), ('totp', 'Two Factor')]:
-            v1 = d1.get(field[0]) or ''
-            v2 = d2.get(field[0]) or ''
-            cmp_result = RecordHistoryCommand.compare_values(v1, v2)
-            if cmp_result:
-                yield field[1], cmp_result[0], cmp_result[1]
-        if record1.custom_fields or record2.custom_fields:
-            all_keys = set()
-            all_keys.update([x['name'] for x in record1.custom_fields if 'name' in x])
-            all_keys.update([x['name'] for x in record2.custom_fields if 'name' in x])
-            keys = [x for x in all_keys]
-            keys.sort()
-            for key in keys:
-                v1 = record1.get(key) or ''
-                v2 = record2.get(key) or ''
-                cmp_result = RecordHistoryCommand.compare_values(v1, v2)
-                if cmp_result:
-                    yield key[:24], cmp_result[0], cmp_result[1]
-        if record1.attachments or record2.attachments:
-            att1 = {}
-            att2 = {}
-            if record1.attachments:
-                for atta in record1.attachments:
-                    if 'id' in atta:
-                        att1[atta['id']] = atta
-            if record2.attachments:
-                for atta in record2.attachments:
-                    if 'id' in atta:
-                        att2[atta['id']] = atta
-            s = set()
-            s.update(att1.keys())
-            s.symmetric_difference_update(att2.keys())
-            if len(s) > 0:
-                for id in s:
-                    yield 'Attachment', RecordHistoryCommand.to_attachment_str(att1.get(id)), RecordHistoryCommand.to_attachment_str(att2.get(id))
 
 
 class TotpEndpoint:
