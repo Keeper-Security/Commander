@@ -228,6 +228,11 @@ trash_restore_parser.add_argument('-f', '--force', dest='force', action='store_t
 trash_restore_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern')
 
+trash_purge_parser = argparse.ArgumentParser(prog='trash purge',
+                                             description='Removes all deleted record from the trash bin.')
+trash_purge_parser.add_argument('-f', '--force', dest='force', action='store_true',
+                                help='do not prompt for confirmation')
+
 
 class TrashMixin:
     last_revision = 0
@@ -288,6 +293,7 @@ class TrashCommand(GroupCommand):
         self.register_command('list', TrashListCommand())
         self.register_command('get', TrashGetCommand())
         self.register_command('restore', TrashRestoreCommand())
+        self.register_command('purge', TrashPurgeCommand())
         self.default_verb = 'list'
 
 
@@ -426,3 +432,22 @@ class TrashRestoreCommand(Command, TrashMixin):
         params.sync_data = True
         for record_uid in to_restore:
             params.queue_audit_event('record_restored', record_uid=record_uid)
+
+
+class TrashPurgeCommand(Command, TrashMixin):
+    def get_parser(self):
+        return trash_purge_parser
+
+    def execute(self, params, **kwargs):
+        if not kwargs.get('force'):
+            answer = user_choice(f'Do you want empty your Trash Bin?', 'yn', default='n')
+            if answer.lower() == 'y':
+                answer = 'yes'
+            if answer.lower() != 'yes':
+                return
+
+        rq = {
+            'command': 'purge_deleted_records'
+        }
+        api.communicate(params, rq)
+        TrashMixin.last_revision = 0
