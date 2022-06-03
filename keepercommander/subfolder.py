@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
-from typing import Optional, Tuple, Literal
+from typing import Optional, Tuple
 
 from .params import KeeperParams
 
@@ -164,7 +164,7 @@ class BaseFolderNode:
 
     """ Folder Common Fields"""
     def __init__(self, type):
-        self.type = type    # type: Literal['/', 'user_folder', 'shared_folder', 'shared_folder_folder']
+        self.type = type
         self.uid = None
         self.parent_uid = None
         self.name = None

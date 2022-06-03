@@ -12,6 +12,7 @@
 import abc
 import json
 import logging
+from typing import Optional, List, Set, Tuple
 
 from google.protobuf import message
 
@@ -76,15 +77,33 @@ class _EnterpriseLoader(object):
             proto.QUEUED_TEAMS: _EnterpriseQueuedTeamEntity(self._enterprise),
             proto.SCIMS: _EnterpriseScimEntity(self._enterprise),
             proto.SSO_SERVICES: _EnterpriseSsoServiceEntity(self._enterprise),
+            proto.BRIDGES: _EnterpriseBridgeEntity(self._enterprise),
+            proto.EMAIL_PROVISION: _EnterpriseEmailProvisionEntity(self._enterprise),
             proto.TEAM_USERS: _EnterpriseTeamUserEntity(self._enterprise),
             proto.QUEUED_TEAM_USERS: _EnterpriseQueuedTeamUserEntity(self._enterprise),
             proto.ROLE_USERS: _EnterpriseRoleUserEntity(self._enterprise),
+            proto.ROLE_TEAMS: _EnterpriseRoleTeamEntity(self._enterprise),
             proto.MANAGED_NODES: _EnterpriseManagedNodeEntity(self._enterprise),
             proto.ROLE_PRIVILEGES: _EnterpriseRolePrivilegeEntity(self._enterprise),
             proto.ROLE_ENFORCEMENTS: _EnterpriseRoleEnforcements(self._enterprise),
             proto.MANAGED_COMPANIES: _EnterpriseManagedCompanyEntity(self._enterprise),
             proto.DEVICES_REQUEST_FOR_ADMIN_APPROVAL: _EnterpriseAdminApprovalRequestEntity(self._enterprise),
         }
+        teams = self._data_types[proto.TEAMS]
+        if isinstance(teams, _EnterpriseEntity):
+            teams.register_link('team_uid', self._data_types[proto.TEAM_USERS])
+            teams.register_link('team_uid', self._data_types[proto.ROLE_TEAMS])
+
+        users = self._data_types[proto.USERS]
+        if isinstance(teams, _EnterpriseEntity):
+            users.register_link('enterprise_user_id', self._data_types[proto.TEAM_USERS])
+            users.register_link('enterprise_user_id', self._data_types[proto.ROLE_USERS])
+
+        roles = self._data_types[proto.ROLES]
+        if isinstance(roles, _EnterpriseEntity):
+            users.register_link('role_id', self._data_types[proto.ROLE_TEAMS])
+            users.register_link('role_id', self._data_types[proto.ROLE_USERS])
+            users.register_link('role_id', self._data_types[proto.MANAGED_NODES])
 
     @property
     def enterprise(self):
@@ -218,7 +237,7 @@ class _EnterpriseDataParser(abc.ABC):
     def to_keeper_entity(self, proto_entity, keeper_entity):
         pass
 
-    def get_entities(self, params, create_if_absent=True):  # type: (KeeperParams, bool) -> list | None
+    def get_entities(self, params, create_if_absent=True):  # type: (KeeperParams, bool) -> Optional[List]
         name = self.get_keeper_entity_name()
         if name not in params.enterprise:
             if not create_if_absent:
@@ -233,6 +252,10 @@ class _EnterpriseDataParser(abc.ABC):
 
 
 class _EnterpriseEntity(_EnterpriseDataParser):
+    def __init__(self, enterprise):  # type: (EnterpriseInfo) -> None
+        super(_EnterpriseEntity, self).__init__(enterprise)
+        self._links = []     # type: List[Tuple[str, _EnterpriseLink]]
+
     @abc.abstractmethod
     def get_keeper_entity_id(self, proto_entity):  # type: (dict) -> any
         pass
@@ -248,6 +271,10 @@ class _EnterpriseEntity(_EnterpriseDataParser):
             d = d[:idx+1]
         return d
 
+    def register_link(self, keeper_entity_id_name, parser):  # type: (str, _EnterpriseDataParser) -> None
+        if isinstance(parser, _EnterpriseLink):
+            self._links.append((keeper_entity_id_name, parser))
+
     def parse(self, params, enterprise_data, **kwargs):  # type: (KeeperParams, proto.EnterpriseData, dict) -> None
         if not enterprise_data.data:
             return
@@ -255,6 +282,7 @@ class _EnterpriseEntity(_EnterpriseDataParser):
         entities = self.get_entities(params)
         entity_map = {self.get_keeper_entity_id(x): x for x in entities}
         entity_type = self.get_entity_type()
+        deleted_entities = set()
         for entityData in enterprise_data.data:
             entity = entity_type()
             entity.ParseFromString(entityData)
@@ -262,6 +290,7 @@ class _EnterpriseEntity(_EnterpriseDataParser):
             if enterprise_data.delete:
                 if entity_id in entity_map:
                     entity_map.pop(entity_id)
+                    deleted_entities.add(entity_id)
             else:
                 keeper_entity = entity_map.get(entity_id)
                 if not keeper_entity:
@@ -271,6 +300,9 @@ class _EnterpriseEntity(_EnterpriseDataParser):
 
         entities.clear()
         entities.extend(entity_map.values())
+        if len(deleted_entities) > 0:
+            for keeper_entity_id_name, link in self._links:
+                link.cascade_delete(params, keeper_entity_id_name, deleted_entities)
 
 
 class _EnterpriseLink(_EnterpriseDataParser):
@@ -289,6 +321,15 @@ class _EnterpriseLink(_EnterpriseDataParser):
     @abc.abstractmethod
     def get_proto_entity2_id(self, proto_entity):  # type: (message.Message) -> any
         pass
+
+    def cascade_delete(self, params, keeper_entity_id, deleted_entities):   # type: (KeeperParams, str, Set) -> None
+        entities = self.get_entities(params, create_if_absent=False)
+        if not entities:
+            return
+        to_keep = [x for x in entities if keeper_entity_id not in x or x[keeper_entity_id] not in deleted_entities]
+        if len(to_keep) < len(entities):
+            entities.clear()
+            entities.extend(to_keep)
 
     def parse(self, params, enterprise_data, **kwargs):  # type: (KeeperParams, proto.EnterpriseData, dict) -> None
         entities = self.get_entities(params)
@@ -315,7 +356,7 @@ class _EnterpriseLink(_EnterpriseDataParser):
         entities.clear()
         entities.extend(entity_map.values())
 
-    def get_entities(self, params, create_if_absent=True):  # type: (KeeperParams, bool) -> list | None
+    def get_entities(self, params, create_if_absent=True):  # type: (KeeperParams, bool) -> Optional[List]
         name = self.get_keeper_entity_name()
         if name not in params.enterprise:
             if not create_if_absent:
@@ -623,6 +664,30 @@ class _EnterpriseRoleUserEntity(_EnterpriseLink):
         return 'role_users'
 
 
+class _EnterpriseRoleTeamEntity(_EnterpriseLink):
+    def to_keeper_entity(self, proto_entity, keeper_entity):  # type: (proto.RoleTeam, dict) -> None
+        _set_or_remove(keeper_entity, 'role_id', self.get_proto_entity1_id(proto_entity))
+        _set_or_remove(keeper_entity, 'team_uid', self.get_proto_entity2_id(proto_entity))
+
+    def get_keeper_entity1_id(self, entity):  # type: (dict) -> any
+        return entity.get('role_id')
+
+    def get_keeper_entity2_id(self, entity):  # type: (dict) -> any
+        return entity.get('team_uid')
+
+    def get_proto_entity1_id(self, entity):  # type: (proto.RoleTeam) -> any
+        return entity.role_id
+
+    def get_proto_entity2_id(self, entity):  # type: (proto.RoleTeam) -> any
+        return utils.base64_url_encode(entity.teamUid)
+
+    def get_entity_type(self):
+        return proto.RoleTeam
+
+    def get_keeper_entity_name(self):  # type: () -> str
+        return 'role_teams'
+
+
 class _EnterpriseManagedNodeEntity(_EnterpriseLink):
     def to_keeper_entity(self, proto_entity, keeper_entity):  # type: (proto.ManagedNode, dict) -> None
         _set_or_remove(keeper_entity, 'role_id', self.get_proto_entity1_id(proto_entity))
@@ -828,3 +893,43 @@ class _EnterpriseSsoServiceEntity(_EnterpriseEntity):
     def get_keeper_entity_name(self):  # type: () -> str
         return 'sso_services'
 
+
+class _EnterpriseBridgeEntity(_EnterpriseEntity):
+    def to_keeper_entity(self, proto_entity, keeper_entity):  # type: (proto.Bridge, dict) -> None
+        _set_or_remove(keeper_entity, 'bridge_id', self.get_proto_entity_id(proto_entity))
+        _set_or_remove(keeper_entity, 'node_id', proto_entity.nodeId)
+        _set_or_remove(keeper_entity, 'wan_ip_enforcement', proto_entity.wanIpEnforcement)
+        _set_or_remove(keeper_entity, 'lan_ip_enforcement', proto_entity.lanIpEnforcement)
+        _set_or_remove(keeper_entity, 'status', proto_entity.status)
+
+    def get_keeper_entity_id(self, entity):  # type: (dict) -> any
+        return entity.get('bridge_id')
+
+    def get_proto_entity_id(self, entity):  # type: (proto.Bridge) -> any
+        return entity.bridgeId
+
+    def get_entity_type(self):
+        return proto.Bridge
+
+    def get_keeper_entity_name(self):  # type: () -> str
+        return 'bridges'
+
+
+class _EnterpriseEmailProvisionEntity(_EnterpriseEntity):
+    def to_keeper_entity(self, proto_entity, keeper_entity):  # type: (proto.EmailProvision, dict) -> None
+        _set_or_remove(keeper_entity, 'id', self.get_proto_entity_id(proto_entity))
+        _set_or_remove(keeper_entity, 'node_id', proto_entity.nodeId)
+        _set_or_remove(keeper_entity, 'domain', proto_entity.domain)
+        _set_or_remove(keeper_entity, 'method', proto_entity.method)
+
+    def get_keeper_entity_id(self, entity):  # type: (dict) -> any
+        return entity.get('id')
+
+    def get_proto_entity_id(self, entity):  # type: (proto.EmailProvision) -> any
+        return entity.id
+
+    def get_entity_type(self):
+        return proto.EmailProvision
+
+    def get_keeper_entity_name(self):  # type: () -> str
+        return 'email_provision'

@@ -4,6 +4,8 @@ import io
 import json
 import logging
 import os
+from typing import Optional
+
 import pyperclip
 import re
 import webbrowser
@@ -1222,7 +1224,8 @@ class LoginV3API:
         raise KeeperApiError('Error', endpoint)
 
     @staticmethod
-    def create_user(params, new_username, user_password, verification_code):    # type: (KeeperParams, str, str, Optional[str]) -> None
+    def create_user(params, new_username, user_password, verification_code):
+        # type: (KeeperParams, str, str, Optional[str]) -> None
         endpoint = 'authentication/request_create_user'
         data_key = utils.generate_aes_key()
         auth_verifier = utils.base64_url_decode(utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000))
