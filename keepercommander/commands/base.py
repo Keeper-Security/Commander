@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shlex
+import sys
 from collections import OrderedDict
 from typing import Optional, Sequence, Callable
 
@@ -290,6 +291,17 @@ def expand_cmd_args(args, envvars, pattern=parameter_pattern):
     return args
 
 
+def normalize_output_param(args: str) -> str:
+    if sys.platform.startswith('win'):
+        # Replace backslashes in output param only if in windows
+        args_list = re.split(r'\s+--', args)
+        for i, args_grp in enumerate(args_list):
+            if re.match(r'(--)*output', args_grp):
+                args_list[i] = args_grp.replace('\\', '/')
+        args = ' --'.join(args_list)
+    return args
+
+
 class CliCommand(abc.ABC):
     @abc.abstractmethod
     def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, dict) -> any
@@ -316,10 +328,10 @@ class Command(CliCommand):
             d.update(kwargs)
             self.extra_parameters = ''
             parser = self._get_parser_safe()
-            if parser is not None:
-                if args:
-                    args = expand_cmd_args(args, params.environment_variables, parameter_pattern)
-
+            envvars = params.environment_variables
+            if args and parser:
+                args = expand_cmd_args(args, envvars)
+                args = normalize_output_param(args)
                 if self.support_extra_parameters():
                     opts, extra_args = parser.parse_known_args(shlex.split(args))
                     if extra_args:
