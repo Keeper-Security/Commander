@@ -10,11 +10,13 @@
 #
 
 import argparse
+import collections
 import datetime
+import json
 import logging
 import fnmatch
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from .base import dump_report_data, user_choice, Command, GroupCommand
 from .. import api, display, crypto, utils, vault, vault_extensions
@@ -22,6 +24,8 @@ from ..team import Team
 
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path
+from ..error import CommandError
+from ..record_management import update_record
 
 
 def register_commands(commands):
@@ -30,6 +34,7 @@ def register_commands(commands):
     commands['list'] = RecordListCommand()
     commands['list-sf'] = RecordListSfCommand()
     commands['list-team'] = RecordListTeamCommand()
+    commands['record-history'] = RecordHistoryCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -37,8 +42,9 @@ def register_command_info(aliases, command_info):
     aliases['l'] = 'list'
     aliases['lsf'] = 'list-sf'
     aliases['lt'] = 'list-team'
+    aliases['rh'] = 'record-history'
 
-    for p in [search_parser, list_parser, list_sf_parser, list_team_parser]:
+    for p in [search_parser, list_parser, list_sf_parser, list_team_parser, record_history_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
 
@@ -75,6 +81,19 @@ list_team_parser.add_argument('--format', dest='format', action='store', choices
                               default='table', help='output format')
 list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
+
+
+record_history_parser = argparse.ArgumentParser(
+    prog='history|rh', description='Show the history of a record modifications.')
+record_history_parser.add_argument(
+    '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
+    help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
+)
+record_history_parser.add_argument(
+    '-r', '--revision', dest='revision', type=int, action='store',
+    help='only show the details for a specific revision')
+record_history_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
+record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
 def find_record(params, record_name):  # type: (KeeperParams, str) -> vault.KeeperRecord
@@ -451,3 +470,196 @@ class TrashPurgeCommand(Command, TrashMixin):
         }
         api.communicate(params, rq)
         TrashMixin.last_revision = 0
+
+
+class RecordHistoryCommand(Command):
+    def get_parser(self):
+        return record_history_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        verbose = kwargs.get('verbose') or False
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            raise CommandError('history', 'Enter name of existing record')
+
+        current_rec = params.record_cache[record_uid]
+        if record_uid in params.record_history:
+            history = params.record_history[record_uid]
+            if history[0].get('revision') < current_rec['revision']:
+                del params.record_history[record_uid]
+
+        record_key = current_rec['record_key_unencrypted']
+
+        if record_uid not in params.record_history:
+            rq = {
+                'command': 'get_record_history',
+                'record_uid': record_uid,
+                'client_time': utils.current_milli_time()
+            }
+            rs = api.communicate(params, rq)
+            history = rs['history']   # type: list
+            history.sort(key=lambda x: x.get('revision', 0), reverse=True)
+            for rec in history:
+                rec['record_key_unencrypted'] = record_key
+                if 'data' in rec:
+                    data = utils.base64_url_decode(rec['data'])
+                    version = rec.get('version') or 0
+                    try:
+                        if version <= 2:
+                            rec['data_unencrypted'] = crypto.decrypt_aes_v1(data, record_key)
+                        else:
+                            rec['data_unencrypted'] = crypto.decrypt_aes_v2(data, record_key)
+                        if 'extra' in rec:
+                            extra = utils.base64_url_decode(rec['extra'])
+                            if version <= 2:
+                                rec['extra_unencrypted'] = crypto.decrypt_aes_v1(extra, record_key)
+                            else:
+                                rec['extra_unencrypted'] = crypto.decrypt_aes_v2(extra, record_key)
+                    except Exception as e:
+                        logging.warning('Cannot decrypt record history revision: %s', e)
+
+            params.record_history[record_uid] = history
+
+        if record_uid in params.record_history:
+            action = kwargs.get('action') or 'list'
+
+            history = params.record_history[record_uid]    # type: List[Dict]
+            length = len(history)
+            if length == 0:
+                logging.info('Record does not have history of edit')
+                return
+
+            if action == 'list':
+                headers = ['Version', 'Modified By', 'Time Modified']
+                rows = []
+                for i, version in enumerate(history):
+                    dt = None
+                    if 'client_modified_time' in version:
+                        dt = datetime.datetime.fromtimestamp(int(version['client_modified_time'] / 1000.0))
+                    rows.append([f'V.{length-i}' if i > 0 else 'Current', version.get('user_name') or '', dt])
+                dump_report_data(rows, headers, title='Record History')
+                return
+
+            revision = kwargs.get('revision') or 0
+            if revision < 0 or revision >= length:
+                raise ValueError(f'Invalid revision {revision}: valid revisions 1..{length}')
+
+            index = 0 if revision == 0 else length - revision
+
+            if action == 'view':
+                rev = history[index]
+                record = vault.KeeperRecord.load(params, rev)
+
+                rows = []
+                for name, value in record.enumerate_fields():
+                    if value:
+                        if isinstance(value, list):
+                            value = '\n'.join(value)
+                        # if len(value) > 100:
+                        #     value = value[:99] + '...'
+                        rows.append([name, value])
+                modified = datetime.datetime.fromtimestamp(int(rev['client_modified_time'] / 1000.0))
+                rows.append(['Modified', modified])
+                dump_report_data(rows, headers=['Name', 'Value'], title=f'Record Revision V.{revision}', no_header=True)
+
+            elif action == 'diff':
+                count = 5
+                current = vault.KeeperRecord.load(params, history[index])
+                rows = []
+                while count >= 0 and current:
+                    previous = vault.KeeperRecord.load(params, history[index + 1]) if index < (length - 1) else None
+                    cur = collections.OrderedDict()
+                    last_pos = len(rows)
+                    for name, value in current.enumerate_fields():
+                        if isinstance(value, list):
+                            value = '\n'.join(value)
+                        cur[name] = value
+                    pre = collections.OrderedDict()
+                    if previous:
+                        for name, value in previous.enumerate_fields():
+                            if isinstance(value, list):
+                                value = '\n'.join(value)
+                            pre[name] = value
+                    for name, value in cur.items():
+                        if name in pre:
+                            pre_value = pre[name]
+                            if pre_value != value:
+                                rows.append(['', name, value, pre_value])
+                            del pre[name]
+                        else:
+                            if value:
+                                rows.append(['', name, value, ''])
+                    for name, value in pre.items():
+                        if value:
+                            if isinstance(value, list):
+                                value = '\n'.join(value)
+                            rows.append(['', name, '', value])
+
+                    version = 'Current' if index == 0 else f'V.{length - index}'
+                    if len(rows) > last_pos:
+                        rows[last_pos][0] = version
+                    else:
+                        rows.append([version, '', '', ''])
+                    count -= 1
+                    index += 1
+                    current = previous
+
+                headers = ('Version', 'Field', 'New Value', 'Old Value')
+                if not verbose:
+                    for row in rows:
+                        for index in (2, 3):
+                            value = row[index]
+                            if not value:
+                                continue
+                            lines = [x[:50]+'...' if len(x) > 52 else x for x in value.split('\n')]
+                            if len(lines) > 3:
+                                lines = lines[:2]
+                                lines.append('...')
+                            row[index] = '\n'.join(lines)
+
+                dump_report_data(rows, headers)
+
+            elif action == 'restore':
+                ro = api.resolve_record_write_path(params, record_uid)    # type: dict
+                if not ro:
+                    raise CommandError('history', 'You do not have permission to modify this record')
+                if revision == 0:
+                    raise CommandError('history', f'Invalid revision to restore: Revisions: 1-{length - 1}')
+
+                rev = history[index]
+                if current_rec['version'] != rev['version']:
+                    raise CommandError('history', 'Cannot restore converted record.')
+
+                record = vault.KeeperRecord.load(params, rev)
+                if isinstance(record, vault.TypedRecord):
+                    fileRef = record.get_typed_field('fileRef')
+                    if fileRef and isinstance(fileRef.value, list):
+                        files = [x for x in fileRef.value if x in params.record_cache]
+                        if len(files) < len(fileRef.value):
+                            fileRef.value.clear()
+                            fileRef.value.extend(files)
+                update_record(params, record)
+                params.queue_audit_event('revision_restored', record_uid=record.record_uid)
+                params.sync_data = True
+                logging.info('Record \"%s\" revision V.%d has been restored', record.title, revision)

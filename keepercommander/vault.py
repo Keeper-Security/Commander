@@ -108,6 +108,21 @@ class KeeperRecord(abc.ABC):
     def enumerate_fields(self):    # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         yield '(title)', self.title
 
+    @staticmethod
+    def size_to_str(size):    # type: (Union[int, float]) -> str
+        scale = 'Bytes'
+        if size > 0:
+            if size > 1000:
+                size = size / 1024
+                scale = 'Kb'
+            if size > 1000:
+                size = size / 1024
+                scale = 'Mb'
+            if size > 1000:
+                size = size / 1024
+                scale = 'Gb'
+        return f'{size:.2f}'.rstrip('0').rstrip('.') + f' {scale}'
+
 
 class CustomField(object):
     def __init__(self, custom_field=None):  # type: (Optional[dict]) -> None
@@ -193,10 +208,13 @@ class PasswordRecord(KeeperRecord):
         yield '(password)', self.password
         yield '(url)', self.link
         yield '(notes)', self.notes
-        for cf in self.custom:
-            yield cf.name, cf.value
         if self.totp:
             yield '(oneTimeCode)', self.totp
+        for cf in self.custom:
+            yield cf.name, cf.value
+        if self.attachments:
+            for atta in self.attachments:
+                yield atta.title or atta.name, f'File ID: {atta.id}; Size: {KeeperRecord.size_to_str(atta.size)}'
 
 
 class TypedField(object):
@@ -220,7 +238,7 @@ class TypedField(object):
         return value
 
     def get_field_name(self):
-        return f'({self.type}.{self.label})' if self.type and self.label else \
+        return f'({self.type}).{self.label}' if self.type and self.label else \
                f'({self.type})' if self.type else \
                f'{self.label}'
 
@@ -385,21 +403,27 @@ class FileRecord(KeeperRecord):
     def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         for pair in super(FileRecord, self).enumerate_fields():
             yield pair
-        yield 'File Name', self.name
-        yield 'Mime Type', self.mime_type
+        yield '(type)', self.get_record_type()
+        yield '(name)', self.name
+        if self.mime_type:
+            yield '(mime-type)', self.mime_type
+        yield '(size)', KeeperRecord.size_to_str(self.size)
 
 
 class ApplicationRecord(KeeperRecord):
     def __init__(self):
         super(ApplicationRecord, self).__init__()
-        self.type_name = ''
 
     def get_version(self):
         return 5
 
     def get_record_type(self):
-        return self.type_name
+        return 'app'
 
     def load_record_data(self, data, extra=None):
         self.title = data.get('title', '')
-        self.type_name = data.get('type', 'app')
+
+    def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
+        for pair in super(ApplicationRecord, self).enumerate_fields():
+            yield pair
+        yield '(type)', self.get_record_type()

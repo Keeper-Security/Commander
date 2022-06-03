@@ -152,8 +152,14 @@ def update_record(params, record, skip_extra=False, **kwargs):
             record_object['extra'] = utils.base64_url_encode(
                 crypto.encrypt_aes_v1(json.dumps(extra).encode(), record.record_key))
 
-            if storage_record.udata:
-                udata = json.loads(storage_record.udata)
+            if 'udata' in storage_record:
+                u = storage_record['udata']
+                if isinstance(u, dict):
+                    udata = u
+                elif isinstance(u, (str, bytes)):
+                    udata = json.loads(u)
+                else:
+                    udata = {}
             else:
                 udata = {}
 
