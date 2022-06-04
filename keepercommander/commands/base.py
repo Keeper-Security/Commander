@@ -304,7 +304,7 @@ def normalize_output_param(args: str) -> str:
         args_list = re.split(r'\s+--', args)
         for i, args_grp in enumerate(args_list):
             if re.match(r'(--)*output', args_grp):
-                args_list[i] = args_grp.replace('\\', '/')
+                args_list[i] = re.sub(r'\\(\w+)', r'/\1', args_grp)
         args = ' --'.join(args_list)
     return args
 
