@@ -256,8 +256,7 @@ class SshAgentContext(logging.Handler):
         return self._thread is not None and self._thread.is_alive()
 
     def emit(self, record):     # type: (logging.LogRecord) -> None
-        if record.levelno >= logging.WARNING:
-            logging.info('ssh_agent: ' + record.msg, record.args)
+        logging.info(record.msg % record.args)
         self.log_messages.append(record)
 
     def _process_ssh_agent_request(self, request):    # type: (bytes) -> bytes
