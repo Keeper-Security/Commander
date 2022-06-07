@@ -336,7 +336,8 @@ class Command(CliCommand):
             self.extra_parameters = ''
             parser = self._get_parser_safe()
             envvars = params.environment_variables
-            if args and parser:
+            args = '' if args is None else args
+            if parser:
                 args = expand_cmd_args(args, envvars)
                 args = normalize_output_param(args)
                 if self.support_extra_parameters():
@@ -346,6 +347,7 @@ class Command(CliCommand):
                 else:
                     opts = parser.parse_args(shlex.split(args))
                 d.update(opts.__dict__)
+
             return self.execute(params, **d)
         except ParseError as e:
             logging.error(e)
