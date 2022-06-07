@@ -31,7 +31,7 @@ class Rotator:
         self.disallow_special_characters = DISALLOW_SPECIAL_CHARACTERS
 
     def rotate(self, record, new_password):
-        """Change a password over ssh"""
+        """Change a password over SSH"""
         return rotate_ssh(self.host, self.port, self.login, self.password, new_password)
 
     def rotate_start_msg(self):
@@ -39,11 +39,22 @@ class Rotator:
         logging.info(f'Rotating with SSH plugin on host {self.host} and port {self.port} using login {self.login}...')
 
     def revert(self, record, new_password):
-        """Revert password change over ssh"""
-        return rotate_ssh(self.host, self.port, self.login, new_password, self.password)
+        """Revert password change over SSH"""
+        return rotate_ssh(self.host, self.port, self.login, new_password, self.password, revert=True)
 
 
-def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
+def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=False):
+    """Rotate an SSH password
+
+    host(str): SSH host
+    port(int): SSH port
+    user(str): SSH login name
+    old_password(str): old password
+    new_password(str): new password
+    timeout(int): SSH connection timeout in seconds
+    revert(bool): True if the new_password is the original password to revert a previous rotation.
+                  This is used to print log messages that make more sense.
+    """
     rotate_success = False
     ssh_logger = logging.getLogger('paramiko')
     ssh_logger.setLevel(logging.WARNING)
@@ -55,7 +66,10 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
                 timeout=timeout, allow_agent=False, look_for_keys=False
             )
         except paramiko.ssh_exception.AuthenticationException:
-            logging.error('SSH authentication was unsuccessful using current password in record.')
+            if revert:
+                logging.error('SSH authentication was unsuccessful for revert of rotation.')
+            else:
+                logging.error('SSH authentication was unsuccessful using current password.')
             return False
         except socket.timeout:
             logging.error('Connection to host timed out.')
@@ -125,18 +139,23 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5):
                 )
             except Exception as e:
                 if attempt == 2:
-                    success_msg = f'{"successful" if rotate_success else "failed"} SSH password rotation'
-                    logging.warning(
-                        f"Can't connect with either old or new password after {success_msg}. "
-                        f'Attempted rotation with new password: {new_password}'
-                    )
+                    revert_msg = 'revert of rotation.'
+                    rotate_msg = revert_msg if revert else f'rotation. Attempted rotation to password: {new_password}'
+                    success_msg = f'{"successful" if rotate_success else "failed"} {rotate_msg}'
+                    logging.warning(f"Can't connect with either old or new password after {success_msg}")
                     rotate_success = False
             else:
                 if pass_name == 'old':
-                    logging.warning('SSH password rotation failed. Verified that old password is still valid.')
+                    if revert:
+                        logging.warnging('Reverting the password rotation failed. The rotated password is still valid.')
+                    else:
+                        logging.warning('SSH password rotation failed. Verified that the old password is still valid.')
                     rotate_success = False
                 else:
-                    logging.info('Verified that SSH password rotation was successful.')
+                    if revert:
+                        logging.info('Verified that reverting the SSH password rotation was successful.')
+                    else:
+                        logging.info('Verified that the SSH password rotation was successful.')
                     rotate_success = True
                 break
 
