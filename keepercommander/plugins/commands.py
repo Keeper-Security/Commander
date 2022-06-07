@@ -17,12 +17,13 @@ from tabulate import tabulate
 
 from keepercommander.commands import recordv3
 from ..params import KeeperParams
-from .. import api
+from .. import api, record_management
 from ..commands.base import raise_parse_exception, suppress_exit, Command
 from . import plugin_manager
 from .. import generator
 from ..subfolder import find_folders, get_folder_path
 from ..utils import confirm
+from ..vault import KeeperRecord
 
 
 def register_commands(commands):
@@ -70,48 +71,37 @@ def adjust_password(password):   # type: (str) -> str
     return 'a' + password
 
 
-def get_v2_or_v3_custom_field_value(record, custom_field_name, default_value=None):
-    if record.record_type:  # V3 record
-        matches = [x for x in record.custom_fields if x.get('name', x.get('label')).endswith(custom_field_name)]
-        if len(matches) > 0:
-            value_list = matches[0].get('value') or default_value
-            if isinstance(value_list, list):
-                ret_val = value_list[0] if len(value_list) > 0 else default_value
-            else:
-                ret_val = value_list
-        else:
-            ret_val = default_value
-
-    else:  # V2 record
-        matches = [x for x in record.custom_fields if x['name'] == custom_field_name]
-        ret_val = matches[0]['value'] if len(matches) > 0 else default_value
-
-    return ret_val
-
-
-def update_v2_or_v3_password(params, record, new_password):
-    if record.record_type:  # V3 record
-        return_result = {}
-        option = [f'f.password={new_password}']
-        recordv3.RecordEditCommand().execute(
-            params, command='edit', option=option, record=record.record_uid, return_result=return_result
-        )
-        return return_result.get('update_record_v3', False)
-
-    else:  # V2 record
+def update_password(params, record, new_password):
+    record_version = record.get_version()
+    if record_version == 2:
         record.password = new_password
-        return api.update_record(params, record)
+    elif record_version == 3:
+        password_field = next((f for f in record.fields if f.type == 'password'), None)
+        if password_field is None:
+            logging.error("Can't find password field for rotation update")
+            return False
+        else:
+            password_field.value[0] = new_password
+    else:
+        logging.error('Invalid type of record (record version) for rotation update')
+        return False
+
+    try:
+        record_management.update_record(params, record)
+    except Exception as e:
+        logging.error(e)
+        return False
+    else:
+        return True
 
 
-def get_new_password(record, plugin, rules=None):
+def get_new_password(plugin, rules=None):
     if hasattr(plugin, 'disallow_special_characters'):
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
             str.maketrans('', '', plugin.disallow_special_characters)
         )
     else:
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS
-    if rules is None:
-        rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
     if rules:
         logging.debug("Rules found for record")
         upper, lower, digits, symbols = (int(n) for n in rules.split(','))
@@ -139,25 +129,27 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
                     new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
-    record = api.get_record(params, record_uid)
+    record = KeeperRecord.load(params, record_uid)
     if api.resolve_record_write_path(params, record_uid) is None:
         logging.error(
-            f'Password rotation failed for record "{record.title}" (uid=[{record.record_uid}]):\n'
-            'The target record is not editable but needs to be updated with the new password to complete the rotation.'
+            f'The rotation failed for record "{record.title}" (uid=[{record.record_uid}]):\n'
+            'The target record is not editable but needs to be updated with new credentials to complete the rotation.'
         )
         return False
 
-    plugin_name, plugin = plugin_manager.get_plugin(record, rotate_name, plugin_name, host, port)
+    plugin_name, plugin_kwargs, plugin = plugin_manager.get_plugin(record, rotate_name, plugin_name, host, port)
     if not plugin:
         return False
 
     if new_password is None:
-        new_password = get_new_password(record, plugin, rules)
+        if not rules:
+            rules = plugin_kwargs.get('rules')
+        new_password = get_new_password(plugin, rules)
 
     api.sync_down(params)
-    record = api.get_record(params, record_uid)
+    record = KeeperRecord.load(params, record_uid)
 
-    if record.password == new_password:
+    if plugin_kwargs.get('password') == new_password:
         logging.warning('Rotation aborted because the old and new passwords are the same.')
         success = False
     else:
@@ -175,7 +167,7 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         )
         return False
 
-    if update_v2_or_v3_password(params, record, new_password):
+    if update_password(params, record, new_password):
         new_record = api.get_record(params, record_uid)
         logging.info(f'Password rotation successful for record "{new_record.title}".')
         return True

@@ -49,60 +49,43 @@ def load_plugin(module_name):
 
 def get_host_field_dict(record):
     return next((
-        f['value'] for f in record.custom_fields
-        if isinstance(f.get('value'), dict) and 'hostName' in f['value'] and 'port' in f['value']
+        f.value for f in record.custom
+        if isinstance(f.value, dict) and 'hostName' in f.value and 'port' in f.value
     ), None)
 
 
-def detect_plugin(record, host, port):
+def detect_plugin(record, plugin_kwargs):
     """Attempt detection of plugin name without "cmdr:plugin" fields
 
     This function also returns the corresponding kwargs for the detected plugin
     Return plugin_name and plugin_kwargs
     """
     plugin_name = None
-    kwargs = {}
-    if record.record_type:
+    if record.get_version() == 3:
         # Search for host field in v3 record
         host_field = get_host_field_dict(record)
         if host_field and host_field['port'].isnumeric() and int(host_field['port']) in PORT_TO_PLUGIN:
-            kwargs['host'] = host_field['hostName']
-            kwargs['port'] = int(host_field['port'])
-            plugin_name = PORT_TO_PLUGIN[kwargs['port']]
-    if not plugin_name and record.login_url:
-        url = urlparse(record.login_url)
+            plugin_name = PORT_TO_PLUGIN[int(host_field['port'])]
+            if 'host' not in plugin_kwargs:
+                plugin_kwargs['host'] = host_field['hostName']
+            if 'port' not in plugin_kwargs:
+                plugin_kwargs['port'] = int(host_field['port'])
+    if not plugin_name and 'url' in plugin_kwargs:
+        url = urlparse(plugin_kwargs['url'])
         if url.port in PORT_TO_PLUGIN:
             plugin_name = PORT_TO_PLUGIN[url.port]
-            kwargs['host'] = url.hostname
-            kwargs['port'] = url.port
+            if 'host' not in plugin_kwargs:
+                plugin_kwargs['host'] = url.hostname
+            if 'port' not in plugin_kwargs:
+                plugin_kwargs['port'] = url.port
         if url.scheme in URL_SCHEME_TO_PLUGIN:
             plugin_name = URL_SCHEME_TO_PLUGIN[url.scheme]
-            kwargs['host'] = url.hostname
-    if host:
-        kwargs['host'] = host
-    if port:
-        kwargs['port'] = port
-    return plugin_name, kwargs
+            if 'host' not in plugin_kwargs:
+                plugin_kwargs['host'] = url.hostname
+    return plugin_name
 
 
-def detect_kwargs(record, plugin_name, host, port):
-    custom_cmdr_field_kwargs = {
-        f.get('name', f.get('label')).split('cmdr:')[-1]: f['value'] for f in record.custom_fields
-        if 'cmdr:' in f.get('name', f.get('label'))
-    }
-    plugin_kwargs = {k: v for k, v in custom_cmdr_field_kwargs.items() if ':' not in k}
-
-    # Additional host and port resolving
-    if host:
-        plugin_kwargs['host'] = host
-    if port:
-        plugin_kwargs['port'] = port
-    if 'port' in plugin_kwargs:
-        if plugin_kwargs['port'].isnumeric():
-            plugin_kwargs['port'] = int(plugin_kwargs['port'])
-        else:
-            plugin_kwargs.pop('port')
-
+def detect_kwargs(record, plugin_name, plugin_kwargs):
     # Look elsewhere in record if host or port parameter is missing
     if 'host' in REQUIRED_PLUGIN_KWARGS[plugin_name] and 'host' not in plugin_kwargs:
         host_field = get_host_field_dict(record)
@@ -112,13 +95,12 @@ def detect_kwargs(record, plugin_name, host, port):
                     'port' in REQUIRED_PLUGIN_KWARGS[plugin_name],
                     'port' not in plugin_kwargs)):
                 plugin_kwargs['port'] = int(host_field['port'])
-        elif record.login_url:
-            url = urlparse(record.login_url)
+        elif 'url' in plugin_kwargs:
+            url = urlparse(plugin_kwargs['url'])
             if url.netloc:
                 plugin_kwargs['host'] = url.netloc
                 if url.port and 'port' in REQUIRED_PLUGIN_KWARGS[plugin_name] and 'port' not in plugin_kwargs:
                     plugin_kwargs['port'] = host_field['port']
-    return plugin_kwargs
 
 
 def check_missing_kwargs(plugin_name, plugin_kwargs):
@@ -141,38 +123,55 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
 
     Return plugin_name (str), plugin (object with rotate method)
     """
-    if plugin_name is None:
-        plugins = [x for x in record.custom_fields if 'cmdr:plugin' in x.get('name', x.get('label', ''))]
-        if plugins and rotate_name:
-            plugins = [x for x in plugins if x.get('name', x.get('label')).endswith('cmdr:plugin:' + rotate_name)]
-        if plugins:
-            plugin_name = plugins[0]['value']
-        if isinstance(plugin_name, list):
-            plugin_name = plugin_name[0]
+    record_version = record.get_version()
+    if record_version not in (2, 3):
+        logging.error('Invalid record for rotation')
+        return None, None
+
+    fld_attr = 'name' if record_version == 2 else 'label'
+    cmdr_kwargs = {
+        getattr(f, fld_attr)[len('cmdr:'):]: f.value[0] if isinstance(f.value, list) else f.value for f in record.custom
+        if getattr(f, fld_attr).startswith('cmdr:')
+    }
+    if plugin_name is None and len(cmdr_kwargs) > 0:
+        rotate_value = cmdr_kwargs.get(f'plugin:{rotate_name}') if rotate_name else None
+        plugin_name = rotate_value if rotate_value else cmdr_kwargs.get('plugin')
+        plugin_kwargs = {k: v for k, v in cmdr_kwargs.items() if ':' not in v}
+    else:
+        plugin_kwargs = {}
+
+    plugin_kwargs.update({
+        k[1:-1]: v for k, v in record.enumerate_fields() if k in ('(login)', '(password)', '(url)') and v
+    })
+
+    if host:
+        plugin_kwargs['host'] = host
+    if port:
+        plugin_kwargs['port'] = port
+    if 'port' in plugin_kwargs:
+        if plugin_kwargs['port'].isnumeric():
+            plugin_kwargs['port'] = int(plugin_kwargs['port'])
+        else:
+            plugin_kwargs.pop('port')
 
     if plugin_name is None:
         if port and port in PORT_TO_PLUGIN:
             plugin_name = PORT_TO_PLUGIN[port]
 
     if plugin_name is None:
-        plugin_name, plugin_kwargs = detect_plugin(record, host, port)
+        plugin_name = detect_plugin(record, plugin_kwargs)
     else:
-        plugin_kwargs = detect_kwargs(record, plugin_name, host, port)
+        detect_kwargs(record, plugin_name, plugin_kwargs)
 
-    if plugin_name:
-        if record.login:
-            plugin_kwargs['login'] = record.login
-        if record.password:
-            plugin_kwargs['password'] = record.password
-        if check_missing_kwargs(plugin_name, plugin_kwargs):
-            return None, None
-    else:
+    if not plugin_name:
         logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
                       'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
+        return None, None
+    elif check_missing_kwargs(plugin_name, plugin_kwargs):
         return None, None
 
     plugin = load_plugin(plugin_name)
     if hasattr(plugin, 'Rotator'):
-        return plugin_name, plugin.Rotator(**plugin_kwargs)
+        return plugin_name, plugin_kwargs, plugin.Rotator(**plugin_kwargs)
     else:
-        return plugin_name, plugin
+        return plugin_name, plugin_kwargs, plugin
