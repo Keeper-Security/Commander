@@ -91,7 +91,8 @@ def generate(length=64):
 
 
 class KeeperPasswordGenerator:
-    def __init__(self, length: int, symbols: int, digits: int, caps: int, lower: int):
+    def __init__(self, length: int, symbols: int, digits: int, caps: int, lower: int,
+                 special_characters: str = PW_SPECIAL_CHARACTERS):
         sum_categories = sum(
             (symbols if symbols > 0 else 0, digits if digits > 0 else 0, caps if caps > 0 else 0, lower if lower > 0 else 0)
         )
@@ -99,7 +100,7 @@ class KeeperPasswordGenerator:
             symbols, digits, caps, lower, sum_categories = 1, 1, 1, 1, 4
         extra_count = length - sum_categories if length > sum_categories else 0
         self.category_map = [
-            (symbols, PW_SPECIAL_CHARACTERS),
+            (symbols, special_characters),
             (digits, string.digits),
             (caps, string.ascii_uppercase),
             (lower, string.ascii_lowercase),

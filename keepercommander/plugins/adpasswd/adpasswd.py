@@ -6,12 +6,10 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 from ldap3 import Server, Connection, ALL
-
-from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
 
 
 """Commander Plugin for Active Directory
@@ -19,19 +17,23 @@ from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
        pip3 install ldap3
 """
 
-def rotate(record, newpassword):
+
+class Rotator:
+    def __init__(self, host, port, use_ssl, userdn, password, **kwargs):
+        self.host = host
+        self.port = port
+        self.use_ssl = use_ssl
+        self.user_dn = userdn
+        self.password = password
+
+    def rotate(self, record, new_password):
+        return rotate_adpasswd(self.host, self.port, self.use_ssl, self.user_dn, self.password, new_password)
+
+
+def rotate_adpasswd(host, port, use_ssl, user_dn, old_password, new_password):
     result = False
 
-    old_password = record.password
-    host = get_v2_or_v3_custom_field_value(record, 'cmdr:host')
-    port = get_v2_or_v3_custom_field_value(record, 'cmdr:port')
-    port = int(port) if port else None
-    user_dn = get_v2_or_v3_custom_field_value(record, 'cmdr:userdn')
-    use_ssl = get_v2_or_v3_custom_field_value(record, 'cmdr:use_ssl')
-
     try:
-        # print('Connecting to ' + host)
-
         server = Server(
             host=host,
             port=port,
@@ -41,20 +43,18 @@ def rotate(record, newpassword):
         conn = Connection(
             server=server,
             user=user_dn,
-            password=record.password,
+            password=old_password,
             auto_bind=True)
 
         print('Connection: ' + str(conn))
         print('Server Info: ' + str(server.info))
         print('Whoami: ' + str(conn.extend.standard.who_am_i()))
 
-        changePwdResult = conn.extend.microsoft.modify_password(
-            user=user_dn, new_password=newpassword, old_password=old_password)
+        result = conn.extend.microsoft.modify_password(
+            user=user_dn, new_password=new_password, old_password=old_password)
 
-        if (changePwdResult == True):
+        if result:
             print('Password changed successfully')
-            record.password = newpassword
-            result = True
         else:
             print('Error with adpasswd change: ' + str(conn.result))
 

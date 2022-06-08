@@ -1,11 +1,11 @@
-#_  __
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
 #              |_|
 #
 # Keeper Commander
-# Copyright 2019 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -17,12 +17,13 @@ from tabulate import tabulate
 
 from keepercommander.commands import recordv3
 from ..params import KeeperParams
-from .. import api
+from .. import api, record_management
 from ..commands.base import raise_parse_exception, suppress_exit, Command
 from . import plugin_manager
 from .. import generator
 from ..subfolder import find_folders, get_folder_path
 from ..utils import confirm
+from ..vault import KeeperRecord, CustomField, TypedField
 
 
 def register_commands(commands):
@@ -35,12 +36,26 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-rotate_parser = argparse.ArgumentParser(prog='rotate|r', description='Rotate the password for a Keeper record from this Commander.')
-rotate_parser.add_argument('--print', dest='print', action='store_true', help='display the record content after rotation')
-rotate_parser.add_argument('--match', dest='match', action='store', help='regular expression to select records for password rotation')
-rotate_parser.add_argument('--password', dest='password', action='store', help='new password (optional)')
-rotate_parser.add_argument('--force', dest='force', action='store_true', help='force all matches to rotate without prompt')
-rotate_parser.add_argument('name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command')
+rotate_parser = argparse.ArgumentParser(
+    prog='rotate|r', description='Rotate the password for a Keeper record from this Commander.'
+)
+rotate_parser.add_argument(
+    '--print', dest='print', action='store_true', help='display the record content after rotation'
+)
+rotate_parser.add_argument(
+    '-m', '--match', dest='match', action='store', help='regular expression to select records for password rotation'
+)
+rotate_parser.add_argument('--plugin', dest='plugin', action='store', help='Force rotation plugin (optional)')
+rotate_parser.add_argument('--host', dest='host', action='store', help='Optional host (override record value)')
+rotate_parser.add_argument('--port', dest='port', action='store', help='Optional port (override record value)')
+rotate_parser.add_argument('--rules', dest='rules', action='store', help='Optional rules (override record value)')
+rotate_parser.add_argument('--password', dest='password', action='store', help='Optional new password')
+rotate_parser.add_argument(
+    '--force', dest='force', action='store_true', help='force all matches to rotate without prompt'
+)
+rotate_parser.add_argument(
+    'name', nargs='?', type=str, action='store', help='record UID or name assigned to rotate command'
+)
 rotate_parser.error = raise_parse_exception
 rotate_parser.exit = suppress_exit
 
@@ -56,104 +71,130 @@ def adjust_password(password):   # type: (str) -> str
     return 'a' + password
 
 
-def get_v2_or_v3_custom_field_value(record, custom_field_name, default_value=None):
-    if record.record_type:  # V3 record
-        matches = [x for x in record.custom_fields if x.get('name', x.get('label')).endswith(custom_field_name)]
-        if len(matches) > 0:
-            value_list = matches[0].get('value') or default_value
-            if isinstance(value_list, list):
-                ret_val = value_list[0] if len(value_list) > 0 else default_value
+def update_custom_text_fields(record, new_field_dict):
+    fld_attr = plugin_manager.get_custom_field_attr(record)
+    record_version = record.get_version()
+    for f in record.custom:
+        field_name = getattr(f, fld_attr)
+        if field_name in new_field_dict:
+            if record_version == 3:
+                f.value[0] = new_field_dict.pop(field_name)
             else:
-                ret_val = value_list
+                f.value = new_field_dict.pop(field_name)
+    for k, v in new_field_dict.items():
+        if record_version == 3:
+            record.custom.append(TypedField({'type': 'text', 'label': k, 'value': [v]}))
         else:
-            ret_val = default_value
-
-    else:  # V2 record
-        matches = [x for x in record.custom_fields if x['name'] == custom_field_name]
-        ret_val = matches[0]['value'] if len(matches) > 0 else default_value
-
-    return ret_val
+            record.custom.append(CustomField({'type': 'text', 'name': k, 'value': v}))
 
 
-def update_v2_or_v3_password(params, record, new_password):
-    if record.record_type:  # V3 record
-        return_result = {}
-        recordv3.RecordEditCommand().execute(
-            params, command='edit', password=new_password, record=record.record_uid, return_result=return_result
-        )
-        return return_result.get('update_record_v3', False)
-
-    else:  # V2 record
+def update_password(params, record, new_password):
+    record_version = record.get_version()
+    if record_version == 2:
         record.password = new_password
-        return api.update_record(params, record)
-
-
-def rotate_password(params, record_uid, name=None, new_password=None):
-    """ Rotate the password for the specified record """
-    api.sync_down(params)
-    record = api.get_record(params, record_uid)
-
-    # execute rotation plugin associated with this record
-    plugin_name = None
-    plugins = [x for x in record.custom_fields if 'cmdr:plugin' in x.get('name', x.get('label', ''))]
-    if plugins:
-        if name:
-            plugins = [x for x in plugins if x.get('name', x.get('label')).endswith('cmdr:plugin:' + name)]
-    if plugins:
-        plugin_name = plugins[0]['value']
-    if isinstance(plugin_name, list):
-        plugin_name = plugin_name[0]
-    if not plugin_name:
-        logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
-                      'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
+    elif record_version == 3:
+        password_field = next((f for f in record.fields if f.type == 'password'), None)
+        if password_field is None:
+            logging.warning('Creating new password for record because existing password is not found.')
+            record.fields.append(TypedField({'type': 'password', 'value': [new_password]}))
+        else:
+            password_field.value[0] = new_password
+    else:
+        logging.error('Invalid type of record (record version) for rotation update')
         return False
 
-    plugin = plugin_manager.get_plugin(plugin_name)
+    try:
+        record_management.update_record(params, record)
+    except Exception as e:
+        logging.error(e)
+        return False
+    else:
+        return True
+
+
+def get_new_password(plugin, rules=None):
+    if hasattr(plugin, 'disallow_special_characters'):
+        pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
+            str.maketrans('', '', plugin.disallow_special_characters)
+        )
+    else:
+        pw_special_characters = generator.PW_SPECIAL_CHARACTERS
+    if rules:
+        logging.debug("Rules found for record")
+        upper, lower, digits, symbols = (int(n) for n in rules.split(','))
+        kpg = generator.KeeperPasswordGenerator(
+            length=upper + lower + digits + symbols, symbols=symbols, digits=digits, caps=upper, lower=lower,
+            special_characters=pw_special_characters
+        )
+    else:
+        logging.debug("No rules, just generate")
+        kpg = generator.KeeperPasswordGenerator(32, 8, 8, 8, 8, special_characters=pw_special_characters)
+    new_password = kpg.generate()
+
+    # ensure password starts with alpha numeric character
+    new_password = adjust_password(new_password)
+
+    # Some plugins might need to change the password in the process of rotation
+    # f.e. windows plugin gets rid of certain characters.
+    if hasattr(plugin, "adjust"):
+        new_password = plugin.adjust(new_password)
+
+    return new_password
+
+
+def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host=None, port=None, rules=None,
+                    new_password=None):
+    """ Rotate the password for the specified record """
+    api.sync_down(params)
+    record = KeeperRecord.load(params, record_uid)
+    if api.resolve_record_write_path(params, record_uid) is None:
+        logging.error(
+            f'The rotation failed for record "{record.title}" (uid=[{record.record_uid}]):\n'
+            'The target record is not editable but needs to be updated with new credentials to complete the rotation.'
+        )
+        return False
+
+    plugin_name, plugin_kwargs, plugin = plugin_manager.get_plugin(record, rotate_name, plugin_name, host, port)
     if not plugin:
         return False
 
-    if not new_password:
-        # generate a new password with any specified rules
-        rules = get_v2_or_v3_custom_field_value(record, "cmdr:rules")
-        if rules:
-            logging.debug("Rules found for record")
-            new_password = generator.generateFromRules(rules)
-        else:
-            logging.debug("No rules, just generate")
-            new_password = generator.generate()
+    if new_password is None:
+        if not rules:
+            rules = plugin_kwargs.get('rules')
+        new_password = get_new_password(plugin, rules)
 
-        # ensure password starts with alpha numeric character
-        new_password = adjust_password(new_password)
-
-        # Some plugins might need to change the password in the process of rotation
-        # f.e. windows plugin gets rid of certain characters.
-        if hasattr(plugin, "adjust"):
-            new_password = plugin.adjust(new_password)
-
-    # log_message = 'Rotated on {0}'.format(datetime.datetime.now().ctime())
-    # if record.notes:
-    #     record.notes += '\n' + log_message
-    # else:
-    #     record.notes = log_message
-    #
-    # if not api.update_record(params, record, silent=True):
-    #     return False
-
-    api.sync_down(params)
-    record = api.get_record(params, record_uid)
-
-    logging.info("Rotating with plugin %s", plugin_name)
-    success = plugin.rotate(record, new_password)
-    if success:
-        logging.debug("Password rotation is successful for \"%s\".", plugin_name)
+    if plugin_kwargs.get('password') == new_password:
+        logging.warning('Rotation aborted because the old and new passwords are the same.')
+        success = False
     else:
-        logging.warning("Password rotation failed for record uid=[%s], plugin \"%s\"." % (record.record_uid, plugin_name))
+        if hasattr(plugin, 'rotate_start_msg'):
+            plugin.rotate_start_msg()
+        else:
+            logging.info(f'Rotating with plugin {plugin_name}')
+        success = plugin.rotate(record, new_password)
+
+    if success:
+        logging.debug(f'Password rotation successful for "{plugin_name}".')
+    else:
+        logging.warning(
+            f'Password rotation failed for record "{record.title}" (uid=[{record.record_uid}]), plugin "{plugin_name}".'
+        )
         return False
 
-    if update_v2_or_v3_password(params, record, new_password):
-        new_record = api.get_record(params, record_uid)
-        logging.info('Rotation successful for record_uid=%s, revision=%d', new_record.record_uid, new_record.revision)
+    if update_password(params, record, new_password):
+        api.sync_down(params)
+        new_record = KeeperRecord.load(params, record_uid)
+        logging.info(f'Password rotation successful for record "{new_record.title}".')
         return True
+    elif hasattr(plugin, 'revert') and plugin.revert(record, new_password):
+        logging.warning(
+            f'Couldn\'t update the record "{record.title}" (uid=[{record.record_uid}]), so the rotation was reverted.'
+        )
+    else:
+        logging.error(
+            f"Rotated to new password {new_password} but couldn't update the record "
+            f'"{record.title}" (uid=[{record.record_uid}]). The new password will be needed for access.'
+        )
 
     return False
 
@@ -200,7 +241,11 @@ class RecordRotateCommand(Command):
                         logging.error('There are more than one rotation records with name %s. Please use record UID.', name)
                         return
             if record_uid:
-                rotate_password(params, record_uid, name=rotate_name, new_password=kwargs.get('password'))
+                rotate_password(
+                    params, record_uid, rotate_name=rotate_name, plugin_name=kwargs.get('plugin'),
+                    host=kwargs.get('host'), port=kwargs.get('port'), rules=kwargs.get('rules'),
+                    new_password=kwargs.get('password')
+                )
                 if print_result:
                     record = api.get_record(params, record_uid)
                     record.display()
@@ -210,7 +255,10 @@ class RecordRotateCommand(Command):
             results = api.search_records(params, match)
             for r in results:
                 if force or confirm(f'Rotate password for record {r.title}?'):
-                    rotate_password(params, r.record_uid, new_password=kwargs.get('password'))
+                    rotate_password(
+                        params, r.record_uid, plugin_name=kwargs.get('plugin'), new_password=kwargs.get('password'),
+                        host=kwargs.get('host'), port=kwargs.get('port'), rules=kwargs.get('rules')
+                    )
                     if print_result:
                         record = api.get_record(params, r.record_uid)
                         record.display()
