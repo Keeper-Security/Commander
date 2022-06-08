@@ -6,92 +6,156 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2016 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
-"""Change a *ix password over ssh."""
-
+"""Change a password over ssh."""
 
 import logging
-import os
+import socket
 
-from keepercommander.plugins.commands import get_v2_or_v3_custom_field_value
-
-if os.name == 'posix':
-    from pexpect import pxssh, exceptions
-else:
-    raise Exception('Not available on Windows')
+import paramiko
+from paramiko_expect import SSHClientInteraction
 
 
-def rotate(record, newpassword):
+# These characters don't work for Windows ssh password rotation
+DISALLOW_SPECIAL_CHARACTERS = '<>^'
+
+
+class Rotator:
+    def __init__(self, host, login, password, port=22, **kwargs):
+        self.host = host
+        self.login = login
+        self.password = password
+        self.port = port
+        self.disallow_special_characters = DISALLOW_SPECIAL_CHARACTERS
+
+    def rotate(self, record, new_password):
+        """Change a password over SSH"""
+        return rotate_ssh(self.host, self.port, self.login, self.password, new_password)
+
+    def rotate_start_msg(self):
+        """Display msg before starting rotation"""
+        logging.info(f'Rotating with SSH plugin on host {self.host} and port {self.port} using login {self.login}...')
+
+    def revert(self, record, new_password):
+        """Revert password change over SSH"""
+        return rotate_ssh(self.host, self.port, self.login, new_password, self.password, revert=True)
+
+
+def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=False):
+    """Rotate an SSH password
+
+    host(str): SSH host
+    port(int): SSH port
+    user(str): SSH login name
+    old_password(str): old password
+    new_password(str): new password
+    timeout(int): SSH connection timeout in seconds
+    revert(bool): True if the new_password is the original password to revert a previous rotation.
+                  This is used to print log messages that make more sense.
     """
-    Change a *ix password over ssh.
-
-    We're pretty platform-agnostic - just need a passwd command.  But pxssh is not.  pxssh wants a sh/ksh/bash/csh/tcsh.  zsh
-    (macOS' 11.* default shell) doesn't work.  And routers are unlikely to work too, even if they support ssh, especially
-    ones with dynamic prompts.
-
-    Grab any required fields from the record.
-    """
-    user = record.login
-    oldpassword = record.password
-
-    result = False
-
-    optional_port = get_v2_or_v3_custom_field_value(record, 'cmdr:port')
-    if not optional_port:
-        port = 22
-    else:
+    rotate_success = False
+    ssh_logger = logging.getLogger('paramiko')
+    ssh_logger.setLevel(logging.WARNING)
+    with paramiko.SSHClient() as ssh:
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            port = int(optional_port)
-        except ValueError:
-            print('port {} could not be converted to int'.format(optional_port))
-            return result
-
-    host = get_v2_or_v3_custom_field_value(record, 'cmdr:host')
-
-    try:
-        options = {
-            'StrictHostKeyChecking': 'no',
-            'UserKnownHostsFile': '/dev/null',
-        }
-        s = pxssh.pxssh(options=options)
-        print('Logging into {}@{} on port {}'.format(user, host, port))
-        s.login(server=host, username=user, password=oldpassword, sync_multiplier=3, port=port)
-        s.sendline('passwd')
-        i = s.expect(['[Oo]ld.*[Pp]assword', '[Cc]urrent.*[Pp]assword', '[Nn]ew.*[Pp]assword'])
-        if i in (0, 1):
-            s.sendline(oldpassword)
-            i = s.expect(['[Nn]ew.*[Pp]assword', 'password unchanged'])
-            if i != 0:
-                return False
-
-        s.sendline(newpassword)
-        s.expect("Retype [Nn]ew.*[Pp]assword:")
-        s.sendline(newpassword)
-        s.prompt()
-
-        pass_result = str(s.before).lower()
-
-        if "success" in pass_result:
-            logging.info("Password changed successfully")
-            record.password = newpassword
-            result = True
-        elif 'this tool does not update the login keychain password' in pass_result.lower():
-            # This is a macOS thing.  The passwd command warns about updating the keychain.  We pass a little of that
-            # up to the user.
-            logging.info("Password changed successfully")
-            logging.info("Consider updating login keychain with: security set-keychain-password ~/Library/Keychains/login-db")
-            record.password = newpassword
-            result = True
+            ssh.connect(
+                hostname=host, port=port, username=user, password=old_password,
+                timeout=timeout, allow_agent=False, look_for_keys=False
+            )
+        except paramiko.ssh_exception.AuthenticationException:
+            if revert:
+                logging.error('SSH authentication was unsuccessful for revert of rotation.')
+            else:
+                logging.error('SSH authentication was unsuccessful using current password.')
+            return False
+        except socket.timeout:
+            logging.error('Connection to host timed out.')
+            return False
+        except Exception as e:
+            logging.error(f'Unrecognized connection error: {e}')
+            return False
+        stdin, stdout, stderr = ssh.exec_command('ver')
+        if ''.join(stdout.readlines()).strip().startswith('Microsoft Windows'):
+            try:
+                stdin, stdout, stderr = ssh.exec_command(
+                    f'net user {user} {new_password}'
+                )
+                result = ''.join(stdout.readlines()).strip()
+                if result == 'The command completed successfully.':
+                    rotate_success = True
+                    logging.debug(result)
+                else:
+                    logging.warning(f'Unrecognized result: "{result}"')
+            except Exception as e:
+                # Catch exception because password
+                # could have still been rotated and we need to verify
+                logging.error(str(e))
         else:
-            logging.error("Password change failed: {}".format(str(pass_result)))
+            stdin, stdout, stderr = ssh.exec_command('which passwd')
+            passwd_cmd = ''.join(stdout.readlines()).strip()
+            if not passwd_cmd.endswith('passwd'):
+                logging.warning('"passwd" command not found on device')
+                return False
+            else:
+                with SSHClientInteraction(ssh, timeout=timeout, display=False) as ia:
+                    ia.send('passwd')
+                    ia.expect(['.*password.*', '.*password.*'])
+                    ia.send(old_password)
+                    ia.expect('.*password.*')
+                    ia.send(new_password)
+                    ia.expect('.*password.*')
+                    try:
+                        ia.send(new_password)
+                        ia.expect('.*')
+                        result1 = ia.current_output
+                        ia.send('')
+                        ia.expect('.*')
+                        result2 = ia.current_output
+                        result_lines = (result1 + result2).splitlines()
+                        result = next(
+                            (r for r in result_lines if 'password' in r), ''
+                        )
+                        if 'password' in result:
+                            rotate_success = True
+                            logging.info(result.split(': ')[-1])
+                    except Exception as e:
+                        # Catch exception because password
+                        # could have still been rotated and we need to verify
+                        logging.error(str(e))
 
-        s.logout()
-    except exceptions.TIMEOUT:
-        logging.error("Timed out waiting for response.")
-    except pxssh.ExceptionPxssh as e:
-        logging.error("Failed to login with ssh: {}".format(str(e)))
+    # Verify which password connects to host
+    with paramiko.SSHClient() as verify_ssh:
+        passwords = {'old': old_password, 'new': new_password}
+        pass_names = ('new', 'old') if rotate_success else ('old', 'new')
+        for attempt, pass_name in enumerate(pass_names, start=1):
+            verify_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            try:
+                verify_ssh.connect(
+                    hostname=host, username=user, password=passwords[pass_name],
+                    timeout=timeout, allow_agent=False, look_for_keys=False
+                )
+            except Exception as e:
+                if attempt == 2:
+                    rotate_msg = 'revert of rotation.' if revert else f'rotation.'
+                    success_msg = f'{"successful" if rotate_success else "failed"} {rotate_msg}'
+                    logging.warning(f"Can't connect with either old or new password after {success_msg}")
+                    rotate_success = False
+            else:
+                if pass_name == 'old':
+                    if revert:
+                        logging.warning('Reverting the password rotation failed. The rotated password is still valid.')
+                    else:
+                        logging.warning('SSH password rotation failed. Verified that the old password is still valid.')
+                    rotate_success = False
+                else:
+                    if revert:
+                        logging.info('Verified that reverting the SSH password rotation was successful.')
+                    else:
+                        logging.info('Verified that the SSH password rotation was successful.')
+                    rotate_success = True
+                break
 
-    return result
+    return rotate_success
