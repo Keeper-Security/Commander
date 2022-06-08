@@ -23,7 +23,7 @@ from . import plugin_manager
 from .. import generator
 from ..subfolder import find_folders, get_folder_path
 from ..utils import confirm
-from ..vault import KeeperRecord
+from ..vault import KeeperRecord, CustomField, TypedField
 
 
 def register_commands(commands):
@@ -71,6 +71,23 @@ def adjust_password(password):   # type: (str) -> str
     return 'a' + password
 
 
+def update_custom_text_fields(record, new_field_dict):
+    fld_attr = plugin_manager.get_custom_field_attr(record)
+    record_version = record.get_version()
+    for f in record.custom:
+        field_name = getattr(f, fld_attr)
+        if field_name in new_field_dict:
+            if record_version == 3:
+                f.value[0] = new_field_dict.pop(field_name)
+            else:
+                f.value = new_field_dict.pop(field_name)
+    for k, v in new_field_dict.items():
+        if record_version == 3:
+            record.custom.append(TypedField({'type': 'text', 'label': k, 'value': [v]}))
+        else:
+            record.custom.append(CustomField({'type': 'text', 'name': k, 'value': v}))
+
+
 def update_password(params, record, new_password):
     record_version = record.get_version()
     if record_version == 2:
@@ -78,8 +95,8 @@ def update_password(params, record, new_password):
     elif record_version == 3:
         password_field = next((f for f in record.fields if f.type == 'password'), None)
         if password_field is None:
-            logging.error("Can't find password field for rotation update")
-            return False
+            logging.warning('Creating new password for record because existing password is not found.')
+            record.fields.append(TypedField({'type': 'password', 'value': [new_password]}))
         else:
             password_field.value[0] = new_password
     else:
@@ -146,9 +163,6 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
             rules = plugin_kwargs.get('rules')
         new_password = get_new_password(plugin, rules)
 
-    api.sync_down(params)
-    record = KeeperRecord.load(params, record_uid)
-
     if plugin_kwargs.get('password') == new_password:
         logging.warning('Rotation aborted because the old and new passwords are the same.')
         success = False
@@ -168,7 +182,8 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         return False
 
     if update_password(params, record, new_password):
-        new_record = api.get_record(params, record_uid)
+        api.sync_down(params)
+        new_record = KeeperRecord.load(params, record_uid)
         logging.info(f'Password rotation successful for record "{new_record.title}".')
         return True
     elif hasattr(plugin, 'revert') and plugin.revert(record, new_password):

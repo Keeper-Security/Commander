@@ -87,7 +87,7 @@ def detect_plugin(record, plugin_kwargs):
 
 def detect_kwargs(record, plugin_name, plugin_kwargs):
     # Look elsewhere in record if host or port parameter is missing
-    if 'host' in REQUIRED_PLUGIN_KWARGS[plugin_name] and 'host' not in plugin_kwargs:
+    if 'host' in REQUIRED_PLUGIN_KWARGS.get(plugin_name, []) and 'host' not in plugin_kwargs:
         host_field = get_host_field_dict(record)
         if host_field:
             plugin_kwargs['host'] = host_field['hostName']
@@ -118,21 +118,35 @@ def check_missing_kwargs(plugin_name, plugin_kwargs):
     return len(missing_kwargs) > 0
 
 
+def get_custom_field_attr(record):
+    record_version = record.get_version()
+    if record_version not in (2, 3):
+        logging.error('Invalid record for rotation')
+        return None
+    else:
+        return 'label' if record_version == 3 else 'name'
+
+
+def get_custom_cmdr_fields(record):
+    fld_attr = get_custom_field_attr(record)
+    if fld_attr is None:
+        return None
+    else:
+        return {
+            getattr(f, fld_attr)[len('cmdr:'):]: next((v for v in f.value), None) if isinstance(f.value, list) else f.value
+            for f in record.custom if getattr(f, fld_attr).startswith('cmdr:')
+        }
+
+
 def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
     """Load plugin based on given record and alt identifier
 
     Return plugin_name (str), plugin (object with rotate method)
     """
-    record_version = record.get_version()
-    if record_version not in (2, 3):
-        logging.error('Invalid record for rotation')
+    cmdr_kwargs = get_custom_cmdr_fields(record)
+    if cmdr_kwargs is None:
         return None, None
 
-    fld_attr = 'name' if record_version == 2 else 'label'
-    cmdr_kwargs = {
-        getattr(f, fld_attr)[len('cmdr:'):]: f.value[0] if isinstance(f.value, list) else f.value for f in record.custom
-        if getattr(f, fld_attr).startswith('cmdr:')
-    }
     if plugin_name is None and len(cmdr_kwargs) > 0:
         rotate_value = cmdr_kwargs.get(f'plugin:{rotate_name}') if rotate_name else None
         plugin_name = rotate_value if rotate_value else cmdr_kwargs.get('plugin')
