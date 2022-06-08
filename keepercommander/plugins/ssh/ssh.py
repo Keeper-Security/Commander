@@ -139,15 +139,14 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                 )
             except Exception as e:
                 if attempt == 2:
-                    revert_msg = 'revert of rotation.'
-                    rotate_msg = revert_msg if revert else f'rotation. Attempted rotation to password: {new_password}'
+                    rotate_msg = 'revert of rotation.' if revert else f'rotation.'
                     success_msg = f'{"successful" if rotate_success else "failed"} {rotate_msg}'
                     logging.warning(f"Can't connect with either old or new password after {success_msg}")
                     rotate_success = False
             else:
                 if pass_name == 'old':
                     if revert:
-                        logging.warnging('Reverting the password rotation failed. The rotated password is still valid.')
+                        logging.warning('Reverting the password rotation failed. The rotated password is still valid.')
                     else:
                         logging.warning('SSH password rotation failed. Verified that the old password is still valid.')
                     rotate_success = False
