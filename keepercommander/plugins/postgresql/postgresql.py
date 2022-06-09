@@ -52,6 +52,9 @@ def rotate_postgresql(host, user, old_password, new_password, port=5432, db='pos
                 cursor.execute(sql, (new_password,))
                 return True
     except Exception as e:
-        logging.error('Error rotating password at Postgres server: %s', e)
+        if revert:
+            logging.error('Error reverting password rotation of Postgres server: %s', e)
+        else:
+            logging.error('Error rotating password of Postgres server: %s', e)
 
     return False
