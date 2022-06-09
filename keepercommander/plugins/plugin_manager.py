@@ -16,12 +16,15 @@ from . import noop
 
 
 REQUIRED_PLUGIN_KWARGS = {
+    'postgresql': ['host', 'login', 'password'],
     'ssh': ['host', 'login', 'password']
 }
 PORT_TO_PLUGIN = {
-    22: 'ssh'
+    22: 'ssh',
+    5432: 'postgresql'
 }
 URL_SCHEME_TO_PLUGIN = {
+    'postgres': 'postgresql',
     'ssh': 'ssh'
 }
 imported_plugins = {}
@@ -82,6 +85,8 @@ def detect_plugin(record, plugin_kwargs):
             plugin_name = URL_SCHEME_TO_PLUGIN[url.scheme]
             if 'host' not in plugin_kwargs:
                 plugin_kwargs['host'] = url.hostname
+            if 'port' not in plugin_kwargs and url.port:
+                plugin_kwargs['port'] = url.port
     return plugin_name
 
 
