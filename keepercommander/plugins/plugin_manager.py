@@ -16,14 +16,17 @@ from . import noop
 
 
 REQUIRED_PLUGIN_KWARGS = {
+    'mysql': ['host', 'login', 'password'],
     'postgresql': ['host', 'login', 'password'],
     'ssh': ['host', 'login', 'password']
 }
 PORT_TO_PLUGIN = {
     22: 'ssh',
+    3306: 'mysql',
     5432: 'postgresql'
 }
 URL_SCHEME_TO_PLUGIN = {
+    'mysql': 'mysql',
     'postgres': 'postgresql',
     'ssh': 'ssh'
 }
