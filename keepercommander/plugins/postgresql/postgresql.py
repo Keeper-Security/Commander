@@ -6,7 +6,7 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -27,10 +27,6 @@ class Rotator:
         self.port = port
         self.db = db
 
-    def rotate(self, record, new_password):
-        """Change a password over SSH"""
-        return rotate_postgresql(self.host, self.login, self.password, new_password, self.port, self.db)
-
     def rotate_start_msg(self):
         """Display msg before starting rotation"""
         logging.info(
@@ -39,22 +35,29 @@ class Rotator:
         )
 
     def revert(self, record, new_password):
-        """Revert password change over SSH"""
-        return rotate_postgresql(self.host, self.login, new_password, self.password, self.port, self.db, revert=True)
+        """Revert rotation of a PostgreSQL password"""
+        self.rotate(record, new_password, revert=True)
 
-
-def rotate_postgresql(host, user, old_password, new_password, port=5432, db='postgres', revert=False):
-    try:
-        with psycopg2.connect(host=host, port=int(port), user=user, password=old_password, database=db) as connection:
-            logging.debug("Connected to %s", host)
-            with connection.cursor() as cursor:
-                sql = f'alter user {user} with password %s'
-                cursor.execute(sql, (new_password,))
-                return True
-    except Exception as e:
+    def rotate(self, record, new_password, revert=False):
+        """Rotate a PostgreSQL password"""
         if revert:
-            logging.error('Error reverting password rotation of Postgres server: %s', e)
+            old_password = new_password
+            new_password = self.password
         else:
-            logging.error('Error rotating password of Postgres server: %s', e)
+            old_password = self.password
 
-    return False
+        try:
+            with psycopg2.connect(host=self.host, port=self.port, user=self.login, password=old_password,
+                                  database=self.db) as connection:
+                logging.debug(f'Connected to {self.host}')
+                with connection.cursor() as cursor:
+                    sql = f'alter user {self.login} with password %s'
+                    cursor.execute(sql, (new_password,))
+                    return True
+        except Exception as e:
+            if revert:
+                logging.error('Error reverting password rotation of Postgres server: %s', e)
+            else:
+                logging.error('Error rotating password of Postgres server: %s', e)
+
+        return False
