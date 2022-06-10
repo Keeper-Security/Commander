@@ -6,29 +6,33 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 import logging
 import subprocess
-import re
 
 
-def rotate(record, newpassword):
-    """ Grab any required fields from the record """
-
-    i = subprocess.call(["net", "user", record.login, newpassword], shell=True)
-
-    if i == 0:
-        logging.info('Password changed successfully')
-        record.password = newpassword
-        return True
-
-    logging.error('Password change failed')
-    return True
+# These characters don't work for Windows password rotation
+DISALLOW_SPECIAL_CHARACTERS = '<>^&|'
 
 
-def adjust(newpassword):
-    # the characters below mess with windows command line
-    return re.sub('[<>&|]', '', newpassword)
+class Rotator:
+    def __init__(self, login, **kwargs):
+        self.login = login
+        self.disallow_special_characters = DISALLOW_SPECIAL_CHARACTERS
+
+    def rotate_start_msg(self):
+        """Display msg before starting rotation"""
+        logging.info(f'Rotating password for Windows account "{self.login}"...')
+
+    def rotate(self, record, new_password):
+        """Rotate Windows account password"""
+        error_code = subprocess.call(["net", "user", self.login, new_password])
+        if error_code == 0:
+            logging.info(f'Password changed successfully for user {self.login}')
+            return True
+        else:
+            logging.error(f'Password change failed for user {self.login}')
+            return False

@@ -19,7 +19,7 @@ from paramiko_expect import SSHClientInteraction
 
 
 # These characters don't work for Windows ssh password rotation
-DISALLOW_SPECIAL_CHARACTERS = '<>^'
+DISALLOW_SPECIAL_CHARACTERS = '<>^&|'
 
 
 class Rotator:
