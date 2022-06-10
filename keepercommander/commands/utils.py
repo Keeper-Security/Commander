@@ -489,7 +489,7 @@ class ThisDeviceCommand(Command):
         acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
         print('{:>20}: {}'.format('Device Name', this_device['deviceName']))
-        print("{:>20}: {}".format('Client Version', this_device['clientVersion']))
+        # print("{:>20}: {}".format('API Client Version', rest_api.CLIENT_VERSION))
 
         if 'encryptedDataKeyPresent' in this_device:
             print("{:>20}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if this_device['encryptedDataKeyPresent'] else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
@@ -521,6 +521,8 @@ class ThisDeviceCommand(Command):
 
         else:
             print("{:>20}: Default".format('Logout Timeout'))
+
+        print('{:>20}: {}'.format('Is SSO User', params.settings['sso_user'] if 'sso_user' in params.settings else False))
 
         print("\nAvailable sub-commands: ", bcolors.OKBLUE + (", ".join(this_device_available_command_verbs)) + bcolors.ENDC)
 
@@ -622,6 +624,7 @@ class VersionCommand(Command):
             print('{0}: {1}'.format('Commander Version', this_app_version))
         else:
             print('{0:>20s}: {1}'.format('Commander Version', this_app_version))
+            print("{0:>20s}: {1}".format('API Client Version', rest_api.CLIENT_VERSION))
             print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
             print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
             print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
