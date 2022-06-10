@@ -17,9 +17,7 @@ import socket
 import paramiko
 from paramiko_expect import SSHClientInteraction
 
-
-# These characters don't work for Windows ssh password rotation
-DISALLOW_SPECIAL_CHARACTERS = '<>^&|'
+from ..windows.windows import DISALLOW_WINDOWS_SPECIAL_CHARACTERS
 
 
 class Rotator:
@@ -28,7 +26,8 @@ class Rotator:
         self.login = login
         self.password = password
         self.port = port
-        self.disallow_special_characters = DISALLOW_SPECIAL_CHARACTERS
+        # These characters don't work for Windows ssh password rotation
+        self.disallow_special_characters = DISALLOW_WINDOWS_SPECIAL_CHARACTERS
 
     def rotate(self, record, new_password):
         """Change a password over SSH"""
