@@ -18,6 +18,7 @@ from . import noop
 REQUIRED_PLUGIN_KWARGS = {
     'mysql': ['host', 'login', 'password'],
     'postgresql': ['host', 'login', 'password'],
+    'pspasswd': ['login', 'password'],
     'ssh': ['host', 'login', 'password'],
     'windows': ['login'],
 }
