@@ -33,6 +33,16 @@ class TimeToKeepalive:
         ):
             # We should be able to get it.
             self.server_logout_timer_window = float(params.settings['logout_timer']) / 1000.0
+            try:
+                if isinstance(params.enforcements, dict) and 'longs' in params.enforcements:
+                    timeout = next((x['value'] for x in params.enforcements['longs']
+                                    if x['key'] == 'logout_timer_desktop'), None)
+                    if timeout:
+                        timeout = int(timeout) * 60
+                        if timeout < self.server_logout_timer_window:
+                            self.server_logout_timer_window = timeout
+            except Exception as e:
+                logging.debug('Error reading logout timeout: %s', e)
 
     def update(self, params):
         """Update the timer, and possibly issue a keepalive."""
