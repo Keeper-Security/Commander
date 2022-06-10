@@ -1,7 +1,6 @@
-from ..record import Record
+from ..vault import KeeperRecord
 
 
-def rotate(record, newpassword):
-    # type: (Record, str) -> bool
+def rotate(record, newpassword):   # type: (KeeperRecord, str) -> bool
     record.password = newpassword
     return True

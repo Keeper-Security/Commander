@@ -9,58 +9,102 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from ldap3 import Server, Connection, ALL
+import json
+import ldap3
+import logging
+import ssl
 
+from ...vault import KeeperRecord
+from ...commands.base import RecordMixin
 
 """Commander Plugin for Active Directory
    Dependencies: 
-       pip3 install ldap3
+       pip install ldap3
 """
 
+PasswordChangeHeader = 'Unable to update the password.'
 
-class Rotator:
-    def __init__(self, host, port, use_ssl, userdn, password, **kwargs):
-        self.host = host
-        self.port = port
-        self.use_ssl = use_ssl
-        self.user_dn = userdn
-        self.password = password
-
-    def rotate(self, record, new_password):
-        return rotate_adpasswd(self.host, self.port, self.use_ssl, self.user_dn, self.password, new_password)
+DomainConstraintViolation = 'The value provided for the new password does not meet ' +\
+                            'the length, complexity, or history requirements for the domain.'
 
 
-def rotate_adpasswd(host, port, use_ssl, user_dn, old_password, new_password):
-    result = False
+def rotate(record, new_password):   # type: (KeeperRecord, str) -> bool
+    old_password = RecordMixin.get_record_field(record, 'password')
+    if not old_password:
+        raise ValueError(f'Rotate AD password: Current password is not set.')
 
-    try:
-        server = Server(
-            host=host,
-            port=port,
-            use_ssl=(use_ssl in ['True','true','yes','Yes','y','Y','T','t']),
-            get_info=ALL)
+    host = RecordMixin.get_record_field(record, 'host')
+    if host:
+        host, _, port = host.partition(':')
+    else:
+        port = ''
+    if not port:
+        port = RecordMixin.get_record_field(record, 'port')
+    if port:
+        port = int(port)
+    else:
+        port = None
+    if not host:
+        raise ValueError(f'Rotate AD password: Domain controller (\"host\") is not set.')
 
-        conn = Connection(
-            server=server,
-            user=user_dn,
-            password=old_password,
-            auto_bind=True)
+    user_dn = RecordMixin.get_record_field(record, 'userdn')
+    login = ''
+    if not user_dn:
+        login = RecordMixin.get_record_field(record, 'login')
+        if login:
+            if login.lower().startswith('CN='):
+                user_dn = login
+                login = ''
 
-        print('Connection: ' + str(conn))
-        print('Server Info: ' + str(server.info))
-        print('Whoami: ' + str(conn.extend.standard.who_am_i()))
+    if not login and not user_dn:
+        raise ValueError(f'Rotate AD password: User login or DN is not set.')
 
-        result = conn.extend.microsoft.modify_password(
-            user=user_dn, new_password=new_password, old_password=old_password)
+    tls = ldap3.Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    server = ldap3.Server(host=host, port=port, use_ssl=True, tls=tls, connect_timeout=5, get_info=ldap3.ALL)
+    with ldap3.Connection(server) as c:
+        c.open()
 
-        if result:
-            print('Password changed successfully')
+    if user_dn:
+        conn = ldap3.Connection(
+            server, version=3, auto_bind=ldap3.AUTO_BIND_NONE, authentication=ldap3.SIMPLE,
+            client_strategy=ldap3.SYNC, read_only=False, lazy=False,
+            user=user_dn, password=old_password)
+    else:
+        conn = ldap3.Connection(
+            server, version=3, auto_bind=ldap3.AUTO_BIND_NONE, authentication=ldap3.NTLM,
+            client_strategy=ldap3.SYNC, read_only=False, lazy=False,
+            user=login, password=old_password)
+
+    if not conn.bind():
+        raise ValueError(f'Rotate AD password: Bind error: {conn.result}')
+
+    if not user_dn:
+        domain, _, name = login.partition('\\')
+        if not name:
+            raise ValueError(f'Rotate AD password: Cannot get User DN')
+
+        request = f'(&(objectClass=user)(sAMAccountName={name}))'
+        conn.search(search_base=server.info.naming_contexts[0], search_filter=request,
+                    attributes=['distinguishedName'], search_scope=ldap3.SUBTREE)
+        if len(conn.entries) == 0:
+            raise ValueError(f'Rotate AD password: Cannot get User DN')
+
+        user_dn = conn.entries[0]['distinguishedName'].value
+
+    change_result = conn.extend.microsoft.modify_password(
+        user=user_dn, new_password=new_password, old_password=old_password)
+
+    if not change_result:
+        error_result = conn.result
+        if isinstance(error_result, dict):
+            if error_result.get('description', '') == 'constraintViolation':
+                logging.info(f'{PasswordChangeHeader} {DomainConstraintViolation}')
+            elif 'message' in error_result:
+                logging.info(f'{PasswordChangeHeader}: %s', conn.result["message"])
+            else:
+                logging.info(f'{PasswordChangeHeader}: %s', json.dumps(conn.result))
         else:
-            print('Error with adpasswd change: ' + str(conn.result))
+            logging.info(f'{PasswordChangeHeader}: %s', str(conn.result))
+    conn.unbind()
 
-        conn.unbind()
-
-    except Exception as e:
-        print("Error during connection to AD server: %s" % str(e))
-
-    return result
+    return change_result

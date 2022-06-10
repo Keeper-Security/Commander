@@ -21,7 +21,7 @@ import shutil
 import sys
 import tempfile
 
-from .base import Command, dump_report_data
+from .base import Command, RecordMixin, dump_report_data
 from .ssh_agent import add_ssh_key, SshAgentCommand
 from .record import find_record, RecordListCommand
 from ..attachment import prepare_attachment_download
@@ -107,7 +107,7 @@ def connect_command_info(aliases, command_info):
         command_info['rdp'] = rdp_parser.description
 
 
-class BaseConnectCommand(Command):
+class BaseConnectCommand(Command, RecordMixin):
     def __init__(self):
         super(BaseConnectCommand, self).__init__()
         self.command = ''
@@ -180,48 +180,6 @@ class BaseConnectCommand(Command):
             logging.warning('Command supports %s records only', ' and '.join(types))
             return
         return record
-
-    @staticmethod
-    def get_custom_field(record, field_name):     # type: (KeeperRecord, str) -> str
-        if isinstance(record, PasswordRecord):
-            return next((x.value for x in record.custom if field_name.lower() == x.name.lower()), None)
-
-        if isinstance(record, TypedRecord):
-            return next((x.get_default_value(str) for x in record.custom
-                         if (x.type or 'text') == 'text' and field_name.lower() == (x.label or '').lower()), None)
-
-    @staticmethod
-    def get_record_field(record, field_name):     # type: (KeeperRecord, str) -> str
-        if isinstance(record, PasswordRecord):
-            if field_name == 'login':
-                return record.login
-            if field_name == 'password':
-                return record.password
-            if field_name == 'url':
-                return record.link
-
-        elif isinstance(record, TypedRecord):
-            if field_name in {'hostname', 'port'}:
-                field = record.get_typed_field('host')
-            else:
-                field = record.get_typed_field(field_name)
-            if field:
-                value = field.get_default_value()
-                if isinstance(value, str):
-                    return value
-                if isinstance(value, dict):
-                    if field_name in {'host', 'hostname', 'port'}:
-                        host_name = value.get('hostName') or ''
-                        port = value.get('port') or ''
-                        if field_name == 'hostname':
-                            return host_name
-                        if field_name == 'port':
-                            return port
-                        if port:
-                            return f'{host_name}:{port}'
-                        return host_name
-                    return ''
-        return BaseConnectCommand.get_custom_field(record, f'cmdr:{field_name}')
 
     @staticmethod
     def get_parameter_value(params, record, parameter, temp_files, **kwargs):
