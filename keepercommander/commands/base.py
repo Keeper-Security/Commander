@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2018 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -22,11 +22,11 @@ import re
 import shlex
 import sys
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable
+from typing import Optional, Sequence, Callable, List
 
 from tabulate import tabulate
 
-from .. import api
+from .. import api, vault
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -169,7 +169,7 @@ def field_to_title(field):   # type: (str) -> str
 
 
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
-    # type: (Sequence[Sequence], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
+    # type: (Sequence[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
     #           row_number: boolean     - Add row number. table only
     #           column_width: int       - Truncate long columns. table only
@@ -458,6 +458,48 @@ class RecordMixin:
                             r = api.get_record(params, uid)
                             if r.title.casefold() == record_name.casefold():
                                 yield uid
+
+    @staticmethod
+    def get_custom_field(record, field_name):     # type: (vault.KeeperRecord, str) -> str
+        if isinstance(record, vault.PasswordRecord):
+            return next((x.value for x in record.custom if field_name.lower() == x.name.lower()), None)
+
+        if isinstance(record, vault.TypedRecord):
+            return next((x.get_default_value(str) for x in record.custom
+                         if (x.type or 'text') == 'text' and field_name.lower() == (x.label or '').lower()), None)
+
+    @staticmethod
+    def get_record_field(record, field_name):     # type: (vault.KeeperRecord, str) -> str
+        if isinstance(record, vault.PasswordRecord):
+            if field_name == 'login':
+                return record.login
+            if field_name == 'password':
+                return record.password
+            if field_name == 'url':
+                return record.link
+
+        elif isinstance(record, vault.TypedRecord):
+            if field_name in {'hostname', 'port'}:
+                field = record.get_typed_field('host')
+            else:
+                field = record.get_typed_field(field_name)
+            if field:
+                value = field.get_default_value()
+                if isinstance(value, str):
+                    return value
+                if isinstance(value, dict):
+                    if field_name in {'host', 'hostname', 'port'}:
+                        host_name = value.get('hostName') or ''
+                        port = value.get('port') or ''
+                        if field_name == 'hostname':
+                            return host_name
+                        if field_name == 'port':
+                            return port
+                        if port:
+                            return f'{host_name}:{port}'
+                        return host_name
+                    return ''
+        return RecordMixin.get_custom_field(record, f'cmdr:{field_name}')
 
 
 class FolderMixin:

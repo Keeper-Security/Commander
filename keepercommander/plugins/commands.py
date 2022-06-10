@@ -12,18 +12,18 @@
 import argparse
 import logging
 import re
+from typing import Dict, List
 
 from tabulate import tabulate
 
-from keepercommander.commands import recordv3
-from ..params import KeeperParams
-from .. import api, record_management
-from ..commands.base import raise_parse_exception, suppress_exit, Command
 from . import plugin_manager
+from .. import api, record_management
 from .. import generator
+from ..commands.base import raise_parse_exception, suppress_exit, Command
+from ..params import KeeperParams
 from ..subfolder import find_folders, get_folder_path
 from ..utils import confirm
-from ..vault import KeeperRecord, CustomField, TypedField
+from ..vault import KeeperRecord, CustomField, TypedField, PasswordRecord, TypedRecord
 
 
 def register_commands(commands):
@@ -171,7 +171,11 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
             plugin.rotate_start_msg()
         else:
             logging.info(f'Rotating with plugin {plugin_name}')
-        success = plugin.rotate(record, new_password)
+        try:
+            success = plugin.rotate(record, new_password)
+        except Exception as e:
+            logging.info('Error rotating with plugin %s: %s', plugin_name, e)
+            success = False
 
     if success:
         logging.debug(f'Password rotation successful for "{plugin_name}".')
@@ -209,8 +213,8 @@ class RotateEndpoint:
         self.paths = paths
 
 
-rotate_pattern =  re.compile(r'^cmdr:plugin(:[^:]*)?$')
-rotate_desc_pattern =  re.compile(r'^cmdr:plugin:([^:]+):description$')
+rotate_pattern = re.compile(r'^cmdr:plugin(:[^:]*)?$')
+rotate_desc_pattern = re.compile(r'^cmdr:plugin:([^:]+):description$')
 
 
 class RecordRotateCommand(Command):
@@ -280,40 +284,55 @@ class RecordRotateCommand(Command):
                 print('')
 
     LastRevision = 0
-    Endpoints = [] # type: [RotateEndpoint]
+    Endpoints = []    # type: List[RotateEndpoint]
 
     @staticmethod
-    def find_endpoints(params):
-        # type: (KeeperParams) -> None
+    def find_endpoints(params):       # type: (KeeperParams) -> None
         if RecordRotateCommand.LastRevision < params.revision:
             RecordRotateCommand.LastRevision = params.revision
             RecordRotateCommand.Endpoints.clear()
-            for record_uid in params.record_cache:
-                record = api.get_record(params, record_uid)
-                if record.custom_fields:
-                    endpoints = {}    # type: {str, str}
-                    endpoints_desc = {}
-                    for field in record.custom_fields:
-                        field_name = field.get('name', field.get('label'))
-                        if field_name:
-                            m = rotate_pattern.match(field_name)
-                            if m and 'value' in field:
-                                endpoints[field_name] = field['value']
-                            else:
-                                m = rotate_desc_pattern.match(field_name)
-                                if m:
-                                    endpoints_desc[m[1]] = field.get('value') or ''
-                    if endpoints:
-                        paths = []
-                        for folder_uid in find_folders(params, record_uid):
-                            path = '/' + get_folder_path(params, folder_uid, '/')
-                            paths.append(path)
-                        for endpoint in endpoints:
-                            name = endpoint
-                            if name.startswith('cmdr:plugin'):
-                                name = name[len('cmdr:plugin'):]
-                                if name and name[0] == ':':
-                                    name = name[1:]
-                            epoint = RotateEndpoint(name, endpoints[endpoint], endpoints_desc.get(endpoint) or '', record_uid, record.title, paths)
-                            RecordRotateCommand.Endpoints.append(epoint)
+            for rec in params.record_cache.values():
+                if rec.get('version', 0) not in {2, 3}:
+                    continue
+                record = KeeperRecord.load(params, rec)
+                endpoints = {}    # type: Dict[str, str]
+                endpoints_desc = {}
+
+                if isinstance(record, PasswordRecord):
+                    for cf in record.custom or []:
+                        m = rotate_pattern.match(cf.name)
+                        if m and cf.value:
+                            endpoints[cf.name] = cf.value
+                        else:
+                            m = rotate_desc_pattern.match(cf.name)
+                            if m:
+                                endpoints_desc[m[1]] = cf.value
+                elif isinstance(record, TypedRecord):
+                    for cf in record.custom or []:
+                        if not cf.label:
+                            continue
+                        value = cf.get_default_value(str)
+                        if not value:
+                            continue
+                        m = rotate_pattern.match(cf.label)
+                        if m:
+                            endpoints[cf.label] = value
+                        else:
+                            m = rotate_desc_pattern.match(cf.label)
+                            if m:
+                                endpoints_desc[m[1]] = value
+                if endpoints:
+                    paths = []
+                    for folder_uid in find_folders(params, record.record_uid):
+                        path = '/' + get_folder_path(params, folder_uid, '/')
+                        paths.append(path)
+                    for endpoint in endpoints:
+                        name = endpoint
+                        if name.startswith('cmdr:plugin'):
+                            name = name[len('cmdr:plugin'):]
+                            if name and name[0] == ':':
+                                name = name[1:]
+                        epoint = RotateEndpoint(name, endpoints[endpoint], endpoints_desc.get(endpoint) or '',
+                                                record.record_uid, record.title, paths)
+                        RecordRotateCommand.Endpoints.append(epoint)
             RecordRotateCommand.Endpoints.sort(key=lambda x: x.name)
