@@ -12,20 +12,18 @@
 import argparse
 import collections
 import datetime
-import json
-import logging
 import fnmatch
+import logging
 import re
 from typing import Dict, Any, List
 
 from .base import dump_report_data, user_choice, Command, GroupCommand
 from .. import api, display, crypto, utils, vault, vault_extensions
-from ..team import Team
-
-from ..params import KeeperParams
-from ..subfolder import try_resolve_path
 from ..error import CommandError
+from ..params import KeeperParams
 from ..record_management import update_record
+from ..subfolder import try_resolve_path
+from ..team import Team
 
 
 def register_commands(commands):
