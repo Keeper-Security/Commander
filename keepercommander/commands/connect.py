@@ -267,7 +267,7 @@ class ConnectSshCommand(BaseConnectCommand):
             passphrase = facade.passphrase
             if not passphrase:
                 passphrase = None
-            to_remove = add_ssh_key(private_key=private_key, passphrase=passphrase, key_name=record.title)
+            to_remove = add_ssh_key(private_key, passphrase, record.title)
             if to_remove:
                 self.run_at_the_end.append(to_remove)
         else:
