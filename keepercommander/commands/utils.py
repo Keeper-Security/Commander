@@ -488,41 +488,52 @@ class ThisDeviceCommand(Command):
     def print_device_info(params: KeeperParams):
         acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
-        print('{:>20}: {}'.format('Device Name', this_device['deviceName']))
-        # print("{:>20}: {}".format('API Client Version', rest_api.CLIENT_VERSION))
+        print('{:>32}: {}'.format('Device Name', this_device['deviceName']))
+        # print("{:>32}: {}".format('API Client Version', rest_api.CLIENT_VERSION))
 
         if 'encryptedDataKeyPresent' in this_device:
-            print("{:>20}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if this_device['encryptedDataKeyPresent'] else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
+            print("{:>32}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if this_device['encryptedDataKeyPresent'] else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
         else:
-            print("{:>20}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
+            print("{:>32}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
 
         if 'ipDisableAutoApprove' in acct_summary_dict['settings']:
             ipDisableAutoApprove = acct_summary_dict['settings']['ipDisableAutoApprove']
             # ip_disable_auto_approve - If enabled, the device is NOT automatically approved
             # If disabled, the device will be auto approved
             ipAutoApprove = not ipDisableAutoApprove
-            print("{:>20}: {}".format('IP Auto Approve',
+            print("{:>32}: {}".format('IP Auto Approve',
                                       (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
                                       if ipAutoApprove else
                                       (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
         else:
-            print("{:>20}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
+            print("{:>32}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
             # ip_disable_auto_approve = 0 / disabled (default) <==> IP Auto Approve :ON
 
         persistentLogin = acct_summary_dict['settings'].get('persistentLogin', False)
-        print("{:>20}: {}".format('Persistent Login',
+        print("{:>32}: {}".format('Persistent Login',
                                   (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
                                   if persistentLogin and not ThisDeviceCommand.is_persistent_login_disabled(params) else
                                   (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
 
         if 'logoutTimer' in acct_summary_dict['settings']:
-            timeout_delta = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
-            print("{:>20}: {}".format('Logout Timeout', format_timeout(timeout_delta)))
+            device_timeout = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
+            print("{:>32}: {}".format('Device Logout Timeout', format_timeout(device_timeout)))
 
         else:
-            print("{:>20}: Default".format('Logout Timeout'))
+            device_timeout = timedelta(hour=1)
+            print("{:>32}: Default".format('Logout Timeout'))
 
-        print('{:>20}: {}'.format('Is SSO User', params.settings['sso_user'] if 'sso_user' in params.settings else False))
+        if 'Enforcements' in acct_summary_dict and 'longs' in acct_summary_dict['Enforcements']:
+            logout_timeout = next((x['value'] for x in acct_summary_dict['Enforcements']['longs']
+                                    if x['key'] == 'logout_timer_desktop'), None)
+            if logout_timeout:
+                enterprise_timeout = timedelta(minutes=int(logout_timeout))
+                print("{:>32}: {}".format('Enterprise Logout Timeout', format_timeout(enterprise_timeout)))
+
+                print("{:>32}: {}".format('Effective Logout Timeout',
+                                          format_timeout(min(enterprise_timeout, device_timeout))))
+
+        print('{:>32}: {}'.format('Is SSO User', params.settings['sso_user'] if 'sso_user' in params.settings else False))
 
         print("\nAvailable sub-commands: ", bcolors.OKBLUE + (", ".join(this_device_available_command_verbs)) + bcolors.ENDC)
 
