@@ -6,123 +6,195 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2016 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
-import subprocess
-import tempfile
 import logging
 import os
 import stat
+import subprocess
+import tempfile
 
-from ..commands import update_custom_text_fields
-from ..plugin_manager import get_custom_field_attr
+import itertools
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 
-
-class Rotator:
-    def __init__(self, login=None, password=None, private_key=None, ssh_public_key=None, port=22, **kwargs):
-        self.port = port
-        self.login = login
-        self.password = password
-        self.private_key = private_key
-        self.ssh_public_key = ssh_public_key
-
-    def rotate(self, record, new_password):
-        """Change a password over SSH"""
-        return rotate_sshkey(
-            record, new_password, self.port, self.login, self.password, self.private_key, self.ssh_public_key
-        )
+from ... import crypto, vault
+from ...commands.base import RecordMixin
+from ...commands.ssh_agent import load_private_key
 
 
-def rotate_sshkey(record, new_password, port=22, user=None, old_password=None, old_private_key=None,
-                  ssh_public_key=None):
-    key_file_name = None
-    if old_private_key:
-        breakpoint()
-        pipe = subprocess.Popen(
-            ['openssl', 'rsa', '-passin', f'pass:{old_password}'],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        (output1, _) = pipe.communicate(input=old_private_key.encode(), timeout=3)
-        if pipe.poll() == 0:
-            key_file_name = tempfile.mktemp()
-            key_file = os.open(key_file_name, os.O_WRONLY | os.O_CREAT, stat.S_IRUSR | stat.S_IWUSR)
-            os.write(key_file, output1)
-            os.close(key_file)
+def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
+    private_key = ''
+    if isinstance(record, vault.PasswordRecord):
+        cf = next((x for x in record.custom if x.name == 'cmdr:private_key'), None)
+        if cf:
+            private_key = cf.value
+    elif isinstance(record, vault.TypedRecord):
+        ssh_key_field = record.get_typed_field('keyPair')
+        if ssh_key_field:
+            key_value = ssh_key_field.get_default_value(dict)
+            if isinstance(key_value, dict):
+                private_key = key_value.get('privateKey', '')
+        else:
+            cf = next((x for x in record.custom if x.label == 'cmdr:private_key'), None)
+            if cf:
+                value = cf.get_default_value(str)
+                if value:
+                    private_key = value
 
-    try:
-        pipe = subprocess.Popen(['openssl', 'genrsa', '-aes128', '-passout', f'pass:{new_password}', '2048'],
-                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        (output1, _) = pipe.communicate(timeout=3)
-        new_private_key = output1.decode('utf-8')
+    old_password = RecordMixin.get_record_field(record, 'password')
 
-        pipe = subprocess.Popen(['openssl', 'rsa', '-passin', f'pass:{new_password}', '-pubout'],
-                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    old_pk = None
+    backend = default_backend()
+    ssh_key_format = serialization.PrivateFormat.TraditionalOpenSSL
+    if private_key:
+        header, _, _ = private_key.partition('\n')
+        if 'BEGIN OPENSSH PRIVATE KEY' in header:
+            ssh_key_format = serialization.PrivateFormat.OpenSSH
+        try:
+            old_pk = load_private_key(private_key, old_password)
+            if isinstance(old_pk, rsa.RSAPrivateKey):
+                pub_key_exponent = old_pk.public_key().public_numbers().e
+                new_pk = rsa.generate_private_key(
+                    key_size=old_pk.key_size, public_exponent=pub_key_exponent, backend=backend)
+            elif isinstance(old_pk, ec.EllipticCurvePrivateKey):
+                new_pk = ec.generate_private_key(old_pk.curve, backend=backend)
+            elif isinstance(old_pk, ed25519.Ed25519PrivateKey):
+                new_pk = ed25519.Ed25519PrivateKey.generate()
+                ssh_key_format = serialization.PrivateFormat.OpenSSH
+            else:
+                raise Exception('Unsupported private key type')
+        except Exception as e:
+            logging.info('SSH Key rotation plugin: load key error: %s', e)
+            return False
+    else:
+        new_pk, _ = crypto.generate_rsa_key()
 
-        (output2, _) = pipe.communicate(input=output1, timeout=3)
-        new_public_key_PEM = output2.decode('utf-8')
-        new_public_key_SSH = None
-        with tempfile.NamedTemporaryFile() as rsa_public:
-            rsa_public.write(output2)
-            rsa_public.flush()
-            pipe = subprocess.Popen(['ssh-keygen', '-i', '-f', rsa_public.name, '-mPKCS8'], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            (output3, _) = pipe.communicate(input=output1, timeout=3)
-            new_public_key_SSH = output3.decode('utf-8')
+    new_private_key = new_pk.private_bytes(
+        encoding=serialization.Encoding.PEM, format=ssh_key_format,
+        encryption_algorithm=serialization.BestAvailableEncryption(new_password.encode('utf-8'))).decode()
 
-        fld_attr = get_custom_field_attr(record)
-        hosts = [
-            next((v for v in f.value), None) if isinstance(f.value, list) else f.value
-            for f in record.custom if getattr(f, fld_attr) == 'cmdr:host'
-        ]
+    new_public_ssh_key = new_pk.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH, format=serialization.PublicFormat.OpenSSH).decode()
 
-        if key_file_name:
-            old_public_key = ssh_public_key
+    optional_port = RecordMixin.get_custom_field(record, 'cmdr:port')
+    if optional_port:
+        try:
+            port = int(optional_port)
+        except ValueError:
+            logging.info('SSH key plugin: port %s could not be converted to int', optional_port)
+            return False
+    else:
+        port = None
 
+    hosts = []
+    if isinstance(record, vault.PasswordRecord):
+        hosts.extend((x.value for x in record.custom if x.name == 'cmdr:host' and x.value))
+    elif isinstance(record, vault.TypedRecord):
+        for host_field in itertools.chain(record.fields, record.custom):
+            if host_field.type == 'host':
+                host_value = host_field.get_default_value(dict)
+                if isinstance(host_value, dict):
+                    if 'hostName' in host_value:
+                        hostname = host_value['hostName']
+                        if hostname:
+                            hostport = host_value.get('port')
+                            if hostport:
+                                hostname = f'{hostname}:{hostport}'
+                            hosts.append(hostname)
+            elif host_field.type == 'text' and host_field.label == 'cmdr:host':
+                hostname = host_field.get_default_value(str)
+                if hostname:
+                    hosts.append(hostname)
+
+    login = RecordMixin.get_record_field(record, 'login')
+    if len(hosts) > 0 and old_pk and login:
+        old_public_ssh_key = old_pk.public_key().public_bytes(
+            encoding=serialization.Encoding.OpenSSH, format=serialization.PublicFormat.OpenSSH)
+
+        key_unencrypted = old_pk.private_bytes(
+            encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.OpenSSH,
+            encryption_algorithm=serialization.NoEncryption())
+        key_file_name = tempfile.mktemp()
+        keyFile = os.open(key_file_name, os.O_WRONLY | os.O_CREAT, stat.S_IRUSR | stat.S_IWUSR)
+        os.write(keyFile, key_unencrypted)
+        os.close(keyFile)
+
+        try:
             for host in hosts:
-                get_keys_cmd = [
-                    'ssh', '-i', key_file_name, '-o', 'StrictHostKeyChecking=no', '-p', str(port), f'{user}@{host}',
-                    'cat .ssh/authorized_keys'
-                ]
                 try:
-                    child = subprocess.Popen(
-                        get_keys_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                    )
+                    host, _, dst_port = host.partition(':')
+                    if not dst_port and port:
+                        dst_port = str(port)
+
+                    ssh_command = ['ssh', '-i', key_file_name, '-o', 'StrictHostKeyChecking=no']
+                    if dst_port:
+                        ssh_command.extend(('-p', dst_port))
+                    ssh_command.append(f'{login}@{host}')
+
+                    get_ssh_keys = list(ssh_command)
+                    get_ssh_keys.append('cat .ssh/authorized_keys')
+                    child = subprocess.Popen(get_ssh_keys, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     (out_child, error_child) = child.communicate(timeout=10)
                     if child.poll() == 0:
                         keys = out_child.decode().splitlines()
-                        keys = [l for l in keys if len(l) > 0]
-                        keys = [l for l in keys if l != old_public_key]
-                        keys.append(new_public_key_SSH)
-                        new_authorized_keys = '\n'.join(keys)
+                        keys = [x for x in keys if len(x) > 0 and x != old_public_ssh_key]
+                        keys.append(new_public_ssh_key)
 
-                        update_keys_cmd = [
-                            'ssh', '-i', key_file_name, '-o', 'StrictHostKeyChecking=no', f'{user}@{host}',
-                            f"echo '{new_authorized_keys}' > .ssh/authorized_keys"
-                        ]
-                        child = subprocess.Popen(
-                            update_keys_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                        )
+                        set_ssh_keys = list(ssh_command)
+                        set_ssh_keys.append('echo \'{0}\' > .ssh/authorized_keys'.format('\n'.join(keys)))
+                        child = subprocess.Popen(set_ssh_keys, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         (out_child, error_child) = child.communicate(timeout=10)
 
                     if error_child:
-                        print(f'Host: {host}: Warning: {error_child.decode()}')
+                        logging.warning('Host: %s: Warning: %s', host, error_child.decode())
 
                 except Exception as e:
-                    print(f'Authorized Keys upload to host: {host}: {e}')
-
-        update_custom_text_fields(record, {
-            'cmdr:private_key': new_private_key,
-            'cmdr:rsa_public_key': new_public_key_PEM,
-            'cmdr:ssh_public_key': new_public_key_SSH,
-        })
-        return True
-
-    except Exception as e:
-        logging.error(e)
-        return False
-
-    finally:
-        if key_file_name:
+                    logging.warning('Authorized Keys upload to host: %s: %s', host, str(e))
+        finally:
             os.remove(key_file_name)
+
+    if isinstance(record, vault.PasswordRecord):
+        for cf in record.custom:
+            if cf.name == 'cmdr:private_key':
+                cf.value = new_private_key
+                new_private_key = ''
+            elif cf.name == 'cmdr:ssh_public_key':
+                cf.value = new_public_ssh_key
+                new_public_ssh_key = ''
+            elif cf.name == 'cmdr:rsa_public_key':
+                cf.value = ''
+                if isinstance(new_pk, rsa.RSAPrivateKey):
+                    cf.value = new_pk.public_key().public_bytes(
+                        encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.PKCS1).decode()
+        if new_private_key:
+            record.custom.append(vault.CustomField.new_field('cmdr:private_key', new_private_key))
+        if new_public_ssh_key:
+            record.custom.append(vault.CustomField.new_field('cmdr:ssh_public_key', new_public_ssh_key))
+    elif isinstance(record, vault.TypedRecord):
+        ssh_key_field = record.get_typed_field('keyPair')
+        if ssh_key_field:
+            ssh_key_field.value = [{
+                'privateKey': new_private_key,
+                'publicKey': new_public_ssh_key
+            }]
+            new_private_key = ''
+        else:
+            for cf in record.custom:
+                if cf.label == 'cmdr:private_key':
+                    cf.value = new_private_key
+                    new_private_key = ''
+                elif cf.label == 'cmdr:ssh_public_key':
+                    cf.value = new_public_ssh_key
+        if new_private_key:
+            kpf = vault.TypedField()
+            kpf.type = 'keyPair'
+            kpf.value = [{
+                'privateKey': new_private_key,
+                'publicKey': new_public_ssh_key
+            }]
+
+    return True

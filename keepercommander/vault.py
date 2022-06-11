@@ -132,6 +132,13 @@ class CustomField(object):
         self.value = custom_field.get('value', '')
         self.type = custom_field.get('type', '')
 
+    @classmethod
+    def new_field(cls, name, value):
+        cf = CustomField()
+        cf.type = 'text'
+        cf.name = name
+        cf.value = value
+        return cf
 
 class AttachmentFileThumb:
     def __init__(self, thumb_field=None):      # type: (Optional[dict]) -> None

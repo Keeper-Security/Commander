@@ -91,7 +91,7 @@ class BreachWatch(object):
             if bw_record:
                 data_obj = bw_record.get('data_unencrypted')
                 if data_obj and 'passwords' in data_obj:
-                    password = next((x for x in data_obj['passwords'] if x.get('value') == record.password), None)
+                    password = next((x for x in data_obj['passwords'] if x.get('value', '') == record.password), None)
                     if password:
                         return
                     euid = next((base64.b64decode(x['euid']) for x in data_obj['passwords'] if 'euid' in x), None)
@@ -219,7 +219,7 @@ class BreachWatch(object):
                 bwr = params.breach_watch_records.get(record_uid)
                 data_obj = bwr['data_unencrypted'] if bwr else None
                 if data_obj and 'passwords' in data_obj:
-                    password_dict = next((x for x in data_obj['passwords'] if x.get('value') == record.password), None)
+                    password_dict = next((x for x in data_obj['passwords'] if x.get('value', '') == record.password), None)
             if callback(record, password_dict):
                 yield record, password_dict
 
