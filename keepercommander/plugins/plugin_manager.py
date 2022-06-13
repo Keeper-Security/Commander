@@ -16,6 +16,7 @@ from . import noop
 
 
 REQUIRED_PLUGIN_KWARGS = {
+    'mssql': ['login', 'password'],
     'mysql': ['host', 'login', 'password'],
     'postgresql': ['host', 'login', 'password'],
     'pspasswd': ['login', 'password'],
@@ -24,10 +25,12 @@ REQUIRED_PLUGIN_KWARGS = {
 }
 PORT_TO_PLUGIN = {
     22: 'ssh',
+    1433: 'mssql',
     3306: 'mysql',
     5432: 'postgresql'
 }
 URL_SCHEME_TO_PLUGIN = {
+    'mssql': 'mssql',
     'mysql': 'mysql',
     'postgres': 'postgresql',
     'ssh': 'ssh'
