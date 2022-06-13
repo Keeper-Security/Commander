@@ -89,16 +89,15 @@ def update_custom_text_fields(record, new_field_dict):
 
 
 def update_password(params, record, new_password):
-    record_version = record.get_version()
-    if record_version == 2:
+    if isinstance(record, PasswordRecord):
         record.password = new_password
-    elif record_version == 3:
-        password_field = next((f for f in record.fields if f.type == 'password'), None)
+    elif isinstance(record, TypedRecord):
+        password_field = record.get_typed_field('password')
         if password_field is None:
             logging.warning('Creating new password for record because existing password is not found.')
-            record.fields.append(TypedField({'type': 'password', 'value': [new_password]}))
+            record.custom.append(TypedField({'type': 'password', 'value': [new_password]}))
         else:
-            password_field.value[0] = new_password
+            password_field.value = [new_password]
     else:
         logging.error('Invalid type of record (record version) for rotation update')
         return False
