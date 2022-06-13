@@ -6,7 +6,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2020 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -16,21 +16,22 @@ import logging
 import requests
 import msal     # pip install msal
 
+from ... import vault
+from ...commands.base import RecordMixin
 
-def rotate(record, newpassword):
-    """
-    @type record: Record
-    """
 
-    user_id = record.login # The Azure user_id either as the object ID (GUID) or the user principal name (UPN) of the target user
+def rotate(record, newpassword):   # type: (vault.KeeperRecord, str) -> bool
 
-    tenant_id = record.get("cmdr:azure_tenant_id")
-    client_id = record.get("cmdr:azure_client_id")
-    secret = record.get("cmdr:azure_secret")
+    # The Azure user_id either as the object ID (GUID) or the user principal name (UPN) of the target user
+    user_id = RecordMixin.get_record_field(record, 'login')
+
+    tenant_id = RecordMixin.get_custom_field(record, "cmdr:azure_tenant_id")
+    client_id = RecordMixin.get_custom_field(record, "cmdr:azure_client_id")
+    secret = RecordMixin.get_custom_field(record, "cmdr:azure_secret")
 
     users_endpoint = 'https://graph.microsoft.com/v1.0/users'
     default_scope = 'https://graph.microsoft.com/.default'
-    authority = 'https://login.microsoftonline.com/%s' % tenant_id
+    authority = f'https://login.microsoftonline.com/{tenant_id}'
 
     try:
 
@@ -41,7 +42,7 @@ def rotate(record, newpassword):
             client_credential=secret,
             # token_cache=...  # Default cache is in memory only.
             # To learn how to use SerializableTokenCache from
-            #   https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
+            # https://msal-python.rtfd.io/en/latest/#msal.SerializableTokenCache
         )
 
         # Get access token
@@ -75,7 +76,7 @@ def rotate(record, newpassword):
             }
 
             usr_pwd_update_resp = requests.patch(
-                '%s/%s' % (users_endpoint, user_id),
+                f'{users_endpoint}/{user_id}',
                 headers={
                     'Authorization': 'Bearer ' + access_token,
                     'Content-Type': 'application/json'
@@ -87,9 +88,6 @@ def rotate(record, newpassword):
 
             if resp_status_code == 204:
                 logging.info("Password successfully changed in Azure")
-
-                record.password = newpassword
-
                 return True
 
             elif resp_status_code == 403:
