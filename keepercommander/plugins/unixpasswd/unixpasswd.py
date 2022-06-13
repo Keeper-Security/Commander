@@ -14,33 +14,39 @@
 import pexpect
 import logging
 
+from ...commands.base import RecordMixin
 
 """Commander Plugin for Unix Passwd Command
    Dependencies: 
        pip3 install pexpect
 """
 
-def rotate(record, newpassword):
-    user = record.login
-    oldpassword = record.password
-    prompt = '.*\$ '
+PasswordOld = ['[Oo]ld', '[Cc]urrent']
+PasswordNew = ['[Nn]ew']
+PasswordAgain = ['[Rr]etype']
 
-    p = pexpect.spawn('bash', timeout=300)
-    i = p.expect(prompt)
+
+def rotate(record, newpassword):
+    user = RecordMixin.get_record_field(record, 'login')
+    oldpassword = RecordMixin.get_record_field(record, 'password')
+
+    prompt = r'.*\$ '
+
+    p = pexpect.spawn('bash', timeout=5)
+    p.expect(prompt)
     logging.info('Connecting to super user %s', user)
-    p.sendline('su - %s' % (user))
-    i = p.expect('[Pp]assword')
+    p.sendline(f'su - {user}')
+    p.expect('[Pp]assword')
     p.sendline(oldpassword)
-    i = p.expect(prompt)
+    p.expect(prompt)
     logging.info('Changing password for %s', user)
     p.sendline('passwd')
-    i = p.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
-    l = p.before
-    if i == 0 or i == 1:
+    i = p.expect(PasswordOld + PasswordNew)
+    if i < len(PasswordOld):
         p.sendline(oldpassword)
-        i = p.expect('[Nn]ew [Pp]assword')
+        p.expect(PasswordNew)
     p.sendline(newpassword)
-    i = p.expect("[Rr]etype [Nn]ew [Pp]assword:")
+    p.expect(PasswordAgain)
     p.sendline(newpassword)
 
     i = p.expect(['.try again', '.authentication', '.failure', prompt])
@@ -53,7 +59,6 @@ def rotate(record, newpassword):
         logging.info('General failure in password update')
     elif i == 3:
         logging.info('Password changed successfully')
-        record.password = newpassword
         return True
 
     return False
