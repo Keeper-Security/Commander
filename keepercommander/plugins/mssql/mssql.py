@@ -6,10 +6,10 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
+import logging
 import pymssql
 
 """Commander Plugin for Microsoft SQL Server
@@ -17,41 +17,57 @@ import pymssql
        pip3 install pymssql
 """
 
-def rotate(record, newpassword):
-    """ Grab any required fields from the record """
-    user = record.login
-    oldpassword = record.password
 
-    result = False
+class Rotator:
+    def __init__(self, login, password, host=None, port=1433, db=None, **kwargs):
+        self.host = host
+        self.port = port
+        self.login = login
+        self.password = password
+        self.db = db
 
-    host = record.get('cmdr:host')
-    db = record.get('cmdr:db')
+    def rotate_start_msg(self):
+        """Display msg before starting rotation"""
+        host_msg = 'on default host' if self.host is None else f'on host "{self.host}"'
+        db_msg = '...' if self.db is None else f' to connect to db "{self.db}"...'
+        logging.info(
+            f'Rotating with Microsoft SQL plugin {host_msg} and port "{self.port}" using login "{self.login}"{db_msg}'
+        )
 
-    connection = ''
+    def revert(self, record, new_password):
+        """Revert rotation of a Microsoft SQL password"""
+        self.rotate(record, new_password, revert=True)
 
-    try:
-        # Connect to the database
-        connection = pymssql.connect(server=host,
-                                     user=user,
-                                     password=oldpassword,
-                                     database=db)
+    def rotate(self, record, new_password, revert=False):
+        """Rotate a Microsoft SQL password"""
+        if revert:
+            old_password = new_password
+            new_password = self.password
+        else:
+            old_password = self.password
 
-        with connection.cursor() as cursor:
-            print("Connected to %s"%(host))
-            # Create a new record
-            sql = "ALTER LOGIN %s WITH PASSWORD = '%s';" % (user, newpassword)
-            cursor.execute(sql)
+        user = self.login
+        kwargs = {'user': user, 'password': old_password}
+        if self.host:
+            kwargs['server'] = self.host
+        if self.db:
+            kwargs['database'] = self.db
 
-        # connection is not autocommit by default. So you must commit to save
-        # your changes.
-        connection.commit()
-
-        record.password = newpassword
-        result = True
-    except Exception as ex:
-        print("Error during connection to Microsoft SQL server: %s" % ex)
-    finally:
-        if connection:
-            connection.close()
-
-    return result 
+        connection = ''
+        result = False
+        try:
+            connection = pymssql.connect(**kwargs)
+            with connection.cursor() as cursor:
+                host = 'default host' if self.host is None else f'"{self.host}"'
+                logging.debug(f'Connected to {host}')
+                sql = f"ALTER LOGIN {user} WITH PASSWORD = '{new_password}';"
+                cursor.execute(sql)
+            # connection is not autocommit by default. So you must commit to save your changes.
+            connection.commit()
+            result = True
+        except Exception as e:
+            logging.error(f'Error during connection to Microsoft SQL server: {e}')
+        finally:
+            if connection:
+                connection.close()
+        return result
