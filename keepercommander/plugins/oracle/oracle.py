@@ -32,10 +32,15 @@ class Rotator:
 
     def rotate_start_msg(self):
         """Display msg before starting rotation"""
-        port_msg = '' if self.port is None else f' and on port "{self.port}"'
-        db_msg = '...' if self.db is None else f' to connect to db "{self.db}"...'
+        port_msg = f' and on port "{self.port}"' if self.port else ''
+        if self.dsn:
+            host_msg = f'on dsn "{self.dsn}"'
+            db_msg = ''
+        else:
+            host_msg = f'on host "{self.host}"'
+            db_msg = f' to connect to db "{self.db}"' if self.db else ''
         logging.info(
-            f'Rotating with Oracle plugin on host "{self.host}"{port_msg} using login "{self.login}"{db_msg}'
+            f'Rotating with Oracle plugin {host_msg}{port_msg} using login "{self.login}"{db_msg}...'
         )
 
     @staticmethod
@@ -56,7 +61,7 @@ class Rotator:
             old_password = self.password
 
         user = self.login
-        dsn = f'{self.host}/{self.db}' if self.dsn is None else self.dsn
+        dsn = self.dsn if self.dsn else f'{self.host}/{self.db}'
         kwargs = {'user': user, 'password': old_password, 'dsn': dsn}
         if self.port:
             kwargs['port'] = self.port
