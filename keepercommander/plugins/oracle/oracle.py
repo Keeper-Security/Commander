@@ -6,55 +6,78 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2015 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
-import cx_Oracle
-
-# cx_Oracle.init_oracle_client(lib_dir="/Users/[username]]/Downloads/instantclient_19_8") # To initialize
+import logging
+import oracledb
 
 """Commander Plugin for Oracle Database Server
    Dependencies: 
-       pip3 install cx_Oracle
+       pip3 install oracledb
 """
 
-def rotate(record, newpassword):
-    """ Grab any required fields from the record """
-    user = record.login
-    oldpassword = record.password
 
-    result = False
+ORACLE_MAX_PASSWORD_LENGTH = 30
 
-    host = ""
 
-    if record.get('cmdr:dsn'):
-        dsn_str = record.get('cmdr:dsn')
-    else:
-        host = record.get('cmdr:host')
-        db = record.get('cmdr:db')
-        dsn_str = host + '/' + db
+class Rotator:
+    def __init__(self, login, password, host='localhost', port=None, db='', dsn=None, **kwargs):
+        self.host = host
+        self.port = port
+        self.login = login
+        self.password = password
+        self.db = db
+        self.dsn = dsn
 
-    connection = ''
+    def rotate_start_msg(self):
+        """Display msg before starting rotation"""
+        port_msg = f' and on port "{self.port}"' if self.port else ''
+        if self.dsn:
+            host_msg = f'on dsn "{self.dsn}"'
+            db_msg = ''
+        else:
+            host_msg = f'on host "{self.host}"'
+            db_msg = f' to connect to db "{self.db}"' if self.db else ''
+        logging.info(
+            f'Rotating with Oracle plugin {host_msg}{port_msg} using login "{self.login}"{db_msg}...'
+        )
 
-    try:
-        # Connect to the database
-        connection = cx_Oracle.connect(dsn=dsn_str,
-                                     user=user,
-                                     password=oldpassword)
+    @staticmethod
+    def adjust(new_password):
+        # Oracle password has a maximum length
+        return new_password[:ORACLE_MAX_PASSWORD_LENGTH]
 
-        with connection.cursor() as cursor:
-            print("Connected to %s" % (dsn_str if record.get('cmdr:dsn') else host))
-            # Create a new record
-            sql = 'ALTER USER %s IDENTIFIED BY "%s" ACCOUNT UNLOCK' % (user, newpassword)
-            cursor.execute(sql)
+    def revert(self, record, new_password):
+        """Revert rotation of an Oracle database password"""
+        self.rotate(record, new_password, revert=True)
 
-        record.password = newpassword
-        result = True
-    except Exception as e:
-        print("Error during connection to Oracle server: %s", e)
-    finally:
-        if connection:
-            connection.close()
+    def rotate(self, record, new_password, revert=False):
+        """Rotate an Oracle database password"""
+        if revert:
+            old_password = new_password
+            new_password = self.password
+        else:
+            old_password = self.password
 
-    return result
+        user = self.login
+        dsn = self.dsn if self.dsn else f'{self.host}/{self.db}'
+        kwargs = {'user': user, 'password': old_password, 'dsn': dsn}
+        if self.port:
+            kwargs['port'] = self.port
+
+        connection = ''
+        result = False
+        try:
+            connection = oracledb.connect(**kwargs)
+            with connection.cursor() as cursor:
+                logging.debug(f'Connected to {dsn}')
+                sql = f'ALTER USER {user} IDENTIFIED BY "{new_password}" ACCOUNT UNLOCK'
+                cursor.execute(sql)
+            result = True
+        except Exception as e:
+            logging.error(f'Error during connection to Oracle server: {e}')
+        finally:
+            if connection:
+                connection.close()
+        return result
