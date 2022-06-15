@@ -439,8 +439,8 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
                     data.update(json.loads(data_json.decode('utf-8')))
                 except Exception as e:
                     logging.warning('Decrypt User data error: %s', e)
-        elif 'full_name' in proto_entity:
-            data['displayname'] = proto_entity['full_name']
+        elif 'full_name' in keeper_entity:
+            data['displayname'] = keeper_entity['full_name']
         keeper_entity['data'] = data
 
     def get_keeper_entity_id(self, entity):  # type: (dict) -> any
