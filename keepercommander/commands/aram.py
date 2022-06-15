@@ -112,7 +112,15 @@ aging_report_parser.add_argument('--username', dest='username', action='store',
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
-
+action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.')
+action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
+                                  choices=['no-logon', 'no-update', 'locked'], default='no-logon',
+                                  help='user status to report on')
+action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
+                                  help='number of days since event of interest (e.g., login, record add/update, lock)')
+action_report_parser.add_argument('--output', dest='output', action='store', help='path to resulting output file')
+action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+                                  default='table', help='output format.')
 syslog_templates = None  # type: Optional[List[str]]
 
 
@@ -1510,3 +1518,61 @@ class AgingReportCommand(Command):
                 connection.executemany('update or ignore audit_data set modified = ? where record_uid = ?',
                                        get_password_data())
                 connection.commit()
+
+
+class ActionReportCommand(EnterpriseCommand):
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return action_report_parser
+
+    def execute(self, params, **kwargs):
+        def get_request(days_since=30, event_types=None, username_field='username'):
+            days_since = 30 if not isinstance(days_since, int) else days_since
+            dt = datetime.datetime.now() - datetime.timedelta(days=days_since)
+            rq = {
+                'command': 'get_audit_event_reports',
+                'report_type': 'span',
+                'scope': 'enterprise',
+                'columns': [username_field, 'audit_event_type'],
+                'filter': {
+                    'audit_event_type': ['login'] if event_types is None else event_types,
+                    'created': {'min': int(dt.timestamp())}
+                },
+                'aggregate': ['last_created'],
+                'limit': 1000,
+                'group_by': ['last_created', 'audit_event_type', username_field]
+            }
+            return rq
+
+        def get_events(days_since, types, username_field='username'):
+            rq = get_request(days_since, types, username_field)
+            rs = api.communicate(params, rq)
+            events = rs['audit_event_overview_report_rows']
+            return events
+
+        def get_no_action_users(candidates, days_since, event_types, name_key='username'):
+            events = get_events(days_since, event_types, name_key)
+            excluded = [event[name_key] for event in events]
+            result = [user['username'] for user in candidates if user['username'] not in excluded]
+            return result
+
+        users = params.enterprise['users']
+        active = [user for user in users if user['status'] == 'active']
+        target_status = kwargs['target_user_status']
+        days = kwargs['days_since']
+        if days is None:
+            days = 90 if target_status == 'locked' else 30
+
+        args_by_status = {
+            'no-logon': [active, days, ['login']],
+            'no-update': [active, days, ['record_add', 'record_update']],
+            'locked': [[user for user in active if user['lock']], days, ['lock_user'], 'to_username']
+        }
+        args = args_by_status[target_status]
+        usernames = get_no_action_users(*args)
+
+        title = f'Users With "{target_status}" Status for at Least {days} day(s):\nCount: {len(usernames)}'
+        filepath = kwargs.get('output')
+        fmt = kwargs.get('format')
+        formatted = [[name] for name in usernames]
+        return dump_report_data(data=formatted, headers=['username'], title=title, fmt=fmt, filename=filepath)
+

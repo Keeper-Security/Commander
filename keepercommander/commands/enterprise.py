@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from .aram import ActionReportCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise_common import EnterpriseCommand
 from .. import api, rest_api,  crypto, utils, constants
@@ -69,6 +70,7 @@ def register_commands(commands):
     commands['aging-report'] = aram.AgingReportCommand()
     commands['security-audit-report'] = SecurityAuditReportCommand()
     commands['user-report'] = UserReportCommand()
+    commands['action-report'] = ActionReportCommand()
 
 
 def register_command_info(aliases, command_info):
