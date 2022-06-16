@@ -1532,14 +1532,13 @@ class ActionReportCommand(EnterpriseCommand):
                 'command': 'get_audit_event_reports',
                 'report_type': 'span',
                 'scope': 'enterprise',
-                'columns': [username_field, 'audit_event_type'],
+                'columns': [username_field],
                 'filter': {
                     'audit_event_type': ['login'] if event_types is None else event_types,
                     'created': {'min': int(dt.timestamp())}
                 },
                 'aggregate': ['last_created'],
                 'limit': 1000,
-                'group_by': ['last_created', 'audit_event_type', username_field]
             }
             return rq
 
