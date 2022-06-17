@@ -32,12 +32,12 @@ class AWSRotator:
 
     def set_iam_session(self):
         """Set session and iam properties for instance"""
-        self.session = set_session(self.aws_profile)
         try:
+            self.session = set_session(self.aws_profile)
             self.iam = boto3.client('iam')
         except Exception as e:
-            logging.error(f'Login failed using {self.profile_msg}: {e}')
+            logging.error(f'Unable to create AWS session using {self.profile_msg}: {e}')
             return False
         else:
-            logging.debug(f'Login successful using {self.profile_msg}')
+            logging.debug(f'Created AWS session using {self.profile_msg}')
             return True
