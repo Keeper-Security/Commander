@@ -168,10 +168,8 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
     if plugin_name is None and len(cmdr_kwargs) > 0:
         rotate_value = cmdr_kwargs.get(f'plugin:{rotate_name}') if rotate_name else None
         plugin_name = rotate_value if rotate_value else cmdr_kwargs.get('plugin')
-        plugin_kwargs = {k: v for k, v in cmdr_kwargs.items() if ':' not in v}
-    else:
-        plugin_kwargs = {}
 
+    plugin_kwargs = {k: v for k, v in cmdr_kwargs.items() if ':' not in v}
     plugin_kwargs.update({
         k[1:-1]: v for k, v in record.enumerate_fields() if k in ('(login)', '(password)', '(url)') and v
     })
