@@ -17,6 +17,7 @@ from . import noop
 
 REQUIRED_PLUGIN_KWARGS = {
     'awskey': ['login', 'aws_key_id'],
+    'awspswd': ['login'],
     'mssql': ['login', 'password'],
     'mysql': ['host', 'login', 'password'],
     'oracle': ['login', 'password'],
