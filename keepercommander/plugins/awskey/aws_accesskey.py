@@ -143,14 +143,25 @@ class Rotator:
             )
             return True
 
+    def set_session(self):
+        """Make sure any existing session has the same AWS key id or start new session"""
+        default_session = boto3.DEFAULT_SESSION
+        if default_session:
+            session_key_id = default_session.get_credentials().access_key
+            if session_key_id == self.aws_key_id:
+                # Use existing session
+                return
+        # Create new session
+        session_kwargs = {}
+        if self.aws_profile:
+            session_kwargs['profile_name'] = self.aws_profile
+        boto3.setup_default_session(**session_kwargs)
+
     def rotate(self, record, new_password):
         """Rotate an AWS access key"""
         profile = self.aws_profile
+        self.set_session()
         try:
-            session_kwargs = {}
-            if profile:
-                session_kwargs['profile_name'] = profile
-            boto3.setup_default_session(**session_kwargs)
             self.iam = boto3.client('iam')
         except Exception as e:
             logging.error(f'Login failed using aws profile "{profile if profile else "default"}": {e}')
