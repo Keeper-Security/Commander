@@ -144,14 +144,7 @@ class Rotator:
             return True
 
     def set_session(self):
-        """Make sure any existing session has the same AWS key id or start new session"""
-        default_session = boto3.DEFAULT_SESSION
-        if default_session:
-            session_key_id = default_session.get_credentials().access_key
-            if session_key_id == self.aws_key_id:
-                # Use existing session
-                return
-        # Create new session
+        """Create new boto3 session"""
         session_kwargs = {}
         if self.aws_profile:
             session_kwargs['profile_name'] = self.aws_profile
