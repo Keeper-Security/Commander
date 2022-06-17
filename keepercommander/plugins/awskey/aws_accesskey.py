@@ -169,8 +169,19 @@ class Rotator:
         else:
             logging.debug(f'Login successful using aws profile "{profile if profile else "default"}"')
 
+        list_response = None
         try:
             list_response = self.iam.list_access_keys(UserName=self.login)
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') == 'InvalidClientTokenId':
+                logging.error(
+                    f'Unable to connect with AWS key "{self.aws_key_id}" for user "{self.login}".'
+                    f' If this AWS key was recently rotated, a delay is needed before reconnecting.'
+                )
+                return False
+            else:
+                logging.error(f'Error listing existing AWS keys for user "{self.login}": {e}')
+                return False
         except Exception as e:
             logging.error(f'Error listing existing AWS keys for user "{self.login}": {e}')
             return False
