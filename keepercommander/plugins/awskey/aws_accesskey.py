@@ -14,9 +14,9 @@ import shutil
 from configparser import RawConfigParser
 from os.path import expandvars, expanduser, isfile
 
-import boto3
 from botocore.exceptions import ClientError
 
+from ..aws_common import AWSRotator, AWS_INVALID_CLIENT_MSG
 from ..commands import update_custom_text_fields
 
 """Commander Plugin for Rotating AWS Access Keys
@@ -33,17 +33,16 @@ AWS_NEW_KEY_ID_FIELD = 'cmdr:aws_key_id'
 AWS_NEW_SECRET_FIELD = 'cmdr:aws_key_secret'
 
 
-class Rotator:
+class Rotator(AWSRotator):
     def __init__(self, login, aws_key_id, aws_key_secret=None, aws_profile=None, aws_sync_profile=None, **kwargs):
         self.login = login
         self.aws_key_id = aws_key_id
         self.aws_key_secret = aws_key_secret
-        self.aws_profile = aws_profile
         self.aws_sync_profile = aws_sync_profile
+        super().__init__(aws_profile)
 
         self.new_key_id = None
         self.new_secret = None
-        self.iam = None
         self.old_key_deleted = False
 
     def rotate_start_msg(self):
@@ -106,9 +105,8 @@ class Rotator:
 
     def sync_with_creds_file(self):
         sync_profile = self.aws_sync_profile
-        session = boto3._get_default_session()
-        botocore_session = session._session
-        credential_method = session.get_credentials().method
+        botocore_session = self.session._session
+        credential_method = self.session.get_credentials().method
         if credential_method == AWS_SYNC_CREDENTIAL_METHOD:
             providers = botocore_session._components.get_component('credential_provider').providers
             credential_provider = next((p for p in providers if p.METHOD == credential_method), None)
@@ -143,34 +141,16 @@ class Rotator:
             )
             return True
 
-    def set_session(self):
-        """Create new boto3 session"""
-        session_kwargs = {}
-        if self.aws_profile:
-            session_kwargs['profile_name'] = self.aws_profile
-        boto3.setup_default_session(**session_kwargs)
-
     def rotate(self, record, new_password):
         """Rotate an AWS access key"""
-        profile = self.aws_profile
-        self.set_session()
-        try:
-            self.iam = boto3.client('iam')
-        except Exception as e:
-            logging.error(f'Login failed using aws profile "{profile if profile else "default"}": {e}')
+        if not self.set_iam_session():
             return False
-        else:
-            logging.debug(f'Login successful using aws profile "{profile if profile else "default"}"')
 
-        list_response = None
         try:
             list_response = self.iam.list_access_keys(UserName=self.login)
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') == 'InvalidClientTokenId':
-                logging.error(
-                    f'Unable to connect with AWS key "{self.aws_key_id}" for user "{self.login}".'
-                    f' If this AWS key was recently rotated, a delay is needed before reconnecting.'
-                )
+                logging.error(f'Unable to connect using {self.profile_msg}. {AWS_INVALID_CLIENT_MSG}')
                 return False
             else:
                 logging.error(f'Error listing existing AWS keys for user "{self.login}": {e}')
