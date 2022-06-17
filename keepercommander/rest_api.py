@@ -13,6 +13,7 @@ import requests
 import os
 import json
 import logging
+import time
 
 from typing import Union, Dict
 
@@ -175,6 +176,12 @@ def execute_rest(context, endpoint, payload):
                             context.server_key_id = server_key_id
                             run_request = True
                             continue
+                elif rs.status_code == 403:
+                    if failure.get('error') == 'throttled':
+                        logging.info('Throttled. sleeping for 10 seconds')
+                        time.sleep(10)
+                        run_request = True
+                        continue
                 return failure
             else:
                 logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
