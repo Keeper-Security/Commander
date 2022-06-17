@@ -10,20 +10,22 @@
 #
 
 import argparse
+import datetime
+import io
+import itertools
 import logging
 import os
 import socket
-import datetime
 import threading
-from typing import Optional, List, Callable, Tuple, Any
-
 import time
+from typing import Optional, List, Callable, Tuple, Any, Union
+
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, padding, utils
 
-from .base import GroupCommand, Command, dump_report_data
-from .. import vault
+from .base import GroupCommand, Command, dump_report_data, user_choice
+from .. import vault, attachment
 from ..params import KeeperParams
 
 ssh_agent_info_parser = argparse.ArgumentParser(prog='ssh-agent info', description='Display ssh agent status')
@@ -104,7 +106,7 @@ def delete_ssh_key(delete_request):
         with ConnectSshAgent() as fd:
             recv_payload = fd.send(delete_request)
             if recv_payload and recv_payload[0] == SSH_AGENT_FAILURE:
-                logging.info('Failed to delete added ssh key')
+                logging.debug('Failed to delete added ssh key')
     except Exception as e:
         logging.error(e)
 
@@ -139,10 +141,146 @@ def ssh_agent_get_next_value(buffer, position):   # type: (bytes, int) -> Tuple[
 def load_private_key(private_key_pem, passphrase):    # type: (str, str) -> Any
     password = passphrase.encode() if passphrase else None
     header, _, _ = private_key_pem.partition('\n')
-    if 'BEGIN OPENSSH PRIVATE KEY' in header:
-        return serialization.load_ssh_private_key(private_key_pem.encode(), password=password)
+    try:
+        if 'BEGIN OPENSSH PRIVATE KEY' in header:
+            return serialization.load_ssh_private_key(private_key_pem.encode(), password=password)
+        else:
+            return serialization.load_pem_private_key(private_key_pem.encode(), password=password)
+    except TypeError as e:
+        try:
+            if 'BEGIN OPENSSH PRIVATE KEY' in header:
+                return serialization.load_ssh_private_key(private_key_pem.encode(), password=None)
+            else:
+                return serialization.load_pem_private_key(private_key_pem.encode(), password=None)
+        except:
+            raise e
+
+
+def is_private_key(header):   # type: (str) -> bool
+    header = header.rstrip('\r\n')
+    header = header.strip('-')
+    if header.startswith('BEGIN') and header.endswith('PRIVATE KEY'):
+        return True
+    return False
+
+Key_Prefix = ['id_']
+Key_Suffix = ['.key', '.pem']
+Key_Suffix_Exclude = ['.pub']
+def is_private_key_name(name):     # type: (str) -> bool
+    if not name:
+        return False
+    if isinstance(name, str):
+        name = name.lower()
+        if any(True for x in Key_Suffix_Exclude if name.endswith(x)):
+            return False
+        if any(True for x in Key_Suffix if name.endswith(x)):
+            return True
+        if any(True for x in Key_Prefix if name.startswith(x)):
+            return True
+
+    return False
+
+
+def try_extract_private_key(params, record_or_uid):
+    # type: (KeeperParams, Union[str, vault.KeeperRecord]) -> Optional[Tuple[str, str]]
+    if isinstance(record_or_uid, vault.KeeperRecord):
+        record = record_or_uid
+    elif isinstance(record_or_uid, str):
+        record = vault.KeeperRecord.load(params, record_or_uid)
+        if not record:
+            return
     else:
-        return serialization.load_pem_private_key(private_key_pem.encode(), password=password)
+        return
+
+    private_key = ''
+    passphrase = ''
+
+    # check keyPair field
+    if isinstance(record, vault.TypedRecord):
+        key_field = record.get_typed_field('keyPair')
+        if key_field:
+            key_pair = key_field.get_default_value(value_type=dict)
+            if key_pair:
+                private_key = key_pair.get('privateKey')
+
+    # check notes field
+    if not private_key:
+        if isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
+            if 444 < len(record.notes) < 4000:
+                header, _, _ = record.notes.partition('\n')
+                if is_private_key(header):
+                    private_key = record.notes
+
+    # check custom fields
+    if not private_key:
+        if isinstance(record, vault.TypedRecord):
+            try_values = (x.get_default_value() for x in itertools.chain(record.fields, record.custom) if x.type in ('text', 'multiline', 'secret', 'note'))
+            for value in (x for x in try_values if x):
+                if isinstance(value, str) and 444 < len(value) < 4000:
+                    header, _, _ = value.partition('\n')
+                    if is_private_key(header):
+                        private_key = value
+                        break
+        elif isinstance(record, vault.PasswordRecord):
+            for value in (x.value for x in record.custom if x.value):
+                if isinstance(value, str) and 444 < len(value) < 4000:
+                    header, _, _ = value.partition('\n')
+                    if is_private_key(header):
+                        private_key = value
+                        break
+
+    # check for a single attachment
+    if not private_key:
+        download_rq = None
+        if isinstance(record, vault.TypedRecord):
+            file_refs = record.get_typed_field('fileRef')
+            if file_refs and isinstance(file_refs.value, list):
+                key_file_uids = []
+                for file_uid in file_refs.value:
+                    file_record = vault.KeeperRecord.load(params, file_uid)
+                    if isinstance(file_record, vault.FileRecord):
+                        names = [file_record.title]
+                        if file_record.name and file_record.name != file_record.title:
+                            names.append(file_record.name)
+                        if any(True for x in names if is_private_key_name(x)):
+                            if 444 < file_record.size < 4000:
+                                key_file_uids.append(file_uid)
+                if len(key_file_uids) == 1:
+                    download_rq = next(attachment.prepare_attachment_download(params, key_file_uids[0]), None)
+        elif isinstance(record, vault.PasswordRecord):
+            key_attachment_ids = []
+            if record.attachments:
+                for atta in record.attachments:
+                    names = []
+                    if atta.title:
+                        names.append(atta.title)
+                    if atta.name and atta.title != atta.name:
+                        names.append(atta.name)
+                    if any(True for x in names if is_private_key_name(x)):
+                        if 444 < atta.size < 4000:
+                            key_attachment_ids.append(atta.id)
+            if len(key_attachment_ids) == 1:
+                download_rq = next(attachment.prepare_attachment_download(params, record.record_uid, key_attachment_ids[0]), None)
+        if download_rq:
+            try:
+                with io.BytesIO() as b:
+                    download_rq.download_to_stream(params, b)
+                    text = b.getvalue().decode('ascii')
+                    header, _, _ = text.partition('\n')
+                    if is_private_key(header):
+                        private_key = text
+            except:
+                pass
+
+    if isinstance(record, vault.PasswordRecord):
+        passphrase = record.password
+    elif isinstance(record, vault.TypedRecord):
+        password_field = record.get_typed_field('password')
+        if password_field:
+            passphrase = password_field.get_default_value(str)
+
+    if private_key:
+        return private_key, passphrase
 
 
 def add_ssh_key(private_key_pem, passphrase, key_name):   # type: (str, str, str) -> Optional[Callable]
@@ -475,6 +613,7 @@ class SshAgentContext(logging.Handler):
         if os.path.exists(self.path):
             os.remove(self.path)
 
+        logging.info('To start using SSH Agent set the SSH_AUTH_SOCK environment variable in your Terminal')
         logging.info('SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;', self.path)
 
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -555,68 +694,60 @@ class SshAgentContext(logging.Handler):
 
     def load_private_keys(self, params):    # type: (KeeperParams) -> None
         for record_uid in params.record_cache:
+            key = try_extract_private_key(params, record_uid)
+            if not key:
+                continue
+
             record = vault.KeeperRecord.load(params, record_uid)
-            if isinstance(record, vault.TypedRecord):
-                key_field = record.get_typed_field('keyPair')
-                if not key_field:
+            private_key_pem, passphrase = key
+            try:
+                private_key = load_private_key(private_key_pem, passphrase)
+                key = SshAgentKey()
+                key.private_key = private_key
+                key.comment = record.title
+                key.record_uid = record.record_uid
+                if isinstance(private_key, rsa.RSAPrivateKey):
+                    key.key_type = 'ssh-rsa'
+                    public_numbers = private_key.public_key().public_numbers()
+                    key_blob = ssh_agent_encode_str(key.key_type)
+                    key_blob += ssh_agent_encode_long(public_numbers.e)
+                    key_blob += ssh_agent_encode_long(public_numbers.n)
+                    key.key_blob = key_blob
+
+                elif isinstance(private_key, ec.EllipticCurvePrivateKey):
+                    curve_name = 'nistp381' if private_key.curve.name == 'secp384r1' else \
+                        'nistp521' if private_key.curve.name == 'secp521r1' else \
+                            'nistp256' if private_key.curve.name == 'secp256r1' else ''
+                    if not curve_name:
+                        raise ValueError(f'EC curve is not supported {private_key.curve.name}')
+                    key.key_type = f'ecdsa-sha2-{curve_name}'
+                    public_key_bytes = private_key.public_key().public_bytes(
+                        encoding=serialization.Encoding.X962, format=serialization.PublicFormat.UncompressedPoint)
+                    key_blob = ssh_agent_encode_str(key.key_type)
+                    key_blob += ssh_agent_encode_str(curve_name)
+                    key_blob += ssh_agent_encode_bytes(public_key_bytes)
+                    key.key_blob = key_blob
+
+                elif isinstance(private_key, ed25519.Ed25519PrivateKey):
+                    key.key_type = 'ssh-ed25519'
+                    public_key_bytes = private_key.public_key().public_bytes(
+                        encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+                    key_blob = ssh_agent_encode_str(key.key_type)
+                    key_blob += ssh_agent_encode_bytes(public_key_bytes)
+                    key.key_blob = key_blob
+
+                else:
+                    self._logger.warning('Record \"%s\" [%s]. Not supported private key', record.title, record.record_uid)
                     continue
-                key_pair = key_field.get_default_value(value_type=dict)
-                if not key_pair:
-                    continue
-                private_key = key_pair.get('privateKey')
-                if not private_key:
-                    continue
-                passphrase = None
-                password_field = record.get_typed_field('password', label='passphrase')
-                if password_field:
-                    passphrase = password_field.get_default_value(str)
-                try:
-                    private_key = load_private_key(private_key, passphrase)
-                    key = SshAgentKey()
-                    key.private_key = private_key
-                    key.comment = record.title
-                    key.record_uid = record.record_uid
-                    if isinstance(private_key, rsa.RSAPrivateKey):
-                        key.key_type = 'ssh-rsa'
-                        public_numbers = private_key.public_key().public_numbers()
-                        key_blob = ssh_agent_encode_str(key.key_type)
-                        key_blob += ssh_agent_encode_long(public_numbers.e)
-                        key_blob += ssh_agent_encode_long(public_numbers.n)
-                        key.key_blob = key_blob
-                        self._logger.info('Record \"%s\" [%s]. RSA key loaded', record.title, record.record_uid)
-                        self.keys.append(key)
 
-                    elif isinstance(private_key, ec.EllipticCurvePrivateKey):
-                        curve_name = 'nistp381' if private_key.curve.name == 'secp384r1' else \
-                            'nistp521' if private_key.curve.name == 'secp521r1' else \
-                                'nistp256' if private_key.curve.name == 'secp256r1' else ''
-                        if not curve_name:
-                            raise ValueError(f'EC curve is not supported {private_key.curve.name}')
-                        key.key_type = f'ecdsa-sha2-{curve_name}'
-                        public_key_bytes = private_key.public_key().public_bytes(
-                            encoding=serialization.Encoding.X962, format=serialization.PublicFormat.UncompressedPoint)
-                        key_blob = ssh_agent_encode_str(key.key_type)
-                        key_blob += ssh_agent_encode_str(curve_name)
-                        key_blob += ssh_agent_encode_bytes(public_key_bytes)
-                        key.key_blob = key_blob
-                        self._logger.info('Record \"%s\" [%s]. EC key loaded', record.title, record.record_uid)
-                        self.keys.append(key)
+                if any(True for x in self.keys if x.key_blob == key.key_blob):
+                    self._logger.info('Record \"%s\" [%s]. Key already loaded', record.title, record.record_uid)
+                else:
+                    self._logger.info('Record \"%s\" [%s]. \"%s\" key loaded', record.title, record.record_uid, key.key_type)
+                    self.keys.append(key)
 
-                    elif isinstance(private_key, ed25519.Ed25519PrivateKey):
-                        key.key_type = 'ssh-ed25519'
-                        public_key_bytes = private_key.public_key().public_bytes(
-                            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
-                        key_blob = ssh_agent_encode_str(key.key_type)
-                        key_blob += ssh_agent_encode_bytes(public_key_bytes)
-                        key.key_blob = key_blob
-                        self._logger.info('Record \"%s\" [%s]. ED25519 key loaded', record.title, record.record_uid)
-                        self.keys.append(key)
-
-                    else:
-                        self._logger.warning('Record \"%s\" [%s]. Not supported private key', record.title, record.record_uid)
-
-                except Exception as e:
-                    self._logger.error('Record \"%s\" [%s]. Load private key error: %s', record.title, record.record_uid, e)
+            except Exception as e:
+                self._logger.error('Record \"%s\" [%s]. Load private key error: %s', record.title, record.record_uid, e)
 
 
 class SshAgentCommand(GroupCommand):
@@ -653,6 +784,33 @@ class SshAgentStartCommand(Command):
         params.ssh_agent.keys = [x for x in params.ssh_agent.keys if x.record_uid]
         params.ssh_agent.load_private_keys(params)
         params.ssh_agent.start(params.user)
+        if params.batch_mode:
+            print(f'Loaded {len(params.ssh_agent.keys)} private key(s)')
+            if os.name == 'posix':
+                print('To start using SSH Agent set the SSH_AUTH_SOCK environment variable in your Terminal')
+                print(f'SSH_AUTH_SOCK={params.ssh_agent.path}; export SSH_AUTH_SOCK;')
+            log_command = SshAgentLogCommand()
+            help_printed = False
+            while True:
+                answer = user_choice('SSH Agent', '?lq', show_choice=False)
+                if not answer:
+                    if not help_printed:
+                        help_printed = True
+                        answer = '?'
+                    else:
+                        continue
+
+                if answer == '?':
+                    print('{0:>12} : {1}'.format('?', 'Print this help'))
+                    print('{0:>12} : {1}'.format('(l)og', 'SSH Agent agent logs'))
+                    print('{0:>12} : {1}'.format('(q)uit', 'Quit'))
+                elif answer.lower() in {'l', 'log'}:
+                    log_command.execute(params)
+                elif answer.lower() in {'q', 'quit'}:
+                    params.ssh_agent.stop()
+                    break
+                else:
+                    print(f'Command \"{answer}\" is not recognized')
 
 
 class SshAgentStopCommand(Command):
