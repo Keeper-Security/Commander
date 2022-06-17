@@ -143,12 +143,14 @@ class Rotator:
             )
             return True
 
-    def rotate(self, record, new_password, revert=False):
+    def rotate(self, record, new_password):
         """Rotate an AWS access key"""
         profile = self.aws_profile
         try:
+            session_kwargs = {}
             if profile:
-                boto3.setup_default_session(profile_name=profile)
+                session_kwargs['profile_name'] = profile
+            boto3.setup_default_session(**session_kwargs)
             self.iam = boto3.client('iam')
         except Exception as e:
             logging.error(f'Login failed using aws profile "{profile if profile else "default"}": {e}')
