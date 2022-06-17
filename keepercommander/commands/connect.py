@@ -10,25 +10,25 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Optional, Callable, Iterator, List, Iterable, Tuple
-
 import argparse
-import logging
 import io
+import logging
 import os
 import re
 import shutil
-import sys
 import tempfile
+from typing import Optional, Callable, Iterator, List, Iterable, Tuple
+
+import sys
 
 from .base import Command, RecordMixin, dump_report_data
-from .ssh_agent import add_ssh_key, SshAgentCommand
 from .record import find_record, RecordListCommand
+from .ssh_agent import add_ssh_key, try_extract_private_key, SshAgentCommand
 from ..attachment import prepare_attachment_download
+from ..error import CommandError
 from ..params import KeeperParams
 from ..subfolder import find_folders, get_folder_path, try_resolve_path
 from ..vault import TypedRecord, KeeperRecord, PasswordRecord
-from ..vault_extensions import SshKeysFacade
 
 ssh_parser = argparse.ArgumentParser(prog='ssh',
                                      description='Establishes connection to external server using SSH. ')
@@ -226,10 +226,28 @@ class ConnectSshCommand(BaseConnectCommand):
         return ssh_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-        record = self.get_record(params, name, ['sshKeys', 'serverCredentials'])
-        if not record:
-            return
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        record = None     # type: Optional[KeeperRecord]
+        if record_name in params.record_cache:
+            record = KeeperRecord.load(params, record_name)
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = KeeperRecord.load(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record = r
+                                break
+
+        if record is None:
+            raise CommandError('ssh', 'Enter name of existing record')
+
+        if not isinstance(record, (PasswordRecord, TypedRecord)):
+            raise CommandError('ssh', f'Record \"{record.title}\" type is not supported.')
 
         dst = kwargs.get('destination', '')
         if dst:
@@ -257,16 +275,9 @@ class ConnectSshCommand(BaseConnectCommand):
         if port:
             self.command += f' -p {port}'
 
-        if record.record_type == 'sshKeys':
-            facade = SshKeysFacade()
-            facade.assign_record(record)
-            private_key = facade.private_key
-            if not facade.private_key:
-                logging.warning('Record "%s" does not have private key.', record.title)
-                return
-            passphrase = facade.passphrase
-            if not passphrase:
-                passphrase = None
+        pk = try_extract_private_key(params, record)
+        if pk:
+            private_key, passphrase = pk
             to_remove = add_ssh_key(private_key, passphrase, record.title)
             if to_remove:
                 self.run_at_the_end.append(to_remove)
@@ -610,9 +621,16 @@ class ConnectCommand(BaseConnectCommand):
 
     @staticmethod
     def add_ssh_keys(params, endpoint, record, temp_files):
+        added = set()
         # type: (KeeperParams, str, KeeperRecord, List[str]) -> Iterable[Callable]
-        key_prefix = f'connect:{endpoint}:ssh-key'
+        pk = try_extract_private_key(params, record)
+        if pk:
+            private_key, passphrase = pk
+            to_delete = add_ssh_key(private_key, passphrase if passphrase else None, record.title)
+            if to_delete:
+                yield to_delete
 
+        key_prefix = f'connect:{endpoint}:ssh-key'
         for cf_name, cf_value in ConnectCommand.get_fields_by_patters(record, key_prefix):
             key_name = cf_name[len(key_prefix)+1:] or 'Commander'
             parsed_values = []
