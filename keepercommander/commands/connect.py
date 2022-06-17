@@ -239,9 +239,10 @@ class ConnectSshCommand(BaseConnectCommand):
                     if folder_uid in params.subfolder_record_cache:
                         for uid in params.subfolder_record_cache[folder_uid]:
                             r = KeeperRecord.load(params, uid)
-                            if r.title.lower() == record_name.lower():
-                                record = r
-                                break
+                            if r:
+                                if r.title.lower() == record_name.lower():
+                                    record = r
+                                    break
 
         if record is None:
             raise CommandError('ssh', 'Enter name of existing record')
@@ -522,9 +523,10 @@ class ConnectCommand(BaseConnectCommand):
                             if folder_uid in params.subfolder_record_cache:
                                 for uid in params.subfolder_record_cache[folder_uid]:
                                     r = KeeperRecord.load(params, uid)
-                                    if r.title.lower() == title.lower():
-                                        record_uid = uid
-                                        break
+                                    if r:
+                                        if r.title.lower() == title.lower():
+                                            record_uid = uid
+                                            break
                 if record_uid:
                     endpoints = [x for x in ConnectCommand.Endpoints
                                  if x.record_uid == record_uid and endpoint_name in {'', x.name}]
@@ -532,7 +534,8 @@ class ConnectCommand(BaseConnectCommand):
             if len(endpoints) > 0:
                 if len(endpoints) == 1:
                     record = KeeperRecord.load(params, endpoints[0].record_uid)
-                    self.connect_endpoint(params, endpoints[0].name, record)
+                    if record:
+                        self.connect_endpoint(params, endpoints[0].name, record)
                 else:
                     logging.warning("Connect endpoint '%s' is not unique", endpoint)
                     ConnectCommand.dump_endpoints(endpoints)
@@ -578,6 +581,8 @@ class ConnectCommand(BaseConnectCommand):
             ConnectCommand.Endpoints.clear()
             for record_uid in params.record_cache:
                 record = KeeperRecord.load(params, record_uid)
+                if not record:
+                    continue
                 endpoints = []
                 endpoints_desc = {}
                 if isinstance(record, PasswordRecord):
