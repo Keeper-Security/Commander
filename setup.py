@@ -28,6 +28,7 @@ install_requires = [
     'keeper-secrets-manager-core>=16.2.0'
 ]
 adpasswd_requires = ['ldap3']
+aws_requires = ['boto3']
 test_requires = ['pytest', 'testfixtures']
 
 setup(
@@ -58,7 +59,8 @@ setup(
     install_requires=install_requires,
     extras_require={
         'adpasswd': adpasswd_requires,
+        'aws': aws_requires,
         'test': test_requires,
-        'all': adpasswd_requires + test_requires
+        'all': adpasswd_requires + aws_requires + test_requires
     }
 )
