@@ -24,7 +24,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, padding, utils
 
-from .base import GroupCommand, Command, dump_report_data
+from .base import GroupCommand, Command, dump_report_data, user_choice
 from .. import vault, attachment
 from ..params import KeeperParams
 
@@ -613,6 +613,7 @@ class SshAgentContext(logging.Handler):
         if os.path.exists(self.path):
             os.remove(self.path)
 
+        logging.info('To start using SSH Agent set the SSH_AUTH_SOCK environment variable in your Terminal')
         logging.info('SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;', self.path)
 
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -783,6 +784,33 @@ class SshAgentStartCommand(Command):
         params.ssh_agent.keys = [x for x in params.ssh_agent.keys if x.record_uid]
         params.ssh_agent.load_private_keys(params)
         params.ssh_agent.start(params.user)
+        if params.batch_mode:
+            print(f'Loaded {len(params.ssh_agent.keys)} private key(s)')
+            if os.name == 'posix':
+                print('To start using SSH Agent set the SSH_AUTH_SOCK environment variable in your Terminal')
+                print(f'SSH_AUTH_SOCK={params.ssh_agent.path}; export SSH_AUTH_SOCK;')
+            log_command = SshAgentLogCommand()
+            help_printed = False
+            while True:
+                answer = user_choice('SSH Agent', '?lq', show_choice=False)
+                if not answer:
+                    if not help_printed:
+                        help_printed = True
+                        answer = '?'
+                    else:
+                        continue
+
+                if answer == '?':
+                    print('{0:>12} : {1}'.format('?', 'Print this help'))
+                    print('{0:>12} : {1}'.format('(l)og', 'SSH Agent agent logs'))
+                    print('{0:>12} : {1}'.format('(q)uit', 'Quit'))
+                elif answer.lower() in {'l', 'log'}:
+                    log_command.execute(params)
+                elif answer.lower() in {'q', 'quit'}:
+                    params.ssh_agent.stop()
+                    break
+                else:
+                    print(f'Command \"{answer}\" is not recognized')
 
 
 class SshAgentStopCommand(Command):
