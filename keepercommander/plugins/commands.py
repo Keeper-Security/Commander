@@ -73,23 +73,24 @@ def adjust_password(password):   # type: (str) -> str
 
 def update_custom_text_fields(record, new_field_dict):
     fld_attr = plugin_manager.get_custom_field_attr(record)
-    record_version = record.get_version()
     for f in record.custom:
         field_name = getattr(f, fld_attr)
         if field_name in new_field_dict:
-            if record_version == 3:
+            if isinstance(record, TypedRecord):
                 f.value[0] = new_field_dict.pop(field_name)
-            else:
+            elif isinstance(record, PasswordRecord):
                 f.value = new_field_dict.pop(field_name)
     for k, v in new_field_dict.items():
-        if record_version == 3:
+        if isinstance(record, TypedRecord):
             record.custom.append(TypedField({'type': 'text', 'label': k, 'value': [v]}))
-        else:
+        elif isinstance(record, PasswordRecord):
             record.custom.append(CustomField({'type': 'text', 'name': k, 'value': v}))
 
 
-def update_password(params, record, new_password):
-    if isinstance(record, PasswordRecord):
+def update_password(params, record, new_password, plugin):
+    if hasattr(plugin, 'update_password'):
+        plugin.update_password(record, new_password)
+    elif isinstance(record, PasswordRecord):
         record.password = new_password
     elif isinstance(record, TypedRecord):
         password_field = record.get_typed_field('password')
@@ -99,7 +100,7 @@ def update_password(params, record, new_password):
         else:
             password_field.value = [new_password]
     else:
-        logging.error('Invalid type of record (record version) for rotation update')
+        logging.error(f'Record {record.title} is an invalid type of record for rotation update')
         return False
 
     try:
@@ -184,20 +185,25 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         )
         return False
 
-    if update_password(params, record, new_password):
+    if update_password(params, record, new_password, plugin):
         api.sync_down(params)
         new_record = KeeperRecord.load(params, record_uid)
+        if hasattr(plugin, 'sync_password'):
+            plugin.sync_password()
         logging.info(f'Password rotation successful for record "{new_record.title}".')
         return True
     elif hasattr(plugin, 'revert') and plugin.revert(record, new_password):
         logging.warning(
-            f'Couldn\'t update the record "{record.title}" (uid=[{record.record_uid}]), so the rotation was reverted.'
+            f'Unable to update the record "{record.title}" (uid=[{record.record_uid}]), so the rotation was reverted.'
         )
     else:
-        logging.error(
-            f"Rotated to new password {new_password} but couldn't update the record "
-            f'"{record.title}" (uid=[{record.record_uid}]). The new password will be needed for access.'
-        )
+        if hasattr(plugin, 'revert_failed_msg'):
+            plugin.revert_failed_msg()
+        else:
+            logging.error(
+                f"Rotated to new password {new_password} but couldn't update the record "
+                f'"{record.title}" (uid=[{record.record_uid}]). The new password will be needed for access.'
+            )
 
     return False
 
