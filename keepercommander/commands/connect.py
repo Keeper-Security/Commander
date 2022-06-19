@@ -227,6 +227,11 @@ class ConnectSshCommand(BaseConnectCommand):
 
     def execute(self, params, **kwargs):
         record_name = kwargs['record'] if 'record' in kwargs else None
+        if not record_name:
+            ls = RecordListCommand()
+            ls.execute(params, record_type=['serverCredentials'], verbose=True)
+            return
+
         record = None     # type: Optional[KeeperRecord]
         if record_name in params.record_cache:
             record = KeeperRecord.load(params, record_name)
