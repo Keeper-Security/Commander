@@ -836,7 +836,8 @@ class SshAgentLogCommand(Command):
 
     def execute(self, params, **kwargs):
         if not isinstance(params.ssh_agent, SshAgentContext):
-            pass
+            logging.warning('SSH Agent is not started')
+            return
         table = []
         headers = ['Time', 'Level', 'Message']
         for record in params.ssh_agent.log_messages:
