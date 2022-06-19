@@ -19,6 +19,7 @@ import socket
 import threading
 import time
 from typing import Optional, List, Callable, Tuple, Any, Union
+from colorama import Fore, Style
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
@@ -613,9 +614,6 @@ class SshAgentContext(logging.Handler):
         if os.path.exists(self.path):
             os.remove(self.path)
 
-        logging.info('To start using SSH Agent set the SSH_AUTH_SOCK environment variable in your Terminal')
-        logging.info('SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;', self.path)
-
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(self.path)
         while True:
@@ -673,8 +671,6 @@ class SshAgentContext(logging.Handler):
         self._thread = threading.Thread(target=self._server_proc, args=(username,), daemon=True)
         self._thread.start()
         time.sleep(1)
-        if self.is_running:
-            logging.info('ssh-agent has been started')
 
     def stop(self):
         if not self.is_running:
@@ -688,7 +684,6 @@ class SshAgentContext(logging.Handler):
                 pass
             if thread:
                 thread.join(1)
-            logging.info('ssh-agent has been stopped')
         except Exception as e:
             logging.info('ssh-agent stop error: %s', e)
 
@@ -759,6 +754,9 @@ class SshAgentCommand(GroupCommand):
         self.register_command('log', SshAgentLogCommand())
         self.default_verb = 'info'
 
+    def is_authorised(self):
+        return False
+
 
 class SshAgentInfoCommand(Command):
     def get_parser(self):
@@ -778,21 +776,29 @@ class SshAgentStartCommand(Command):
     def get_parser(self):
         return ssh_agent_start_parser
 
+    def is_authorised(self):
+        return True
+
     def execute(self, params, **kwargs):
         if params.ssh_agent is None:
             params.ssh_agent = SshAgentContext()
         params.ssh_agent.keys = [x for x in params.ssh_agent.keys if x.record_uid]
+        print(Style.BRIGHT + 'Starting Commander in SSH Agent Mode...' + Style.RESET_ALL)
+        print('Loading keys...')
         params.ssh_agent.load_private_keys(params)
         params.ssh_agent.start(params.user)
+        print(f'Loaded {len(params.ssh_agent.keys)} private key(s)')
+        print('\033[2K' + Fore.LIGHTGREEN_EX + 'SSH Agent Started.' + Style.RESET_ALL)
+        if os.name == 'posix':
+            print(Fore.CYAN)
+            print('Note: To use the Commander SSH Agent, run the below command in your terminal or startup file:')
+            print(f'export SSH_AUTH_SOCK={params.ssh_agent.path}')
+            print(Style.RESET_ALL)
         if params.batch_mode:
-            print(f'Loaded {len(params.ssh_agent.keys)} private key(s)')
-            if os.name == 'posix':
-                print('To start using SSH Agent set the SSH_AUTH_SOCK environment variable in your Terminal')
-                print(f'SSH_AUTH_SOCK={params.ssh_agent.path}; export SSH_AUTH_SOCK;')
             log_command = SshAgentLogCommand()
             help_printed = False
             while True:
-                answer = user_choice('SSH Agent', '?lq', show_choice=False)
+                answer = user_choice('Commander SSH Agent', '?lq', show_choice=False)
                 if not answer:
                     if not help_printed:
                         help_printed = True
@@ -821,6 +827,7 @@ class SshAgentStopCommand(Command):
         if isinstance(params.ssh_agent, SshAgentContext):
             params.ssh_agent.stop()
             params.ssh_agent = None
+            print('\033[2K' + Fore.LIGHTGREEN_EX + 'SSH Agent Stopped.' + Style.RESET_ALL)
 
 
 class SshAgentLogCommand(Command):
