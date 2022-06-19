@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Optional, Callable, Union
 
-from fido2.client import U2fClient, Fido2Client, WindowsClient, ClientError
+from fido2.client import Fido2Client, WindowsClient, ClientError
 from fido2.ctap import CtapError
 from fido2.hid import CtapHidDevice
 from fido2.webauthn import PublicKeyCredentialRequestOptions, AuthenticatorAssertionResponse
@@ -33,27 +33,7 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[dict]
     evt = threading.Event()
     response = None  # type: Optional[str]
 
-    if 'authenticateRequests' in request:    # U2F
-
-        options = request['authenticateRequests']
-        origin = options[0].get('appId') or ''
-        challenge = options[0]['challenge']
-        keys = [{
-            'version': x.get('version') or '',
-            'keyHandle': x['keyHandle']
-        } for x in options if 'keyHandle' in x]
-
-        dev = next(CtapHidDevice.list_devices(), None)
-        if not dev:
-            logging.warning("No Security Key detected")
-            return
-        client = U2fClient(dev, origin)
-
-        def auth_func():
-            nonlocal response
-            response = client.sign(origin, challenge, keys, event=evt)
-
-    elif 'publicKeyCredentialRequestOptions' in request:  # WebAuthN
+    if 'publicKeyCredentialRequestOptions' in request:  # WebAuthN
         origin = ''
         options = request['publicKeyCredentialRequestOptions']
         if 'extensions' in options:
