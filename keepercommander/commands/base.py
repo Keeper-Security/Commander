@@ -429,6 +429,13 @@ class GroupCommand(CliCommand):
 
         if command:
             kwargs['action'] = verb
+            if command.is_authorised() and not params.session_token:
+                from .utils import LoginCommand
+                login_cmd = LoginCommand()
+                login_cmd.execute(params)
+                if not params.session_token:
+                    return
+
             return command.execute_args(params, args, **kwargs)
 
     def validate(self, params):  # type: (KeeperParams) -> None
