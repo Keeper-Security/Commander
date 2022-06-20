@@ -96,6 +96,7 @@ def connect_commands(commands):
 
 
 def connect_command_info(aliases, command_info):
+    command_info['ssh-agent'] = 'Manage SSH Agent'
     command_info[connect_parser.prog] = connect_parser.description
     command_info[ssh_parser.prog] = ssh_parser.description
     if mysql:
