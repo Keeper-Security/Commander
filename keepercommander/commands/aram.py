@@ -1548,7 +1548,8 @@ class ActionReportCommand(EnterpriseCommand):
                 events = rs['audit_event_overview_report_rows']
                 to_exclude = [event[username_field] for event in events]
                 excluded = excluded + to_exclude
-                if get_events := (len(events) >= API_EVENT_SUMMARY_ROW_LIMIT):
+                get_events = len(events) >= API_EVENT_SUMMARY_ROW_LIMIT
+                if get_events:
                     candidates = [user for user in candidates if user not in excluded]
                     end = int(events[-1]['last_created'])
                     query_filter['created']['max'] = end
