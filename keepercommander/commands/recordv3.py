@@ -518,7 +518,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
         if not password and kwargs.get('generate'):
-            password = generator.generate(16)
+            password = generator.KeeperPasswordGenerator(16).generate()
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
@@ -755,7 +755,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
         if not password and kwargs.get('generate'):
-            password = generator.generate(16)
+            password = generator.KeeperPasswordGenerator(16).generate()
         if password:
             record.password = password
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
