@@ -1903,6 +1903,8 @@ class GenerateCommand(Command):
             else:
                 logging.info('Wrote to file {}'.format(output))
 
+        return format_output
+
 
 class ResetPasswordCommand(Command):
     def get_parser(self):
