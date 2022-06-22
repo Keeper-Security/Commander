@@ -1876,7 +1876,7 @@ class GenerateCommand(Command):
             header = format_template.format(
                 count='', strength='Strength(%)', breach_watch='BreachWatch', password='Password'
             )
-            password_output = [format_template.format(count=i + 1, **p) for i, p in enumerate(passwords)]
+            password_output = [format_template.format(count=i, **p) for i, p in enumerate(passwords, start=1)]
             format_output = header + '\n' + '\n'.join(password_output)
         elif format == 'json':
             format_output = json.dumps(passwords, indent=json_indent or None)
@@ -1903,7 +1903,7 @@ class GenerateCommand(Command):
             else:
                 logging.info('Wrote to file {}'.format(output))
 
-        return format_output
+        return passwords, format_output
 
 
 class ResetPasswordCommand(Command):
