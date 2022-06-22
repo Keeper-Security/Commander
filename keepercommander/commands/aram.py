@@ -123,6 +123,7 @@ action_report_parser.add_argument('--format', dest='format', action='store', cho
                                   default='table', help='output format.')
 syslog_templates = None  # type: Optional[List[str]]
 
+API_EVENT_SUMMARY_ROW_LIMIT = 2000
 
 def load_syslog_templates(params):
     global syslog_templates
@@ -1525,32 +1526,49 @@ class ActionReportCommand(EnterpriseCommand):
         return action_report_parser
 
     def execute(self, params, **kwargs):
-        def get_request(days_since=30, event_types=None, username_field='username'):
-            days_since = 30 if not isinstance(days_since, int) else days_since
-            dt = datetime.datetime.now() - datetime.timedelta(days=days_since)
+        def get_request(query_filter, cols=None):
             rq = {
                 'command': 'get_audit_event_reports',
                 'report_type': 'span',
                 'scope': 'enterprise',
-                'columns': [username_field],
-                'filter': {
-                    'audit_event_type': ['login'] if event_types is None else event_types,
-                    'created': {'min': int(dt.timestamp())}
-                },
+                'columns': ['username'] if cols is None else cols,
+                'filter': query_filter,
                 'aggregate': ['last_created'],
-                'limit': 1000,
+                'limit': API_EVENT_SUMMARY_ROW_LIMIT,
             }
             return rq
 
-        def get_events(days_since, types, username_field='username'):
-            rq = get_request(days_since, types, username_field)
-            rs = api.communicate(params, rq)
-            events = rs['audit_event_overview_report_rows']
-            return events
+        def get_excluded(candidates, query_filter, username_field='username'):
+            excluded = []
+            columns = [username_field]
+            get_events = len(candidates) > len(excluded)
+            while get_events:
+                rq = get_request(query_filter, columns)
+                rs = api.communicate(params, rq)
+                events = rs['audit_event_overview_report_rows']
+                to_exclude = [event[username_field] for event in events]
+                excluded = excluded + to_exclude
+                get_events = len(events) >= API_EVENT_SUMMARY_ROW_LIMIT
+                if get_events:
+                    candidates = [user for user in candidates if user not in excluded]
+                    end = int(events[-1]['last_created'])
+                    query_filter['created']['max'] = end
+                    query_filter[username_field] = candidates
+            return excluded
 
         def get_no_action_users(candidates, days_since, event_types, name_key='username'):
-            events = get_events(days_since, event_types, name_key)
-            excluded = [event[name_key] for event in events]
+            days_since = 30 if not isinstance(days_since, int) else days_since
+            now_dt = datetime.datetime.now()
+            min_dt = now_dt - datetime.timedelta(days=days_since)
+            start = int(min_dt.timestamp())
+            end = int(now_dt.timestamp())
+            period = {'min': start, 'max': end}
+            included = [candidate['username'] for candidate in candidates]
+            query_filter = {
+                'audit_event_type': ['login'] if event_types is None else event_types,
+                'created': period
+            }
+            excluded = get_excluded(included, query_filter, name_key)
             result = [user['username'] for user in candidates if user['username'] not in excluded]
             return result
 
