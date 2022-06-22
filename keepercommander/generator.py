@@ -11,16 +11,13 @@ import logging
 import os
 import random
 import string
+from typing import Optional
 from secrets import choice
 
 from Cryptodome.Random.random import shuffle
 
 
 DEFAULT_LENGTH = 32
-DEFAULT_SYMBOLS = 8
-DEFAULT_DIGITS = 8
-DEFAULT_CAPS = 8
-DEFAULT_LOWER = 8
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 
 
@@ -96,12 +93,18 @@ def generate(length=64):
 
 
 class KeeperPasswordGenerator:
-    def __init__(self, length: int = DEFAULT_LENGTH, symbols: int = DEFAULT_SYMBOLS, digits: int = DEFAULT_DIGITS,
-                 caps: int = DEFAULT_CAPS, lower: int = DEFAULT_LOWER, special_characters: str = PW_SPECIAL_CHARACTERS):
-        sum_categories = sum(
-            (symbols if symbols > 0 else 0, digits if digits > 0 else 0, caps if caps > 0 else 0, lower if lower > 0 else 0)
-        )
-        if sum_categories == 0:
+    def __init__(self, length: int = DEFAULT_LENGTH, symbols: Optional[int] = None, digits: Optional[int] = None,
+                 caps: Optional[int] = None, lower: Optional[int] = None,
+                 special_characters: str = PW_SPECIAL_CHARACTERS):
+        none_count = (symbols, digits, caps, lower).count(None)
+        sum_categories = sum(0 if i is None or i <= 0 else i for i in (symbols, digits, caps, lower))
+        if none_count > 0:
+            # remaining length of password will be divided among unspecified categories
+            extra_count = length - sum_categories if length > sum_categories else 0
+            new_none_value = extra_count // none_count
+            symbols, digits, caps, lower = (new_none_value if i is None else i for i in (symbols, digits, caps, lower))
+            sum_categories += new_none_value * none_count
+        elif sum_categories == 0:
             symbols, digits, caps, lower, sum_categories = 1, 1, 1, 1, 4
         extra_count = length - sum_categories if length > sum_categories else 0
         self.category_map = [
