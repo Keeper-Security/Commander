@@ -268,11 +268,11 @@ generate_parser.add_argument('--clipboard', '-cc', dest='clipboard', action='sto
 generate_parser.add_argument('--quiet', '-q', dest='quiet', action='store_true', help='Only print password list')
 generate_parser.add_argument(
     '--password-list', '-p', dest='password_list', action='store_true',
-    help='Also print password list apart from table, csv, json'
+    help='Also print password list apart from formatted table or json'
 )
-generate_parser.add_argument('--output', '-o', dest='output', action='store', help='Output to file')
+generate_parser.add_argument('--output', '-o', dest='output_file', action='store', help='Output to specified file')
 generate_parser.add_argument(
-    '--format', '-f', dest='format', action='store', choices=['table', 'json'],
+    '--format', '-f', dest='output_format', action='store', choices=['table', 'json'],
     default='table', help='Output format for displaying password, strength, and BreachWatch if available'
 )
 generate_parser.add_argument(
@@ -1806,7 +1806,8 @@ class GenerateCommand(Command):
 
     def execute(self, params, number=None, no_breachwatch=None,
                 length=None, symbols=None, digits=None, uppercase=None, lowercase=None,
-                format=None, output=None, json_indent=None, **kwargs):
+                output_format=None, output_file=None, json_indent=None, quiet=False, password_list=False,
+                clipboard=False, return_result=False, **kwargs):
         """
         Executes "generate" command
 
@@ -1828,12 +1829,20 @@ class GenerateCommand(Command):
             Minimum number of lowercase letters in password or 0 for none. Default: 1
         no_breachwatch : bool
             Skip BreachWatch detection if BreachWatch is enabled for this account
-        format : str
+        output_format : str
             Output format for displaying password, strength, and BreachWatch if available. 'table' or 'json'
-        output : str
+        output_file : str
             File name to store result. stdout is omitted
         json_indent : int
             JSON format indent (0 for compact, >0 for pretty print). Default: 2
+        quiet : bool
+            Only print password list
+        password_list: bool
+            Also print password list apart from formatted table or json
+        clipboard: bool
+            Copy to clipboard
+        return_result : bool
+            If True return tuple of password dict and formatted output string
         """
 
         kpg = KeeperPasswordGenerator(
@@ -1868,39 +1877,43 @@ class GenerateCommand(Command):
                         )
                 params.breach_watch.delete_euids(params, euids)
 
-        if kwargs['quiet']:
-            format_output = ''
+        if quiet:
+            formatted_output = ''
+        elif output_format == 'table':
+            breach_watch = '' if no_breachwatch else '{breach_watch:13}'
+            format_template = '{count:<5}{strength:<13}' + breach_watch + '{password}'
+            header = format_template.format(
+                count='', strength='Strength(%)', breach_watch='BreachWatch', password='Password'
+            )
+            password_output = [format_template.format(count=i, **p) for i, p in enumerate(passwords, start=1)]
+            formatted_output = header + '\n' + '\n'.join(password_output)
+        elif output_format == 'json':
+            formatted_output = json.dumps(passwords, indent=json_indent or None)
         else:
-            if format == 'table':
-                breach_watch = '' if no_breachwatch else '{breach_watch:13}'
-                format_template = '{count:<5}{strength:<13}' + breach_watch + '{password}'
-                header = format_template.format(
-                    count='', strength='Strength(%)', breach_watch='BreachWatch', password='Password'
-                )
-                password_output = [format_template.format(count=i + 1, **p) for i, p in enumerate(passwords)]
-                format_output = header + '\n' + '\n'.join(password_output)
-            elif format == 'json':
-                format_output = json.dumps(passwords, indent=json_indent or None)
+            formatted_output = ''
 
-        if kwargs['quiet'] or kwargs['password_list']:
-            skip_line = '\n\n' if kwargs['password_list'] else ''
-            format_output += skip_line + '\n'.join(p['password'] for p in passwords)
+        if quiet or password_list:
+            skip_line = '\n\n' if password_list else ''
+            formatted_output += skip_line + '\n'.join(p['password'] for p in passwords)
 
-        if kwargs['clipboard']:
+        if clipboard:
             import pyperclip
-            pyperclip.copy(format_output)
+            pyperclip.copy(formatted_output)
             logging.info('New passwords copied to clipboard')
-        elif not output:
-            print(format_output)
+        elif not output_file:
+            print(formatted_output)
 
-        if output:
+        if output_file:
             try:
-                with open(output, 'w') as f:
-                    f.write(format_output)
+                with open(output_file, 'w') as f:
+                    f.write(formatted_output)
             except Exception as e:
-                logging.warning('Error writing to file {}: {}'.format(output, str(e)))
+                logging.warning('Error writing to file {}: {}'.format(output_file, str(e)))
             else:
-                logging.info('Wrote to file {}'.format(output))
+                logging.info('Wrote to file {}'.format(output_file))
+
+        if return_result:
+            return passwords, formatted_output
 
 
 class ResetPasswordCommand(Command):

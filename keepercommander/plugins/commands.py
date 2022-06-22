@@ -128,7 +128,7 @@ def get_new_password(plugin, rules=None):
         )
     else:
         logging.debug("No rules, just generate")
-        kpg = generator.KeeperPasswordGenerator(32, 8, 8, 8, 8, special_characters=pw_special_characters)
+        kpg = generator.KeeperPasswordGenerator(special_characters=pw_special_characters)
     new_password = kpg.generate()
 
     # ensure password starts with alpha numeric character
