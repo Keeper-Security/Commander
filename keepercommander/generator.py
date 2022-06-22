@@ -16,6 +16,11 @@ from secrets import choice
 from Cryptodome.Random.random import shuffle
 
 
+DEFAULT_LENGTH = 32
+DEFAULT_SYMBOLS = 8
+DEFAULT_DIGITS = 8
+DEFAULT_CAPS = 8
+DEFAULT_LOWER = 8
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 
 
@@ -91,8 +96,8 @@ def generate(length=64):
 
 
 class KeeperPasswordGenerator:
-    def __init__(self, length: int, symbols: int, digits: int, caps: int, lower: int,
-                 special_characters: str = PW_SPECIAL_CHARACTERS):
+    def __init__(self, length: int = DEFAULT_LENGTH, symbols: int = DEFAULT_SYMBOLS, digits: int = DEFAULT_DIGITS,
+                 caps: int = DEFAULT_CAPS, lower: int = DEFAULT_LOWER, special_characters: str = PW_SPECIAL_CHARACTERS):
         sum_categories = sum(
             (symbols if symbols > 0 else 0, digits if digits > 0 else 0, caps if caps > 0 else 0, lower if lower > 0 else 0)
         )
