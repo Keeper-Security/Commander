@@ -270,7 +270,7 @@ generate_parser.add_argument(
     '--password-list', '-p', dest='password_list', action='store_true',
     help='Also print password list apart from table, csv, json'
 )
-generate_parser.add_argument('--output', '-o', dest='output', action='store', help='Output to file')
+generate_parser.add_argument('--output', '-o', dest='output', action='store', help='Output to specified file')
 generate_parser.add_argument(
     '--format', '-f', dest='format', action='store', choices=['table', 'json'],
     default='table', help='Output format for displaying password, strength, and BreachWatch if available'
@@ -1870,17 +1870,18 @@ class GenerateCommand(Command):
 
         if kwargs['quiet']:
             format_output = ''
+        elif format == 'table':
+            breach_watch = '' if no_breachwatch else '{breach_watch:13}'
+            format_template = '{count:<5}{strength:<13}' + breach_watch + '{password}'
+            header = format_template.format(
+                count='', strength='Strength(%)', breach_watch='BreachWatch', password='Password'
+            )
+            password_output = [format_template.format(count=i + 1, **p) for i, p in enumerate(passwords)]
+            format_output = header + '\n' + '\n'.join(password_output)
+        elif format == 'json':
+            format_output = json.dumps(passwords, indent=json_indent or None)
         else:
-            if format == 'table':
-                breach_watch = '' if no_breachwatch else '{breach_watch:13}'
-                format_template = '{count:<5}{strength:<13}' + breach_watch + '{password}'
-                header = format_template.format(
-                    count='', strength='Strength(%)', breach_watch='BreachWatch', password='Password'
-                )
-                password_output = [format_template.format(count=i + 1, **p) for i, p in enumerate(passwords)]
-                format_output = header + '\n' + '\n'.join(password_output)
-            elif format == 'json':
-                format_output = json.dumps(passwords, indent=json_indent or None)
+            format_output = ''
 
         if kwargs['quiet'] or kwargs['password_list']:
             skip_line = '\n\n' if kwargs['password_list'] else ''
