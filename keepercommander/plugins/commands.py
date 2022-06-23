@@ -121,11 +121,10 @@ def get_new_password(plugin, rules=None):
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS
     if rules:
         logging.debug("Rules found for record")
-        upper, lower, digits, symbols = (int(n) for n in rules.split(','))
-        kpg = generator.KeeperPasswordGenerator(
-            length=upper + lower + digits + symbols, symbols=symbols, digits=digits, caps=upper, lower=lower,
-            special_characters=pw_special_characters
-        )
+        kpg = generator.KeeperPasswordGenerator.create_from_rules(rules, special_characters=pw_special_characters)
+        if kpg is None:
+            logging.warning('Using default password complexity rules')
+            kpg = generator.KeeperPasswordGenerator(special_characters=pw_special_characters)
     else:
         logging.debug("No rules, just generate")
         kpg = generator.KeeperPasswordGenerator(special_characters=pw_special_characters)

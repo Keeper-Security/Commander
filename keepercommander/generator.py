@@ -17,7 +17,7 @@ from secrets import choice
 from Cryptodome.Random.random import shuffle
 
 
-DEFAULT_LENGTH = 32
+DEFAULT_PASSWORD_LENGTH = 32
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 
 
@@ -93,8 +93,8 @@ def generate(length=64):
 
 
 class KeeperPasswordGenerator:
-    def __init__(self, length: int = DEFAULT_LENGTH, symbols: Optional[int] = None, digits: Optional[int] = None,
-                 caps: Optional[int] = None, lower: Optional[int] = None,
+    def __init__(self, length: int = DEFAULT_PASSWORD_LENGTH, symbols: Optional[int] = None,
+                 digits: Optional[int] = None, caps: Optional[int] = None, lower: Optional[int] = None,
                  special_characters: str = PW_SPECIAL_CHARACTERS):
         none_count = (symbols, digits, caps, lower).count(None)
         sum_categories = sum(0 if i is None or i <= 0 else i for i in (symbols, digits, caps, lower))
@@ -122,3 +122,24 @@ class KeeperPasswordGenerator:
             password_list.extend(choice(chars) for i in range(count))
         shuffle(password_list)
         return ''.join(password_list)
+
+    @classmethod
+    def create_from_rules(cls, rule_string: str, length: Optional[int] = None,
+                          special_characters: str = PW_SPECIAL_CHARACTERS):
+        """Create instance of class from rules string
+
+        rule_string: comma separated integer character counts of uppercase, lowercase, numbers, symbols
+        length: length of password
+        special_characters: set of characters used to generate password symbols
+        """
+        rule_list = [s.strip() for s in rule_string.split(',')]
+        if len(rule_list) != 4 or not all(n.isnumeric() for n in rule_list):
+            logging.warning(
+                'Invalid rules to generate password. Format is "upper, lower, digits, symbols"'
+            )
+            return None
+        else:
+            rule_list = [int(n) for n in rule_list]
+            upper, lower, digits, symbols = rule_list
+            length = sum(rule_list) if length is None else length
+            return cls(length=length, caps=upper, lower=lower, digits=digits, symbols=symbols)
