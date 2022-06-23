@@ -86,6 +86,10 @@ command_group.add_argument(
     '-gr', '--generate-rules', dest='generate_rules', action='store',
     help='generate a random password with comma separated complexity integers (uppercase, lowercase, numbers, symbols)'
 )
+add_parser.add_argument(
+    '-gl', '--generate-length', type=int, dest='generate_length', action='store',
+    help='generate password with given length'
+)
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
@@ -111,6 +115,10 @@ command_group.add_argument('-g', '--generate', dest='generate', action='store_tr
 command_group.add_argument(
     '-gr', '--generate-rules', dest='generate_rules', action='store',
     help='generate a random password with comma separated complexity integers (uppercase, lowercase, numbers, symbols)'
+)
+edit_parser.add_argument(
+    '-gl', '--generate-length', type=int, dest='generate_length', action='store',
+    help='generate password with given length'
 )
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
@@ -269,14 +277,14 @@ file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
 
 
-def get_password_from_rules(generate_rules):
+def get_password_from_rules(generate_rules, generate_length):
     if generate_rules:
-        kpg = generator.KeeperPasswordGenerator.create_from_rules(generate_rules)
+        kpg = generator.KeeperPasswordGenerator.create_from_rules(generate_rules, length=generate_length)
         if kpg is None:
             logging.warning('Using default password complexity rules')
-            kpg = generator.KeeperPasswordGenerator(DEFAULT_GENERATE_PASSWORD_LENGTH)
+            kpg = generator.KeeperPasswordGenerator(generate_length or DEFAULT_GENERATE_PASSWORD_LENGTH)
     else:
-        kpg = generator.KeeperPasswordGenerator(DEFAULT_GENERATE_PASSWORD_LENGTH)
+        kpg = generator.KeeperPasswordGenerator(generate_length or DEFAULT_GENERATE_PASSWORD_LENGTH)
     return kpg.generate()
 
 
@@ -539,8 +547,8 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
-        if not password and (kwargs.get('generate') or kwargs.get('generate_rules')):
-            password = get_password_from_rules(kwargs.get('generate_rules'))
+        if not password and (kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length')):
+            password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
@@ -746,7 +754,8 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None
         data_opts = recordv3.RecordV3.convert_options_to_json(params, record_data, rt_def, kwargs) if rt_def else None
-        if not (data_json or data_file or data_opts or kwargs.get('generate')):
+        generate = kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length')
+        if not (data_json or data_file or data_opts or generate):
             logging.error(bcolors.FAIL + "Please provide valid record data as a JSON string, options or file name." + bcolors.ENDC)
             self.get_parser().print_help()
             return
@@ -765,7 +774,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             if not data_opts.get('errors'):
                 rec = data_opts.get('record')
                 data = json.dumps(rec) if rec else ''
-        if kwargs.get('generate') and not data:
+        if generate and not data:
             data = record_data
 
         data = data.strip() if data else None
@@ -776,8 +785,8 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
-        if not password and (kwargs.get('generate') or kwargs.get('generate_rules')):
-            password = get_password_from_rules(kwargs.get('generate_rules'))
+        if not password and generate:
+            password = get_password_from_rules(kwargs.get('generate_rules'), kwargs.get('generate_length'))
         if password:
             record.password = password
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
