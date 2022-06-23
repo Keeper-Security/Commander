@@ -142,4 +142,7 @@ class KeeperPasswordGenerator:
             rule_list = [int(n) for n in rule_list]
             upper, lower, digits, symbols = rule_list
             length = sum(rule_list) if length is None else length
-            return cls(length=length, caps=upper, lower=lower, digits=digits, symbols=symbols)
+            return cls(
+                length=length, caps=upper, lower=lower, digits=digits, symbols=symbols,
+                special_characters=special_characters
+            )
