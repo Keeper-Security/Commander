@@ -39,6 +39,9 @@ from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_fold
 from ..attachment import prepare_attachment_download
 
 
+DEFAULT_GENERATE_PASSWORD_LENGTH = 16
+
+
 def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['edit'] = RecordEditCommand()
@@ -79,6 +82,10 @@ add_parser.add_argument('--login', dest='login', action='store', help='login nam
 command_group = add_parser.add_mutually_exclusive_group()
 command_group.add_argument('--pass', dest='password', action='store', help='password')
 command_group.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
+command_group.add_argument(
+    '-gr', '--generate-rules', dest='generate_rules', action='store',
+    help='generate a random password with comma separated complexity integers (uppercase, lowercase, numbers, symbols)'
+)
 add_parser.add_argument('--url', dest='url', action='store', help='url')
 add_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 add_parser.add_argument('--custom', dest='custom', action='store', help='add custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
@@ -101,6 +108,10 @@ edit_parser.add_argument('--login', dest='login', action='store', help='login na
 command_group = edit_parser.add_mutually_exclusive_group()
 command_group.add_argument('--pass', dest='password', action='store', help='password')
 command_group.add_argument('-g', '--generate', dest='generate', action='store_true', help='generate a random password')
+command_group.add_argument(
+    '-gr', '--generate-rules', dest='generate_rules', action='store',
+    help='generate a random password with comma separated complexity integers (uppercase, lowercase, numbers, symbols)'
+)
 edit_parser.add_argument('--url', dest='url', action='store', help='url')
 edit_parser.add_argument('--notes', dest='notes', action='store', help='set or replace the notes. Use a plus sign (+) in front appends to existing notes')
 edit_parser.add_argument('--custom', dest='custom', action='store', help='custom fields. JSON or name:value pairs separated by comma. CSV Example: --custom "name1: value1, name2: value2". JSON Example: --custom \'{"name1":"value1", "name2":"value: 2,3,4"}\'')
@@ -256,6 +267,17 @@ file_report_parser.add_argument('-d', '--try-download', dest='try_download', act
 file_report_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 file_report_parser.error = raise_parse_exception
 file_report_parser.exit = suppress_exit
+
+
+def get_password_from_rules(generate_rules):
+    if generate_rules:
+        kpg = generator.KeeperPasswordGenerator.create_from_rules(generate_rules)
+        if kpg is None:
+            logging.warning('Using default password complexity rules')
+            kpg = generator.KeeperPasswordGenerator(DEFAULT_GENERATE_PASSWORD_LENGTH)
+    else:
+        kpg = generator.KeeperPasswordGenerator(DEFAULT_GENERATE_PASSWORD_LENGTH)
+    return kpg.generate()
 
 
 class RecordAddCommand(Command, recordv2.RecordUtils):
@@ -517,8 +539,8 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
-        if not password and kwargs.get('generate'):
-            password = generator.KeeperPasswordGenerator(16).generate()
+        if not password and (kwargs.get('generate') or kwargs.get('generate_rules')):
+            password = get_password_from_rules(kwargs.get('generate_rules'))
         if password:
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
 
@@ -754,8 +776,8 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
         # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
-        if not password and kwargs.get('generate'):
-            password = generator.KeeperPasswordGenerator(16).generate()
+        if not password and (kwargs.get('generate') or kwargs.get('generate_rules')):
+            password = get_password_from_rules(kwargs.get('generate_rules'))
         if password:
             record.password = password
             data = recordv3.RecordV3.update_password(password, data, recordv3.RecordV3.get_record_type_definition(params, data))
