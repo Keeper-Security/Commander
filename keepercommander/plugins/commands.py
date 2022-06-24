@@ -48,7 +48,10 @@ rotate_parser.add_argument(
 rotate_parser.add_argument('--plugin', dest='plugin', action='store', help='Force rotation plugin (optional)')
 rotate_parser.add_argument('--host', dest='host', action='store', help='Optional host (override record value)')
 rotate_parser.add_argument('--port', dest='port', action='store', help='Optional port (override record value)')
-rotate_parser.add_argument('--rules', dest='rules', action='store', help='Optional rules (override record value)')
+rotate_parser.add_argument('-r', '--rules', dest='rules', action='store', help='Optional rules (override record value)')
+rotate_parser.add_argument(
+    '-l', '--length', type=int, dest='length', action='store', help='Optional password length (override record value)'
+)
 rotate_parser.add_argument('--password', dest='password', action='store', help='Optional new password')
 rotate_parser.add_argument(
     '--force', dest='force', action='store_true', help='force all matches to rotate without prompt'
@@ -112,7 +115,7 @@ def update_password(params, record, new_password, plugin):
         return True
 
 
-def get_new_password(plugin, rules=None):
+def get_new_password(plugin, rules=None, length=None):
     if hasattr(plugin, 'disallow_special_characters'):
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS.translate(
             str.maketrans('', '', plugin.disallow_special_characters)
@@ -121,14 +124,19 @@ def get_new_password(plugin, rules=None):
         pw_special_characters = generator.PW_SPECIAL_CHARACTERS
     if rules:
         logging.debug("Rules found for record")
-        upper, lower, digits, symbols = (int(n) for n in rules.split(','))
-        kpg = generator.KeeperPasswordGenerator(
-            length=upper + lower + digits + symbols, symbols=symbols, digits=digits, caps=upper, lower=lower,
-            special_characters=pw_special_characters
+        kpg = generator.KeeperPasswordGenerator.create_from_rules(
+            rules, length=length, special_characters=pw_special_characters
         )
+        if kpg is None:
+            logging.warning('Using default password complexity rules')
+            if length is None:
+                length = generator.DEFAULT_PASSWORD_LENGTH
+            kpg = generator.KeeperPasswordGenerator(length=length, special_characters=pw_special_characters)
     else:
         logging.debug("No rules, just generate")
-        kpg = generator.KeeperPasswordGenerator(special_characters=pw_special_characters)
+        if length is None:
+            length = generator.DEFAULT_PASSWORD_LENGTH
+        kpg = generator.KeeperPasswordGenerator(length=length, special_characters=pw_special_characters)
     new_password = kpg.generate()
 
     # ensure password starts with alpha numeric character
@@ -143,7 +151,7 @@ def get_new_password(plugin, rules=None):
 
 
 def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host=None, port=None, rules=None,
-                    new_password=None):
+                    length=None, new_password=None):
     """ Rotate the password for the specified record """
     api.sync_down(params)
     record = KeeperRecord.load(params, record_uid)
@@ -161,7 +169,9 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
     if new_password is None:
         if not rules:
             rules = plugin_kwargs.get('rules')
-        new_password = get_new_password(plugin, rules)
+        if not length:
+            length = plugin_kwargs.get('length')
+        new_password = get_new_password(plugin, rules, length)
 
     if plugin_kwargs.get('password') == new_password:
         logging.warning('Rotation aborted because the old and new passwords are the same.')
@@ -253,7 +263,7 @@ class RecordRotateCommand(Command):
                 rotate_password(
                     params, record_uid, rotate_name=rotate_name, plugin_name=kwargs.get('plugin'),
                     host=kwargs.get('host'), port=kwargs.get('port'), rules=kwargs.get('rules'),
-                    new_password=kwargs.get('password')
+                    length=kwargs.get('length'), new_password=kwargs.get('password')
                 )
                 if print_result:
                     record = api.get_record(params, record_uid)
