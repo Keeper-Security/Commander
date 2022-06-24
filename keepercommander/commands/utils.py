@@ -157,6 +157,7 @@ whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true
 whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
 
+
 this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'timeout']
 this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device.')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
@@ -253,8 +254,9 @@ ksm_parser.exit = suppress_exit
 
 
 version_parser = argparse.ArgumentParser(prog='version|v', description='Displays version of the installed Commander.')
-version_parser.error = raise_parse_exception
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+version_parser.add_argument('-p', '--packages', action='store_true', help='Show installed Python packages')
+version_parser.error = raise_parse_exception
 version_parser.exit = suppress_exit
 
 
@@ -616,15 +618,15 @@ class WhoamiCommand(Command):
 
 class VersionCommand(Command):
     def get_parser(self):
-        return whoami_parser
+        return version_parser
 
     def is_authorised(self):
         return False
 
     def execute(self, params, **kwargs):
-
         version_details = is_up_to_date_version(params)
-        is_verbose = kwargs.get('verbose') or False
+        is_verbose = kwargs.get('verbose', False)
+        show_packages = kwargs.get('packages', False)
 
         this_app_version = __version__
 
@@ -643,7 +645,7 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
-        if logging.getLogger().isEnabledFor(logging.DEBUG):
+        if logging.getLogger().isEnabledFor(logging.DEBUG) or show_packages:
             import pkg_resources
             installed_packages = pkg_resources.working_set
             installed_packages_list = sorted(["%s==%s" % (i.key, i.version) for i in installed_packages])
