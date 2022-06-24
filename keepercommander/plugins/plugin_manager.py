@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from . import noop
 
 
+CONVERT_KWARG_TO_INT = ('port', 'length')
 REQUIRED_PLUGIN_KWARGS = {
     'awskey': ['login', 'aws_key_id'],
     'awspswd': ['login'],
@@ -178,11 +179,17 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
         plugin_kwargs['host'] = host
     if port:
         plugin_kwargs['port'] = port
-    if 'port' in plugin_kwargs:
-        if plugin_kwargs['port'].isnumeric():
-            plugin_kwargs['port'] = int(plugin_kwargs['port'])
-        else:
-            plugin_kwargs.pop('port')
+
+    for convert_kwarg in CONVERT_KWARG_TO_INT:
+        if convert_kwarg in plugin_kwargs:
+            if plugin_kwargs[convert_kwarg].isnumeric():
+                plugin_kwargs[convert_kwarg] = int(plugin_kwargs[convert_kwarg])
+            else:
+                logging.warning(
+                    f'Argument "{convert_kwarg}", value "{plugin_kwargs[convert_kwarg]}"'
+                    ' ignored because unable to convert to integer'
+                )
+                plugin_kwargs.pop(convert_kwarg)
 
     if plugin_name is None:
         if port and port in PORT_TO_PLUGIN:

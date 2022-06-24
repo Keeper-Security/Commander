@@ -292,20 +292,24 @@ generate_parser.add_argument(
     '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=20
 )
 generate_parser.add_argument(
-    '--symbols', '-s', type=int, dest='symbols', action='store', default=1,
+    '--symbols', '-s', type=int, dest='symbols', action='store',
     help='Minimum number of symbols in password or 0 for none'
 )
 generate_parser.add_argument(
-    '--digits', '-d', type=int, dest='digits', action='store', default=1,
+    '--digits', '-d', type=int, dest='digits', action='store',
     help='Minimum number of digits in password or 0 for none'
 )
 generate_parser.add_argument(
-    '--uppercase', '-u', type=int, dest='uppercase', action='store', default=1,
+    '--uppercase', '-u', type=int, dest='uppercase', action='store',
     help='Minimum number of uppercase letters in password or 0 for none'
 )
 generate_parser.add_argument(
-    '--lowercase', '-l', type=int, dest='lowercase', action='store', default=1,
+    '--lowercase', '-l', type=int, dest='lowercase', action='store',
     help='Minimum number of lowercase letters in password or 0 for none'
+)
+generate_parser.add_argument(
+    '-r', '--rules', dest='rules', action='store',
+    help='Use comma separated complexity integers (uppercase, lowercase, numbers, symbols)'
 )
 generate_parser.error = raise_parse_exception
 generate_parser.exit = suppress_exit
@@ -1807,7 +1811,7 @@ class GenerateCommand(Command):
         return generate_parser
 
     def execute(self, params, number=None, no_breachwatch=None,
-                length=None, symbols=None, digits=None, uppercase=None, lowercase=None,
+                length=None, symbols=None, digits=None, uppercase=None, lowercase=None, rules=None,
                 output_format=None, output_file=None, json_indent=None, quiet=False, password_list=False,
                 clipboard=False, return_result=False, **kwargs):
         """
@@ -1829,6 +1833,8 @@ class GenerateCommand(Command):
             Minimum number of uppercase letters in password or 0 for none. Default: 1
         lowercase : int
             Minimum number of lowercase letters in password or 0 for none. Default: 1
+        rules : str
+            Use comma separated complexity integers (uppercase, lowercase, numbers, symbols)
         no_breachwatch : bool
             Skip BreachWatch detection if BreachWatch is enabled for this account
         output_format : str
@@ -1847,9 +1853,19 @@ class GenerateCommand(Command):
             If True return tuple of password dict and formatted output string
         """
 
-        kpg = KeeperPasswordGenerator(
-            length, symbols, digits, uppercase, lowercase
-        )
+        if rules and all(i is None for i in (symbols, digits, uppercase, lowercase)):
+            kpg = KeeperPasswordGenerator.create_from_rules(rules, length)
+            if kpg is None:
+                logging.warning('Using default password complexity rules')
+                kpg = KeeperPasswordGenerator(length=length)
+        else:
+            if rules:
+                logging.warning(
+                    'Ignoring "rules" option used with "symbols", "digits", "uppercase", or "lowercase" option'
+                )
+            kpg = KeeperPasswordGenerator(
+                length=length, symbols=symbols, digits=digits, caps=uppercase, lower=lowercase
+            )
         get_new_password_count = number
         no_breachwatch = no_breachwatch or getattr(params, 'breach_watch', None) is None
 
