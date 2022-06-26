@@ -120,7 +120,13 @@ action_report_parser.add_argument('--days-since', '-d', dest='days_since', actio
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
 action_report_parser.add_argument('--output', dest='output', action='store', help='path to resulting output file')
 action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                  default='table', help='output format.')
+                                  default='table', help='format of output')
+action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
+                                  choices=['lock', 'delete', 'none'], default='none',
+                                  help='admin action to apply to each user in the report')
+action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
+                                  help='flag to enable dry-run mode')
+
 syslog_templates = None  # type: Optional[List[str]]
 
 API_EVENT_SUMMARY_ROW_LIMIT = 2000
@@ -1526,11 +1532,18 @@ class ActionReportCommand(EnterpriseCommand):
         return action_report_parser
 
     def execute(self, params, **kwargs):
-        def get_request(query_filter, cols=None):
+        def cmd_rq(cmd, **kwargs):
             rq = {
-                'command': 'get_audit_event_reports',
-                'report_type': 'span',
+                'command': cmd,
                 'scope': 'enterprise',
+                **kwargs
+            }
+            return rq
+
+        def report_rq(query_filter, cols=None):
+            rq = {
+                **cmd_rq('get_audit_event_reports'),
+                'report_type': 'span',
                 'columns': ['username'] if cols is None else cols,
                 'filter': query_filter,
                 'aggregate': ['last_created'],
@@ -1543,7 +1556,7 @@ class ActionReportCommand(EnterpriseCommand):
             columns = [username_field]
             get_events = len(candidates) > len(excluded)
             while get_events:
-                rq = get_request(query_filter, columns)
+                rq = report_rq(query_filter, columns)
                 rs = api.communicate(params, rq)
                 events = rs['audit_event_overview_report_rows']
                 to_exclude = [event[username_field] for event in events]
@@ -1569,11 +1582,54 @@ class ActionReportCommand(EnterpriseCommand):
                 'created': period
             }
             excluded = get_excluded(included, query_filter, name_key)
-            result = [user['username'] for user in candidates if user['username'] not in excluded]
-            return result
+            return [user for user in candidates if user['username'] not in excluded]
 
-        users = params.enterprise['users']
-        active = [user for user in users if user['status'] == 'active']
+        def batch_apply_cmd(users, api_cmd_rq=None, dryrun=False, userid_field='enterprise_user_id'):
+            cmd_status = 'aborted' if api_cmd_rq else 'n/a'
+            affected = 0
+            server_msg = 'n/a'
+            cmd = None if api_cmd_rq is None else api_cmd_rq.get('command')
+            if api_cmd_rq is not None and len(users):
+                cmd_rqs = [{**api_cmd_rq, userid_field: user[userid_field]} for user in users]
+                rq = cmd_rq('execute', requests=cmd_rqs)
+                if dryrun:
+                    cmd_status = 'dry run'
+                else:
+                    rs = api.communicate(params, rq)
+                    cmd_status = rs.get('result')
+                    server_msg = rs.get('message')
+                    affected = len(users)
+                    if cmd_status == 'success':
+                        results = rs.get('results')
+                        fails = [result for result in results if result.get('result') != 'success']
+                        if any(fails):
+                            fail = fails[0]
+                            cmd_status = 'incomplete'
+                            affected = len(users) - len(fails)
+                            server_msg = fail.get('message')
+
+            return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
+
+        def apply_admin_action(users, target_status='no-update', action='none', dryrun=False):
+            default_allowed = {'none'}
+            status_actions = {
+                'no-logon':     {*default_allowed, 'lock'},
+                'no-update':    {*default_allowed},
+                'locked':       {*default_allowed, 'delete'}
+            }
+            action_cmd_rqs = {
+                'none': None,
+                'lock': cmd_rq('enterprise_user_lock', lock='locked'),
+                'delete': cmd_rq('enterprise_user_delete')
+            }
+            invalid_action_msg = f'NONE (Action "{action}" not allowed on "{target_status}" users)'
+            is_valid_action = action in status_actions[target_status]
+            api_cmd_rq = action_cmd_rqs[action]
+            return batch_apply_cmd(users, api_cmd_rq, dryrun) if is_valid_action else invalid_action_msg
+
+        candidates = params.enterprise['users']
+        active = [user for user in candidates if user['status'] == 'active']
+        locked = [user for user in active if user['lock']]
         target_status = kwargs['target_user_status']
         days = kwargs['days_since']
         if days is None:
@@ -1582,14 +1638,21 @@ class ActionReportCommand(EnterpriseCommand):
         args_by_status = {
             'no-logon': [active, days, ['login']],
             'no-update': [active, days, ['record_add', 'record_update']],
-            'locked': [[user for user in active if user['lock']], days, ['lock_user'], 'to_username']
+            'locked': [locked, days, ['lock_user'], 'to_username']
         }
         args = args_by_status[target_status]
-        usernames = get_no_action_users(*args)
+        target_users = get_no_action_users(*args)
+        usernames = [user['username'] for user in target_users]
 
-        title = f'Users With "{target_status}" Status for at Least {days} day(s):\nCount: {len(usernames)}'
+        admin_action = kwargs['apply_action']
+        dry_run = kwargs['dry_run']
+        action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
+
+        title = f'Admin Action Taken:\n{action_msg}\n'
+        title += f'\n{len(usernames)} Users With "{target_status}" Status Older Than {days} Day(s): '
         filepath = kwargs.get('output')
         fmt = kwargs.get('format')
         formatted = [[name] for name in usernames]
+
         return dump_report_data(data=formatted, headers=['username'], title=title, fmt=fmt, filename=filepath)
 
