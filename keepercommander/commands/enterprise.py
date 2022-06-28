@@ -747,7 +747,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
-                        logging.warning('\n\nSupported team columns: %s\n', ', '.join(supported_columns))
+                        logging.warning('\n\nSupported role columns: %s\n', ', '.join(supported_columns))
 
                 displayed_columns = [x for x in supported_columns if x in columns]
 
