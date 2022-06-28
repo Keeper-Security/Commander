@@ -741,7 +741,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_roles:
-                supported_columns = SUPPORTED_TEAM_COLUMNS
+                supported_columns = SUPPORTED_ROLE_COLUMNS
                 if len(columns) == 0:
                     columns.update(('is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count'))
                 else:
