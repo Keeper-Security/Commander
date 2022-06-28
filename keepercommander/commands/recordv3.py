@@ -10,7 +10,6 @@
 #
 
 import argparse
-import datetime
 import json
 import logging
 import os
@@ -18,26 +17,25 @@ import re
 import tempfile
 import threading
 from pathlib import Path
-from typing import Generator, List, Tuple
+from typing import List
 
 import requests
 from Cryptodome.Cipher import AES
 from tabulate import tabulate
 
-from . import recordv2 as recordv2
 from . import record_common
+from . import recordv2 as recordv2
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .register import FileReportCommand
 from .. import api, crypto, generator
 from .. import recordv3, loginv3
+from ..attachment import prepare_attachment_download
 from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import record_pb2 as records
-from ..record import Record, get_totp_code
-from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path, SharedFolderFolderNode
-from ..attachment import prepare_attachment_download
-
+from ..record import get_totp_code
+from ..subfolder import BaseFolderNode, find_folders, try_resolve_path, get_folder_path
 
 DEFAULT_GENERATE_PASSWORD_LENGTH = 16
 
@@ -53,7 +51,6 @@ def register_commands(commands):
     commands['delete-attachment'] = RecordDeleteAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
     commands['totp'] = TotpCommand()
-    commands['shared-records-report'] = SharedRecordsReport()
     commands['record-type-info'] = RecordTypeInfo()
     commands['record-type'] = RecordRecordType()
     commands['file-report'] = RecordFileReportCommand()
@@ -72,7 +69,7 @@ def register_command_info(aliases, command_info):
 
     for p in [add_parser, edit_parser, rm_parser,  list_parser, get_info_parser, append_parser,
               download_parser, upload_parser, delete_attachment_parser, clipboard_copy_parser,
-              totp_parser, shared_records_report_parser, record_type_info_parser, record_type_parser,
+              totp_parser, record_type_info_parser, record_type_parser,
               file_report_parser]:
         command_info[p.prog] = p.description
 
@@ -232,14 +229,6 @@ totp_parser.add_argument('--legacy', dest='legacy', action='store_true', help='w
 totp_parser.add_argument('--details', dest='details', action='store_true', help='display 2FA details')
 totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
-
-
-shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', description='Report shared records for a logged-in user')
-shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
-shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
-#shared_records_report_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
-shared_records_report_parser.error = raise_parse_exception
-shared_records_report_parser.exit = suppress_exit
 
 
 record_type_info_parser = argparse.ArgumentParser(prog='record-type-info|rti', description='Get record type info')
@@ -1549,14 +1538,6 @@ class TotpCommand(Command):
                         path = '/' + get_folder_path(params, folder_uid, '/')
                         paths.append(path)
                     TotpCommand.Endpoints.append(TotpEndpoint(record_uid, record.title, paths))
-
-
-class SharedRecordsReport(Command):
-    def get_parser(self):
-        return shared_records_report_parser
-
-    def execute(self, params, **kwargs):
-        recordv2.SharedRecordsReport().execute(params, **kwargs)
 
 
 get_record_types_description = '''

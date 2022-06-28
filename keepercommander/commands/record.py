@@ -17,12 +17,13 @@ import logging
 import re
 from typing import Dict, Any, List
 
-from .base import dump_report_data, user_choice, Command, GroupCommand
+from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
 from .. import api, display, crypto, utils, vault, vault_extensions
 from ..error import CommandError
 from ..params import KeeperParams
 from ..record_management import update_record
-from ..subfolder import try_resolve_path
+from ..subfolder import try_resolve_path, get_folder_path, find_folders
+from ..proto.enterprise_pb2 import SharedRecordResponse
 from ..team import Team
 
 
@@ -33,6 +34,7 @@ def register_commands(commands):
     commands['list-sf'] = RecordListSfCommand()
     commands['list-team'] = RecordListTeamCommand()
     commands['record-history'] = RecordHistoryCommand()
+    commands['shared-records-report'] = SharedRecordsReport()
 
 
 def register_command_info(aliases, command_info):
@@ -41,8 +43,9 @@ def register_command_info(aliases, command_info):
     aliases['lsf'] = 'list-sf'
     aliases['lt'] = 'list-team'
     aliases['rh'] = 'record-history'
+    aliases['srr'] = 'shared-records-report'
 
-    for p in [search_parser, list_parser, list_sf_parser, list_team_parser, record_history_parser]:
+    for p in [search_parser, list_parser, list_sf_parser, list_team_parser, record_history_parser, shared_records_report_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
 
@@ -92,6 +95,11 @@ record_history_parser.add_argument(
     help='only show the details for a specific revision')
 record_history_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+
+
+shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
+shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
+shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 
 
 def find_record(params, record_name):  # type: (KeeperParams, str) -> vault.KeeperRecord
@@ -661,3 +669,73 @@ class RecordHistoryCommand(Command):
                 params.queue_audit_event('revision_restored', record_uid=record.record_uid)
                 params.sync_data = True
                 logging.info('Record \"%s\" revision V.%d has been restored', record.title, revision)
+
+
+class SharedRecordsReport(Command):
+    def get_parser(self):
+        return shared_records_report_parser
+
+    def execute(self, params, **kwargs):
+
+        export_format = kwargs['format'] if 'format' in kwargs else None
+        export_name = kwargs['name'] if 'name' in kwargs else None
+
+        shared_records_data_rs = api.communicate_rest(params, None, 'report/get_shared_record_report', rs_type=SharedRecordResponse)
+
+        shared_from_mapping = {
+            1: "Direct Share",
+            2: "Share Folder",
+            3: "Share Team Folder"
+        }
+
+        rows = []
+        for e in shared_records_data_rs.events:
+            record_uid = api.decode_uid_to_str(e.recordUid)
+
+            cached_record = None
+
+            if record_uid in params.record_cache:   # to avoid not found warning log messages
+                cached_record = api.get_record(params, record_uid)
+
+            if not cached_record:   # probably deleted record
+                logging.debug("Record uid=%s was not located in current cache." % record_uid)
+                continue
+
+            # Folder Path(s)
+            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
+            path_str = ""
+            for i in range(len(folders)):
+                path_str = path_str + ('{0}{1}'.format('\n' if i > 0 else '', folders[i]))
+
+            if not e.canEdit and not e.canReshare:
+                permissions = "Read Only"
+            elif not e.canEdit and e.canReshare:
+                permissions = "Can Share"
+            elif e.canEdit and e.canReshare:
+                permissions = "Can Edit"
+            else:
+                permissions = "Can Edit & Share"
+
+            row = {
+                'record_uid': record_uid,
+                'title': cached_record.title,
+                'share_to': e.userName,
+                'shared_from': shared_from_mapping[e.shareFrom] if e.shareFrom in shared_from_mapping else "Other Share",
+                'permissions': permissions,
+                'folder_path': path_str
+            }
+
+            rows.append(row)
+
+        fields = ['record_uid', 'title', 'share_to', 'shared_from', 'permissions', 'folder_path']
+
+        table = []
+        for raw in rows:
+            row = []
+            for f in fields:
+                row.append(raw[f])
+            table.append(row)
+
+        if export_format == 'table':
+            fields = [field_to_title(x) for x in fields]
+        return dump_report_data(table, fields, fmt=export_format, filename=export_name, row_number=True)
