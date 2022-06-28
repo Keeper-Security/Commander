@@ -169,11 +169,20 @@ def field_to_title(field):   # type: (str) -> str
 
 
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
-    # type: (Sequence[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
+    # type: (List[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
     #           row_number: boolean     - Add row number. table only
     #           column_width: int       - Truncate long columns. table only
     #           no_header: boolean      - Do not print header
+    #           group_by: int           - Sort by columnNo
+
+    group_by = kwargs.get('group_by')
+    if group_by is not None:
+        group_by = int(group_by)
+
+    if isinstance(group_by, int):
+        data.sort(key=lambda x: x[group_by] if 0 <= group_by < len(x) else None)
+
     if fmt == 'csv':
         if filename:
             _, ext = os.path.splitext(filename)
@@ -245,8 +254,16 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             headers.insert(0, '#')
 
         expanded_data = []
+        last_group_by_value = None
         for row_no in range(len(data)):
             row = data[row_no]
+            if isinstance(group_by, int):
+                if 0 <= group_by < len(row):
+                    group_by_value = row[group_by]
+                    if group_by_value == last_group_by_value:
+                        row[group_by] = None
+                    else:
+                        last_group_by_value = group_by_value
             if row_number:
                 if not isinstance(row, list):
                     row = list(row)

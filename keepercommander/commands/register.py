@@ -11,6 +11,7 @@
 
 import argparse
 import datetime
+import itertools
 import re
 import base64
 import logging
@@ -21,7 +22,7 @@ from tabulate import tabulate
 from urllib.parse import urlparse, urlunparse
 
 from Cryptodome.PublicKey import RSA
-from typing import Optional
+from typing import Optional, Dict
 
 from .. import api, utils, crypto
 from .base import dump_report_data, user_choice, field_to_title
@@ -93,8 +94,8 @@ share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
 
 share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.')
-share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv'], default='table',
-                                 help='output format.')
+share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'],
+                                 default='table', help='output format.')
 share_report_parser.add_argument('--output', dest='output', action='store',
                                  help='output file name. (ignored for table format)')
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
@@ -106,6 +107,8 @@ share_report_parser.add_argument('--share-date', dest='share_date', action='stor
                                       'detailed owner report. This data is available only to those users who have '
                                       'permissions to execute reports for their company. Example of the report that '
                                       'includes shared date: `share-report -v -o --share-date --format table`')
+share_report_parser.add_argument('-sf', '--shared-folders', dest='shared_folders', action='store_true',
+                                 help='display shared folder detail information. If omitted then records.')
 share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
                                  help='display verbose information')
 share_report_parser.error = raise_parse_exception
@@ -654,9 +657,12 @@ class ShareReportCommand(Command):
 
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose') or False
-        record_uids = []
+        output_format = kwargs.get('format', 'table')
         user_filter = set()
         record_filter = set()
+        user_lookup = None   # type: Optional[Dict[int, str]]
+        if isinstance(params.enterprise, dict) and 'users' in params.enterprise:
+            user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
 
         if kwargs.get('record'):
             records = kwargs.get('record') or []
@@ -695,12 +701,15 @@ class ShareReportCommand(Command):
         if not kwargs.get('owner'):
             record_shares = {}
             sf_shares = {}
+            record_owners = {}
             for uid in record_uids:
                 record = params.record_cache[uid]
                 if 'shares' in record:
                     if 'user_permissions' in record['shares']:
                         for up in record['shares']['user_permissions']:
                             user_name = up['username']
+                            if up.get('owner'):
+                                record_owners[uid] = user_name
                             if user_filter:
                                 if user_name not in user_filter:
                                     continue
@@ -718,17 +727,29 @@ class ShareReportCommand(Command):
                                 if 'users' in shared_folder:
                                     for u in shared_folder['users']:
                                         user_name = u['username']
-                                        if user_filter:
-                                            if user_name not in user_filter:
-                                                continue
-                                        names.add(user_name)
+                                        matches = user_name in user_filter if user_filter else True
+                                        if matches:
+                                            names.add(user_name)
                                 if 'teams' in shared_folder:
                                     for t in shared_folder['teams']:
                                         user_name = t['name']
-                                        if user_filter:
-                                            if user_name not in user_filter:
-                                                continue
-                                        names.add(user_name)
+                                        matches = user_name in user_filter if user_filter else True
+                                        if matches:
+                                            names.add(user_name)
+                                        if user_lookup:
+                                            team_uid = t['team_uid']
+                                            if 'team_users' in params.enterprise:
+                                                for tu in params.enterprise['team_users']:
+                                                    if tu.get('team_uid') != team_uid:
+                                                        continue
+                                                    if tu.get('user_type') == 2:
+                                                        continue
+                                                    user_name = user_lookup.get(tu.get('enterprise_user_id'))
+                                                    if not user_name:
+                                                        continue
+                                                    matches = user_name in user_filter if user_filter else True
+                                                    if matches:
+                                                        names.add(user_name)
 
                                 for user_name in names:
                                     if user_name not in sf_shares:
@@ -740,7 +761,7 @@ class ShareReportCommand(Command):
                                     for sfr in shared_folder['records']:
                                         uid = sfr['record_uid']
                                         if record_filter:
-                                            if not uid in record_filter:
+                                            if uid not in record_filter:
                                                 continue
                                         for user_name in names:
                                             if user_filter:
@@ -769,59 +790,59 @@ class ShareReportCommand(Command):
                         print('')
 
             elif kwargs.get('user'):
-                if len(record_shares) > 0:
-                    user_names = [x for x in record_shares.keys()]
-                    user_names.sort()
-                    headers = ['#', 'Record UID', 'Title']
-                    for user in user_names:
-                        record_uids = record_shares[user]
-                        records = [api.get_record(params, x) for x in record_uids]
-                        records.sort(key=lambda x: x.title.lower())
-                        table = [[i + 1, r.record_uid, r.title] for i, r in enumerate(records)]
-                        title = 'Records shared with: {0}'.format(user)
-                        dump_report_data(table, headers, title=title, fmt=kwargs.get('format'),
-                                         filename=kwargs.get('output'), append=True)
+                if kwargs.get('shared_folders'):
+                    headers = ['username', 'shared_folder_uid', 'name']
+                    table = []
+                    for user in sf_shares:
+                        for shared_folder_uid in sf_shares[user]:
+                            sf = api.get_shared_folder(params, shared_folder_uid)
+                            row = [user, shared_folder_uid, sf.name if sf else '']
+                            table.append(row)
 
-                if len(sf_shares) > 0:
-                    user_names = [x for x in sf_shares.keys()]
-                    user_names.sort(key=lambda x: x.lower())
-                    headers = ['#', 'Shared Folder UID', 'Name']
-                    for user in user_names:
-                        sf_uids = sf_shares[user]
-                        sfs = [api.get_shared_folder(params, x) for x in sf_uids]
-                        sfs.sort(key=lambda x: x.name.lower())
-                        table = [[i + 1, sf.shared_folder_uid, sf.name] for i, sf in enumerate(sfs)]
-                        title = 'Folders shared with: {0}'.format(user)
-                        dump_report_data(table, headers, title=title, fmt=kwargs.get('format'),
-                                         filename=kwargs.get('output'), append=True)
+                    if output_format == 'table':
+                        headers = [field_to_title(x) for x in headers]
+                    return dump_report_data(
+                        table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'),
+                        group_by=0, row_number=True)
+
+                else:
+                    headers = ['username', 'record_owner', 'record_uid', 'record_title']
+                    table = []
+                    for user in record_shares:
+                        for record_uid in record_shares[user]:
+                            rec = api.get_record(params, record_uid)
+                            table.append([user, record_owners.get(rec.record_uid, ''), record_uid, rec.title if rec else ''])
+
+                    if output_format == 'table':
+                        headers = [field_to_title(x) for x in headers]
+                    return dump_report_data(
+                        table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'),
+                        group_by=0, row_number=True)
             else:
                 if params.user in record_shares:
                     del record_shares[params.user]
                 if params.user in sf_shares:
                     del sf_shares[params.user]
 
-                headers = ['#', 'Shared to', 'Records']
+                headers = ['shared_to', 'records', 'shared_folders']
                 table = []
-                for user_name, uids in record_shares.items():
-                    if verbose:
-                        records = []
-                        for uid in uids:
-                            record = api.get_record(params, uid)
-                            records.append('{0}  {1}'.format(uid, record.title if record else ''))
-                        table.append([user_name, records])
-                    else:
-                        table.append([user_name, len(uids)])
-                [(s[0], list(s[1]) if verbose else len(s[1])) for s in record_shares.items()]
-                table.sort(key=lambda x: len(x[1]) if type(x[1]) == list else x[1], reverse=True)
-                table = [[i + 1, s[0], s[1]] for i, s in enumerate(table)]
-                return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                names = set(itertools.chain(record_shares.keys(), sf_shares.keys()))
+                for name in names:
+                    records = len(record_shares[name]) if name in record_shares else None
+                    shared_folders = len(sf_shares[name]) if name in sf_shares else None
+                    table.append([name, records, shared_folders])
 
+                if output_format == 'table':
+                    headers = [field_to_title(x) for x in headers]
+                return dump_report_data(
+                    table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'),
+                    group_by=0, row_number=True)
         else:
-
             include_share_date = kwargs.get('share_date')
             record_owners = {}
             record_shared_with = {}
-            is_an_enterprise_user_by_ref = [True] # To track if use is part of an enterprise. If not then call backend only once.
+            # To track if use is part of an enterprise. If not then call backend only once.
+            is_an_enterprise_user_by_ref = [True]
             total_record = len(record_uids)
             count = 0
             for uid in record_uids:
@@ -884,10 +905,9 @@ class ShareReportCommand(Command):
                                             record_shared_with[uid].append('{0} => {1}{2}'.format(team_name, permission, date_shared))
 
             if len(record_owners) > 0:
-                headers = ['#', 'Record Title', 'Record UID', 'Owner', 'Shared with', 'Folder Path']
+                headers = ['record_owner', 'record_uid', 'record_title', 'shared_with', 'folder_path']
                 table = []
                 for uid, user_name in record_owners.items():
-
                     folder_paths = []
                     folders = list(find_folders(params, uid))
                     if len(folders) > 0:
@@ -896,7 +916,7 @@ class ShareReportCommand(Command):
                     folder_paths = '\n'.join(folder_paths)
 
                     record = api.get_record(params, uid)
-                    row = [record.title[0:32] if record else '', uid, user_name]
+                    row = [user_name, uid, record.title[0:32] if record else '']
                     share_to = record_shared_with.get(uid)
                     if verbose:
                         share_to.sort()
@@ -905,9 +925,12 @@ class ShareReportCommand(Command):
                         row.append(len(share_to) if share_to else 0)
                     row.append(folder_paths)
                     table.append(row)
-                table.sort(key=lambda x: len(x[3]) if type(x[3]) == list else x[3], reverse=True)
-                table = [[i + 1, s[0], s[1], s[2], s[3], s[4]] for i, s in enumerate(table)]
-                return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+
+                if output_format == 'table':
+                    headers = [field_to_title(x) for x in headers]
+                return dump_report_data(
+                    table, headers, fmt=output_format, filename=kwargs.get('output'),
+                    group_by=0, row_number=True)
 
     @staticmethod
     def get_permission_text(can_edit, can_share, can_view=True):
