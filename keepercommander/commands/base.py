@@ -523,7 +523,8 @@ class RecordMixin:
                             return f'{host_name}:{port}'
                         return host_name
                     return ''
-        return RecordMixin.get_custom_field(record, f'cmdr:{field_name}')
+
+        return RecordMixin.get_custom_field(record, field_name)
 
 
 class FolderMixin:
