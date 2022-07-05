@@ -69,7 +69,8 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
 
             verification_code = ''
             try:
-                data = {'displayname': email}
+                displayname = kwargs.get('name',email)
+                data = {'displayname': displayname}
                 rq = {
                     'command': 'enterprise_user_add',
                     'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
