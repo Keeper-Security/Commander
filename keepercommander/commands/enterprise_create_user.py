@@ -59,7 +59,6 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         node_id = nodes[0]['node_id']
         emails = kwargs.get('email', [])
         email_pattern = re.compile(EMAIL_PATTERN)
-        displayname = kwargs.get('name')
 
         added_accounts = {}
         for email in emails:
@@ -70,6 +69,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
 
             verification_code = ''
             try:
+                displayname = kwargs.get('name',email)
                 data = {'displayname': displayname}
                 rq = {
                     'command': 'enterprise_user_add',
