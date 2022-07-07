@@ -207,7 +207,7 @@ class RecordV3:
         if badf:
             return {'is_valid': False, 'error': 'Unknown field types: ' + str(badf)}
 
-        known_ft_atributes = {'$ref', 'label', 'required'}
+        known_ft_atributes = {'$ref', 'label', 'required', 'privacyScreen', 'enforceGeneration', 'complexity'}
         unknown_ft_atributes = [x for x in flds if not set(x.keys()).issubset(known_ft_atributes)]
         if unknown_ft_atributes:
             return {'is_valid': False, 'error': 'Unknown field atributes: ' + str(unknown_ft_atributes)}
@@ -816,7 +816,7 @@ class RecordV3:
             ref = ft.get('$ref')
             result = RecordV3.is_valid_field_type(ref)
 
-            known_keys = ('$ref', 'label', 'required')
+            known_keys = ('$ref', 'label', 'required', 'privacyscreen', 'enforcegeneration', 'complexity')
             unknown_keys = [x for x in ft if x.lower() not in known_keys]
             if unknown_keys:
                 logging.warning('Unknown attributes in field reference: ' + str(unknown_keys))
