@@ -108,6 +108,8 @@ share_report_parser.add_argument('--share-date', dest='share_date', action='stor
                                       'includes shared date: `share-report -v -o --share-date --format table`')
 share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
                                  help='display verbose information')
+share_report_parser.add_argument('-sf', '--shared-folders', dest='shared_folders', action='store_true', default=False,
+                                 help='show shared-folder info')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
@@ -652,11 +654,40 @@ class ShareReportCommand(Command):
     def get_parser(self):
         return share_report_parser
 
+    def sf_report(self, params, out=None, fmt=None):
+        def getshares(group, namekey):
+            perm_fields = {'manage_users', 'manage_records'}
+            name_field = 'name'
+            perms_field = 'permissions'
+            shares = [{
+                name_field: member[namekey],
+                perms_field: ','.join([field for field in perm_fields if member[field]])
+            } for member in group]
+            return shares
+
+        title = 'Shared folders'
+        headers = ['Folder UID', 'Name', 'Shared To', 'Permissions', 'Folder Path']
+        shared_folders = {**params.shared_folder_cache}
+        table = []
+        for uid, props in shared_folders.items():
+            path = get_folder_path(params, uid)
+            name = props['name_unencrypted']
+            row = [uid, name]
+            users = props.get('users') or []
+            teams = props.get('teams') or []
+            shared_to = getshares(users, 'username') + getshares(teams, 'name')
+            rows = [[*row, sharee['name'], sharee['permissions'], path] for sharee in shared_to]
+            table += rows
+        return dump_report_data(table, headers, title=title, fmt=fmt, filename=out)
+
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose') or False
         record_uids = []
         user_filter = set()
         record_filter = set()
+
+        if kwargs.get('shared_folders'):
+            return self.sf_report(params, out=kwargs.get('output'), fmt=kwargs.get('format'))
 
         if kwargs.get('record'):
             records = kwargs.get('record') or []
