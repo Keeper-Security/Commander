@@ -666,7 +666,7 @@ class ShareReportCommand(Command):
             return shares
 
         title = 'Shared folders'
-        headers = ['Folder UID', 'Name', 'Shared To', 'Permissions', 'Folder Path']
+        headers = ['Folder UID', 'Folder Name', 'Shared To', 'Permissions', 'Folder Path']
         shared_folders = {**params.shared_folder_cache}
         table = []
         for uid, props in shared_folders.items():
