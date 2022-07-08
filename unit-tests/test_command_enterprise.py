@@ -142,7 +142,7 @@ class TestEnterprise(TestCase):
         with mock.patch('builtins.print'):
             cmd.execute(params, role=[ent_env.role1_name])
 
-        with mock.patch('keepercommander.commands.enterprise.user_choice') as mock_choice:
+        with mock.patch('keepercommander.commands.enterprise_common.user_choice') as mock_choice:
             mock_choice.return_value = 'y'
             TestEnterprise.expected_commands = ['role_user_add']
             cmd.execute(params, add_user=[ent_env.user2_email], role=[ent_env.role1_id])

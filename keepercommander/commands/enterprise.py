@@ -179,12 +179,20 @@ enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store
 enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
 enterprise_role_parser.add_argument('--node', dest='node', action='store', help='node Name or ID')
 enterprise_role_parser.add_argument('--name', dest='name', action='store', help='role\'s new name')
-enterprise_role_parser.add_argument('--add-user', dest='add_user', action='append', metavar='EMAIL', help='add user to role')
-enterprise_role_parser.add_argument('--remove-user', dest='remove_user', action='append', metavar='EMAIL', help='remove user from role')
-enterprise_role_parser.add_argument('--enforcement', dest='enforcements', action='append', metavar='KEY:VALUE', help='sets role enforcement')
-enterprise_role_parser.add_argument('--add-admin', dest='add_admin', action='append', help='add managed node to role')
+enterprise_role_parser.add_argument('-au', '--add-user', action='append', metavar='EMAIL', help='add user to role')
+enterprise_role_parser.add_argument(
+    '-ru', '--remove-user', action='append', metavar='EMAIL', help='remove user from role'
+)
+enterprise_role_parser.add_argument('-at', '--add-team', action='append', metavar='EMAIL', help='add team to role')
+enterprise_role_parser.add_argument(
+    '-rt', '--remove-team', action='append', metavar='EMAIL', help='remove team from role'
+)
+enterprise_role_parser.add_argument('-aa', '--add-admin', action='append', help='add managed node to role')
+enterprise_role_parser.add_argument('-ra', '--remove-admin', action='append', help='remove managed node from role')
+enterprise_role_parser.add_argument(
+    '--enforcement', dest='enforcements', action='append', metavar='KEY:VALUE', help='sets role enforcement'
+)
 enterprise_role_parser.add_argument('--cascade', dest='cascade', action='store', choices=['on', 'off'], help='apply to the children nodes. \'add-admin\' only')
-enterprise_role_parser.add_argument('--remove-admin', dest='remove_admin', action='append', help='remove managed node from role')
 enterprise_role_parser.add_argument('role', type=str, nargs='+', help='Role Name ID. Can be repeated.')
 enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
@@ -196,10 +204,12 @@ enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='s
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
 enterprise_team_parser.add_argument('--approve', dest='approve', action='store_true', help='approve queued team')
 enterprise_team_parser.add_argument('--delete', dest='delete', action='store_true', help='delete team')
-enterprise_team_parser.add_argument('--add-user', dest='add_user', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-au', '--add-user', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-ru', '--remove-user', action='append', help='remove user from team')
+enterprise_team_parser.add_argument('-ar', '--add-role', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-rr', '--remove-role', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-user only')
-enterprise_team_parser.add_argument('--remove-user', dest='remove_user', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
 enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
 enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
@@ -1599,6 +1609,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         matched_roles = list(matched.values())
 
         request_batch = []
+        non_batch_update_msgs = []
         skip_display = False
         if kwargs.get('add'):
             for role in matched_roles:
@@ -1630,83 +1641,21 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             if not matched_roles:
                 return
 
+            add_team, remove_team = kwargs.get('add_team'), kwargs.get('remove_team')
+            add_user, remove_user = kwargs.get('add_user'), kwargs.get('remove_user')
+
             if kwargs.get('delete'):
                 for role in matched_roles:
                     request_batch.append({ "command": "role_delete", "role_id": role['role_id'] })
 
-            elif kwargs.get('add_user') or kwargs.get('remove_user'):
-                user_changes = {}
-                for is_add in [False, True]:
-                    ul = kwargs.get('add_user') if is_add else kwargs.get('remove_user')
-                    if ul:
-                        for u in ul:
-                            uname = u.lower()
-                            user_node = None
-                            if 'users' in params.enterprise:
-                                for user in params.enterprise['users']:
-                                    if uname in { str(user['enterprise_user_id']),
-                                                  user['username'].lower() }:
-                                        user_node = user
-                                        break
-                            if user_node:
-                                user_id = user_node['enterprise_user_id']
-                                user_changes[user_id] = is_add, user_node['username']
-                            else:
-                                logging.warning('User %s could be resolved', u)
+            elif add_team or remove_team or add_user or remove_user:
+                if add_team or remove_team:
+                    non_batch_update_msgs += self.change_role_teams(params, matched_roles, add_team, remove_team)
 
-                user_pkeys = {}
-                for role in matched_roles:
-                    role_id = role['role_id']
-                    for user_id in user_changes:
-                        is_add, email = user_changes[user_id]
-                        role_key = None
-                        is_managed_role = False
-                        if is_add:
-                            if 'managed_nodes' in params.enterprise:
-                                for mn in params.enterprise['managed_nodes']:
-                                    if mn['role_id'] == role_id:
-                                        is_managed_role = True
-                                        break
-                        if is_managed_role:
-
-                            if 'role_keys2' in params.enterprise:
-                                for rk2 in params.enterprise['role_keys2']:
-                                    if rk2['role_id'] == role_id:
-                                        encrypted_key_decoded = base64.urlsafe_b64decode(rk2['role_key'] + '==')
-                                        role_key = rest_api.decrypt_aes(encrypted_key_decoded, params.enterprise['unencrypted_tree_key'])
-                                        break
-
-                            if 'role_keys' in params.enterprise and role_key is None:
-                                for rk in params.enterprise['role_keys']:
-                                    if rk['role_id'] == role_id:
-                                        if rk['key_type'] == 'encrypted_by_data_key':
-                                            role_key = api.decrypt_data(rk['encrypted_key'], params.data_key)
-                                        elif rk['key_type'] == 'encrypted_by_public_key':
-                                            role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
-                                        break
-                        rq = {
-                            'command': 'role_user_add' if is_add else 'role_user_remove',
-                            'enterprise_user_id': user_id,
-                            'role_id': role_id
-                        }
-                        if is_managed_role:
-                            if user_id not in user_pkeys:
-                                answer = 'y' if kwargs.get('force') else user_choice('Do you want to grant administrative privileges to {0}'.format(email), 'yn', 'n')
-                                public_key = None
-                                if answer == 'y':
-                                    public_key = self.get_public_key(params, email)
-                                    if public_key is None:
-                                        logging.warning('Cannot get public key for user %s', email)
-                                user_pkeys[user_id] = public_key
-                            if user_pkeys[user_id]:
-                                encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
-                                rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
-                                if role_key:
-                                    encrypted_role_key = crypto.encrypt_rsa(role_key, user_pkeys[user_id])
-                                    rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
-                                request_batch.append(rq)
-                        else:
-                            request_batch.append(rq)
+                if add_user or remove_user:
+                    request_batch += self.get_role_users_change_batch(
+                        params, matched_roles, add_user, remove_user
+                    )
 
             elif kwargs.get('enforcements'):
                 skip_display = True
@@ -2073,6 +2022,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     else:
                         if rs['result'] != 'success':
                             logging.warning('Error: %s', rs['message'])
+
+        if request_batch or len(non_batch_update_msgs) > 0:
+            for update_msg in non_batch_update_msgs:
+                logging.info(update_msg)
             api.query_enterprise(params)
         else:
             if kwargs.get('format') == 'json':
@@ -2103,16 +2056,20 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             'node_name': self.get_node_path(params, role['node_id']),
             'cascade': role.get('visible_below', False),
             'new_user_inherit': role.get('new_user_inherit', False),
-            'users': []
+            'users': [],
+            'teams': []
         }
         if 'role_users' in params.enterprise:
-            user_ids = [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]
+            user_ids = [r['enterprise_user_id'] for r in params.enterprise['role_users'] if r['role_id'] == role_id]
             if len(user_ids) > 0:
-                users = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
-                ret['users'] = [{
-                    'user_id': x,
-                    'username': users[x]
-                } for x in user_ids if x in users]
+                users = {u['enterprise_user_id']: u['username'] for u in params.enterprise['users']}
+                ret['users'] = [{'user_id': i, 'username': users[i]} for i in user_ids if i in users]
+
+        if 'role_teams' in params.enterprise:
+            team_ids = [r['team_uid'] for r in params.enterprise['role_teams'] if r['role_id'] == role_id]
+            if len(team_ids) > 0:
+                teams = {t['team_uid']: t['name'] for t in params.enterprise['teams']}
+                ret['teams'] = [{'team_id': i, 'team_name': teams[i]} for i in team_ids if i in teams]
 
         if 'managed_nodes' in params.enterprise:
             node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
@@ -2175,15 +2132,24 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         print('{0:>24s}: {1}'.format('Cascade?', 'Yes' if role['visible_below'] else 'No'))
         print('{0:>24s}: {1}'.format('New user?', 'Yes' if role['new_user_inherit'] else 'No'))
         if 'role_users' in params.enterprise:
-            user_ids = [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]
+            user_ids = [r['enterprise_user_id'] for r in params.enterprise['role_users'] if r['role_id'] == role_id]
             if len(user_ids) > 0:
-                users = {}
-                for user in params.enterprise['users']:
-                    users[user['enterprise_user_id']] = user['username']
+                users = {u['enterprise_user_id']: u['username'] for u in params.enterprise['users']}
                 user_ids.sort(key=lambda x: users[x])
-                for i in range(len(user_ids)):
-                    user_id = user_ids[i]
-                    print('{0:>24s}: {1:<32s} {2}'.format('User(s)' if i == 0 else '', users[user_id], user_id if is_verbose else ''))
+                for i, user_id in enumerate(user_ids):
+                    print('{0:>25s} {1:<32s} {2}'.format(
+                        'User(s):' if i == 0 else '', users[user_id], user_id if is_verbose else ''
+                    ))
+
+        if 'role_teams' in params.enterprise:
+            team_ids = [r['team_uid'] for r in params.enterprise['role_teams'] if r['role_id'] == role_id]
+            if len(team_ids) > 0:
+                teams = {t['team_uid']: t['name'] for t in params.enterprise['teams']}
+                team_ids.sort(key=lambda x: teams[x])
+                for i, team_id in enumerate(team_ids):
+                    print('{0:>25s} {1:<32s} {2}'.format(
+                        'Team(s):' if i == 0 else '', teams[team_id], team_id if is_verbose else ''
+                    ))
 
         if 'managed_nodes' in params.enterprise:
             node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
@@ -2297,6 +2263,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         matched_teams = list(matched.values())
         request_batch = []
+        non_batch_update_msgs = []
 
         if kwargs.get('add') or kwargs.get('approve'):
             queue = []
@@ -2361,6 +2328,11 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                             'team_uid': team['team_uid']
                         }
                         request_batch.append(rq)
+
+            if kwargs.get('add_role') or kwargs.get('remove_role'):
+                non_batch_update_msgs = self.change_team_roles(
+                    params, matched_teams, kwargs.get('add_role'), kwargs.get('remove_role')
+                )
 
             if kwargs.get('add_user') or kwargs.get('remove_user'):
                 users = {}
@@ -2480,6 +2452,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     else:
                         logging.warning('\'%s\' %s team failed to %s user %s: %s', team_name, 'queued' if command == 'team_queue_user' else '',
                                         'delete' if command == 'team_enterprise_user_remove' else 'add', user_name, rs['message'])
+
+        if request_batch or len(non_batch_update_msgs) > 0:
+            for update_msg in non_batch_update_msgs:
+                logging.info(update_msg)
             api.query_enterprise(params)
         else:
             for team in matched_teams:
@@ -2501,17 +2477,24 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             print('{0:>16s}: {1}'.format('Restrict Share?', 'Yes' if team['restrict_sharing'] else 'No'))
             print('{0:>16s}: {1}'.format('Restrict View?', 'Yes' if team['restrict_view'] else 'No'))
 
-        user_names = {}
-        for u in params.enterprise['users']:
-            user_names[u['enterprise_user_id']] = u['username'] if 'username' in u else '[empty]'
+        if 'role_teams' in params.enterprise:
+            role_ids = [r['role_id'] for r in params.enterprise['role_teams'] if r['team_uid'] == team_uid]
+            if len(role_ids) > 0:
+                roles = {r['role_id']: r['data'].get('displayname', '[empty]') for r in params.enterprise['roles']}
+                role_ids.sort(key=lambda x: roles[x])
+                for i, role_id in enumerate(role_ids):
+                    print('{0:>17s} {1:<24s} {2}'.format(
+                        'Role(s):' if i == 0 else '', roles[role_id], role_id if is_verbose else ''
+                    ))
 
+        user_names = {u['enterprise_user_id']: u.get('username', '[empty]') for u in params.enterprise['users']}
         if 'team_users' in params.enterprise:
             user_teams = [x for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
-            # user_ids.sort(key=lambda x: user_names.get(x))
+            user_teams.sort(key=lambda x: user_names.get(x['enterprise_user_id']))
             for i, tu in enumerate(user_teams):
                 user_id = tu['enterprise_user_id']
-                print('{0:>16s}: {1:<24s}{2} {3}'.format(
-                    'Active User(s)' if i == 0 else '',
+                print('{0:>17s} {1:<24s}{2} {3}'.format(
+                    'Active User(s):' if i == 0 else '',
                     user_names[user_id] if user_id in user_names else f'(Unmanaged User: {user_id})',
                     f' [{user_id}]' if is_verbose else '',
                     '(No Shared Folders)' if tu.get('user_type') == 2 else ''
