@@ -9,12 +9,24 @@
 # Contact: ops@keepersecurity.com
 #
 
+import base64
 import collections
+import logging
 
-from .base import Command
-from .. import api, utils, crypto
+from .base import Command, user_choice
+from .. import api, utils, crypto, rest_api
 from ..error import CommandError
 from ..params import KeeperParams
+from ..proto.enterprise_pb2 import RoleTeam, RoleTeams
+
+
+def decrypt_role_key(params, role_key):
+    if role_key['key_type'] == 'encrypted_by_data_key':
+        return api.decrypt_data(role_key['encrypted_key'], params.data_key)
+    elif role_key['key_type'] == 'encrypted_by_public_key':
+        return api.decrypt_rsa(role_key['encrypted_key'], params.rsa_key)
+    else:
+        return None
 
 
 class EnterpriseCommand(Command):
@@ -96,6 +108,202 @@ class EnterpriseCommand(Command):
         if team_key is not None:
             self.team_keys[team_uid] = team_key
         return team_key
+
+    def get_role_users_change_batch(self, params, roles, add_user, remove_user, force=False):
+        """Get batch of requests for changing enterprise role users"""
+        request_batch = []
+        user_changes = {}
+        for is_add in (False, True):
+            ul = add_user if is_add else remove_user
+            if ul:
+                for u in ul:
+                    user_node = next((
+                        user for user in params.enterprise.get('users', [])
+                        if u.lower() in (str(user['enterprise_user_id']), user['username'].lower())
+                    ), None)
+                    if user_node:
+                        user_id = user_node['enterprise_user_id']
+                        user_changes[user_id] = is_add, user_node['username']
+                    else:
+                        logging.warning('User %s could be resolved', u)
+
+        user_pkeys = {}
+        for role in roles:
+            role_id = role['role_id']
+            for user_id in user_changes:
+                is_add, email = user_changes[user_id]
+                role_key = None
+                if is_add:
+                    is_managed_role = next((
+                        True for mn in params.enterprise.get('managed_nodes', []) if mn['role_id'] == role_id
+                    ), False)
+                else:
+                    is_managed_role = False
+
+                if is_managed_role:
+                    role_keys2 = params.enterprise.get('role_keys2', [])
+                    role_key = next((rk2['role_key'] for rk2 in role_keys2 if rk2['role_id'] == role_id), None)
+                    if role_key:
+                        encrypted_key_decoded = base64.urlsafe_b64decode(role_key + '==')
+                        role_key = rest_api.decrypt_aes(
+                            encrypted_key_decoded, params.enterprise['unencrypted_tree_key']
+                        )
+                    else:
+                        role_keys = params.enterprise.get('role_keys', [])
+                        role_key = next((
+                            decrypt_role_key(params, rk) for rk in role_keys if rk['role_id'] == role_id
+                        ), None)
+                rq = {
+                    'command': 'role_user_add' if is_add else 'role_user_remove',
+                    'enterprise_user_id': user_id,
+                    'role_id': role_id
+                }
+                if is_managed_role:
+                    if user_id not in user_pkeys:
+                        answer = 'y' if force else user_choice(
+                            'Do you want to grant administrative privileges to {0}'.format(email), 'yn', 'n')
+                        public_key = None
+                        if answer == 'y':
+                            public_key = self.get_public_key(params, email)
+                            if public_key is None:
+                                logging.warning('Cannot get public key for user %s', email)
+                        user_pkeys[user_id] = public_key
+                    if user_pkeys[user_id]:
+                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'],
+                                                                user_pkeys[user_id])
+                        rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
+                        if role_key:
+                            encrypted_role_key = crypto.encrypt_rsa(role_key, user_pkeys[user_id])
+                            rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                        request_batch.append(rq)
+                else:
+                    request_batch.append(rq)
+        return request_batch
+
+    @staticmethod
+    def decrypt_role_key(params, rk):
+        if rk['key_type'] == 'encrypted_by_data_key':
+            return api.decrypt_data(rk['encrypted_key'], params.data_key)
+        elif rk['key_type'] == 'encrypted_by_public_key':
+            return api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+        else:
+            return None
+
+    @staticmethod
+    def change_role_teams(params, roles, add_team, remove_team):
+        """Change enterprise role teams"""
+        update_msgs = []
+        add_teams = None
+        remove_teams = None
+        team_changes = {}
+        for is_add in (False, True):
+            team_list = add_team if is_add else remove_team
+            if team_list:
+                if is_add:
+                    add_teams = RoleTeams()
+                else:
+                    remove_teams = RoleTeams()
+                for team in team_list:
+                    team_node = next((
+                        t for t in params.enterprise.get('teams', []) if team in (t['team_uid'], t['name'])
+                    ), None)
+                    if team_node:
+                        team_changes[team_node['team_uid']] = is_add, team_node['name']
+                    else:
+                        logging.warning('Team %s could be resolved', team)
+
+        for role in roles:
+            role_id = role['role_id']
+            for team_id in team_changes:
+                is_add, team_name = team_changes[team_id]
+                if is_add:
+                    is_managed_role = next((
+                        True for mn in params.enterprise.get('managed_nodes', []) if mn['role_id'] == role_id
+                    ), False)
+                else:
+                    is_managed_role = False
+
+                if is_managed_role:
+                    logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                else:
+                    role_team = RoleTeam()
+                    role_team.role_id = role_id
+                    role_team.teamUid = utils.base64_url_decode(team_id)
+                    role_name = role['data']['displayname']
+                    if is_add:
+                        add_teams.role_team.append(role_team)
+                        update_msgs.append(f"'{role_name}' role assigned to team '{team_name}'")
+                    else:
+                        remove_teams.role_team.append(role_team)
+                        update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
+        if remove_teams:
+            api.communicate_rest(params, remove_teams, 'enterprise/role_team_remove')
+        if add_teams:
+            api.communicate_rest(params, add_teams, 'enterprise/role_team_add')
+        return update_msgs
+
+    @staticmethod
+    def change_team_roles(params, teams, add_roles, remove_roles):
+        update_msgs = []
+        add_role_teams = None
+        remove_role_teams = None
+        role_changes = {}
+        for is_add in (False, True):
+            role_list = add_roles if is_add else remove_roles
+            if role_list:
+                if is_add:
+                    add_role_teams = RoleTeams()
+                else:
+                    remove_role_teams = RoleTeams()
+                for role in role_list:
+                    role_node = next((
+                        r for r in params.enterprise['roles']
+                        if role in (str(r['role_id']), r['data'].get('displayname'))
+                    ), None)
+                    if role_node:
+                        role_changes[role_node['role_id']] = is_add, role_node['data'].get('displayname')
+                    else:
+                        logging.warning('Role %s cannot be resolved', role)
+
+        if len(role_changes) > 0:
+            for role_id in role_changes:
+                is_add, role_name = role_changes[role_id]
+                role_teams = {r['team_uid'] for r in params.enterprise.get('role_teams', []) if r['role_id'] == role_id}
+                if is_add:
+                    is_managed_role = next((
+                        True for mn in params.enterprise.get('managed_nodes', []) if mn['role_id'] == role_id
+                    ), False)
+                else:
+                    is_managed_role = False
+
+                if is_managed_role:
+                    logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                else:
+                    for team in teams:
+                        if is_add and team['team_uid'] in role_teams:
+                            logging.warning(
+                                'Team %s is already in "%s" role: Add to role is skipped', team['name'], role_name
+                            )
+                        elif not is_add and team['team_uid'] not in role_teams:
+                            logging.warning(
+                                'Team %s is not in "%s" role: Remove from role is skipped', team['name'], role_name
+                            )
+                        else:
+                            role_team = RoleTeam()
+                            role_team.role_id = role_id
+                            role_team.teamUid = utils.base64_url_decode(team['team_uid'])
+                            team_name = team['name']
+                            if is_add:
+                                add_role_teams.role_team.append(role_team)
+                                update_msgs.append(f"'{role_name}' role assigned to team '{team_name}'")
+                            else:
+                                remove_role_teams.role_team.append(role_team)
+                                update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
+        if remove_role_teams:
+            api.communicate_rest(params, remove_role_teams, 'enterprise/role_team_remove')
+        if add_role_teams:
+            api.communicate_rest(params, add_role_teams, 'enterprise/role_team_add')
+        return update_msgs
 
     @staticmethod
     def get_enterprise_id(params):
