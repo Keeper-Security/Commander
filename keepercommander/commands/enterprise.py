@@ -2263,6 +2263,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
 
         matched_teams = list(matched.values())
         request_batch = []
+        non_batch_update_msgs = []
 
         if kwargs.get('add') or kwargs.get('approve'):
             queue = []
@@ -2332,8 +2333,6 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 non_batch_update_msgs = self.change_team_roles(
                     params, matched_teams, kwargs.get('add_role'), kwargs.get('remove_role')
                 )
-            else:
-                non_batch_update_msgs = []
 
             if kwargs.get('add_user') or kwargs.get('remove_user'):
                 users = {}
