@@ -111,7 +111,7 @@ share_report_parser.add_argument('-sf', '--shared-folders', dest='shared_folders
                                  help='display shared folder detail information. If omitted then records.')
 share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
                                  help='display verbose information')
-share_report_parser.add_argument('-sf', '--shared-folders', dest='shared_folders', action='store_true', default=False,
+share_report_parser.add_argument('-f', '--folders', dest='folders', action='store_true', default=False,
                                  help='show shared-folder info')
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
@@ -692,7 +692,7 @@ class ShareReportCommand(Command):
         if isinstance(params.enterprise, dict) and 'users' in params.enterprise:
             user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
 
-        if kwargs.get('shared_folders'):
+        if kwargs.get('folders'):
             return self.sf_report(params, out=kwargs.get('output'), fmt=kwargs.get('format'))
 
         if kwargs.get('record'):
