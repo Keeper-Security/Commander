@@ -243,6 +243,69 @@ class EnterpriseCommand(Command):
         return update_msgs
 
     @staticmethod
+    def change_team_roles(params, teams, add_roles, remove_roles):
+        update_msgs = []
+        add_role_teams = None
+        remove_role_teams = None
+        role_changes = {}
+        for is_add in (False, True):
+            role_list = add_roles if is_add else remove_roles
+            if role_list:
+                if is_add:
+                    add_role_teams = RoleTeams()
+                else:
+                    remove_role_teams = RoleTeams()
+                for role in role_list:
+                    role_node = next((
+                        r for r in params.enterprise['roles']
+                        if role in (str(r['role_id']), r['data'].get('displayname'))
+                    ), None)
+                    if role_node:
+                        role_changes[role_node['role_id']] = is_add, role_node['data'].get('displayname')
+                    else:
+                        logging.warning('Role %s cannot be resolved', role)
+
+        if len(role_changes) > 0:
+            for role_id in role_changes:
+                is_add, role_name = role_changes[role_id]
+                role_teams = {r['team_uid'] for r in params.enterprise.get('role_teams', []) if r['role_id'] == role_id}
+                if is_add:
+                    is_managed_role = next((
+                        True for mn in params.enterprise.get('managed_nodes', []) if mn['role_id'] == role_id
+                    ), False)
+                else:
+                    is_managed_role = False
+
+                if is_managed_role:
+                    logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                else:
+                    for team in teams:
+                        if is_add and team['team_uid'] in role_teams:
+                            logging.warning(
+                                'Team %s is already in "%s" role: Add to role is skipped', team['name'], role_name
+                            )
+                        elif not is_add and team['team_uid'] not in role_teams:
+                            logging.warning(
+                                'Team %s is not in "%s" role: Remove from role is skipped', team['name'], role_name
+                            )
+                        else:
+                            role_team = RoleTeam()
+                            role_team.role_id = role_id
+                            role_team.teamUid = utils.base64_url_decode(team['team_uid'])
+                            team_name = team['name']
+                            if is_add:
+                                add_role_teams.role_team.append(role_team)
+                                update_msgs.append(f"'{role_name}' role assigned to team '{team_name}'")
+                            else:
+                                remove_role_teams.role_team.append(role_team)
+                                update_msgs.append(f"'{role_name}' role removed from team '{team_name}'")
+        if remove_role_teams:
+            api.communicate_rest(params, remove_role_teams, 'enterprise/role_team_remove')
+        if add_role_teams:
+            api.communicate_rest(params, add_role_teams, 'enterprise/role_team_add')
+        return update_msgs
+
+    @staticmethod
     def get_enterprise_id(params):
         rq = {
             'command': 'enterprise_allocate_ids',

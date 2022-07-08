@@ -187,12 +187,8 @@ enterprise_role_parser.add_argument('-at', '--add-team', action='append', metava
 enterprise_role_parser.add_argument(
     '-rt', '--remove-team', action='append', metavar='EMAIL', help='remove team from role'
 )
-enterprise_role_parser.add_argument(
-    '-aa', '--add-admin', dest='add_admin', action='append', help='add managed node to role'
-)
-enterprise_role_parser.add_argument(
-    '-ra', '--remove-admin', dest='remove_admin', action='append', help='remove managed node from role'
-)
+enterprise_role_parser.add_argument('-aa', '--add-admin', action='append', help='add managed node to role')
+enterprise_role_parser.add_argument('-ra', '--remove-admin', action='append', help='remove managed node from role')
 enterprise_role_parser.add_argument(
     '--enforcement', dest='enforcements', action='append', metavar='KEY:VALUE', help='sets role enforcement'
 )
@@ -208,10 +204,12 @@ enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='s
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
 enterprise_team_parser.add_argument('--approve', dest='approve', action='store_true', help='approve queued team')
 enterprise_team_parser.add_argument('--delete', dest='delete', action='store_true', help='delete team')
-enterprise_team_parser.add_argument('--add-user', dest='add_user', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-au', '--add-user', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-ru', '--remove-user', action='append', help='remove user from team')
+enterprise_team_parser.add_argument('-ar', '--add-role', action='append', help='add user to team')
+enterprise_team_parser.add_argument('-rr', '--remove-role', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-user only')
-enterprise_team_parser.add_argument('--remove-user', dest='remove_user', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
 enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
 enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
@@ -2139,7 +2137,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 users = {u['enterprise_user_id']: u['username'] for u in params.enterprise['users']}
                 user_ids.sort(key=lambda x: users[x])
                 for i, user_id in enumerate(user_ids):
-                    print('{0:>24s} {1:<32s} {2}'.format(
+                    print('{0:>25s} {1:<32s} {2}'.format(
                         'User(s):' if i == 0 else '', users[user_id], user_id if is_verbose else ''
                     ))
 
@@ -2149,7 +2147,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 teams = {t['team_uid']: t['name'] for t in params.enterprise['teams']}
                 team_ids.sort(key=lambda x: teams[x])
                 for i, team_id in enumerate(team_ids):
-                    print('{0:>24s} {1:<32s} {2}'.format(
+                    print('{0:>25s} {1:<32s} {2}'.format(
                         'Team(s):' if i == 0 else '', teams[team_id], team_id if is_verbose else ''
                     ))
 
@@ -2330,6 +2328,13 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                         }
                         request_batch.append(rq)
 
+            if kwargs.get('add_role') or kwargs.get('remove_role'):
+                non_batch_update_msgs = self.change_team_roles(
+                    params, matched_teams, kwargs.get('add_role'), kwargs.get('remove_role')
+                )
+            else:
+                non_batch_update_msgs = []
+
             if kwargs.get('add_user') or kwargs.get('remove_user'):
                 users = {}
                 for is_add in [False, True]:
@@ -2448,6 +2453,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     else:
                         logging.warning('\'%s\' %s team failed to %s user %s: %s', team_name, 'queued' if command == 'team_queue_user' else '',
                                         'delete' if command == 'team_enterprise_user_remove' else 'add', user_name, rs['message'])
+
+        if request_batch or len(non_batch_update_msgs) > 0:
+            for update_msg in non_batch_update_msgs:
+                logging.info(update_msg)
             api.query_enterprise(params)
         else:
             for team in matched_teams:
@@ -2469,17 +2478,24 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             print('{0:>16s}: {1}'.format('Restrict Share?', 'Yes' if team['restrict_sharing'] else 'No'))
             print('{0:>16s}: {1}'.format('Restrict View?', 'Yes' if team['restrict_view'] else 'No'))
 
-        user_names = {}
-        for u in params.enterprise['users']:
-            user_names[u['enterprise_user_id']] = u['username'] if 'username' in u else '[empty]'
+        if 'role_teams' in params.enterprise:
+            role_ids = [r['role_id'] for r in params.enterprise['role_teams'] if r['team_uid'] == team_uid]
+            if len(role_ids) > 0:
+                roles = {r['role_id']: r['data'].get('displayname', '[empty]') for r in params.enterprise['roles']}
+                role_ids.sort(key=lambda x: roles[x])
+                for i, role_id in enumerate(role_ids):
+                    print('{0:>17s} {1:<24s} {2}'.format(
+                        'Role(s):' if i == 0 else '', roles[role_id], role_id if is_verbose else ''
+                    ))
 
+        user_names = {u['enterprise_user_id']: u.get('username', '[empty]') for u in params.enterprise['users']}
         if 'team_users' in params.enterprise:
             user_teams = [x for x in params.enterprise['team_users'] if x['team_uid'] == team_uid]
-            # user_ids.sort(key=lambda x: user_names.get(x))
+            user_teams.sort(key=lambda x: user_names.get(x['enterprise_user_id']))
             for i, tu in enumerate(user_teams):
                 user_id = tu['enterprise_user_id']
-                print('{0:>16s}: {1:<24s}{2} {3}'.format(
-                    'Active User(s)' if i == 0 else '',
+                print('{0:>17s} {1:<24s}{2} {3}'.format(
+                    'Active User(s):' if i == 0 else '',
                     user_names[user_id] if user_id in user_names else f'(Unmanaged User: {user_id})',
                     f' [{user_id}]' if is_verbose else '',
                     '(No Shared Folders)' if tu.get('user_type') == 2 else ''
