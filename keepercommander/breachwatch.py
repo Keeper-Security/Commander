@@ -234,8 +234,8 @@ class BreachWatch(object):
         return False
 
     @staticmethod
-    def get_records_by_status(params, status):
-        # type: (KeeperParams, Optional[str, List[str]]) -> Iterator[Record]
+    def get_records_by_status(params, status, owned=False):
+        # type: (KeeperParams, Optional[str, List[str]], bool) -> Iterator[Record]
         statuses = set()
         if status:
             if isinstance(status, list):
@@ -245,4 +245,4 @@ class BreachWatch(object):
         else:
             statuses.update((x.casefold() for x in client_proto.BWStatus.keys()))
 
-        yield from params.breach_watch.get_records(params, lambda r, b: BreachWatch.check_status(b, statuses))
+        yield from params.breach_watch.get_records(params, lambda r, b: BreachWatch.check_status(b, statuses), owned)
