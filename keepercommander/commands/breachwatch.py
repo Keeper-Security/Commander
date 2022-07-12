@@ -23,7 +23,10 @@ from ..proto import client_pb2 as client_proto, breachwatch_pb2 as breachwatch_p
 
 
 breachwatch_list_parser = argparse.ArgumentParser(prog='breachwatch-list')
-breachwatch_list_parser.add_argument('--all', '-a', dest='all', action='store_true', help='Display all breached records')
+breachwatch_list_parser.add_argument('--all', '-a', dest='all', action='store_true',
+                                     help='Display all breached records (default is to show only first 30 records)')
+breachwatch_list_parser.add_argument('--owned', '-o', dest='owned', action='store_true',
+                                     help='Display only breached records owned by user (omits records shared to user)')
 #breachwatch_list_parser.add_argument('--ignored', '-i', dest='ignored', action='store_true', help='Display ignored records')
 
 
@@ -71,7 +74,7 @@ class BreachWatchListCommand(Command):
     def execute(self, params, **kwargs):   # type: (KeeperParams, ...) -> None
         table = []
 
-        for record, _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
+        for record, _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED'], kwargs.get('owned')):
             row = [record.record_uid, record.title, record.login]
             table.append(row)
 
