@@ -16,7 +16,7 @@ _sym_db = _symbol_database.Default()
 from . import APIRequest_pb2 as APIRequest__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0essocloud.proto\x12\x08SsoCloud\x1a\x10\x41PIRequest.proto\"\xd5\x01\n\x14SsoCloudSettingValue\x12\x11\n\tsettingId\x18\x01 \x01(\x04\x12\x13\n\x0bsettingName\x18\x02 \x01(\t\x12\r\n\x05label\x18\x03 \x01(\t\x12\r\n\x05value\x18\x04 \x01(\t\x12%\n\tvalueType\x18\x05 \x01(\x0e\x32\x12.SsoCloud.DataType\x12\x14\n\x0clastModified\x18\x07 \x01(\t\x12\x12\n\nisFromFile\x18\x08 \x01(\x08\x12\x12\n\nisEditable\x18\t \x01(\x08\x12\x12\n\nisRequired\x18\n \x01(\x08\"\x89\x01\n\x15SsoCloudSettingAction\x12\x11\n\tsettingId\x18\x01 \x01(\x04\x12\x13\n\x0bsettingName\x18\x02 \x01(\t\x12\x39\n\toperation\x18\x03 \x01(\x0e\x32&.SsoCloud.SsoCloudSettingOperationType\x12\r\n\x05value\x18\x04 \x01(\t\"\xe1\x01\n\x1cSsoCloudConfigurationRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x1c\n\x14ssoSpConfigurationId\x18\x02 \x01(\x04\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x37\n\x13ssoAuthProtocolType\x18\x04 \x01(\x0e\x32\x1a.SsoCloud.AuthProtocolType\x12>\n\x15ssoCloudSettingAction\x18\x05 \x03(\x0b\x32\x1f.SsoCloud.SsoCloudSettingAction\"\xe5\x01\n\x1dSsoCloudConfigurationResponse\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x1c\n\x14ssoSpConfigurationId\x18\x02 \x01(\x04\x12\x14\n\x0c\x65nterpriseId\x18\x03 \x01(\x04\x12\x0c\n\x04name\x18\x04 \x01(\t\x12\x10\n\x08protocol\x18\x05 \x01(\t\x12\x14\n\x0clastModified\x18\x06 \x01(\t\x12<\n\x14ssoCloudSettingValue\x18\x07 \x03(\x0b\x32\x1e.SsoCloud.SsoCloudSettingValue\"E\n\x11SsoIdpTypeRequest\x12\x14\n\x0cssoIdpTypeId\x18\x01 \x01(\r\x12\x0b\n\x03tag\x18\x02 \x01(\t\x12\r\n\x05label\x18\x03 \x01(\t\"F\n\x12SsoIdpTypeResponse\x12\x14\n\x0cssoIdpTypeId\x18\x01 \x01(\x05\x12\x0b\n\x03tag\x18\x02 \x01(\x05\x12\r\n\x05label\x18\x03 \x01(\x05\"6\n\x16SsoCloudSAMLLogRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\"\xdc\x01\n\x14SsoCloudSAMLLogEntry\x12\x12\n\nserverTime\x18\x01 \x01(\t\x12\x11\n\tdirection\x18\x02 \x01(\t\x12\x13\n\x0bmessageType\x18\x03 \x01(\t\x12\x15\n\rmessageIssued\x18\x04 \x01(\t\x12\x14\n\x0c\x66romEntityId\x18\x05 \x01(\t\x12\x12\n\nsamlStatus\x18\x06 \x01(\t\x12\x12\n\nrelayState\x18\x07 \x01(\t\x12\x13\n\x0bsamlContent\x18\x08 \x01(\t\x12\x10\n\x08isSigned\x18\t \x01(\x08\x12\x0c\n\x04isOK\x18\n \x01(\x08\"f\n\x17SsoCloudSAMLLogResponse\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12-\n\x05\x65ntry\x18\x02 \x03(\x0b\x32\x1e.SsoCloud.SsoCloudSAMLLogEntry\"b\n$SsoCloudServiceProviderUpdateRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x1c\n\x14ssoSpConfigurationId\x18\x02 \x01(\x04\"]\n\x1aSsoCloudIdpMetadataRequest\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x01(\x04\x12\x10\n\x08\x66ilename\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x03 \x01(\x0c\"F\n&SsoCloudConfigurationValidationRequest\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x03(\x04\"]\n\x11ValidationContent\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x01(\x04\x12\x14\n\x0cisSuccessful\x18\x02 \x01(\x08\x12\x14\n\x0c\x65rrorMessage\x18\x03 \x03(\t\"a\n\'SsoCloudConfigurationValidationResponse\x12\x36\n\x11validationContent\x18\x01 \x03(\x0b\x32\x1b.SsoCloud.ValidationContent\"O\n/SsoCloudServiceProviderConfigurationListRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\"W\n\x15\x43onfigurationListItem\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x01(\x04\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\nisSelected\x18\x03 \x01(\x08\"n\n0SsoCloudServiceProviderConfigurationListResponse\x12:\n\x11\x63onfigurationItem\x18\x01 \x03(\x0b\x32\x1f.SsoCloud.ConfigurationListItem\"\xad\x01\n\x0fSsoCloudRequest\x12\x19\n\x11messageSessionUid\x18\x01 \x01(\x0c\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x10\n\x08\x65mbedded\x18\x03 \x01(\x08\x12\x0c\n\x04json\x18\x04 \x01(\x08\x12\x0c\n\x04\x64\x65st\x18\x05 \x01(\t\x12\x14\n\x0cidpSessionId\x18\x06 \x01(\t\x12\x12\n\nforceLogin\x18\x07 \x01(\x08\x12\x10\n\x08username\x18\x08 \x01(\t\"\xc9\x01\n\x10SsoCloudResponse\x12\x0f\n\x07\x63ommand\x18\x01 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x02 \x01(\x0c\x12\r\n\x05\x65mail\x18\x03 \x01(\t\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x04 \x01(\x0c\x12\x14\n\x0cproviderName\x18\x05 \x01(\t\x12\x14\n\x0cidpSessionId\x18\x06 \x01(\t\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x07 \x01(\x0c\x12\x12\n\nerrorToken\x18\x08 \x01(\t\"Z\n\x12SsoCloudLogRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x13\n\x0bserviceName\x18\x02 \x01(\t\x12\x11\n\tserviceId\x18\x03 \x01(\r\"\xf6\x01\n\x0eSamlRelayState\x12\x19\n\x11messageSessionUid\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x10\n\x08\x65mbedded\x18\x03 \x01(\x08\x12\x0c\n\x04json\x18\x04 \x01(\x08\x12\x0e\n\x06\x64\x65stId\x18\x05 \x01(\r\x12\r\n\x05keyId\x18\x06 \x01(\x05\x12<\n\x11supportedLanguage\x18\x07 \x01(\x0e\x32!.Authentication.SupportedLanguage\x12\x10\n\x08\x63hecksum\x18\x08 \x01(\x04\x12\x16\n\x0eisGeneratedUid\x18\t \x01(\x08\x12\x10\n\x08\x64\x65viceId\x18\n \x01(\x03*\x1d\n\x10\x41uthProtocolType\x12\t\n\x05SAML2\x10\x00*\x80\x02\n\x08\x44\x61taType\x12\x07\n\x03\x41NY\x10\x00\x12\x0b\n\x07\x42OOLEAN\x10\x01\x12\x0b\n\x07INTEGER\x10\x02\x12\n\n\x06STRING\x10\x03\x12\t\n\x05\x42YTES\x10\x04\x12\x07\n\x03URL\x10\x05\x12.\n*com_keepersecurity_proto_SsoCloud_DataType\x10\x06\x12\x36\n2com_keepersecurity_proto_SsoCloud_AuthProtocolType\x10\x07\x12\x30\n,com_keepersecurity_proto_SsoCloud_SsoIdpType\x10\x08\x12\x08\n\x04LONG\x10\t\x12\r\n\tTIMESTAMP\x10\n*R\n\x1cSsoCloudSettingOperationType\x12\x07\n\x03SET\x10\x00\x12\x07\n\x03GET\x10\x01\x12\n\n\x06\x44\x45LETE\x10\x02\x12\x14\n\x10RESET_TO_DEFAULT\x10\x03*\x82\x01\n\nSsoIdpType\x12\r\n\tXX_UNUSED\x10\x00\x12\x0b\n\x07GENERIC\x10\x01\x12\x06\n\x02\x46\x35\x10\x02\x12\n\n\x06GOOGLE\x10\x03\x12\x08\n\x04OKTA\x10\x04\x12\x08\n\x04\x41\x44\x46S\x10\x05\x12\t\n\x05\x41ZURE\x10\x06\x12\x0c\n\x08ONELOGIN\x10\x07\x12\x08\n\x04PING\x10\x08\x12\r\n\tJUMPCLOUD\x10\tB$\n\x18\x63om.keepersecurity.protoB\x08SsoCloudb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0essocloud.proto\x12\x08SsoCloud\x1a\x10\x41PIRequest.proto\"\xd5\x01\n\x14SsoCloudSettingValue\x12\x11\n\tsettingId\x18\x01 \x01(\x04\x12\x13\n\x0bsettingName\x18\x02 \x01(\t\x12\r\n\x05label\x18\x03 \x01(\t\x12\r\n\x05value\x18\x04 \x01(\t\x12%\n\tvalueType\x18\x05 \x01(\x0e\x32\x12.SsoCloud.DataType\x12\x14\n\x0clastModified\x18\x07 \x01(\t\x12\x12\n\nisFromFile\x18\x08 \x01(\x08\x12\x12\n\nisEditable\x18\t \x01(\x08\x12\x12\n\nisRequired\x18\n \x01(\x08\"\x89\x01\n\x15SsoCloudSettingAction\x12\x11\n\tsettingId\x18\x01 \x01(\x04\x12\x13\n\x0bsettingName\x18\x02 \x01(\t\x12\x39\n\toperation\x18\x03 \x01(\x0e\x32&.SsoCloud.SsoCloudSettingOperationType\x12\r\n\x05value\x18\x04 \x01(\t\"\xe1\x01\n\x1cSsoCloudConfigurationRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x1c\n\x14ssoSpConfigurationId\x18\x02 \x01(\x04\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x37\n\x13ssoAuthProtocolType\x18\x04 \x01(\x0e\x32\x1a.SsoCloud.AuthProtocolType\x12>\n\x15ssoCloudSettingAction\x18\x05 \x03(\x0b\x32\x1f.SsoCloud.SsoCloudSettingAction\"\xe5\x01\n\x1dSsoCloudConfigurationResponse\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x1c\n\x14ssoSpConfigurationId\x18\x02 \x01(\x04\x12\x14\n\x0c\x65nterpriseId\x18\x03 \x01(\x04\x12\x0c\n\x04name\x18\x04 \x01(\t\x12\x10\n\x08protocol\x18\x05 \x01(\t\x12\x14\n\x0clastModified\x18\x06 \x01(\t\x12<\n\x14ssoCloudSettingValue\x18\x07 \x03(\x0b\x32\x1e.SsoCloud.SsoCloudSettingValue\"E\n\x11SsoIdpTypeRequest\x12\x14\n\x0cssoIdpTypeId\x18\x01 \x01(\r\x12\x0b\n\x03tag\x18\x02 \x01(\t\x12\r\n\x05label\x18\x03 \x01(\t\"F\n\x12SsoIdpTypeResponse\x12\x14\n\x0cssoIdpTypeId\x18\x01 \x01(\x05\x12\x0b\n\x03tag\x18\x02 \x01(\x05\x12\r\n\x05label\x18\x03 \x01(\x05\"6\n\x16SsoCloudSAMLLogRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\"\xdc\x01\n\x14SsoCloudSAMLLogEntry\x12\x12\n\nserverTime\x18\x01 \x01(\t\x12\x11\n\tdirection\x18\x02 \x01(\t\x12\x13\n\x0bmessageType\x18\x03 \x01(\t\x12\x15\n\rmessageIssued\x18\x04 \x01(\t\x12\x14\n\x0c\x66romEntityId\x18\x05 \x01(\t\x12\x12\n\nsamlStatus\x18\x06 \x01(\t\x12\x12\n\nrelayState\x18\x07 \x01(\t\x12\x13\n\x0bsamlContent\x18\x08 \x01(\t\x12\x10\n\x08isSigned\x18\t \x01(\x08\x12\x0c\n\x04isOK\x18\n \x01(\x08\"f\n\x17SsoCloudSAMLLogResponse\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12-\n\x05\x65ntry\x18\x02 \x03(\x0b\x32\x1e.SsoCloud.SsoCloudSAMLLogEntry\"b\n$SsoCloudServiceProviderUpdateRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x1c\n\x14ssoSpConfigurationId\x18\x02 \x01(\x04\"]\n\x1aSsoCloudIdpMetadataRequest\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x01(\x04\x12\x10\n\x08\x66ilename\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x03 \x01(\x0c\"F\n&SsoCloudConfigurationValidationRequest\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x03(\x04\"]\n\x11ValidationContent\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x01(\x04\x12\x14\n\x0cisSuccessful\x18\x02 \x01(\x08\x12\x14\n\x0c\x65rrorMessage\x18\x03 \x03(\t\"a\n\'SsoCloudConfigurationValidationResponse\x12\x36\n\x11validationContent\x18\x01 \x03(\x0b\x32\x1b.SsoCloud.ValidationContent\"O\n/SsoCloudServiceProviderConfigurationListRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\"u\n\x15\x43onfigurationListItem\x12\x1c\n\x14ssoSpConfigurationId\x18\x01 \x01(\x04\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\nisSelected\x18\x03 \x01(\x08\x12\x1c\n\x14ssoServiceProviderId\x18\x04 \x03(\x04\"n\n0SsoCloudServiceProviderConfigurationListResponse\x12:\n\x11\x63onfigurationItem\x18\x01 \x03(\x0b\x32\x1f.SsoCloud.ConfigurationListItem\"\xbf\x01\n\x0fSsoCloudRequest\x12\x19\n\x11messageSessionUid\x18\x01 \x01(\x0c\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x10\n\x08\x65mbedded\x18\x03 \x01(\x08\x12\x0c\n\x04json\x18\x04 \x01(\x08\x12\x0c\n\x04\x64\x65st\x18\x05 \x01(\t\x12\x14\n\x0cidpSessionId\x18\x06 \x01(\t\x12\x12\n\nforceLogin\x18\x07 \x01(\x08\x12\x10\n\x08username\x18\x08 \x01(\t\x12\x10\n\x08\x64\x65tached\x18\t \x01(\x08\"\xc9\x01\n\x10SsoCloudResponse\x12\x0f\n\x07\x63ommand\x18\x01 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x02 \x01(\x0c\x12\r\n\x05\x65mail\x18\x03 \x01(\t\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x04 \x01(\x0c\x12\x14\n\x0cproviderName\x18\x05 \x01(\t\x12\x14\n\x0cidpSessionId\x18\x06 \x01(\t\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x07 \x01(\x0c\x12\x12\n\nerrorToken\x18\x08 \x01(\t\"Z\n\x12SsoCloudLogRequest\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x04\x12\x13\n\x0bserviceName\x18\x02 \x01(\t\x12\x11\n\tserviceId\x18\x03 \x01(\r\"\x88\x02\n\x0eSamlRelayState\x12\x19\n\x11messageSessionUid\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x10\n\x08\x65mbedded\x18\x03 \x01(\x08\x12\x0c\n\x04json\x18\x04 \x01(\x08\x12\x0e\n\x06\x64\x65stId\x18\x05 \x01(\r\x12\r\n\x05keyId\x18\x06 \x01(\x05\x12<\n\x11supportedLanguage\x18\x07 \x01(\x0e\x32!.Authentication.SupportedLanguage\x12\x10\n\x08\x63hecksum\x18\x08 \x01(\x04\x12\x16\n\x0eisGeneratedUid\x18\t \x01(\x08\x12\x10\n\x08\x64\x65viceId\x18\n \x01(\x03\x12\x10\n\x08\x64\x65tached\x18\x0b \x01(\x08\"q\n\x1eSsoCloudMigrationStatusRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x04\x12\x12\n\nfullStatus\x18\x02 \x01(\x08\x12\x1c\n\x14includeMigratedUsers\x18\x03 \x01(\x08\x12\r\n\x05limit\x18\x04 \x01(\x05\"\xe8\x02\n\x1fSsoCloudMigrationStatusResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x04\x12\x14\n\x0cssoConnectId\x18\x04 \x01(\x04\x12\x16\n\x0essoConnectName\x18\x05 \x01(\t\x12\x19\n\x11ssoConnectCloudId\x18\x06 \x01(\x04\x12\x1b\n\x13ssoConnectCloudName\x18\x07 \x01(\t\x12\x17\n\x0ftotalUsersCount\x18\x08 \x01(\r\x12\x1a\n\x12usersMigratedCount\x18\t \x01(\r\x12:\n\rmigratedUsers\x18\n \x03(\x0b\x32#.SsoCloud.SsoCloudMigrationUserInfo\x12<\n\x0funmigratedUsers\x18\x0b \x03(\x0b\x32#.SsoCloud.SsoCloudMigrationUserInfo\"`\n\x19SsoCloudMigrationUserInfo\x12\x0e\n\x06userId\x18\x01 \x01(\r\x12\r\n\x05\x65mail\x18\x02 \x01(\t\x12\x10\n\x08\x66ullName\x18\x03 \x01(\t\x12\x12\n\nisMigrated\x18\x04 \x01(\x08*\x1d\n\x10\x41uthProtocolType\x12\t\n\x05SAML2\x10\x00*\x80\x02\n\x08\x44\x61taType\x12\x07\n\x03\x41NY\x10\x00\x12\x0b\n\x07\x42OOLEAN\x10\x01\x12\x0b\n\x07INTEGER\x10\x02\x12\n\n\x06STRING\x10\x03\x12\t\n\x05\x42YTES\x10\x04\x12\x07\n\x03URL\x10\x05\x12.\n*com_keepersecurity_proto_SsoCloud_DataType\x10\x06\x12\x36\n2com_keepersecurity_proto_SsoCloud_AuthProtocolType\x10\x07\x12\x30\n,com_keepersecurity_proto_SsoCloud_SsoIdpType\x10\x08\x12\x08\n\x04LONG\x10\t\x12\r\n\tTIMESTAMP\x10\n*R\n\x1cSsoCloudSettingOperationType\x12\x07\n\x03SET\x10\x00\x12\x07\n\x03GET\x10\x01\x12\n\n\x06\x44\x45LETE\x10\x02\x12\x14\n\x10RESET_TO_DEFAULT\x10\x03*\x82\x01\n\nSsoIdpType\x12\r\n\tXX_UNUSED\x10\x00\x12\x0b\n\x07GENERIC\x10\x01\x12\x06\n\x02\x46\x35\x10\x02\x12\n\n\x06GOOGLE\x10\x03\x12\x08\n\x04OKTA\x10\x04\x12\x08\n\x04\x41\x44\x46S\x10\x05\x12\t\n\x05\x41ZURE\x10\x06\x12\x0c\n\x08ONELOGIN\x10\x07\x12\x08\n\x04PING\x10\x08\x12\r\n\tJUMPCLOUD\x10\tB$\n\x18\x63om.keepersecurity.protoB\x08SsoCloudb\x06proto3')
 
 _AUTHPROTOCOLTYPE = DESCRIPTOR.enum_types_by_name['AuthProtocolType']
 AuthProtocolType = enum_type_wrapper.EnumTypeWrapper(_AUTHPROTOCOLTYPE)
@@ -75,6 +75,9 @@ _SSOCLOUDREQUEST = DESCRIPTOR.message_types_by_name['SsoCloudRequest']
 _SSOCLOUDRESPONSE = DESCRIPTOR.message_types_by_name['SsoCloudResponse']
 _SSOCLOUDLOGREQUEST = DESCRIPTOR.message_types_by_name['SsoCloudLogRequest']
 _SAMLRELAYSTATE = DESCRIPTOR.message_types_by_name['SamlRelayState']
+_SSOCLOUDMIGRATIONSTATUSREQUEST = DESCRIPTOR.message_types_by_name['SsoCloudMigrationStatusRequest']
+_SSOCLOUDMIGRATIONSTATUSRESPONSE = DESCRIPTOR.message_types_by_name['SsoCloudMigrationStatusResponse']
+_SSOCLOUDMIGRATIONUSERINFO = DESCRIPTOR.message_types_by_name['SsoCloudMigrationUserInfo']
 SsoCloudSettingValue = _reflection.GeneratedProtocolMessageType('SsoCloudSettingValue', (_message.Message,), {
   'DESCRIPTOR' : _SSOCLOUDSETTINGVALUE,
   '__module__' : 'ssocloud_pb2'
@@ -222,18 +225,39 @@ SamlRelayState = _reflection.GeneratedProtocolMessageType('SamlRelayState', (_me
   })
 _sym_db.RegisterMessage(SamlRelayState)
 
+SsoCloudMigrationStatusRequest = _reflection.GeneratedProtocolMessageType('SsoCloudMigrationStatusRequest', (_message.Message,), {
+  'DESCRIPTOR' : _SSOCLOUDMIGRATIONSTATUSREQUEST,
+  '__module__' : 'ssocloud_pb2'
+  # @@protoc_insertion_point(class_scope:SsoCloud.SsoCloudMigrationStatusRequest)
+  })
+_sym_db.RegisterMessage(SsoCloudMigrationStatusRequest)
+
+SsoCloudMigrationStatusResponse = _reflection.GeneratedProtocolMessageType('SsoCloudMigrationStatusResponse', (_message.Message,), {
+  'DESCRIPTOR' : _SSOCLOUDMIGRATIONSTATUSRESPONSE,
+  '__module__' : 'ssocloud_pb2'
+  # @@protoc_insertion_point(class_scope:SsoCloud.SsoCloudMigrationStatusResponse)
+  })
+_sym_db.RegisterMessage(SsoCloudMigrationStatusResponse)
+
+SsoCloudMigrationUserInfo = _reflection.GeneratedProtocolMessageType('SsoCloudMigrationUserInfo', (_message.Message,), {
+  'DESCRIPTOR' : _SSOCLOUDMIGRATIONUSERINFO,
+  '__module__' : 'ssocloud_pb2'
+  # @@protoc_insertion_point(class_scope:SsoCloud.SsoCloudMigrationUserInfo)
+  })
+_sym_db.RegisterMessage(SsoCloudMigrationUserInfo)
+
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\010SsoCloud'
-  _AUTHPROTOCOLTYPE._serialized_start=2852
-  _AUTHPROTOCOLTYPE._serialized_end=2881
-  _DATATYPE._serialized_start=2884
-  _DATATYPE._serialized_end=3140
-  _SSOCLOUDSETTINGOPERATIONTYPE._serialized_start=3142
-  _SSOCLOUDSETTINGOPERATIONTYPE._serialized_end=3224
-  _SSOIDPTYPE._serialized_start=3227
-  _SSOIDPTYPE._serialized_end=3357
+  _AUTHPROTOCOLTYPE._serialized_start=3494
+  _AUTHPROTOCOLTYPE._serialized_end=3523
+  _DATATYPE._serialized_start=3526
+  _DATATYPE._serialized_end=3782
+  _SSOCLOUDSETTINGOPERATIONTYPE._serialized_start=3784
+  _SSOCLOUDSETTINGOPERATIONTYPE._serialized_end=3866
+  _SSOIDPTYPE._serialized_start=3869
+  _SSOIDPTYPE._serialized_end=3999
   _SSOCLOUDSETTINGVALUE._serialized_start=47
   _SSOCLOUDSETTINGVALUE._serialized_end=260
   _SSOCLOUDSETTINGACTION._serialized_start=263
@@ -265,15 +289,21 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _SSOCLOUDSERVICEPROVIDERCONFIGURATIONLISTREQUEST._serialized_start=1849
   _SSOCLOUDSERVICEPROVIDERCONFIGURATIONLISTREQUEST._serialized_end=1928
   _CONFIGURATIONLISTITEM._serialized_start=1930
-  _CONFIGURATIONLISTITEM._serialized_end=2017
-  _SSOCLOUDSERVICEPROVIDERCONFIGURATIONLISTRESPONSE._serialized_start=2019
-  _SSOCLOUDSERVICEPROVIDERCONFIGURATIONLISTRESPONSE._serialized_end=2129
-  _SSOCLOUDREQUEST._serialized_start=2132
-  _SSOCLOUDREQUEST._serialized_end=2305
-  _SSOCLOUDRESPONSE._serialized_start=2308
-  _SSOCLOUDRESPONSE._serialized_end=2509
-  _SSOCLOUDLOGREQUEST._serialized_start=2511
-  _SSOCLOUDLOGREQUEST._serialized_end=2601
-  _SAMLRELAYSTATE._serialized_start=2604
-  _SAMLRELAYSTATE._serialized_end=2850
+  _CONFIGURATIONLISTITEM._serialized_end=2047
+  _SSOCLOUDSERVICEPROVIDERCONFIGURATIONLISTRESPONSE._serialized_start=2049
+  _SSOCLOUDSERVICEPROVIDERCONFIGURATIONLISTRESPONSE._serialized_end=2159
+  _SSOCLOUDREQUEST._serialized_start=2162
+  _SSOCLOUDREQUEST._serialized_end=2353
+  _SSOCLOUDRESPONSE._serialized_start=2356
+  _SSOCLOUDRESPONSE._serialized_end=2557
+  _SSOCLOUDLOGREQUEST._serialized_start=2559
+  _SSOCLOUDLOGREQUEST._serialized_end=2649
+  _SAMLRELAYSTATE._serialized_start=2652
+  _SAMLRELAYSTATE._serialized_end=2916
+  _SSOCLOUDMIGRATIONSTATUSREQUEST._serialized_start=2918
+  _SSOCLOUDMIGRATIONSTATUSREQUEST._serialized_end=3031
+  _SSOCLOUDMIGRATIONSTATUSRESPONSE._serialized_start=3034
+  _SSOCLOUDMIGRATIONSTATUSRESPONSE._serialized_end=3394
+  _SSOCLOUDMIGRATIONUSERINFO._serialized_start=3396
+  _SSOCLOUDMIGRATIONUSERINFO._serialized_end=3492
 # @@protoc_insertion_point(module_scope)
