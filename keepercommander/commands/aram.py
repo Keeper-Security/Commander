@@ -61,7 +61,7 @@ audit_report_parser.add_argument('--aggregate', dest='aggregate', action='append
 audit_report_parser.add_argument('--timezone', dest='timezone', action='store',
                                  help='return results for specific timezone')
 audit_report_parser.add_argument('--limit', dest='limit', type=int, action='store',
-                                 help='maximum number of returned rows')
+                                 help='maximum number of returned rows (set to -1 to get all rows for raw report-type)')
 audit_report_parser.add_argument('--order', dest='order', action='store', choices=['desc', 'asc'],
                                  help='sort order')
 audit_report_parser.add_argument('--created', dest='created', action='store',
@@ -129,7 +129,8 @@ action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=Fal
 
 syslog_templates = None  # type: Optional[List[str]]
 
-API_EVENT_SUMMARY_ROW_LIMIT = 1000
+API_EVENT_SUMMARY_ROW_LIMIT = 2000
+API_EVENT_RAW_ROW_LIMIT = 1000
 
 def load_syslog_templates(params):
     global syslog_templates
@@ -1121,8 +1122,8 @@ class AuditReportCommand(Command):
                 rq['aggregate'] = aggregates
 
         user_limit = kwargs.get('limit')
-        rq_limit = 50 if user_limit is None else user_limit if user_limit > 0 else API_EVENT_SUMMARY_ROW_LIMIT
-        rq['limit'] = min(rq_limit, API_EVENT_SUMMARY_ROW_LIMIT)
+        rq_limit = 50 if user_limit is None else user_limit if user_limit > 0 else API_EVENT_RAW_ROW_LIMIT
+        rq['limit'] = min(rq_limit, API_EVENT_RAW_ROW_LIMIT)
 
         if kwargs.get('order'):
             rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'
@@ -1226,7 +1227,7 @@ class AuditReportCommand(Command):
                         value = self.get_value(params, field, event)
                         row.append(self.convert_value(field, value, details=details, params=params))
                     table.append(row)
-                incomplete = len(events) >= API_EVENT_SUMMARY_ROW_LIMIT
+                incomplete = len(events) >= API_EVENT_RAW_ROW_LIMIT
                 if incomplete:
                     asc = rq.get('order') == 'ascending'
                     first_key, last_key = ('min', 'max') if asc else ('max', 'min')
@@ -1243,9 +1244,9 @@ class AuditReportCommand(Command):
                     else:
                         period[last_key] = rq_filter.get(last_key)
                     rq_filter['created'] = period
-                    if user_limit and user_limit >= API_EVENT_SUMMARY_ROW_LIMIT:
+                    if user_limit and user_limit >= API_EVENT_RAW_ROW_LIMIT:
                         missing = user_limit - len(table)
-                        if missing < API_EVENT_SUMMARY_ROW_LIMIT:
+                        if missing < API_EVENT_RAW_ROW_LIMIT:
                             if missing > 0:
                                 rq['limit'] = missing
                             else:
