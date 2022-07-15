@@ -129,7 +129,7 @@ action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=Fal
 
 syslog_templates = None  # type: Optional[List[str]]
 
-API_EVENT_SUMMARY_ROW_LIMIT = 2000
+API_EVENT_SUMMARY_ROW_LIMIT = 1000
 
 def load_syslog_templates(params):
     global syslog_templates
@@ -1120,10 +1120,9 @@ class AuditReportCommand(Command):
                 aggregates = kwargs['aggregate']
                 rq['aggregate'] = aggregates
 
-        if 'limit' in kwargs and kwargs['limit']:
-            rq['limit'] = kwargs['limit']
-        else:
-            rq['limit'] = 50
+        user_limit = kwargs.get('limit')
+        rq_limit = 50 if user_limit is None else user_limit if user_limit > 0 else API_EVENT_SUMMARY_ROW_LIMIT
+        rq['limit'] = min(rq_limit, API_EVENT_SUMMARY_ROW_LIMIT)
 
         if kwargs.get('order'):
             rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'
@@ -1202,29 +1201,56 @@ class AuditReportCommand(Command):
         if report_type == 'raw':
             fields.extend(audit_report.RAW_FIELDS)
             misc_fields = list(audit_report.MISC_FIELDS) if kwargs.get('report_format') == 'fields' else ['message']
-
-            for event in rs['audit_event_overview_report_rows']:
-                if misc_fields:
-                    lenf = len(fields)
-                    for mf in misc_fields:
-                        if mf == 'message':
-                            fields.append(mf)
-                        elif mf in event:
-                            val = event.get(mf)
-                            if val:
+            incomplete = True
+            while incomplete:
+                events = rs.get('audit_event_overview_report_rows')
+                for event in events:
+                    if misc_fields:
+                        lenf = len(fields)
+                        for mf in misc_fields:
+                            if mf == 'message':
                                 fields.append(mf)
-                                if mf in audit_report.lookup_types:
-                                    fields.extend(audit_report.lookup_types[mf].fields)
-                    if len(fields) > lenf:
-                        for f in fields[lenf:]:
-                            if f not in audit_report.fields_to_uid_name:
-                                misc_fields.remove(f)
+                            elif mf in event:
+                                val = event.get(mf)
+                                if val:
+                                    fields.append(mf)
+                                    if mf in audit_report.lookup_types:
+                                        fields.extend(audit_report.lookup_types[mf].fields)
+                        if len(fields) > lenf:
+                            for f in fields[lenf:]:
+                                if f not in audit_report.fields_to_uid_name:
+                                    misc_fields.remove(f)
 
-                row = []
-                for field in fields:
-                    value = self.get_value(params, field, event)
-                    row.append(self.convert_value(field, value, details=details, params=params))
-                table.append(row)
+                    row = []
+                    for field in fields:
+                        value = self.get_value(params, field, event)
+                        row.append(self.convert_value(field, value, details=details, params=params))
+                    table.append(row)
+                incomplete = len(events) >= API_EVENT_SUMMARY_ROW_LIMIT
+                if incomplete:
+                    asc = rq.get('order') == 'ascending'
+                    first_key, last_key = ('min', 'max') if asc else ('max', 'min')
+                    rq_filter = rq.get('filter')
+                    period = {first_key: int(events[-1]['created'])}
+                    if rq_filter is None or last_key not in rq_filter:
+                        last_rq = {**rq}
+                        reverse = 'descending' if asc else 'ascending'
+                        last_rq['order'] = reverse
+                        last_rq['limit'] = 1
+                        rs = api.communicate(params, last_rq)
+                        last_row = rs.get('audit_event_overview_report_rows')[0]
+                        period[last_key] = int(last_row['created'])
+                    else:
+                        period[last_key] = rq_filter.get(last_key)
+                    rq_filter['created'] = period
+                    if user_limit and user_limit >= API_EVENT_SUMMARY_ROW_LIMIT:
+                        missing = user_limit - len(table)
+                        if missing < API_EVENT_SUMMARY_ROW_LIMIT:
+                            if missing > 0:
+                                rq['limit'] = missing
+                            else:
+                                break
+                    rs = api.communicate(params, rq)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
             if aggregates:
