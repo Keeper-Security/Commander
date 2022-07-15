@@ -538,10 +538,10 @@ class LoginV3Flow:
         if is_cloud:
             sso_rq = ssocloud.SsoCloudRequest()
             sso_rq.clientVersion = rest_api.CLIENT_VERSION
-            sso_rq.embedded = True
             sso_rq.dest = 'commander'
             sso_rq.username = params.user.lower()
             sso_rq.forceLogin = False
+            sso_rq.detached = True
 
             transmission_key = utils.generate_aes_key()
             rq_payload = proto.ApiRequestPayload()
@@ -576,12 +576,9 @@ class LoginV3Flow:
         sp_url = urlunparse(sp_url_builder)
         print(f'\nSSO Login URL:\n{sp_url}')
         print('Navigate to SSO Login URL with your browser and complete login.')
-        print('Copy a returned SSO token into clipboard.')
+        print('Copy a returned SSO Token into clipboard.')
         print('Paste that token into Commander')
-        print('NOTE: To copy SSO Token please select "View Page Source" from right-click context menu on "SSO Connect" page.')
-        print('      Then scroll down to the end of the page to "<script>" HTML section.')
-        print('      You can find SSO token in \'var token = "<SSO TOKEN>";\' line. Copy into clipboard the text between double quotes.')
-        print('      Commander team is working on making SSO token copy process simpler.')
+        print('NOTE: To copy SSO Token please click "Copy login token" button on "SSO Connect" page.')
         print('')
         print('  a. SSO User with a Master Password')
         print('  c. Copy SSO Login URL to clipboard')
