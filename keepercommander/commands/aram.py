@@ -1232,8 +1232,9 @@ class AuditReportCommand(Command):
                     asc = rq.get('order') == 'ascending'
                     first_key, last_key = ('min', 'max') if asc else ('max', 'min')
                     rq_filter = rq.get('filter', {})
+                    rq_period = rq_filter.get('created', {})
                     period = {first_key: int(events[-1]['created'])}
-                    if last_key not in rq_filter:
+                    if not isinstance(rq_period, dict) or rq_period.get(last_key) is None:
                         last_rq = {**rq}
                         reverse = 'descending' if asc else 'ascending'
                         last_rq['order'] = reverse
@@ -1242,7 +1243,7 @@ class AuditReportCommand(Command):
                         last_row = rs.get('audit_event_overview_report_rows')[0]
                         period[last_key] = int(last_row['created'])
                     else:
-                        period[last_key] = rq_filter.get(last_key)
+                        period[last_key] = rq_period.get(last_key)
                     rq_filter['created'] = period
                     rq['filter'] = rq_filter
                     if user_limit and user_limit >= API_EVENT_RAW_ROW_LIMIT:
