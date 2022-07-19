@@ -44,7 +44,7 @@ setup(
     classifiers=["Development Status :: 4 - Beta",
                  "License :: OSI Approved :: MIT License",
                  "Operating System :: OS Independent",
-                 "Programming Language :: Python :: 3.6",
+                 "Programming Language :: Python :: 3.7",
                  "Topic :: Security"],
     keywords='security password',
 
