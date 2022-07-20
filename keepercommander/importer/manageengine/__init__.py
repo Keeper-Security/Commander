@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .mepmp import MEPMPImporter as Importer
+from .manageengine import ManageEngineImporter as Importer
 
 __all__ = ['Importer']

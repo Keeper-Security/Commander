@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from ..importer import Attachment
 
 
-class PMPAttachment(Attachment):
+class ManageEngineAttachment(Attachment):
     def __init__(self, name, request_kwargs):
         Attachment.__init__(self)
         self.name = name

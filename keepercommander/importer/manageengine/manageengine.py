@@ -13,7 +13,7 @@ import logging
 from urllib.parse import urlsplit
 
 from ..importer import BaseImporter, Folder, Record, RecordField
-from .attachment import PMPAttachment
+from .attachment import ManageEngineAttachment
 from .restapi import RestAPI
 
 
@@ -58,9 +58,9 @@ def get_new_record(resource_info, field_map, account_info=None):
     return record
 
 
-class MEPMPImporter(BaseImporter):
+class ManageEngineImporter(BaseImporter):
     def __init__(self):
-        super(MEPMPImporter, self).__init__()
+        super(ManageEngineImporter, self).__init__()
 
     def do_import(self, name, **kwargs):
         url = urlsplit(name)
@@ -90,7 +90,7 @@ class MEPMPImporter(BaseImporter):
                 account_record = get_new_record(resource_info, RECORD_TO_IMPORT_ACCOUNT_FIELD, account_info)
                 if resource_info['RESOURCE TYPE'] == 'File Store':
                     file_attachment_kwargs = rest_api.get_file_attachment_kwargs(account)
-                    attachment = PMPAttachment(account_info['PASSWORD STATUS'], file_attachment_kwargs)
+                    attachment = ManageEngineAttachment(account_info['PASSWORD STATUS'], file_attachment_kwargs)
                     account_record.attachments = [attachment]
                 else:
                     account_record.password = rest_api.get_password(account)
