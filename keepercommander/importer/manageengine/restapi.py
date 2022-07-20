@@ -10,6 +10,7 @@
 #
 import json
 import logging
+import sys
 from collections import namedtuple
 from urllib.parse import urlunsplit
 
@@ -20,7 +21,6 @@ import urllib3
 DEFAULT_FILE_REASON = {'operation': {'Details': {'REASON': 'Import into Keeper'}}}
 DEFAULT_BASE_PATH = '/restapi/json/v1'
 PKI_BASE_PATH = '/api/pki/restapi'
-Url = namedtuple('Url', ['scheme', 'netloc', 'path', 'query', 'fragment'], defaults=('', '', ''))
 URL_PATHS = dict(
     all_resources='resources',
     resource_accounts='resources/{resource_id}/accounts',
@@ -37,6 +37,11 @@ API_DOC_NUMBERS = {
 }
 
 
+if sys.version_info < (3, 7):
+    Url = namedtuple('Url', ['scheme', 'netloc', 'path', 'query', 'fragment'])
+    Url.__new__.__defaults__ = ('', '', '')
+else:
+    Url = namedtuple('Url', ['scheme', 'netloc', 'path', 'query', 'fragment'], defaults=('', '', ''))
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
