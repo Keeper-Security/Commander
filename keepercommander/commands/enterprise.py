@@ -10,6 +10,8 @@
 #
 import argparse
 import ipaddress
+from typing import Set, Dict
+
 import itertools
 import json
 import base64
@@ -95,7 +97,7 @@ def register_command_info(aliases, command_info):
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
-SUPPORTED_ROLE_COLUMNS = ['is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count', 'users']
+SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down|ed',
                                                  description='Download & decrypt enterprise data.')
@@ -174,27 +176,25 @@ enterprise_role_parser.add_argument('--output', dest='output', action='store',
 enterprise_role_parser.add_argument('--add', dest='add', action='store_true', help='create role')
 enterprise_role_parser.add_argument('--copy', dest='copy', action='store_true', help='copy role with enforcements')
 enterprise_role_parser.add_argument('--clone', dest='clone', action='store_true', help='copy role with users and enforcements')
-enterprise_role_parser.add_argument('--visible-below', dest='visible_below', action='store', choices=['on', 'off'], help='visible to all nodes. \'add\' only')
+#enterprise_role_parser.add_argument('--visible-below', dest='visible_below', action='store', choices=['on', 'off'], help='visible to all nodes. \'add\' only')
 enterprise_role_parser.add_argument('--new-user', dest='new_user', action='store', choices=['on', 'off'], help='assign this role to new users. \'add\' only')
 enterprise_role_parser.add_argument('--delete', dest='delete', action='store_true', help='delete role')
 enterprise_role_parser.add_argument('--node', dest='node', action='store', help='node Name or ID')
 enterprise_role_parser.add_argument('--name', dest='name', action='store', help='role\'s new name')
 enterprise_role_parser.add_argument('-au', '--add-user', action='append', metavar='EMAIL', help='add user to role')
-enterprise_role_parser.add_argument(
-    '-ru', '--remove-user', action='append', metavar='EMAIL', help='remove user from role'
-)
+enterprise_role_parser.add_argument('-ru', '--remove-user', action='append', metavar='EMAIL', help='remove user from role')
 enterprise_role_parser.add_argument('-at', '--add-team', action='append', metavar='TEAM', help='add team to role')
-enterprise_role_parser.add_argument(
-    '-rt', '--remove-team', action='append', metavar='TEAM', help='remove team from role'
-)
-enterprise_role_parser.add_argument('-aa', '--add-admin', action='append', metavar='NODE',
-                                    help='add managed node to role')
-enterprise_role_parser.add_argument('-ra', '--remove-admin', action='append', metavar='NODE',
-                                    help='remove managed node from role')
-enterprise_role_parser.add_argument(
-    '--enforcement', dest='enforcements', action='append', metavar='KEY:VALUE', help='sets role enforcement'
-)
-enterprise_role_parser.add_argument('--cascade', dest='cascade', action='store', choices=['on', 'off'], help='apply to the children nodes. \'add-admin\' only')
+enterprise_role_parser.add_argument('-rt', '--remove-team', action='append', metavar='TEAM', help='remove team from role')
+enterprise_role_parser.add_argument('-aa', '--add-admin', action='append', metavar='NODE', help='add managed node to role')
+enterprise_role_parser.add_argument('-ra', '--remove-admin', action='append', metavar='NODE', help='remove managed node from role')
+enterprise_role_parser.add_argument('-ap', '--add-privilege', dest='add_privilege', action='append',
+                                    metavar='PRIVILEGE', help='add privilege to managed node')
+enterprise_role_parser.add_argument('-rp', '--remove-privilege', dest='remove_privilege', action='append',
+                                    metavar='PRIVILEGE', help='remove privilege from managed node')
+enterprise_role_parser.add_argument('--enforcement', dest='enforcements', action='append', metavar='KEY:VALUE',
+                                    help='sets role enforcement')
+enterprise_role_parser.add_argument('--cascade', dest='cascade', action='store', choices=['on', 'off'],
+                                    help='apply to the children nodes. \'add-admin\' only')
 enterprise_role_parser.add_argument('role', type=str, nargs='+', help='Role Name ID. Can be repeated.')
 enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
@@ -758,7 +758,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_roles:
                 supported_columns = SUPPORTED_ROLE_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('is_visible_below', 'is_new_user', 'is_admin', 'node', 'user_count'))
+                    columns.update(('default_role', 'admin', 'node', 'user_count'))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
@@ -770,11 +770,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 for r in roles.values():
                     row = [r['id'], r['name']]
                     for column in displayed_columns:
-                        if column == 'is_visible_below':
+                        if column == 'visible_below':
                             row.append('Y' if r['visible_below'] else '')
-                        elif column == 'is_new_user':
+                        elif column == 'default_role':
                             row.append('Y' if r['new_user_inherit'] else '')
-                        elif column == 'is_admin':
+                        elif column == 'admin':
                             row.append('Y' if r['is_admin'] else '')
                         elif column == 'node':
                             row.append(self.get_node_path(params, r['node_id']))
@@ -1884,6 +1884,53 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                                 "tree_key": utils.base64_url_encode(encrypted_tree_key)
                                             })
                         request_batch.append(rq)
+
+            elif kwargs.get('add_privilege') or kwargs.get('remove_privilege'):
+                if len(matched_roles) != 1:
+                    logging.warning('Add/Remove managed node privilege command expects exactly one role.')
+                    return
+
+                if not node_id:
+                    logging.warning('Add/Remove managed node privilege: node parameter is required')
+                    return
+                role_id = matched_roles[0]['role_id']
+                node = next((x for x in params.enterprise.get('managed_nodes', [])
+                             if x['role_id'] == role_id and x['managed_node_id'] == node_id), None)
+                if not node:
+                    logging.warning('Role "%d" does not manage node "%d"', role_id, node_id)
+                    return
+                privileges = {x['privilege'] for x in params.enterprise.get('role_privileges', [])
+                              if x['role_id'] == role_id and x['managed_node_id'] == node_id}
+                all_privileges = {x[1].lower() for x in constants.ROLE_PRIVILEGES}
+                for is_add in [True, False]:
+                    parameter = 'add_privilege' if is_add else 'remove_privilege'
+                    if isinstance(kwargs.get(parameter), list):
+                        for privilege in kwargs.get(parameter):
+                            privilege = privilege.lower()
+                            if privilege not in all_privileges:
+                                logging.warning('Add/Remove managed node privilege: invalid privilege: %s', privilege)
+                                return
+                            if is_add:
+                                if privilege in ['transfer_account', 'manage_companies']:
+                                    logging.warning('Add managed node privilege: Commander does not support \"%s\" privilege', privilege)
+                                    return
+                            if is_add and privilege in privileges:
+                                logging.info('Add privilege: Role "%d", Mode "%s" already contains privilege "%s" ',
+                                             role_id, node_id, privilege)
+                                continue
+                            if not is_add and privilege not in privileges:
+                                logging.info('Remove privilege: Role "%d", Mode "%s" does not contains privilege "%s" ',
+                                             role_id, node_id, privilege)
+                                continue
+
+                            rq = {
+                                'command': 'managed_node_privilege_add' if is_add else 'managed_node_privilege_remove',
+                                'role_id': role_id,
+                                'managed_node_id': node_id,
+                                'privilege': privilege
+                            }
+                            request_batch.append(rq)
+
             elif kwargs.get('copy') or kwargs.get('clone'):
                 role_name = kwargs.get('name')
                 role = matched_roles[0]
@@ -2005,9 +2052,22 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
                             node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
                             if rs['result'] == 'success':
-                                logging.info('\'%s\' role is %s managing node \'%s\'', role_name, 'assigned to' if command == 'role_managed_node_add' else 'removed from', node_name)
+                                logging.info('\'%s\' role is %s managing node \'%s\'',
+                                             role_name, 'assigned to' if command == 'role_managed_node_add' else 'removed from', node_name)
                             else:
-                                logging.warning('\'%s\' role failed to %s managing node \'%s\': %s', role_name, 'assign' if command == 'role_managed_node_add' else 'remove', node_name, rs['message'])
+                                logging.warning('\'%s\' role failed to %s managing node \'%s\': %s',
+                                                role_name, 'assign' if command == 'role_managed_node_add' else 'remove', node_name, rs['message'])
+                        elif command in {'managed_node_privilege_add', 'managed_node_privilege_remove'}:
+                            node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
+                            node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
+                            privilege = rq['privilege']
+                            if rs['result'] == 'success':
+                                logging.info('Node \'%s\' in role \'%s\' has \'%s\' privilege %s',
+                                             node_name, role_name, privilege, 'assigned' if command == 'managed_node_privilege_add' else 'removed')
+                            else:
+                                logging.warning('Failed to %s \'%s\' privilege to node \'%s\' in role \'%s\': %s',
+                                                'assign' if command == 'role_managed_node_add' else 'remove', privilege, node_name, role_name, rs['message'])
+
                         elif command in {'role_enforcement_add', 'role_enforcement_update', 'role_enforcement_remove'}:
                             enforcement = rq['enforcement']
                             if rs['result'] == 'success':
@@ -2059,8 +2119,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             'name': role['data'].get('displayname'),
             'node_id':  role['node_id'],
             'node_name': self.get_node_path(params, role['node_id']),
-            'cascade': role.get('visible_below', False),
-            'new_user_inherit': role.get('new_user_inherit', False),
+            'default_role': role.get('new_user_inherit', False),
             'users': [],
             'teams': []
         }
@@ -2134,8 +2193,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         print('{0:>24s}: {1}'.format('Role ID', role_id))
         print('{0:>24s}: {1}'.format('Role Name', role['data'].get('displayname')))
         print('{0:>24s}: {1}'.format('Node', self.get_node_path(params, role['node_id'])))
-        print('{0:>24s}: {1}'.format('Cascade?', 'Yes' if role['visible_below'] else 'No'))
-        print('{0:>24s}: {1}'.format('New user?', 'Yes' if role['new_user_inherit'] else 'No'))
+        print('{0:>24s}: {1}'.format('Default Role', 'Yes' if role['new_user_inherit'] else 'No'))
         if 'role_users' in params.enterprise:
             user_ids = [r['enterprise_user_id'] for r in params.enterprise['role_users'] if r['role_id'] == role_id]
             if len(user_ids) > 0:
@@ -2157,15 +2215,59 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     ))
 
         if 'managed_nodes' in params.enterprise:
-            node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
+            node_ids = {x['managed_node_id']: x['cascade_node_management']
+                        for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id}
+            is_msp = EnterpriseCommand.is_msp(params)
             if len(node_ids) > 0:
                 nodes = {}
                 for node in params.enterprise['nodes']:
                     nodes[node['node_id']] = node['data'].get('displayname') or params.enterprise['enterprise_name']
-                node_ids.sort(key=lambda x: nodes[x])
-                for i in range(len(node_ids)):
-                    node_id = node_ids[i]
-                    print('{0:>24s}: {1:<32s} {2}'.format('Manages Nodes(s)' if i == 0 else '', nodes[node_id], node_id if is_verbose else ''))
+                privileges = {}    # type: Dict[str, Set[int]]
+                for rp in params.enterprise.get('role_privileges', []):
+                    if rp['role_id'] != role_id:
+                        continue
+                    privilege = rp['privilege'].lower()
+                    if privilege not in privileges:
+                        privileges[privilege] = set()
+                    privileges[privilege].add(rp['managed_node_id'])
+                headers = ['Privilege']
+                if is_verbose:
+                    headers.append('Code')
+                for node_id in node_ids:
+                    headers.append(nodes[node_id])
+
+                table = []
+                for priv in constants.ROLE_PRIVILEGES:
+                    if priv[2] == constants.PrivilegeScope.Hidden:
+                        continue
+                    if priv[2] == constants.PrivilegeScope.MSP and not is_msp:
+                        continue
+                    privilege = priv[1].lower()
+                    nodes = privileges[privilege] if privilege in privileges else set()
+                    if not is_verbose and len(nodes) == 0:
+                        continue
+
+                    row = [priv[0]]
+                    if is_verbose:
+                        row.append(privilege)
+                    for node_id in node_ids:
+                        row.append('X' if node_id in nodes else '')
+                    table.append(row)
+
+                table.append(['------------------------'])
+                if is_verbose:
+                    row = ['Node ID', '']
+                    for node_id in node_ids:
+                        row.append(node_id)
+                    table.append(row)
+                row = ['Cascade Node Permissions']
+                if is_verbose:
+                    row.append('')
+                for node_id in node_ids:
+                    row.append('Yes' if node_ids[node_id] else 'No')
+                table.append(row)
+
+                dump_report_data(table, headers, title='Managed Node Privileges')
 
         if 'role_enforcements' in params.enterprise:
             enforcements = None
@@ -2174,7 +2276,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     enforcements = e['enforcements']
                     break
             if enforcements:
-                print('{0:>24s}: '.format('Role Enforcements'))
+                print('\n{0:>24s}: '.format('Role Enforcements'))
                 enforcement_list = constants.enforcement_list()
                 if not is_verbose:
                     enforcement_list = [x for x in enforcement_list if x[1] in enforcements]

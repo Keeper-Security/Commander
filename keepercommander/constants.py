@@ -1,8 +1,33 @@
+import enum
 import sys
 from typing import List, Tuple
 from datetime import timedelta
 from urllib.parse import urlparse
 
+# Managed Role privileges
+
+
+class PrivilegeScope(enum.IntEnum):
+    All = 1,
+    MSP = 2,
+    Hidden = 3,
+
+
+ROLE_PRIVILEGES = [
+    ('Manage Nodes', 'MANAGE_NODES', PrivilegeScope.All),
+    ('Manage Users', 'MANAGE_USER', PrivilegeScope.All),
+    ('Manage Licences', 'MANAGE_LICENCES', PrivilegeScope.Hidden),
+    ('Manage Roles', 'MANAGE_ROLES', PrivilegeScope.All),
+    ('Manage Teams', 'MANAGE_TEAMS', PrivilegeScope.All),
+    ('Run Security Reports', 'RUN_REPORTS', PrivilegeScope.All),
+    ('Manage Bridge/SSO', 'MANAGE_BRIDGE', PrivilegeScope.All),
+    ('Perform Device Approvals', 'APPROVE_DEVICE', PrivilegeScope.All),
+    ('Manage Record Types in Vault', 'MANAGE_RECORD_TYPES', PrivilegeScope.All),
+    ('Run Compliance Reports', 'RUN_COMPLIANCE_REPORTS', PrivilegeScope.All),
+    ('Manage Companies', 'MANAGE_COMPANIES', PrivilegeScope.MSP),
+    ('Transfer Account', 'TRANSFER_ACCOUNT', PrivilegeScope.All),
+    ('Sharing Administrator', 'SHARING_ADMINISTRATOR', PrivilegeScope.All),
+]
 
 # Timeout constants
 # Set to default value by using timedelta of 0
