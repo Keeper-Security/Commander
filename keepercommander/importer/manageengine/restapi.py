@@ -74,7 +74,12 @@ class RestAPI:
         if request_kwargs is None:
             return None
 
-        response = requests.get(**request_kwargs)
+        try:
+            response = requests.get(**request_kwargs)
+        except Exception as e:
+            logging.warning(f"Can't connect to ManageEngine server {urlunsplit(self.base_url)}")
+            return None
+
         if response.text:
             try:
                 raw_data = json.loads(response.text)
@@ -82,12 +87,16 @@ class RestAPI:
                 logging.warning(f"Can't parse import JSON with status code {response.status_code}:\n{response.text}")
                 return None
         else:
+            logging.warning(f"Failed to get response from ManageEngine connection.")
             return None
+
         operation = raw_data.get('operation', {})
         result = operation.get('result')
         if result and result.get('status') == 'Success':
             return operation.get('Details')
         else:
+            message = result.get('message', 'No connection failed message.')
+            logging.warning(f"Connection to ManageEngine server failed: {message}")
             return None
 
     def resources(self):
