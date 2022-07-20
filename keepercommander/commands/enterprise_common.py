@@ -438,3 +438,13 @@ class EnterpriseCommand(Command):
 
         params.enterprise['user_root_nodes'] = list(root_nodes)
         params.enterprise['user_managed_nodes'] = list(managed_nodes)
+
+    @staticmethod
+    def is_msp(params):     # type: (KeeperParams) -> bool
+        if params.enterprise:
+            if 'licenses' in params.enterprise:
+                msp_license = next((x for x in params.enterprise['licenses'] if x['lic_status'].startswith('msp')),
+                                   None)
+                if msp_license:
+                    return True
+        return False
