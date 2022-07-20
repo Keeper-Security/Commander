@@ -95,8 +95,8 @@ class RestAPI:
         if result and result.get('status') == 'Success':
             return operation.get('Details')
         else:
-            message = result.get('message', 'No connection failed message.')
-            logging.warning(f"Connection to ManageEngine server failed: {message}")
+            message = f": {result['message']}" if 'message' in result else '.'
+            logging.warning(f'Connection to ManageEngine server failed{message}')
             return None
 
     def resources(self):
