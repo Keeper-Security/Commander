@@ -276,7 +276,10 @@ security_audit_report_parser.exit = suppress_exit
 user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run a user report.')
 user_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'], default='table', help='output format.')
 user_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365, help='number of days to look back for last login.')
+user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365,
+                                help='number of days to look back for last login (set to <= 0 to disable limit).')
+user_report_parser.add_argument('-l', '--last-login', dest='last_login', action='store_true',
+                                help='simplify report to include only last-login-related info')
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
 
@@ -2966,15 +2969,12 @@ class UserReportCommand(EnterpriseCommand):
                 if tu['team_uid'] in self.teams:
                     self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
-        look_back_days = kwargs.get('days') or 365
-        logging.info('Quering latest login for the last {0} days'.format(look_back_days))
-        from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
-        report_filter = {
-            "audit_event_type": "login",
-            "created": {
-                "min": int(from_date.timestamp())
-            }
-        }
+        look_back_days = kwargs.get('days')
+        report_filter = {'audit_event_type': 'login'}
+        if look_back_days > 0:
+            logging.info(f'Querying latest login for the last {look_back_days} days')
+            from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
+            report_filter['created'] = {'min': int(from_date.timestamp())}
         rq = {
             "command": "get_enterprise_audit_event_reports",
             "report_type": "span",
@@ -3008,8 +3008,11 @@ class UserReportCommand(EnterpriseCommand):
         user_list = list(self.users.values())
         user_list.sort(key=lambda x: x['username'].lower())
 
+        last_login_report = kwargs.get('last_login')
         rows = []
-        headers = ['email', 'name', 'status', 'transfer_status', 'last_login', 'node', 'roles', 'teams']
+        headers_basic = ['email', 'name', 'status', 'transfer_status', 'last_login']
+        headers_extra = [*headers_basic, 'node', 'roles', 'teams']
+        headers = headers_basic if last_login_report else headers_extra
         for user in user_list:
             status_dict = get_user_status_dict(user)
 
@@ -3023,16 +3026,20 @@ class UserReportCommand(EnterpriseCommand):
             roles.sort(key=str.lower)
             ll = user.get('last_login')
             last_log = str(ll) if ll else ''
-            rows.append([
-                user['username'],       # email
-                user['name'],           # name
-                acct_status,            # status == acct_status
-                acct_transfer_status,   # acct_transfer_status
-                last_log,               # last_login
-                path,                   # node
-                roles,                  # roles
-                teams                   # teams
-            ])
+            row_basic = [
+                user['username'],  # email
+                user['name'],  # name
+                acct_status,  # status == acct_status
+                acct_transfer_status,  # acct_transfer_status
+                last_log,  # last_login
+            ]
+            row_extra = [
+                *row_basic,
+                path,  # node
+                roles,  # roles
+                teams  # teams
+            ]
+            rows.append(row_basic if last_login_report else row_extra)
 
         if kwargs.get('format') != 'json':
             headers = [string.capwords(x.replace('_', ' ')) for x in headers]
