@@ -224,9 +224,8 @@ def main(from_package=False):
             flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
             options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
             if opts.command:
-                command = ' '.join([opts.command or '', flags])
-                if options:
-                    command += ' -- ' + options
+                options = ' -- ' + options if options.startswith('-') else options
+                command = ' '.join([opts.command or '', options, flags])
                 params.commands.append(command)
             params.commands.append('q')
             params.batch_mode = True
