@@ -237,10 +237,15 @@ def sync_down(params, record_types=False):
     if params.revision == 0:
         logging.info('Syncing...')
 
+    includes = FOLDER_SCOPE + ['user_auth']
+    skip_records = params.config and 'skip_records' in params.config
+    if not skip_records:
+        includes += RECORD_SCOPE
+
     rq = {
         'command': 'sync_down',
         'revision': params.revision or 0,
-        'include': FOLDER_SCOPE + RECORD_SCOPE + ['user_auth'] + EXPLICIT
+        'include': includes + EXPLICIT
     }
     response_json = communicate(params, rq)
 
@@ -804,6 +809,9 @@ def sync_down(params, record_types=False):
                 record_count += 1
         if record_count:
             logging.info('Decrypted [%d] record(s)', record_count)
+        if skip_records:
+            logging.warning(bcolors.FAIL + 'Record loading is prevented in the configuration file.' + bcolors.ENDC)
+            logging.info('To load records use \"sync-down --force\" command.')
 
 
 def create_auth_verifier(password, salt, iterations):
