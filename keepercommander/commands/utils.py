@@ -90,11 +90,10 @@ def register_command_info(aliases, command_info):
     aliases['v'] = 'version'
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
-    for p in [whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
+    for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser
               ]:
         command_info[p.prog] = p.description
-    command_info['sync-down|d'] = 'Download & decrypt data'
 
 
 available_ksm_commands = f"""
@@ -151,6 +150,9 @@ Commands to configure and manage the Keeper Secrets Manager platform.
   {bcolors.WARNING}https://docs.keeper.io/secrets-manager/{bcolors.ENDC}
 
 """
+
+sync_down_parser = argparse.ArgumentParser(prog='sync-down|d', description='Download & decrypt data.')
+sync_down_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -329,7 +331,16 @@ def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
 
 
 class SyncDownCommand(Command):
+    def get_parser(self):
+        return sync_down_parser
+
     def execute(self, params, **kwargs):
+        if kwargs.get('force'):
+            params.revision = 0
+            if params.config:
+                if 'skip_records' in params.config:
+                    del params.config['skip_records']
+
         api.sync_down(params, record_types=True)
 
         accepted = False
