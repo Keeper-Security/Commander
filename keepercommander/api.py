@@ -238,7 +238,7 @@ def sync_down(params, record_types=False):
         logging.info('Syncing...')
 
     includes = FOLDER_SCOPE + ['user_auth']
-    skip_records = params.config and 'skip_records' in params.config
+    skip_records = params.config and 'skip_records' in params.config and params.config['skip_records'] is True
     if not skip_records:
         includes += RECORD_SCOPE
 
