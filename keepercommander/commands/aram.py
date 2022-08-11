@@ -42,7 +42,11 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from .register import EMAIL_PATTERN
-
+from ..sox import sox_data, sqlite_storage
+from ..sox.sox_data import RebuildTask
+from ..sox.storage_types import StorageRecord, StorageUser, StorageUserRecordLink
+from ..storage import sqlite_dao
+from ..storage.sqlite import SqliteEntityStorage
 
 audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
@@ -131,6 +135,7 @@ syslog_templates = None  # type: Optional[List[str]]
 
 API_EVENT_SUMMARY_ROW_LIMIT = 2000
 API_EVENT_RAW_ROW_LIMIT = 1000
+API_SOX_REQUEST_USER_LIMIT = 1000
 
 def load_syslog_templates(params):
     global syslog_templates
@@ -146,6 +151,84 @@ def load_syslog_templates(params):
             syslog = et.get('syslog')
             if name and syslog:
                 syslog_templates[name] = syslog
+
+def get_sox_data(params, enterprise_id, rebuild=False, min_updated=0):
+    # type (KeeperParams, bytes, bool, int) -> SoxData
+    def sync_down(user_lookup, store):  # type (Dict, SqliteSoxStorage) ->  None
+        def to_storage_types(user_data, user_lookup):
+            def to_record_entity(record):
+                entity = StorageRecord()
+                entity.record_uid = utils.base64_url_encode(record.recordUid)
+                entity.encrypted_data = utils.base64_url_encode(record.encryptedData)
+                entity.shared = record.shared
+                return entity
+
+            def to_user_entity(user, lookup):
+                entity = StorageUser()
+                entity.status = user.status
+                entity.user_uid = user.enterpriseUserId
+                entity.email = lookup.get(entity.user_uid)
+                return entity
+
+            def to_user_record_link(uuid, ruid):
+                link = StorageUserRecordLink()
+                link.user_uid = uuid
+                link.record_uid = ruid
+                return link
+
+            user = to_user_entity(user_data, user_lookup)
+            records = {to_record_entity(x) for x in user_data.auditUserRecords}
+            links = {to_user_record_link(user.user_uid, record.record_uid) for record in records}
+            return user, records, links
+
+        def rebuild_store(store, user_ents, record_ents, user_rec_links):
+            store.clear()
+            store.get_users().put_entities(user_ents)
+            store.get_records().put_entities(record_ents)
+            store.get_user_record_links().put_links(user_rec_links)
+            store.set_last_updated()
+
+        logging.info('Loading record information...')
+        record_entities = set()
+        user_entities = set()
+        user_record_links = set()
+        user_ids = list(user_lookup.keys())
+        while user_ids:
+            token = b''
+            chunk = user_ids[:API_SOX_REQUEST_USER_LIMIT]
+            user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
+            rq = enterprise_pb2.PreliminaryComplianceDataRequest()
+            rq.enterpriseUserIds.extend(chunk)
+            rq.includeNonShared = True
+            has_more = True
+            while has_more:
+                if token:
+                    rq.continuationToken = token
+                rs = api.communicate_rest(params, rq, 'enterprise/get_preliminary_compliance_data',
+                                          rs_type=enterprise_pb2.PreliminaryComplianceDataResponse)
+                has_more = rs.hasMore
+                token = rs.continuationToken
+                e_users = [user for user in rs.auditUserData if user.status == enterprise_pb2.OK]
+                for eu in e_users:
+                    user, records, links = to_storage_types(eu, user_lookup)
+                    user_entities.add(user)
+                    record_entities.update(records)
+                    user_record_links.update(links)
+        rebuild_store(store, user_entities, record_entities, user_record_links)
+
+    path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
+    database_name = os.path.join(path, f'sox_{enterprise_id}.db')
+    tree_key = params.enterprise['unencrypted_tree_key']
+    ecc_key = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
+    ecc_key = crypto.decrypt_aes_v2(ecc_key, tree_key)
+    key = crypto.load_ec_private_key(ecc_key)
+    storage = sqlite_storage.SqliteSoxStorage(get_connection=lambda: sqlite3.connect(database_name), owner=params.user)
+    user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
+    last_updated = storage.last_updated
+    rebuild_needed = rebuild or not last_updated or min_updated > last_updated
+    if rebuild_needed:
+        sync_down(user_lookup, storage)
+    return sox_data.SoxData(ec_private_key=key, storage=storage)
 
 
 class AuditLogBaseExport(abc.ABC):
@@ -1345,215 +1428,141 @@ class AgingReportCommand(Command):
         return aging_report_parser
 
     def execute(self, params, **kwargs):
-        enterprise_id = next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
-        path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
-        database_name = os.path.join(path, f'sox_data_{enterprise_id}.db')
-
-        if kwargs.get('rebuild') and os.path.exists(database_name):
-            os.remove(database_name)
-
-        if not AgingReportCommand.data_updated:
-            AgingReportCommand.prepare_database(params, database_name)
-
-        dt = datetime.datetime.now()
-        period = kwargs.get('period')
-        if not period:
-            logging.info('\n\nThe default password aging period is 3 months\n'
-                  'To change this value pass --period=[PERIOD] parameter\n'
-                  '[PERIOD] example: 10d for 10 days; 3m for 3 months; 1y for 1 year\n\n')
-            period = '3m'
-
-        co = period[-1]
-        try:
-            va = abs(int(period[:-1]))
-        except:
-            logging.warning(f'Invalid period: {period}')
-            return
-
-        if co != 'd':
-            if co == 'm':
-                va *= 30
-            elif co == 'y':
-                va *= 365
-            else:
+        def get_floor(period):  # type: (str) -> datetime.datetime
+            dt = datetime.datetime.now()
+            if not period:
+                logging.info('\n\nThe default password aging period is 3 months\n'
+                             'To change this value pass --period=[PERIOD] parameter\n'
+                             '[PERIOD] example: 10d for 10 days; 3m for 3 months; 1y for 1 year\n\n')
+                period = '3m'
+            co = period[-1]
+            try:
+                va = abs(int(period[:-1]))
+            except:
                 logging.warning(f'Invalid period: {period}')
-                return
-        dt = dt - datetime.timedelta(days=va)
+                return None
 
-        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
-        enterprise_user_id = 0
-        user = kwargs.get('username')
-        if user:
-            user = user.lower()
-            enterprise_user_id = next((x[0] for x in user_lookup.items() if x[1].lower() == user), 0)
+            if co != 'd':
+                if co == 'm':
+                    va *= 30
+                elif co == 'y':
+                    va *= 365
+                else:
+                    logging.warning(f'Invalid period: {period}')
+                    return None
+            return dt - datetime.timedelta(days=va)
 
-        tree_key = params.enterprise['unencrypted_tree_key']
-        ecc_key = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
-        ecc_key = crypto.decrypt_aes_v2(ecc_key, tree_key)
-        ec_private_key = crypto.load_ec_private_key(ecc_key)
-
+        enterprise_id = next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
+        dt = get_floor(kwargs.get('period'))
+        if dt is None:
+            return
+        period_min_ts = int(dt.timestamp())
+        sd = get_sox_data(params, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=period_min_ts)
+        sd = self.update_aging_data(params, sd)
+        users = sd.get_users()
+        usernames = {user.email for user in users.values()}
+        uid_lookup = {user.email: uid for uid, user in users.items()}
+        username = kwargs.get('username')
+        if username and username not in usernames:
+            logging.info(f'user {username} is not a valid enterprise user')
+            return
+        else:
+            user_uids = [uid_lookup.get(username)] if username is not None else None
         output_format = kwargs.get('format', 'table')
         date_ts = int(dt.timestamp())
-        error_count = 0
         columns = ['owner', 'title', 'password_changed', 'shared', 'record_url'] if output_format == 'json' else \
             ['Owner', 'Record Title', 'Last Password Change', 'Shared', 'Record URL']
         table = []
-        with sqlite3.connect(os.path.join(os.path.dirname(__file__), database_name)) as connection:
-            cursor = connection.execute('select record_uid, user, created, modified, shared, encrypted_data from audit_data')
-
-            for record_uid, user_id, created, modified, shared, encrypted_data in cursor:
-                if user_id not in user_lookup:
-                    continue
-                if enterprise_user_id > 0 and user_id != enterprise_user_id:
-                    continue
-                if created or modified:
-                    if modified:
-                        if modified >= date_ts:
-                            continue
-                    else:
-                        if created >= date_ts:
-                            continue
-                try:
-                    audit_json = crypto.decrypt_ec(utils.base64_url_decode(encrypted_data), ec_private_key)
-                    audit = json.loads(audit_json.decode())
-                    row = [user_lookup[user_id], audit.get('title', record_uid),
-                           datetime.datetime.fromtimestamp(modified) if modified else None,
-                           True if shared > 0 else False,
-                           f'https://{params.server}/vault/#detail/{record_uid}']
-                    table.append(row)
-                except:
-                    error_count += 1
-
+        user_records = sd.get_user_records(user_uids)
+        for ur in user_records:
+            created_ts = ur.record.created
+            change_ts = ur.record.last_pw_change
+            created_after_date = created_ts and (created_ts >= date_ts)
+            pw_changed_after_date = change_ts and (change_ts >= date_ts)
+            if created_after_date or pw_changed_after_date:
+                continue
+            else:
+                email = sd.get_user(ur.user_uid).email
+                change_dt = datetime.datetime.fromtimestamp(change_ts) if change_ts else None
+                record_url = f'https://{params.server}/value/#detail/{ur.record.record_uid}'
+                row = [email, ur.record.data.get('title'), change_dt, ur.record.shared, record_url]
+                table.append(row)
         return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'))
 
     @staticmethod
     def get_database_path(params):
         pass
 
-    @staticmethod
-    def prepare_database(params, database_name):
-        user_lookup = {x['username']: x['enterprise_user_id'] for x in params.enterprise['users']}
-        last_audit_time = 0
-        report_command = AuditReportCommand()
-        from_date = datetime.datetime.now()
-        from_date = from_date.replace(year=(from_date.year - 5))
+    def update_aging_data(self, params, sox):    # type: (KeeperParams, sox_data.SoxData) -> sox_data.SoxData
+        def get_record_event_dates(params, record_uids, event_type, ts_floor):
+            # type: (KeeperParams, List[str], str, int) -> Dict[str, int]
+            rq = {
+                'command':      'get_audit_event_reports',
+                'scope':        'enterprise',
+                'report_type':  'span',
+                'event_type':   event_type,
+                'columns':      ['record_uid'],
+                'aggregate':    ['last_created'],
+                'limit':        API_EVENT_SUMMARY_ROW_LIMIT
+            }
+            dt_lookup = {}
+            while record_uids:
+                chunk = record_uids[:API_EVENT_SUMMARY_ROW_LIMIT]
+                record_uids = record_uids[API_EVENT_SUMMARY_ROW_LIMIT:]
+                rq_filter = {'record_uid': chunk, 'created': {'min': ts_floor}}
+                rq['filter'] = rq_filter
+                rs = api.communicate(params, rq)
+                events = rs['audit_event_overview_report_rows']
+                dts_to_add = {event['record_uid']: int(event['last_created']) for event in events}
+                dt_lookup = {**dt_lookup, **dts_to_add}
+            return dt_lookup
 
-        # get SOX data
-        with sqlite3.connect(database_name) as connection:
-            rs = connection.execute('pragma table_info(\'audit_data\')').fetchall()
-            if rs:
-                rs = connection.execute('select max(modified) from audit_data where modified is not null').fetchall()
-                try:
-                    if rs[0][0] is not None:
-                        last_audit_time = rs[0][0]
-                except:
-                    pass
+        def update_records(params, sd, r_uids, event_type, set_ent_field_fn, on_updated, msg, ts_floor=0):
+            # type: (KeeperParams, SoxData, List[int], str, Callable, Callable, str, int) -> None
+            logging.info(msg)
+            ts_lookup = get_record_event_dates(params, r_uids, event_type, ts_floor)
+            updated_entities = set()
+            for entity in sd.storage.records.get_all():
+                entity = set_ent_field_fn(entity, ts_lookup.get(entity.record_uid))
+                updated_entities.add(entity)
+            updated_ruids = {ruid for ruid in ts_lookup.keys()}
+            rebuild_task = RebuildTask(False)
+            rebuild_task.update_records(updated_ruids)
+            sd.storage.records.put_entities(updated_entities)
+            sd.rebuild_data(rebuild_task)
+            on_updated()
 
-            else:
-                connection.execute('create table audit_data (record_uid TEXT NOT NULL, user INTEGER NOT NULL, encrypted_data TEXT NOT NULL, '
-                                   'shared INTEGER NOT NULL, created INTEGER NULL, modified INTEGER NULL, primary key (record_uid))')
-                connection.execute('create index audit_data_user_idx on audit_data(user)')
+        def update_record_created_times(params, sd, ts_floor=0):   # type: (sox_data.SoxData, int) -> None
+            def update_ent(ent, val):   # type: (StorageRecord, int) -> StorageRecord
+                ent.created = val
+                return ent
 
-                record_uids = set()
-                logging.info('Loading record information.')
-                user_ids = list(user_lookup.values())
-                loaded = 0
-                while user_ids:
-                    continuation_token = b''
-                    chunk = user_ids[:999]
-                    user_ids = user_ids[999:]
-                    rq = enterprise_pb2.PreliminaryComplianceDataRequest()
-                    rq.enterpriseUserIds.extend(chunk)
-                    rq.includeNonShared = True
-                    has_more = True
-                    total_records = 0
-                    while has_more:
-                        if continuation_token:
-                            rq.continuationToken = continuation_token
-                        rs = api.communicate_rest(params, rq, 'enterprise/get_preliminary_compliance_data',
-                                                  rs_type=enterprise_pb2.PreliminaryComplianceDataResponse)
-                        has_more = rs.hasMore
-                        continuation_token = rs.continuationToken
-                        if rs.totalMatchingRecords:
-                            total_records = rs.totalMatchingRecords
-                        for user in rs.auditUserData:
-                            loaded += len(user.auditUserRecords)
+            r_uids = list(sd.get_records().keys())
+            event_type = 'record_add'
+            msg = 'Loading record creation time...'
+            update_records(params, sd, r_uids, event_type, update_ent, sd.storage.set_records_dated, msg, ts_floor)
 
-                        def get_audit_data():
-                            for user in rs.auditUserData:
-                                if user.status == enterprise_pb2.OK:
-                                    for record in user.auditUserRecords:
-                                        record_uid = utils.base64_url_encode(record.recordUid)
-                                        record_uids.add(record_uid)
-                                        yield (record_uid, user.enterpriseUserId, 1 if record.shared else 0,
-                                               utils.base64_url_encode(record.encryptedData))
+        def update_record_pw_change_times(params, sd, r_uids, ts_floor=0):
+            # type: (KeeperParams, SoxData, List[int], int) -> None
+            def update_ent(ent, val):   # type: (StorageRecord, int) -> StorageRecord
+                ent.last_pw_change = val
+                return ent
 
-                        connection.executemany('insert into audit_data (record_uid, user, shared, encrypted_data) values (?, ?, ?, ?) ' +
-                                               'on conflict (record_uid) do update set ' +
-                                               'user=excluded.user, shared=excluded.shared, encrypted_data=excluded.encrypted_data',
-                                               get_audit_data())
+            event_type = 'record_password_change'
+            msg = 'Loading record password change information...'
+            update_records(params, sd, r_uids, event_type, update_ent, sd.storage.set_last_pw_audit, msg, ts_floor)
 
-                        connection.commit()
-                logging.info('Loading record creation time')
-                loaded = 0
-                has_more = True
-                last_created_time = from_date.timestamp()
-                while has_more:
-                    has_more = False
-                    report_data = report_command.execute(
-                        params, report_type='span', columns=['record_uid'], aggregate=['last_created'], format='json',
-                        order='asc', limit=1000, created=f'> {int(last_created_time)}', event_type='record_add')
-                    data = json.loads(report_data)
-                    if not data:
-                        break
-                    loaded += len(data)
-                    if len(data) == 1000:
-                        last_event = data[-1]
-                        created_date = datetime.datetime.strptime(last_event['last_created'], '%Y-%m-%dT%H:%M:%S%z')
-                        last_created_time = created_date.timestamp()
-                        has_more = True
-
-                    def get_date_created():
-                        for event in data:
-                            last_created = event['last_created']
-                            dt = datetime.datetime.strptime(last_created, '%Y-%m-%dT%H:%M:%S%z')
-                            record_uid = event['record_uid']
-                            if record_uid in record_uids:
-                                yield int(dt.timestamp()), event['record_uid']
-
-                    connection.executemany('update or ignore audit_data set created = ? where record_uid = ?', get_date_created())
-                    connection.commit()
-
-            has_more = True
-            if last_audit_time == 0:
-                last_audit_time = from_date.timestamp()
-            loaded = 0
-            while has_more:
-                has_more = False
-                report_data = report_command.execute(params, report_type='span', columns=['record_uid'], aggregate=['last_created'], order='asc', limit=1000,
-                                                     created=f'> {int(last_audit_time)}', event_type='record_password_change', format='json')
-                data = json.loads(report_data)
-                if not data:
-                    break
-                if loaded == 0:
-                    logging.info('Loading record password change information.')
-
-                loaded += len(data)
-                if len(data) == 1000:
-                    last_event = data[-1]
-                    modified_date = datetime.datetime.strptime(last_event['last_created'], '%Y-%m-%dT%H:%M:%S%z')
-                    last_audit_time = modified_date.timestamp()
-                    has_more = True
-
-                def get_password_data():
-                    for event in data:
-                        last_created = event['last_created']
-                        dt = datetime.datetime.strptime(last_created, '%Y-%m-%dT%H:%M:%S%z')
-                        yield int(dt.timestamp()), event['record_uid']
-
-                connection.executemany('update or ignore audit_data set modified = ? where record_uid = ?',
-                                       get_password_data())
-                connection.commit()
+        min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
+        min_ts = int(min_dt.timestamp())
+        if not sox.storage.records_dated:
+            update_record_created_times(params, sox, min_ts)
+        if not sox.storage.last_pw_audit:
+            records = {uid: record for uid, record in sox.get_records().items() if record.created}
+            r_uids = list(records.keys())
+            record_timestamps = {rec.created for rec in records.values()}
+            min_ts = min(record_timestamps)
+            update_record_pw_change_times(params, sox, r_uids, min_ts)
+        return sox
 
 
 class ActionReportCommand(EnterpriseCommand):
