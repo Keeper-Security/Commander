@@ -181,40 +181,37 @@ def get_sox_data(params, enterprise_id, rebuild=False, min_updated=0):
             links = {to_user_record_link(user.user_uid, record.record_uid) for record in records}
             return user, records, links
 
-        def rebuild_store(store, user_ents, record_ents, user_rec_links):
-            store.clear()
-            store.get_users().put_entities(user_ents)
-            store.get_records().put_entities(record_ents)
-            store.get_user_record_links().put_links(user_rec_links)
-            store.set_last_updated()
+        def load_entities():
+            logging.info('Loading record information...')
+            record_entities = set()
+            user_entities = set()
+            user_record_links = set()
+            user_ids = list(user_lookup.keys())
+            while user_ids:
+                token = b''
+                chunk = user_ids[:API_SOX_REQUEST_USER_LIMIT]
+                user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
+                rq = enterprise_pb2.PreliminaryComplianceDataRequest()
+                rq.enterpriseUserIds.extend(chunk)
+                rq.includeNonShared = True
+                has_more = True
+                while has_more:
+                    if token:
+                        rq.continuationToken = token
+                    rs = api.communicate_rest(params, rq, 'enterprise/get_preliminary_compliance_data',
+                                              rs_type=enterprise_pb2.PreliminaryComplianceDataResponse)
+                    has_more = rs.hasMore
+                    token = rs.continuationToken
+                    e_users = [user for user in rs.auditUserData if user.status == enterprise_pb2.OK]
+                    for eu in e_users:
+                        user, records, links = to_storage_types(eu, user_lookup)
+                        user_entities.add(user)
+                        record_entities.update(records)
+                        user_record_links.update(links)
+            return user_entities, record_entities, user_record_links
 
-        logging.info('Loading record information...')
-        record_entities = set()
-        user_entities = set()
-        user_record_links = set()
-        user_ids = list(user_lookup.keys())
-        while user_ids:
-            token = b''
-            chunk = user_ids[:API_SOX_REQUEST_USER_LIMIT]
-            user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
-            rq = enterprise_pb2.PreliminaryComplianceDataRequest()
-            rq.enterpriseUserIds.extend(chunk)
-            rq.includeNonShared = True
-            has_more = True
-            while has_more:
-                if token:
-                    rq.continuationToken = token
-                rs = api.communicate_rest(params, rq, 'enterprise/get_preliminary_compliance_data',
-                                          rs_type=enterprise_pb2.PreliminaryComplianceDataResponse)
-                has_more = rs.hasMore
-                token = rs.continuationToken
-                e_users = [user for user in rs.auditUserData if user.status == enterprise_pb2.OK]
-                for eu in e_users:
-                    user, records, links = to_storage_types(eu, user_lookup)
-                    user_entities.add(user)
-                    record_entities.update(records)
-                    user_record_links.update(links)
-        rebuild_store(store, user_entities, record_entities, user_record_links)
+        users, records, links = load_entities()
+        store.rebuild(users, records, links)
 
     path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
     database_name = os.path.join(path, f'sox_{enterprise_id}.db')

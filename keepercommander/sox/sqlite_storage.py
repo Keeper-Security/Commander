@@ -95,3 +95,9 @@ class SqliteSoxStorage:
         self._user_record_links.delete_all()
         self._metadata.delete_all()
 
+    def rebuild(self, users, records, links):
+        self.clear()
+        self._users.put_entities(users)
+        self._records.put_entities(records)
+        self._user_record_links.put_links(links)
+        self.set_last_updated()
