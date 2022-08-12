@@ -25,8 +25,11 @@ class SqliteEntityStorage(sqlite_dao.SqliteStorage, IEntityStorage):
             raise ValueError(f'SqliteEntityStorage: Primary key to have one column.')
 
     def get_entity(self, uid):
-        for entity in self.select_by_filter(self.schema.primary_key, [uid]):
-            return entity
+        return list(self.select_by_filter(self.schema.primary_key, [uid]))[0]
+
+    def get_entities(self, pk_values):
+        for value in pk_values:
+            yield self.get_entity(value)
 
     def get_all(self):
         for entity in self.select_all():
