@@ -1,4 +1,7 @@
 from typing import Iterable, Dict, Set, List, Optional
+
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
+
 from . import sox_types, sqlite_storage
 
 
@@ -14,8 +17,9 @@ class RebuildTask:
 
 
 class SoxData:
-    def __init__(self, ec_private_key, storage):    # type: (bytes, sqlite_storage.SqliteSoxStorage) -> None
-        self.ec_private_key = ec_private_key    # type: bytes
+    def __init__(self, ec_private_key, storage):
+        # type: (EllipticCurvePrivateKey, sqlite_storage.SqliteSoxStorage) -> None
+        self.ec_private_key = ec_private_key    # type: EllipticCurvePrivateKey
         self.storage = storage                  # type: sqlite_storage.SqliteSoxStorage
         self._records = {}                      # type: Dict[str, sox_types.Record]
         self._users = {}                        # type: Dict[int, sox_types.EnterpriseUser]
