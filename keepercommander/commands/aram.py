@@ -22,7 +22,7 @@ import os
 import platform
 import re
 import sqlite3
-from typing import Optional, List
+from typing import Optional, List, Union
 
 import requests
 import socket
@@ -45,8 +45,7 @@ from .register import EMAIL_PATTERN
 from ..sox import sox_data, sqlite_storage
 from ..sox.sox_data import RebuildTask
 from ..sox.storage_types import StorageRecord, StorageUser, StorageUserRecordLink
-from ..storage import sqlite_dao
-from ..storage.sqlite import SqliteEntityStorage
+from typing import Dict, Callable
 
 audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
@@ -137,6 +136,7 @@ API_EVENT_SUMMARY_ROW_LIMIT = 2000
 API_EVENT_RAW_ROW_LIMIT = 1000
 API_SOX_REQUEST_USER_LIMIT = 1000
 
+
 def load_syslog_templates(params):
     global syslog_templates
     if syslog_templates is None:
@@ -152,10 +152,11 @@ def load_syslog_templates(params):
             if name and syslog:
                 syslog_templates[name] = syslog
 
+
 def get_sox_data(params, enterprise_id, rebuild=False, min_updated=0):
     # type (KeeperParams, bytes, bool, int) -> SoxData
-    def sync_down(user_lookup, store):  # type (Dict, SqliteSoxStorage) ->  None
-        def to_storage_types(user_data, user_lookup):
+    def sync_down(name_by_id, store):  # type: (Dict, sqlite_storage.SqliteSoxStorage) ->  None
+        def to_storage_types(user_data, username_lookup):
             def to_record_entity(record):
                 entity = StorageRecord()
                 entity.record_uid = utils.base64_url_encode(record.recordUid)
@@ -163,11 +164,11 @@ def get_sox_data(params, enterprise_id, rebuild=False, min_updated=0):
                 entity.shared = record.shared
                 return entity
 
-            def to_user_entity(user, lookup):
+            def to_user_entity(user, email_lookup):
                 entity = StorageUser()
                 entity.status = user.status
                 entity.user_uid = user.enterpriseUserId
-                entity.email = lookup.get(entity.user_uid)
+                entity.email = email_lookup.get(entity.user_uid)
                 return entity
 
             def to_user_record_link(uuid, ruid):
@@ -176,10 +177,10 @@ def get_sox_data(params, enterprise_id, rebuild=False, min_updated=0):
                 link.record_uid = ruid
                 return link
 
-            user = to_user_entity(user_data, user_lookup)
-            records = {to_record_entity(x) for x in user_data.auditUserRecords}
-            links = {to_user_record_link(user.user_uid, record.record_uid) for record in records}
-            return user, records, links
+            user_ent = to_user_entity(user_data, username_lookup)
+            record_ents = {to_record_entity(x) for x in user_data.auditUserRecords}
+            user_rec_links = {to_user_record_link(user_ent.user_uid, record_ent.record_uid) for record_ent in record_ents}
+            return user_ent, record_ents, user_rec_links
 
         def load_entities():
             logging.info('Loading record information...')
@@ -1425,7 +1426,7 @@ class AgingReportCommand(Command):
         return aging_report_parser
 
     def execute(self, params, **kwargs):
-        def get_floor(period):  # type: (str) -> datetime.datetime
+        def get_floor(period):  # type: (str) -> Union[datetime.datetime, None]
             dt = datetime.datetime.now()
             if not period:
                 logging.info('\n\nThe default password aging period is 3 months\n'
@@ -1492,7 +1493,7 @@ class AgingReportCommand(Command):
 
     def update_aging_data(self, params, sox):    # type: (KeeperParams, sox_data.SoxData) -> sox_data.SoxData
         def get_record_event_dates(params, record_uids, event_type, ts_floor):
-            # type: (KeeperParams, List[str], str, int) -> Dict[str, int]
+            # type: (KeeperParams, List[Union[str, int]], str, int) -> Dict[str, int]
             rq = {
                 'command':      'get_audit_event_reports',
                 'scope':        'enterprise',
@@ -1502,7 +1503,7 @@ class AgingReportCommand(Command):
                 'aggregate':    ['last_created'],
                 'limit':        API_EVENT_SUMMARY_ROW_LIMIT
             }
-            dt_lookup = {}
+            ts_lookup = dict()
             while record_uids:
                 chunk = record_uids[:API_EVENT_SUMMARY_ROW_LIMIT]
                 record_uids = record_uids[API_EVENT_SUMMARY_ROW_LIMIT:]
@@ -1510,26 +1511,25 @@ class AgingReportCommand(Command):
                 rq['filter'] = rq_filter
                 rs = api.communicate(params, rq)
                 events = rs['audit_event_overview_report_rows']
-                dts_to_add = {event['record_uid']: int(event['last_created']) for event in events}
-                dt_lookup = {**dt_lookup, **dts_to_add}
-            return dt_lookup
+                chunk_ts_lookup = {event['record_uid']: int(event['last_created']) for event in events}
+                ts_lookup.update(chunk_ts_lookup)
+            return ts_lookup
 
         def update_records(params, sd, r_uids, event_type, set_ent_field_fn, on_updated, msg, ts_floor=0):
-            # type: (KeeperParams, SoxData, List[int], str, Callable, Callable, str, int) -> None
+            # type: (KeeperParams, sox_data.SoxData, List[int], str, Callable, Callable, str, int) -> None
             logging.info(msg)
             ts_lookup = get_record_event_dates(params, r_uids, event_type, ts_floor)
-            updated_entities = set()
-            for entity in sd.storage.records.get_all():
+            updated_entities = []
+            for entity in sd.storage.records.get_entities(ts_lookup.keys()):
                 entity = set_ent_field_fn(entity, ts_lookup.get(entity.record_uid))
-                updated_entities.add(entity)
-            updated_ruids = {ruid for ruid in ts_lookup.keys()}
+                updated_entities.append(entity)
             rebuild_task = RebuildTask(False)
-            rebuild_task.update_records(updated_ruids)
+            rebuild_task.update_records(ts_lookup.keys())
             sd.storage.records.put_entities(updated_entities)
             sd.rebuild_data(rebuild_task)
             on_updated()
 
-        def update_record_created_times(params, sd, ts_floor=0):   # type: (sox_data.SoxData, int) -> None
+        def update_record_created_times(params, sd, ts_floor=0):   # type: (KeeperParams, sox_data.SoxData, int) -> None
             def update_ent(ent, val):   # type: (StorageRecord, int) -> StorageRecord
                 ent.created = val
                 return ent
@@ -1540,7 +1540,7 @@ class AgingReportCommand(Command):
             update_records(params, sd, r_uids, event_type, update_ent, sd.storage.set_records_dated, msg, ts_floor)
 
         def update_record_pw_change_times(params, sd, r_uids, ts_floor=0):
-            # type: (KeeperParams, SoxData, List[int], int) -> None
+            # type: (KeeperParams, sox_data.SoxData, List[int], int) -> None
             def update_ent(ent, val):   # type: (StorageRecord, int) -> StorageRecord
                 ent.last_pw_change = val
                 return ent
