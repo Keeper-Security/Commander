@@ -45,7 +45,7 @@ import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='s
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',
                            help='display Keeper JSON import instructions')
 import_parser.add_argument(
-    '--format', choices=['json', 'csv', 'keepass', 'lastpass', 'myki', 'manageengine'],
+    '--format', choices=['json', 'csv', 'keepass', 'lastpass', 'myki', 'manageengine', '1password'],
     required=True, help='file format'
 )
 import_parser.add_argument('--folder', dest='folder', action='store',
@@ -69,7 +69,7 @@ import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='sto
 import_parser.add_argument('--file-cache', dest='tmpdir', action='store',
                            help='Temp directory used to cache encrypted attachment imports')
 import_parser.add_argument(
-    'name', type=str, help='file name (json, csv, keepass), account name (lastpass), or URL (ManageEngine)'
+    'name', type=str, help='file name (json, csv, keepass, 1password), account name (lastpass), or URL (ManageEngine)'
 )
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
