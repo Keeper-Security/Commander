@@ -457,8 +457,8 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
-    for x in importer.execute(filename, users_only=import_users, old_domain=old_domain, new_domain=new_domain,
-                              tmpdir=tmpdir):
+    for x in importer.execute(filename, params=params, users_only=import_users,
+                              old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir):
         if isinstance(x, ImportRecord):
             if shared or import_into:
                 if not x.folders:

@@ -540,7 +540,7 @@ class RecordV3:
                 'region': '',  # string
                 'number': '',  # string
                 'ext': '',  # string
-                'type': ('Mobile', 'Home', 'Work')
+                'type': ('', 'Mobile', 'Home', 'Work')
             }
         },
         'name': {

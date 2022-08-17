@@ -17,7 +17,7 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Optional, Tuple, Iterable, List, Dict
+from typing import Optional, Tuple, Iterable, List, Dict, Any
 
 import google
 import itertools
@@ -1506,8 +1506,8 @@ def get_pb2_record_update(params, rec, **kwargs):
     return record_rq
 
 
-def get_record_v3_response(params, rq, endpoint, record_rq_by_uid, silent=False):
-    # type: (KeeperParams, records._message.Message, str, dict[dict]) -> Optional[bool]
+def get_record_v3_response(params, rq, endpoint, record_rq_by_uid, silent=True):
+    # type: (KeeperParams, Any, str, dict[dict], bool) -> Optional[bool]
     rs = communicate_rest(params, rq, endpoint)
     records_modify_rs = records.RecordsModifyResponse()
     records_modify_rs.ParseFromString(rs)
@@ -1542,7 +1542,7 @@ def get_record_v3_response(params, rq, endpoint, record_rq_by_uid, silent=False)
 
         record_rq['revision'] = new_revision
 
-    sync_down(params)
+    params.sync_data = True
     return True
 
 
