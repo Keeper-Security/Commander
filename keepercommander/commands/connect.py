@@ -12,6 +12,7 @@
 
 import argparse
 import io
+import json
 import logging
 import os
 import re
@@ -168,7 +169,7 @@ class BaseConnectCommand(Command, RecordMixin):
             return
 
         try:
-            record = find_record(params, record)
+            record = find_record(params, record, types)
         except Exception as e:
             logging.warning(e)
             return
@@ -230,7 +231,7 @@ class ConnectSshCommand(BaseConnectCommand):
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             ls = RecordListCommand()
-            ls.execute(params, record_type=['serverCredentials'], verbose=True)
+            ls.execute(params, record_type=['serverCredentials', 'sshKeys'], verbose=True)
             return
 
         record = None     # type: Optional[KeeperRecord]
@@ -249,6 +250,38 @@ class ConnectSshCommand(BaseConnectCommand):
                                 if r.title.lower() == record_name.lower():
                                     record = r
                                     break
+
+        if record is None:
+            ls = RecordListCommand()
+            result = ls.execute(params, record_type=['serverCredentials', 'sshKeys'], format='json', verbose=True)
+            if result:
+                try:
+                    recs = json.loads(result)
+                    records = []
+                    if isinstance(recs, list):
+                        for rec in recs:
+                            if isinstance(rec, dict):
+                                if 'title' in rec:
+                                    title = rec.get('title', '').strip().lower()
+                                    if title == record_name.lower():
+                                        records.append(rec)
+                                        continue
+                                if 'description' in rec:
+                                    description = rec.get('description', '').lower()
+                                    if description:
+                                        user, sep, host = description.partition("@")
+                                        if sep == '@':
+                                            description = host
+                                        hostname, _, _ = description.strip().partition(':')
+                                        if hostname == record_name.lower():
+                                            records.append(rec)
+                                            continue
+                    if len(records) == 1:
+                        record = KeeperRecord.load(params, records[0].get('record_uid'))
+                    elif len(records) > 1:
+                        raise CommandError('ssh', f'More than one record found for \"{record_name}\". Please use record UID or full record path.')
+                except:
+                    pass
 
         if record is None:
             raise CommandError('ssh', 'Enter name of existing record')
