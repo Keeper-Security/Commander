@@ -90,7 +90,7 @@ class Record:
     def load(self, data, **kwargs):
         self.version = kwargs.get('version', 2)
         if 'title' in data:
-            self.title = Record.xstr(data['title'])
+            self.title = Record.xstr(data['title']).strip()
         if 'notes' in data:
             self.notes = Record.xstr(data['notes'])
 

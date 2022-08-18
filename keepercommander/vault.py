@@ -128,9 +128,9 @@ class CustomField(object):
     def __init__(self, custom_field=None):  # type: (Optional[dict]) -> None
         if custom_field is None:
             custom_field = {}
-        self.name = custom_field.get('name', '')
-        self.value = custom_field.get('value', '')
-        self.type = custom_field.get('type', '')
+        self.name = custom_field.get('name', '').strip()
+        self.value = custom_field.get('value', '').strip()
+        self.type = custom_field.get('type', '').strip()
 
     @classmethod
     def new_field(cls, name, value):
@@ -192,8 +192,8 @@ class PasswordRecord(KeeperRecord):
         return ''
 
     def load_record_data(self, data, extra=None):
-        self.title = data.get('title', '')
-        self.login = data.get('secret1', '')
+        self.title = data.get('title', '').strip()
+        self.login = data.get('secret1', '').strip()
         self.password = data.get('secret2', '')
         self.link = data.get('link', '')
         self.notes = data.get('notes', '')
@@ -228,8 +228,8 @@ class TypedField(object):
     def __init__(self, typed_field=None):
         if typed_field is None:
             typed_field = {}
-        self.type = typed_field.get('type', '')
-        self.label = typed_field.get('label', '')
+        self.type = typed_field.get('type', '').strip()
+        self.label = typed_field.get('label', '').strip()
         self.value = typed_field.get('value', [])
 
     def get_default_value(self, value_type=None):  # type: (Optional[Type]) -> any
@@ -368,8 +368,8 @@ class TypedRecord(KeeperRecord):
                     None)
 
     def load_record_data(self, data, extra=None):
-        self.type_name = data.get('type', '')
-        self.title = data.get('title', '')
+        self.type_name = data.get('type', '').strip()
+        self.title = data.get('title', '').strip()
         self.notes = data.get('notes', '')
         self.fields.extend((TypedField(x) for x in data.get('fields', [])))
         self.custom.extend((TypedField(x) for x in data.get('custom', [])))
@@ -401,8 +401,8 @@ class FileRecord(KeeperRecord):
         return 'file'
 
     def load_record_data(self, data, extra=None):
-        self.title = data.get('title', '')
-        self.name = data.get('name', '')
+        self.title = data.get('title', '').strip()
+        self.name = data.get('name', '').strip()
         self.size = data.get('size')
         self.mime_type = data.get('type', '')
         self.last_modified = data.get('lastModified')
