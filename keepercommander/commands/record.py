@@ -13,9 +13,10 @@ import argparse
 import collections
 import datetime
 import fnmatch
+import json
 import logging
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Iterator
 
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
 from .. import api, display, crypto, utils, vault, vault_extensions
@@ -102,10 +103,12 @@ shared_records_report_parser.add_argument('--format', dest='format', choices=['j
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 
 
-def find_record(params, record_name):  # type: (KeeperParams, str) -> vault.KeeperRecord
-    record_uid = None
+def find_record(params, record_name, types=None):  # type: (KeeperParams, str, Optional[Iterator[str]]) -> Optional[vault.KeeperRecord]
+    if not record_name:
+        raise Exception(f'Record name cannot be empty.')
+
     if record_name in params.record_cache:
-        record_uid = record_name
+        return vault.KeeperRecord.load(params, record_name)
     else:
         rs = try_resolve_path(params, record_name)
         if rs is not None:
@@ -114,14 +117,43 @@ def find_record(params, record_name):  # type: (KeeperParams, str) -> vault.Keep
                 folder_uid = folder.uid or ''
                 if folder_uid in params.subfolder_record_cache:
                     for uid in params.subfolder_record_cache[folder_uid]:
-                        r = api.get_record(params, uid)
-                        if r.title.lower() == record_name.lower():
-                            record_uid = uid
-                            break
-    if not record_uid:
-        raise Exception(f'Record "{record_name}" not found.')
+                        r = vault.KeeperRecord.load(params, uid)
+                        if r and r.title.lower() == record_name.lower():
+                            return r
 
-    return vault.KeeperRecord.load(params, record_uid)
+    if types:
+        ls = RecordListCommand()
+        result = ls.execute(params, record_type=types, format='json', verbose=True)
+        if result:
+            try:
+                recs = json.loads(result)
+                records = []
+                if isinstance(recs, list):
+                    for rec in recs:
+                        if isinstance(rec, dict):
+                            if 'title' in rec:
+                                title = rec.get('title', '').strip().lower()
+                                if title == record_name.lower():
+                                    records.append(rec)
+                                    continue
+                            if 'description' in rec:
+                                description = rec.get('description', '').lower()
+                                if description:
+                                    if {'serverCredentials', 'databaseCredentials', 'sskKeys'}.issuperset(types):
+                                        user, sep, host = description.partition("@")
+                                        if sep == '@':
+                                            description = host
+                                        hostname, _, _ = description.strip().partition(':')
+                                        if hostname == record_name.lower():
+                                            records.append(rec)
+                                            continue
+                if len(records) == 1:
+                    return vault.KeeperRecord.load(params, records[0].get('record_uid'))
+                elif len(records) > 1:
+                    raise Exception(f'More than one record found for \"{record_name}\". Please use record UID or full record path.')
+            except:
+                pass
+    raise Exception(f'Record "{record_name}" not found.')
 
 
 class SearchCommand(Command):
