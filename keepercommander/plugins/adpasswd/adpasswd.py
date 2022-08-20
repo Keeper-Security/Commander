@@ -47,7 +47,7 @@ def rotate(record, new_password):   # type: (KeeperRecord, str) -> bool
     if not host:
         raise ValueError(f'Rotate AD password: Domain controller (\"host\") is not set.')
 
-    user_dn = RecordMixin.get_record_field(record, 'userdn')
+    user_dn = RecordMixin.get_record_field(record, 'cmdr:userdn')
     login = ''
     if not user_dn:
         login = RecordMixin.get_record_field(record, 'login')
@@ -59,7 +59,7 @@ def rotate(record, new_password):   # type: (KeeperRecord, str) -> bool
     if not login and not user_dn:
         raise ValueError(f'Rotate AD password: User login or DN is not set.')
 
-    tls = ldap3.Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
+    tls = ldap3.Tls(validate=ssl.CERT_NONE)
     server = ldap3.Server(host=host, port=port, use_ssl=True, tls=tls, connect_timeout=5, get_info=ldap3.ALL)
     with ldap3.Connection(server) as c:
         c.open()
