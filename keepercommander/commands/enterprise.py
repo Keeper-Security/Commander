@@ -73,6 +73,7 @@ def register_commands(commands):
     commands['security-audit-report'] = SecurityAuditReportCommand()
     commands['user-report'] = UserReportCommand()
     commands['action-report'] = ActionReportCommand()
+    commands['compliance-report'] = aram.ComplianceReportCommand()
 
 
 def register_command_info(aliases, command_info):

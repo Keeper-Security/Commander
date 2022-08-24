@@ -25,7 +25,8 @@ class SqliteEntityStorage(sqlite_dao.SqliteStorage, IEntityStorage):
             raise ValueError(f'SqliteEntityStorage: Primary key to have one column.')
 
     def get_entity(self, uid):
-        return list(self.select_by_filter(self.schema.primary_key, [uid]))[0]
+        results = list(self.select_by_filter(self.schema.primary_key, [uid]))
+        return results[0] if results else None
 
     def get_entities(self, pk_values):
         for value in pk_values:
@@ -66,7 +67,7 @@ class SqliteLinkStorage(sqlite_dao.SqliteStorage, ILinkStorage):
 
     @staticmethod
     def expand_link_to_tuple(links):
-        # type: (Iterable[Union[IUidLink, Tuple[str, str]]]) -> Iterable[Tuple[str, str]]
+        # type: (Iterable[Union[IUidLink, Tuple[str, str]]]) -> Iterable[Tuple[Union[str, int], Union[str, int]]]
         for link in links:
             if isinstance(link, IUidLink):
                 yield link.subject_uid(), link.object_uid()
