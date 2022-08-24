@@ -91,7 +91,7 @@ def register_command_info(aliases, command_info):
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              security_audit_report_parser, user_report_parser]:
+              security_audit_report_parser, user_report_parser, aram.compliance_report_parser]:
         command_info[p.prog] = p.description
 
 
