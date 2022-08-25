@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import base64
 import collections
 import datetime
 import io
@@ -86,7 +85,7 @@ class OnePasswordImporter(BaseImporter):
                                 sf.path = vault_name
                                 yield sf
                             elif vault_type == 'U':
-                                vault_type = vault['attrs'].get('type', '')
+                                vault_name = vault['attrs'].get('name')
 
                         vault_records = {}
                         references = {}   # type: Dict[str, Set[str]]
@@ -94,18 +93,7 @@ class OnePasswordImporter(BaseImporter):
                             if item.get('trashed') is True:
                                 continue
                             record = Record()
-                            uuid = item.get('uuid', '')
-                            if uuid:
-                                reminder = len(uuid) % 8
-                                if reminder in {2, 4, 5, 7}:
-                                    padding = '=' * (8 - reminder)
-                                    uuid += padding
-                                try:
-                                    uid = base64.b32decode(uuid, casefold=True)
-                                    if len(uid) == 16:
-                                        record.uid = utils.base64_url_encode(uid)
-                                except:
-                                    pass
+                            record.uid = item.get('uuid') or utils.generate_uid()
                             category = item.get('categoryUuid', '')
                             if category in ('001', '110', '112'):
                                 record.type = 'login'
@@ -172,6 +160,15 @@ class OnePasswordImporter(BaseImporter):
                                             folder.path = ''
                                         folder.path += tag
                                         record.folders.append(folder)
+                                if not record.folders and vault_name:
+                                    record.folders = []
+                                    folder = Folder()
+                                    if vault_name:
+                                        if is_shared:
+                                            folder.domain = vault_name
+                                        else:
+                                            folder.path = vault_name
+                                    record.folders.append(folder)
 
                             details = item.get('details')
                             if not details:
@@ -367,6 +364,9 @@ class OnePasswordImporter(BaseImporter):
                                                 if len(names) > 0:
                                                     fv['middle'] = ' '.join(names)
                                                 fl = OnePasswordImporter.adjust_field_label(record, 'name', fl, rt)
+                                            elif field_id.endswith('website'):
+                                                ft = 'url'
+                                                fv = field_value
                                             elif field_id in ('number', 'membership_no'):
                                                 if record.type in ('ssnCard', 'membership', 'driverLicense', 'healthInsurance', 'passport'):
                                                     ft = 'accountNumber'
@@ -396,19 +396,10 @@ class OnePasswordImporter(BaseImporter):
                                                     record.login = field_value
                                                     continue
                                             elif field_type == 'reference':
-                                                reminder = len(field_value) % 8
-                                                if reminder in {2, 4, 5, 7}:
-                                                    padding = '=' * (8 - reminder)
-                                                    field_value += padding
-                                                try:
-                                                    uid = base64.b32decode(field_value, casefold=True)
-                                                    if len(field_value) == 16:
-                                                        ref_uid = utils.base64_url_encode(uid)
-                                                        if record.uid not in references:
-                                                            references[record_uid] = set()
-                                                        references[record_uid].add(ref_uid)
-                                                except:
-                                                    pass
+                                                ref_uid = field_value
+                                                if record.uid not in references:
+                                                    references[record.uid] = set()
+                                                references[record.uid].add(ref_uid)
                                                 continue
                                             elif field_type == 'concealed':
                                                 if field_id.endswith('password') or \
@@ -516,28 +507,29 @@ class OnePasswordImporter(BaseImporter):
                                                 continue
                                             record.fields.append(RecordField(type=ft, label=fl, value=fv))
 
-                            if len(references) > 0:
-                                for record_uid in references:
-                                    record = vault_records.get(record_uid)
-                                    refs = references[record_uid]
-                                    if record and isinstance(refs, set):
-                                        cards = RecordReferences('card')
-                                        addresses = RecordReferences('address')
-                                        record.references = []
-                                        for ref_uid in refs:
-                                            ref_record = vault_records.get(ref_uid)
-                                            if ref_record:
-                                                if ref_record.type == 'bankCard':
-                                                    cards.uids.append(ref_uid)
-                                                elif ref_record.type == 'address':
-                                                    addresses.uids.append(ref_uid)
-                                        if len(addresses.uids) > 0:
-                                            record.references.append(addresses)
-                                        if len(cards.uids) > 0:
-                                            record.references.append(cards)
-
-                                references.clear()
                             vault_records[record.uid] = record
+
+                        if len(references) > 0:
+                            for record_uid in references:
+                                record = vault_records.get(record_uid)
+                                refs = references[record_uid]
+                                if record and isinstance(refs, set):
+                                    cards = RecordReferences('card')
+                                    addresses = RecordReferences('address')
+                                    record.references = []
+                                    for ref_uid in refs:
+                                        ref_record = vault_records.get(ref_uid)
+                                        if ref_record:
+                                            if ref_record.type == 'bankCard':
+                                                cards.uids.append(ref_uid)
+                                            elif ref_record.type == 'address':
+                                                addresses.uids.append(ref_uid)
+                                    if len(addresses.uids) > 0:
+                                        record.references.append(addresses)
+                                    if len(cards.uids) > 0:
+                                        record.references.append(cards)
+
+                            references.clear()
                         for record in vault_records.values():
                             yield record
                         vault_records.clear()
