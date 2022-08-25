@@ -1,8 +1,7 @@
 import collections
+import logging
 import sqlite3
 from typing import Dict, Union, Sequence, Any, List, Optional, Type, Callable, Iterable, Iterator
-
-from . import utils
 
 FieldSchema = collections.namedtuple('FieldSchema', ['name', 'type'])
 
@@ -39,11 +38,11 @@ class TableSchema:
             elif isinstance(value, (bytes, bytearray)):
                 field_type = bytes
             elif value is None:
-                utils.get_logger().debug(
+                logging.debug(
                     'load_schema: Attribute \"%s\" in class \"%s\" is skipped since it is None',
                     field_name, schema.table_name)
             else:
-                utils.get_logger().debug(
+                logging.debug(
                     'load_schema: Unsupported type for attribute \"%s\" in class \"%s\". Skipping',
                     field_name, schema.table_name)
             if field_type:

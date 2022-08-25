@@ -1,5 +1,5 @@
-from keepercommander.proto import enterprise_pb2
-from keepercommander.storage.types import IUidLink, IUid
+from ..proto import enterprise_pb2
+from ..storage.types import IUidLink, IUid
 
 
 class StorageUser(IUid):

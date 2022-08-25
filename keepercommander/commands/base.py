@@ -464,6 +464,8 @@ class GroupCommand(CliCommand):
 
 
 class RecordMixin:
+    CUSTOM_FIELD_TYPES = {'text', 'secret', 'email', 'url', 'multiline', 'pinCode'}
+
     @staticmethod
     def resolve_records(params, record_name):  # type: (KeeperParams, str) -> collections.Iterator[str]
         if not record_name:
@@ -490,7 +492,7 @@ class RecordMixin:
 
         if isinstance(record, vault.TypedRecord):
             return next((x.get_default_value(str) for x in record.custom
-                         if (x.type or 'text') == 'text' and field_name.lower() == (x.label or '').lower()), None)
+                         if (x.type or 'text') in RecordMixin.CUSTOM_FIELD_TYPES and field_name.lower() == (x.label or '').lower()), None)
 
     @staticmethod
     def get_record_field(record, field_name):     # type: (vault.KeeperRecord, str) -> str
