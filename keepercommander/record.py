@@ -207,9 +207,10 @@ class Record:
             for i in range(len(folders)):
                 print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
 
+        print('{0:>20s}: {1:<20s}'.format('Type', ''))
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title', self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
-        if self.password: print('{0:>20s}: {1:<20s}'.format('Password', self.password))
+        if self.password: print('{0:>20s}: {1:<20s}'.format('Password', self.password if kwargs.get('unmask') else '********'))
         if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL', self.login_url))
         # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
 
