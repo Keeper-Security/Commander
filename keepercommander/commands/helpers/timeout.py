@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 from re import findall
 
-from keepercommander.constants import (
+from ...constants import (
     TIMEOUT_DEFAULT, TIMEOUT_MIN, TIMEOUT_DEFAULT_UNIT, TIMEOUT_ALLOWED_UNITS
 )
 

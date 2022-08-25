@@ -78,7 +78,9 @@ class SoxData:
             entities = []
             if changes.records:
                 for uid in changes.records:
-                    entities.extend(store.records.select_by_filter('record_uid', uid))
+                    entity = store.records.get_entity(uid)
+                    if entity:
+                        entities.append(entity)
             else:
                 entities.extend(store.records.get_all())
 

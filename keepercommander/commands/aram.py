@@ -1393,7 +1393,7 @@ class AgingReportCommand(Command):
             return
         period_min_ts = int(dt.timestamp())
 
-        from keepercommander.sox import get_prelim_data
+        from ..sox import get_prelim_data
         sd = get_prelim_data(params, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=period_min_ts)
         sd = self.update_aging_data(params, sd, period_start_ts=period_min_ts)
 
@@ -1653,7 +1653,7 @@ class ComplianceReportCommand(EnterpriseCommand):
         max_data_age = datetime.timedelta(days=1)
         min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
 
-        from keepercommander.sox import get_compliance_data
+        from ..sox import get_compliance_data
         sd = get_compliance_data(params, node_id, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=min_data_ts)
 
         report_fmt = kwargs.get('format', 'table')

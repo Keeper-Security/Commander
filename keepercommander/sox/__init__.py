@@ -3,20 +3,19 @@ import os
 import sqlite3
 from typing import Dict
 
-from keepercommander import api, crypto
-from keepercommander.proto import enterprise_pb2
-from keepercommander.sox import sqlite_storage, sox_data
-from keepercommander.sox.sox_data import RebuildTask
-from keepercommander.sox.storage_types import StorageRecord, StorageUser, StorageUserRecordLink, StorageTeam, \
+from .. import api, crypto, utils
+from ..params import KeeperParams
+from ..proto import enterprise_pb2
+from . import sqlite_storage, sox_data
+from .storage_types import StorageRecord, StorageUser, StorageUserRecordLink, StorageTeam, \
     StorageRecordPermissions, StorageTeamUserLink, StorageSharedFolderRecordLink, StorageSharedFolderUserLink, \
     StorageSharedFolderTeamLink
-from keepercommander.storage import utils
 
 API_SOX_REQUEST_USER_LIMIT = 1000
 
 
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0):
-    # type (KeeperParams, int, bool, int) -> SoxData
+    # type: (KeeperParams, int, bool, int) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
         def to_storage_types(user_data, username_lookup):
             def to_record_entity(record):
@@ -46,13 +45,13 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0):
             return user_ent, record_ents, user_rec_links
 
         def fetch_entities():
-            print('Loading record information.', end='')
+            print('Loading record information.', end='', flush=True)
             record_entities = set()
             user_entities = set()
             user_record_links = set()
             user_ids = list(user_lookup.keys())
             while user_ids:
-                print('.', end='')
+                print('.', end='', flush=True)
                 token = b''
                 chunk = user_ids[:API_SOX_REQUEST_USER_LIMIT]
                 user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
@@ -61,13 +60,13 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0):
                 rq.includeNonShared = True
                 has_more = True
                 while has_more:
-                    print('.', end='')
+                    print('.', end='', flush=True)
                     if token:
                         rq.continuationToken = token
                     rs = api.communicate_rest(params, rq, 'enterprise/get_preliminary_compliance_data',
                                               rs_type=enterprise_pb2.PreliminaryComplianceDataResponse)
                     has_more = rs.hasMore
-                    print('.', end='') if has_more else print('.')
+                    print('.', end='', flush=True) if has_more else print('.')
                     token = rs.continuationToken
                     for user_data in rs.auditUserData:
                         user, records, links = to_storage_types(user_data, name_by_id)
@@ -110,7 +109,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 entities.append(entity)
             sdata.storage.users.put_entities(entities)
 
-        print('Loading compliance data.', end='')
+        print('Loading compliance data.', end='', flush=True)
         users_uids = [int(uid) for uid in sd.get_users().keys()]
         record_uids = [utils.base64_url_decode(uid) for uid in sd.get_records().keys()]
         loaded_audit_records = []
@@ -124,7 +123,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
         anon_user_uid = 0
 
         while record_uids:
-            print('.', end='')
+            print('.', end='', flush=True)
             chunk = record_uids[:API_SOX_REQUEST_USER_LIMIT]
             record_uids = record_uids[API_SOX_REQUEST_USER_LIMIT:]
             rq = enterprise_pb2.ComplianceReportRequest()
@@ -137,7 +136,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             caf.nodeId = node_uid
             rs = api.communicate_rest(params, rq, 'enterprise/run_compliance_report',
                                       rs_type=enterprise_pb2.ComplianceReportResponse)
-            print('.', end='') if record_uids else print('.')
+            print('.', end='', flush=True) if record_uids else print('.')
 
             # create new user uid for each anonymous user (uid >> 32 == 0)
             anon_ids = dict()
@@ -257,6 +256,6 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
         enterprise_users = params.enterprise.get('users')
         user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id') for e_user in enterprise_users}
         sync_down(sd, node_id, user_node_id_lookup=user_node_ids)
-    rebuild_task = RebuildTask(is_full_sync=False, load_compliance_data=True)
+    rebuild_task = sox_data.RebuildTask(is_full_sync=False, load_compliance_data=True)
     sd.rebuild_data(rebuild_task)
     return sd

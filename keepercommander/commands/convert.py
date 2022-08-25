@@ -17,7 +17,7 @@ import re
 from collections import OrderedDict
 from typing import Optional, Tuple
 
-from keepercommander.utils import is_url, is_email
+from ..utils import is_url, is_email
 from .base import raise_parse_exception, suppress_exit, Command
 from .folder import get_folder_path
 from .. import api, crypto, loginv3, utils

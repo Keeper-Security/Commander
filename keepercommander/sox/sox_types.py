@@ -2,8 +2,8 @@ from typing import Dict, Any, List
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
-from keepercommander import crypto, utils
-from keepercommander.proto import enterprise_pb2
+from .. import crypto, utils
+from ..proto import enterprise_pb2
 import json
 
 from .storage_types import StorageUser, StorageRecord, StorageTeam

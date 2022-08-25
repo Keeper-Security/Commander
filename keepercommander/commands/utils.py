@@ -29,7 +29,6 @@ from typing import Optional
 from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
-import keepercommander
 from . import aliases, commands, enterprise_commands, msp_commands
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
 from .helpers.timeout import (
@@ -656,7 +655,7 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Python Version', sys.version.replace("\n", "")))
             print('{0:>20s}: {1}'.format('Operating System', loginv3.CommonHelperMethods.get_os() + '(' + platform.release() + ')'))
             print('{0:>20s}: {1}'.format('Working directory', os.getcwd()))
-            print('{0:>20s}: {1}'.format('Package directory', os.path.dirname(keepercommander.__file__)))
+            print('{0:>20s}: {1}'.format('Package directory', os.path.dirname(api.__file__)))
             print('{0:>20s}: {1}'.format('Config. File', params.config_filename))
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
