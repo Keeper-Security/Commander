@@ -185,7 +185,7 @@ def convert_keeper_record(record, has_attachments=False):
                 rec.login = field_value
             elif field_type == 'password' and not rec.password and type(field_value) == str:
                 rec.password = field_value
-            elif field_type == 'url' and not rec.login_url and type(field_value) == str:
+            elif field_type == 'url' and not field.get('label') and not rec.login_url and type(field_value) == str:
                 rec.login_url = field_value
             elif field_type.endswith('Ref'):
                 ref_type = field_type[:-3]
@@ -281,9 +281,8 @@ def export(params, file_format, filename, **kwargs):
             to_export.append(fol)
     sf_count = len(to_export)
 
-    v3_enabled = params.settings.get('record_types_enabled') if params.settings else False
     force = kwargs.get('force', False)
-    if not force and v3_enabled and not exporter.supports_v3_record():
+    if not force and not exporter.supports_v3_record():
         answer = base.user_choice(f'Export to {file_format} does not fully support typed records\n\n'
                                   'Do you want to continue?', 'yn', 'n')
         if answer.lower() != 'y':
@@ -441,8 +440,7 @@ def _import(params, file_format, filename, **kwargs):
     old_domain = kwargs.get('old_domain')
     new_domain = kwargs.get('new_domain')
     tmpdir = kwargs.get('tmpdir')
-    v3_enabled = params.settings.get('record_types_enabled', False) if params.settings else False
-    record_type = kwargs.get('record_type') if v3_enabled else None
+    record_type = kwargs.get('record_type')
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -539,15 +537,13 @@ def _import(params, file_format, filename, **kwargs):
     audit_uids = []
 
     if records:  # create/update records
-        v3_enabled = params.settings.get('record_types_enabled') if params.settings else False
-
         records_v2_to_add = []      # type: List[folder_pb2.RecordRequest]
         records_v2_to_update = []   # type: List[dict]
         records_v3_to_add = []      # type: List[record_pb2.RecordAdd]
         records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
         import_uids = {}
 
-        records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records, v3_enabled)
+        records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records)
 
         reference_uids = set()
         for import_record in records_to_import:
@@ -576,8 +572,6 @@ def _import(params, file_format, filename, **kwargs):
             if existing_record:
                 version = existing_record.get('version', 0)
                 if version == 3:   # V3
-                    if not v3_enabled:
-                        continue
                     orig_data = json.loads(existing_record['data_unencrypted'])
                     if not import_record.type:
                         import_record.type = orig_data.get('type', 'login')
@@ -650,7 +644,7 @@ def _import(params, file_format, filename, **kwargs):
                         if folder.type == BaseFolderNode.RootFolderType:
                             folder_uid = ''
 
-                if import_record.type and v3_enabled:   # V3
+                if import_record.type:   # V3
                     v3_add_rq = record_pb2.RecordAdd()
                     v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
@@ -811,7 +805,7 @@ def _import(params, file_format, filename, **kwargs):
 
                     if missing_attachments:
                         r.uid = external_lookup[r.uid]
-                        if v3_enabled and r.type:
+                        if r.type:
                             v3_atts.append(r)
 
         if len(v2_atts) > 0:
@@ -1595,8 +1589,8 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
     return hasher.hexdigest()
 
 
-def prepare_record_add_or_update(update_flag, params, records, v3_enabled):
-    # type: (bool, KeeperParams, Iterator[ImportRecord], bool) -> Tuple[List[ImportRecord], dict]
+def prepare_record_add_or_update(update_flag, params, records):
+    # type: (bool, KeeperParams, Iterator[ImportRecord]) -> Tuple[List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -1624,7 +1618,7 @@ def prepare_record_add_or_update(update_flag, params, records, v3_enabled):
     external_lookup = {}
 
     for import_record in records:
-        if v3_enabled and import_record.type:
+        if import_record.type:
             if len(import_record.notes or '') > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
                 if import_record.attachments is None:
                     import_record.attachments = []
