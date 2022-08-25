@@ -114,6 +114,7 @@ rm_parser.exit = suppress_exit
 
 get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID.')
 get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
+get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
@@ -664,7 +665,7 @@ class RecordGetUidCommand(Command):
                 elif fmt == 'password':
                     print(r.password)
                 else:
-                    r.display(params=params)
+                    r.display(params=params, unmask=kwargs.get('unmask', False))
                 return
 
         if params.available_team_cache is None:

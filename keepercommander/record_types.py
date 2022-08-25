@@ -72,6 +72,7 @@ RecordFields = {x[0]: x for x in (
     RecordField('host', 'host', Multiple.Optional),
     RecordField('securityQuestion', 'securityQuestion', Multiple.Always),
     RecordField('pinCode', 'secret', Multiple.Never),
+    RecordField('secret', 'secret', Multiple.Never),
     RecordField('oneTimeCode', 'otp', Multiple.Never),
     RecordField('keyPair', 'privateKey', Multiple.Never),
     RecordField('licenseNumber', 'multiline', Multiple.Never),

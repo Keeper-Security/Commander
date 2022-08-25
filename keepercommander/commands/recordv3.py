@@ -150,6 +150,7 @@ list_parser.exit = suppress_exit
 
 
 get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID')
+get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
 get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 get_info_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
@@ -2005,7 +2006,7 @@ class RecordGetUidCommand(Command):
                     if password and password.strip():
                         print(password)
                 else:
-                    recordv3.RecordV3.display(r, **{'params': params, 'format': fmt})
+                    recordv3.RecordV3.display(r, **{'params': params, 'format': fmt, 'unmask': kwargs.get('unmask')})
                 return
 
 

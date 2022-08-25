@@ -228,8 +228,8 @@ class TypedField(object):
     def __init__(self, typed_field=None):
         if typed_field is None:
             typed_field = {}
-        self.type = typed_field.get('type', '').strip()
-        self.label = typed_field.get('label', '').strip()
+        self.type = (typed_field.get('type') or '').strip()
+        self.label = (typed_field.get('label') or '').strip()
         self.value = typed_field.get('value', [])
 
     def get_default_value(self, value_type=None):  # type: (Optional[Type]) -> any

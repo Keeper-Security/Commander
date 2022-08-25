@@ -1591,32 +1591,87 @@ class RecordV3:
         fields = data.get('fields') or []
         custom = data.get('custom') or []
 
-        print('{0:>20s}: {1:<20s}'.format('Type', str(data['type']) if 'type' in data else ''))
+        record_type = data['type'] if 'type' in data else ''
+        print('{0:>20s}: {1:<20s}'.format('Type', record_type))
         print('{0:>20s}: {1:<20s}'.format('Title', str(data['title']) if 'title' in data else ''))
         # NB! General notes here - fields[] might provide their own notes
-        if 'notes' in data: print('{0:>20s}: {1:<20s}'.format('Notes', str(data['notes'])))
+        if 'notes' in data:
+            notes = data['notes']
+            if notes:
+                lines = notes.split('\n')
+                for i, line in enumerate(lines):
+                    print('{0:>21s} {1}'.format('Notes:' if i == 0 else '', line.strip()))
         # fields[] * print Field# NN - atrib: value
-
+        unmask = kwargs.get('unmask', False)
         for c in fields + custom:
             ftyp = c.get('type') or ''
             flab = c.get('label') or ''
             flds = c.get('value') or []
             fval = flds
-            if isinstance(flds, list) and len(flds) == 1 and flds[0]:
-                if isinstance(flds[0], dict):
-                    fval = (' ' if ftyp.lower() == 'name' else ' | ').join((str(x) for x in flds[0].values()))
-                elif RecordV3.get_field_type(ftyp).get('type') == 'date' and bool(
-                        re.match('^[+-]?[0-9]+$', str(flds[0]).strip())):
-                    dt = datetime.datetime.fromtimestamp(flds[0] / 1000.0)
-                    fval = str(dt)
-                else:
-                    fval = flds[0]
-            if fval:
-                if ftyp in ('fileRef', 'cardRef', 'addressRef'):
-                    RecordV3.display_ref(ftyp, fval, **kwargs)
-                else:
-                    fkey = '{} ({})'.format(flab, ftyp)
-                    print('{0:>20s}: {1:<s}'.format(str(fkey), str(fval)))
+            fkey = '{} ({})'.format(flab, ftyp)
+            if ftyp in ['securityQuestion', 'paymentCard', 'host', 'keyPair']:
+                if not isinstance(flds, list):
+                    flds = [flds]
+                fval = []
+                for x in flds:
+                    if isinstance(x, dict):
+                        if ftyp == 'securityQuestion':
+                            q = x.get('question') or ''
+                            if q and not q.endswith('?'):
+                                q += '?'
+                            a = x.get('answer', '') if unmask else '********'
+                            fval.append(f'{q} {a}')
+                        elif ftyp == 'paymentCard':
+                            n = x.get('cardNumber') or ''
+                            if n and not unmask:
+                                n = '*' + n[-4:]
+                            e = x.get('cardExpirationDate') or ''
+                            c = (x.get('cardSecurityCode') or '') if unmask else '***'
+                            fval.append(f'{n} exp:{e} cvv:{c}')
+                        elif ftyp == 'keyPair':
+                            public_key = x.get('publicKey')
+                            if public_key:
+                                fval.append(public_key)
+                            private_key = x.get('privateKey')
+                            if private_key:
+                                fval.append(private_key if unmask else '********')
+                        elif ftyp == 'host':
+                            hostname = x.get('hostName') or ''
+                            port = x.get('port') or ''
+                            if port:
+                                hostname += f':{port}'
+                            if hostname:
+                                fval.append(hostname)
+                for i, line in enumerate(fval):
+                    print('{0:>20s}: {1:<s}'.format(fkey if i == 0 else '', line))
+            else:
+                if isinstance(flds, list) and len(flds) == 1:
+                    if not flds[0]: continue
+                    if isinstance(flds[0], dict):
+                        fval = (' ' if ftyp.lower() == 'name' else ' | ').join((str(x) for x in flds[0].values()))
+                    elif RecordV3.get_field_type(ftyp).get('type') == 'date' and bool(
+                            re.match('^[+-]?[0-9]+$', str(flds[0]).strip())):
+                        dt = datetime.datetime.fromtimestamp(flds[0] / 1000.0)
+                        fval = str(dt)
+                    elif record_type == 'ssnCard' and ftyp == 'accountNumber' and flab == 'identityNumber':
+                        fval = flds[0] if unmask else '********'
+                    else:
+                        fval = flds[0]
+                if fval:
+                    if ftyp in ('fileRef', 'cardRef', 'addressRef'):
+                        RecordV3.display_ref(ftyp, fval, **kwargs)
+                    else:
+                        is_masked = ftyp in ['password', 'pinCode', 'secret', 'note', 'oneTimeCode'] and not unmask
+                        if is_masked:
+                            print('{0:>20s}: {1:<s}'.format(fkey, '********'))
+                        else:
+                            if ftyp == 'multiline' and isinstance(fval, str):
+                                lines = fval.split('\n')
+                                lines = [x.strip() for x in lines if x]
+                                for i, line in enumerate(lines):
+                                    print('{0:>20s}: {1}'.format(fkey if i == 0 else '', line.strip()))
+                            else:
+                                print('{0:>20s}: {1:<s}'.format(fkey, str(fval)))
 
         totp = next((t.get('value') for t in fields if t.get('type', '') == 'oneTimeCode'), None)
         if totp:
@@ -1705,6 +1760,7 @@ class RecordV3:
         # fileRef can hold multiple references - convert single value to list for compatibility
         fvalue = fvalue if isinstance(fvalue, list) else [fvalue]
         params = kwargs.get('params')
+        unmask = kwargs.get('unmask', False)
         if ftype == 'fileRef':
             for fuid in fvalue:
                 frec = params.record_cache.get(fuid) or {}
@@ -1723,11 +1779,16 @@ class RecordV3:
                 fdic = RecordV3.record_type_to_dict(fdat)
                 title = RecordV3.get_record_type_title(fdat) or ''
                 name = RecordV3.get_record_field_value(fdat, 'text', False) or ''
-                pin = RecordV3.get_record_field_value(fdat, 'pinCode', False) or ''
-                card = RecordV3.get_record_field_value(fdat, 'paymentCard', False) or '{}'
-                card_line = 'Name: ' + name + ' | ' + ' Pin: ' + pin + ' | Card: ' + ' | '.join(
-                    str(x) for x in card.values())
-                print('{0:>20s}: {1:<s}'.format('address.' + str(title), str(card_line)))
+                card_line = 'Name: ' + name
+                card = RecordV3.get_record_field_value(fdat, 'paymentCard', False)
+                if isinstance(card, dict):
+                    n = card.get('cardNumber') or ''
+                    if n and not unmask:
+                        n = '*' + n[-4:]
+                    e = card.get('cardExpirationDate') or ''
+                    c = (card.get('cardSecurityCode') or '') if unmask else '***'
+                    card_line += f' | Card: {n} exp:{e} cvv:{c}'
+                print('{0:>20s}: {1}'.format('card.' + str(title), card_line))
         elif ftype == 'addressRef':
             for fuid in fvalue:
                 frec = params.record_cache.get(fuid) or {}
