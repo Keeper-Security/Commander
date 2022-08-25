@@ -148,7 +148,6 @@ syslog_templates = None  # type: Optional[List[str]]
 
 API_EVENT_SUMMARY_ROW_LIMIT = 2000
 API_EVENT_RAW_ROW_LIMIT = 1000
-API_SOX_REQUEST_USER_LIMIT = 1000
 
 
 def load_syslog_templates(params):
