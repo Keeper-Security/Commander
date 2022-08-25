@@ -12,3 +12,4 @@ keeper.txt
 *.kdbx
 *.csv
 Makefile
+*.db
