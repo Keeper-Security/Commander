@@ -1,9 +1,9 @@
 import logging
-from typing import Iterable, Dict, Set
+from typing import Iterable, Dict, Set, List
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
-from . import sox_types, sqlite_storage
+from . import sox_types, sqlite_storage, storage_types
 from .sox_types import RecordPermissions
 
 
@@ -75,7 +75,7 @@ class SoxData:
 
         def load_records(store, changes):
             # type: (sqlite_storage.SqliteSoxStorage, RebuildTask) -> Dict[str, sox_types.Record]
-            entities = []
+            entities = []   # type: List[storage_types.StorageRecord]
             if changes.records:
                 for uid in changes.records:
                     entity = store.records.get_entity(uid)
@@ -84,8 +84,14 @@ class SoxData:
             else:
                 entities.extend(store.records.get_all())
 
-            records = {sox_types.Record.load(entity, self.ec_private_key) for entity in entities}
-            record_lookup = {record.record_uid: record for record in records}
+            record_lookup = {}
+            for entity in entities:
+                try:
+                    record = sox_types.Record.load(entity, self.ec_private_key)
+                    if record:
+                        record_lookup[record.record_uid] = record
+                except:
+                    logging.debug('Cannot decrypt record \"%s\" info.', entity.record_uid)
             record_lookup = link_record_aging(store, record_lookup)
             return link_record_permissions(store, record_lookup) if changes.load_compliance_data else record_lookup
 
