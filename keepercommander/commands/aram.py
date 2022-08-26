@@ -1684,6 +1684,8 @@ class ComplianceReportCommand(EnterpriseCommand):
         for owner in owners:
             owner_records = filter_records(sd.get_records(owner.records).values())
             for record in owner_records:
+                if not record:
+                    continue
                 ruid = record.record_uid
                 for user_uid, permission_bits in record.user_permissions.items():
                     user = sd.get_user(user_uid)
