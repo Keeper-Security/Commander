@@ -306,8 +306,6 @@ def export(params, file_format, filename, **kwargs):
             rec = convert_keeper_record(record, exporter.has_attachments())
             if not rec:
                 continue
-            if not exporter.supports_v3_record() and rec.type and rec.type != 'login':
-                continue
 
             if exporter.has_attachments():
                 if record_version == 2 and 'extra_unencrypted' in record:

@@ -12,12 +12,14 @@ import abc
 import collections
 import importlib
 import io
+import json
 import logging
 import os.path
 from contextlib import contextmanager
 from typing import List, Optional, Union
 
 from ..error import CommandError
+from ..recordv3 import RecordV3
 
 PathDelimiter = '\\'
 TWO_FACTOR_CODE = 'TFC:Keeper'
@@ -177,6 +179,12 @@ class RecordField:
             value = '|'.join((x for x in value if x))
         elif isinstance(value, dict):
             keys = [x for x in value]
+            if 'privateKey' in keys:
+                if value['privateKey']:
+                    try:
+                        keys.remove('publicKey')
+                    except:
+                        pass
             keys.sort()
             kvp = [(x, RecordField.hash_value(value[x])) for x in keys]
             kvp = [x for x in kvp if x[1]]
@@ -294,6 +302,8 @@ class BaseImporter(abc.ABC):
                 elif not ext:
                     ext = comp
             result = {
+                'type': '',
+                'region': '',
                 'number': number.strip(),
                 'ext': ext.strip()
             }
@@ -362,7 +372,7 @@ class BaseImporter(abc.ABC):
         if isinstance(value, str):
             q, sign, a = value.partition('?')
             return {
-                'question': q.strip(),
+                'question': q.strip() + '?',
                 'answer': a.strip(),
             }
 
@@ -420,6 +430,60 @@ class BaseImporter(abc.ABC):
                 'privateKey': value,
                 'publicKey': ''
             }
+
+    @staticmethod
+    def import_field(field_type, field_value):  # type: (str, str) -> any
+        if not field_value:
+            return None
+        if not field_type:
+            return field_value
+        if field_type in {'text', 'multiline', 'secret', 'note'}:
+            return field_value
+        if field_type == 'date':
+            try:
+                return int(field_value)
+            except:
+                return None
+        if field_type == 'keyPair':
+            return BaseImporter.import_ssh_key_field(field_value)
+
+        str_values = field_value.split('\n')
+        values = []
+        for str_value in str_values:
+            if field_type == 'host':
+                v = BaseImporter.import_host_field(str_value)
+            elif field_type == 'phone':
+                v = BaseImporter.import_phone_field(str_value)
+            elif field_type == 'name':
+                v = BaseImporter.import_name_field(str_value)
+            elif field_type == 'address':
+                v = BaseImporter.import_address_field(str_value)
+            elif field_type == 'securityQuestion':
+                v = BaseImporter.import_q_and_a_field(str_value)
+            elif field_type == 'paymentCard':
+                v = BaseImporter.import_card_field(str_value)
+            elif field_type == 'bankAccount':
+                v = BaseImporter.import_account_field(str_value)
+            else:
+                v = str_value
+                if field_type in RecordV3.field_values:
+                    fv = RecordV3.field_values[field_type]
+                    if isinstance(fv.get('value'), dict):
+                        try:
+                            v = json.loads(str_value)
+                        except:
+                            pass
+                    elif isinstance(fv.get('value'), int):
+                        try:
+                            v = int(str_value)
+                        except:
+                            pass
+            if v:
+                values.append(v)
+        if values:
+            if len(values) == 1:
+                return values[0]
+            return values
 
 
 class BaseFileImporter(BaseImporter, abc.ABC):
@@ -590,6 +654,41 @@ class BaseExporter(abc.ABC):
     def export_ssh_key_field(value):   # type: (dict) -> Optional[str]
         if isinstance(value, dict):
             return value.get('privateKey', '')
+
+    @staticmethod
+    def export_field(field_type, field_value):  # type: (str, any) -> str
+        if not field_value:
+            return ''
+
+        if isinstance(field_value, str):
+            return field_value
+        if isinstance(field_value, list):
+            values = []
+            for value in field_value:
+                v = BaseExporter.export_field(field_type, value)
+                if v:
+                    values.append(v)
+            return '\n'.join((x.replace('\n', ' ') for x in values))
+        if isinstance(field_value, dict):
+            if field_type == 'host':
+                return BaseExporter.export_host_field(field_value)
+            if field_type == 'phone':
+                return BaseExporter.export_phone_field(field_value)
+            if field_type == 'name':
+                return BaseExporter.export_name_field(field_value)
+            if field_type == 'address':
+                return BaseExporter.export_address_field(field_value)
+            if field_type == 'securityQuestion':
+                return BaseExporter.export_q_and_a_field(field_value)
+            if field_type == 'paymentCard':
+                return BaseExporter.export_card_field(field_value)
+            if field_type == 'bankAccount':
+                return BaseExporter.export_account_field(field_value)
+            if field_type == 'keyPair':
+                return BaseExporter.export_ssh_key_field(field_value)
+            return json.dumps(field_value)
+
+        return str(field_value)
 
 
 class BytesAttachment(Attachment):
