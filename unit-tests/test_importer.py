@@ -124,7 +124,12 @@ class TestImporterUtils(TestCase):
         str_value = importer.BaseExporter.export_q_and_a_field(dict_value)
         self.assertIsNotNone(str_value)
         dict_value1 = importer.BaseImporter.import_q_and_a_field(str_value)
-        self.assertEqual(dict_value, dict_value1)
+        self.assertTrue(isinstance(dict_value1, dict))
+        orig_question = dict_value['question']
+        if not orig_question.endswith('?'):
+            orig_question += '?'
+        self.assertEqual(orig_question, dict_value1['question'])
+        self.assertEqual(dict_value['answer'], dict_value1['answer'])
 
     def test_card_serialization(self):
         dict_value = {

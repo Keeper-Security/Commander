@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import uuid
+from typing import Dict
 from xml.sax.saxutils import escape
 
 from pykeepass import PyKeePass
@@ -101,21 +102,24 @@ class KeepassImporter(BaseFileImporter):
                             if entry.notes:
                                 record.notes = entry.notes
                             for key, value in entry.custom_properties.items():
+                                if key == '$type':
+                                    record.type = value
+                                    continue
+                                rest, sep, no = key.rpartition('#')
+                                if sep:
+                                    if no.isdigit():
+                                        key = rest
                                 if key.startswith('$'):
-                                    pos = key.find(':')
-                                    if pos > 0:
-                                        field_type = key[1:pos].strip()
-                                        field_label = key[pos+1:].strip()
-                                    else:
-                                        field_type = key[1:]
-                                        field_label = ''
+                                    ftype, sep, flabel = key.partition(':')
+                                    field_type = ftype[1:]
+                                    field_label = flabel
                                 else:
                                     field_type = ''
                                     field_label = key
                                 field = RecordField()
                                 field.type = field_type
                                 field.label = field_label
-                                field.value = value
+                                field.value = KeepassImporter.import_field(field_type, value)
                                 record.fields.append(field)
 
                             if entry.attachments:
@@ -257,12 +261,15 @@ class KeepassExporter(BaseExporter, XmlUtils):
                             break
 
                     if entry is None:
-                        entry = kdb.add_entry(node, r.title, r.login, r.password)
+                        entry = kdb.add_entry(node, title=r.title or '', username=r.login or '',
+                                              password=r.password or '', url=r.login_url or '',
+                                              notes=r.notes or '')
                         if r.uid:
                             entry.UUID = uuid.UUID(bytes=utils.base64_url_decode(r.uid))
-                    entry.url = r.login_url
-                    entry.notes = r.notes
+                    if r.type:
+                        entry.set_custom_property('$type', r.type)
                     if r.fields:
+                        custom_names = {}   # type: Dict[str, int]
                         for cf in r.fields:
                             if cf.type and cf.label:
                                 title = f'${cf.type}:{cf.label}'
@@ -270,7 +277,14 @@ class KeepassExporter(BaseExporter, XmlUtils):
                                 title = f'${cf.type}'
                             else:
                                 title = cf.label or ''
-                            entry.set_custom_property(title, self.to_keepass_value(cf.value))
+                            if title in custom_names:
+                                no = custom_names[title]
+                                no += 1
+                                custom_names[title] = no
+                                title = f'{title}#{no}'
+                            else:
+                                custom_names[title] = 1
+                            entry.set_custom_property(title, self.to_keepass_value(BaseExporter.export_field(cf.type, cf.value)))
 
                     if r.attachments:
                         for atta in r.attachments:
