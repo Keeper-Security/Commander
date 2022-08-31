@@ -22,7 +22,7 @@ from tabulate import tabulate
 from urllib.parse import urlparse, urlunparse
 
 from Cryptodome.PublicKey import RSA
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, Iterable
 
 from .. import api, utils, crypto
 from .base import dump_report_data, user_choice, field_to_title
@@ -112,7 +112,9 @@ share_report_parser.add_argument('-sf', '--shared-folders', dest='shared_folders
 share_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
                                  help='display verbose information')
 share_report_parser.add_argument('-f', '--folders', dest='folders', action='store_true', default=False,
-                                 help='show shared-folder info')
+                                 help='limit report to shared folders (excludes shared records)')
+tu_help = 'show shared-folder team members (to be used with "--folders"/ "-f" flag, ignored for non-admin accounts)'
+share_report_parser.add_argument('-tu', '--show-team-users', action='store_true', help=tu_help)
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
@@ -657,16 +659,41 @@ class ShareReportCommand(Command):
     def get_parser(self):
         return share_report_parser
 
-    def sf_report(self, params, out=None, fmt=None):
-        def getshares(group, namekey):
-            perm_fields = {'manage_users', 'manage_records'}
-            name_field = 'name'
-            perms_field = 'permissions'
-            shares = [{
-                name_field: member[namekey],
-                perms_field: ','.join([field for field in perm_fields if member[field]])
-            } for member in group]
-            return shares
+    @staticmethod
+    def sf_report(params, out=None, fmt=None, show_team_users=False):
+        def get_share_info(share_target, name_key):  # type: (Dict[str, Any], str) -> Dict[str, str]
+            permissions_lookup = {'manage_users': 'Manage Users', 'manage_records': 'Manage Records'}
+            share = {
+                'name': share_target.get(name_key),
+                'permissions': ', '.join([val for k, val in permissions_lookup.items() if share_target.get(k)])
+            }
+            return share
+
+        def get_username(user_uid, users):  # type: (int, Iterable[Dict[str, Any]]) -> str
+            for u in users:
+                if user_uid == u.get('enterprise_user_id'):
+                    return u.get('username')
+
+        def get_team_shares(share_target):
+            t_shares = [share_target]
+            if params.enterprise and show_team_users:
+                e_team_users = params.enterprise.get('team_users') or []
+                e_teams = params.enterprise.get('teams') or []
+                e_users = params.enterprise.get('users') or []
+                for team in e_teams:
+                    if team.get('name') == share_target.get('name'):
+                        share = {**share_target}
+                        team_users = [u for u in e_team_users if u.get('team_uid') == team.get('team_uid')]
+                        t_shares.extend(get_team_user_shares(share, e_users, team_users))
+            share_target['name'] = '(Team) ' + share_target.get('name')
+            return t_shares
+
+        def get_team_user_shares(team_share, users, team_users):
+            team_user_shares = []
+            for tu in team_users:
+                t_u_share = {**team_share, 'name': '(Team User) ' + get_username(tu.get('enterprise_user_id'), users)}
+                team_user_shares.append(t_u_share)
+            return team_user_shares
 
         title = 'Shared folders'
         headers = ['Folder UID', 'Folder Name', 'Shared To', 'Permissions', 'Folder Path']
@@ -678,8 +705,12 @@ class ShareReportCommand(Command):
             row = [uid, name]
             users = props.get('users') or []
             teams = props.get('teams') or []
-            shared_to = getshares(users, 'username') + getshares(teams, 'name')
-            rows = [[*row, sharee['name'], sharee['permissions'], path] for sharee in shared_to]
+            user_shares = [get_share_info(u, 'username') for u in users]
+            shared_to = [*user_shares]
+            team_shares = [get_share_info(t, 'name') for t in teams]
+            for ts in team_shares:
+                shared_to.extend(get_team_shares(ts))
+            rows = [(*row, target.get('name'), target.get('permissions'), path) for target in shared_to]
             table += rows
         return dump_report_data(table, headers, title=title, fmt=fmt, filename=out)
 
@@ -693,7 +724,13 @@ class ShareReportCommand(Command):
             user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
 
         if kwargs.get('folders'):
-            return self.sf_report(params, out=kwargs.get('output'), fmt=kwargs.get('format'))
+            report = ShareReportCommand.sf_report(
+                params,
+                out=kwargs.get('output'),
+                fmt=kwargs.get('format'),
+                show_team_users=kwargs.get('show_team_users')
+            )
+            return report
 
         if kwargs.get('record'):
             records = kwargs.get('record') or []

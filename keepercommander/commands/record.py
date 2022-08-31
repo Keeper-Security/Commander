@@ -16,7 +16,7 @@ import fnmatch
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterator
+from typing import Dict, Any, List, Optional, Iterator, Tuple, Set
 
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
 from .. import api, display, crypto, utils, vault, vault_extensions
@@ -100,6 +100,8 @@ record_history_parser.add_argument('record', nargs='?', type=str, action='store'
 
 shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
 shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
+shared_records_report_parser.add_argument('-tu', '--show-team-users', action='store_true',
+                                          help='show members of team for records shared via share team folders')
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 
 
@@ -720,6 +722,13 @@ class SharedRecordsReport(Command):
             3: "Share Team Folder"
         }
 
+        team_records = set()    # type: Set[Tuple[str, str]]
+
+        def get_share_team(rec_uid):
+            for folder in find_folders(params, rec_uid):
+                if folder in params.shared_folder_cache:
+                    return params.shared_folder_cache.get(folder).get('teams')[0]
+
         rows = []
         for e in shared_records_data_rs.events:
             record_uid = api.decode_uid_to_str(e.recordUid)
@@ -748,7 +757,7 @@ class SharedRecordsReport(Command):
             else:
                 permissions = "Can Edit & Share"
 
-            row = {
+            user_row = {
                 'record_uid': record_uid,
                 'title': cached_record.title,
                 'share_to': e.userName,
@@ -757,7 +766,19 @@ class SharedRecordsReport(Command):
                 'folder_path': path_str
             }
 
-            rows.append(row)
+            if e.shareFrom == 3:
+                # Show team info for records shared via share team folders
+                share_team = get_share_team(record_uid)
+                team_record = share_team.get('team_uid'), record_uid
+                if team_record not in team_records:
+                    team_records.add(team_record)
+                    team_row = {**user_row, 'share_to': '(Team) ' + share_team.get('name')}
+                    rows.append(team_row)
+                if kwargs.get('show_team_users'):
+                    user_row['share_to'] = '(Team User) ' + user_row.get('share_to')
+                    rows.append(user_row)
+            else:
+                rows.append(user_row)
 
         fields = ['record_uid', 'title', 'share_to', 'shared_from', 'permissions', 'folder_path']
 
