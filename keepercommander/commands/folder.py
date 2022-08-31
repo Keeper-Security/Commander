@@ -21,11 +21,11 @@ import json
 from collections import OrderedDict
 from typing import Tuple, List, Optional, Dict, Set
 
-from .. import api, display, vault, crypto, utils
+from .. import api, display, vault, vault_extensions, crypto, utils
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
 from ..params import KeeperParams
 from ..record import Record
-from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand
+from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, RecordMixin
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..error import CommandError
 
@@ -132,7 +132,7 @@ shortcut_keep_parser.add_argument('target', nargs='?', help='Full record or fold
 shortcut_keep_parser.add_argument('folder', nargs='?', help='Optional. Folder name or UID. Overwrites current folder.')
 
 
-class FolderListCommand(Command):
+class FolderListCommand(Command, RecordMixin):
     @staticmethod
     def folder_match_strings(folder):   # type: (BaseFolderNode) -> collections.Iterable[str]
         return filter(lambda f: isinstance(f, str) and len(f) > 0, [folder.name, folder.uid])
@@ -166,10 +166,10 @@ class FolderListCommand(Command):
 
         regex = None
         if pattern:
-            regex = re.compile(fnmatch.translate(pattern)).match
+            regex = re.compile(fnmatch.translate(pattern), re.IGNORECASE).match
 
-        folders = []
-        records = []
+        folders = []    # type: List[BaseFolderNode]
+        records = []    # type: List[vault.KeeperRecord]
 
         if show_folders:
             for uid in folder.subfolders:
@@ -177,20 +177,24 @@ class FolderListCommand(Command):
                 if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))) if regex is not None else True:
                     folders.append(f)
 
-        v3_enabled = params.settings.get('record_types_enabled') \
-            if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-        if show_records:
+        if show_records and params.record_cache:
             folder_uid = folder.uid or ''
             if folder_uid in params.subfolder_record_cache:
                 for uid in params.subfolder_record_cache[folder_uid]:
-                    rv = params.record_cache[uid].get('version') if params.record_cache and uid in params.record_cache else None
-                    if rv == 4 or rv == 5:
+                    if uid not in params.record_cache:
+                        continue
+                    rec = params.record_cache[uid]
+                    rv = rec.get('version', 0)
+                    if rv in (0, 4, 5):
                         continue    # skip fileRef and application records - they use file-report command
-                    if not v3_enabled and rv in (3, 4):
-                        continue    # skip record types when not enabled
-                    r = api.get_record(params, uid)
-                    if any(filter(lambda x: regex(x) is not None, FolderListCommand.record_match_strings(r))) if regex is not None else True:
-                        records.append(r)
+
+                    r = vault.KeeperRecord.load(params, rec)
+                    if not r:
+                        continue
+
+                    if regex and not regex(r.title):
+                        continue
+                    records.append(r)
 
         if len(folders) == 0 and len(records) == 0:
             if pattern:
@@ -200,7 +204,13 @@ class FolderListCommand(Command):
                 if len(folders) > 0:
                     display.formatted_folders(folders)
                 if len(records) > 0:
-                    display.formatted_records(records, folder=folder.uid, verbose=kwargs.get('verbose', False), skip_details=True)
+                    table = []
+                    headers = ['Record UID', 'Type', 'Title', 'Description']
+                    for record in records:
+                        row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record)]
+                        table.append(row)
+                    table.sort(key=lambda x: (x[2] or '').lower())
+                    dump_report_data(table, headers, row_number=True)
             else:
                 names = []
                 for f in folders:

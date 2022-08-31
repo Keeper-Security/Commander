@@ -1609,7 +1609,7 @@ class RecordV3:
             flds = c.get('value') or []
             fval = flds
             fkey = '{} ({})'.format(flab, ftyp)
-            if ftyp in ['securityQuestion', 'paymentCard', 'host', 'keyPair']:
+            if ftyp in ['securityQuestion', 'paymentCard', 'host', 'keyPair', 'bankAccount']:
                 if not isinstance(flds, list):
                     flds = [flds]
                 fval = []
@@ -1642,6 +1642,22 @@ class RecordV3:
                                 hostname += f':{port}'
                             if hostname:
                                 fval.append(hostname)
+                        elif ftyp == 'bankAccount':
+                            account_type = x.get('accountType') or ''
+                            routing_number = x.get('routingNumber') or ''
+                            if routing_number and not unmask:
+                                routing_number = '*' + routing_number[-3:]
+                            account_number = x.get('accountNumber') or ''
+                            if account_number and not unmask:
+                                account_number = '*' + account_number[-3:]
+                            number = f'{account_type}: ' if account_type else ''
+                            if routing_number or account_number:
+                                if routing_number and account_number:
+                                    number += f'{routing_number} / {account_number}'
+                                else:
+                                    number = routing_number if routing_number else account_number
+                            fval.append(number)
+
                 for i, line in enumerate(fval):
                     print('{0:>20s}: {1:<s}'.format(fkey if i == 0 else '', line))
             else:

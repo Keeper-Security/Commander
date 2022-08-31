@@ -11,17 +11,50 @@
 import abc
 import itertools
 import re
-from typing import Optional, Union, Iterator, Dict, Set
+from typing import Optional, Union, Iterator, Dict, Set, Callable, Any, Iterable
 
 from . import crypto, utils, vault, record_types
 from .params import KeeperParams
 
 
-def find_records(params, search_str=None, record_type=None):
-    # type: (KeeperParams, Optional[str], Optional[Union[str, Iterator[str]]]) -> Iterator[vault.KeeperRecord]
-    pattern = re.compile(search_str, re.IGNORECASE) if search_str else None
+def _match_value(pattern, value):  # type: (Callable[[str], Any], Any) -> bool
+    if isinstance(value, str):
+        if pattern(value):
+            return True
+    elif isinstance(value, list):
+        for v in value:
+            if _match_value(pattern, v):
+                return True
+    elif isinstance(value, dict):
+        for v in value.values():
+            if _match_value(pattern, v):
+                return True
+    return False
 
-    type_filter = None
+
+def matches_record(record, pattern):    # type: (vault.KeeperRecord, Union[str, Callable[[str], Any]]) -> bool
+    if isinstance(pattern, str):
+        pattern = re.compile(pattern, re.IGNORECASE).search
+
+    for key, value in record.enumerate_fields():
+        m = re.search(r'^\(\w+\)\.?', key)
+        if m:
+            span = m.span(0)
+            key = key[span[1]:]
+        if key and _match_value(pattern, key):
+            return True
+        if value and _match_value(pattern, value):
+            return True
+    return False
+
+
+def find_records(params, search_str=None, **kwargs):
+    # type: (KeeperParams, Optional[str], Any) -> Iterator[vault.KeeperRecord]
+    pattern = re.compile(search_str, re.IGNORECASE).search if search_str else None
+
+    type_filter = None       # type: Optional[Set[str]]
+    version_filter = None    # type: Optional[Set[int]]
+    record_type = kwargs.get('record_type')   # type: Optional[Union[str, Iterator[str]]]
     if record_type:
         type_filter = set()
         if hasattr(record_type, '__iter__'):
@@ -29,34 +62,29 @@ def find_records(params, search_str=None, record_type=None):
         elif isinstance(record_type, str):
             type_filter.add(record_type)
 
+    record_version = kwargs.get('record_version')   # type: Optional[Union[int, Iterator[int]]]
+    if record_version:
+        version_filter = set()
+        if hasattr(record_version, '__iter__'):
+            version_filter.update((x for x in record_version if isinstance(x, int)))
+        elif isinstance(record_version, int):
+            version_filter.add(record_version)
+
     for record_uid in params.record_cache:
         record = vault.KeeperRecord.load(params, record_uid)
+        if search_str and record.record_uid == search_str:
+            yield record
+            continue
         if not record:
+            continue
+        if version_filter and record.version not in version_filter:
             continue
         if type_filter and record.record_type not in type_filter:
             continue
-        if not pattern:
+
+        is_match = matches_record(record, pattern) if pattern else True
+        if is_match:
             yield record
-        else:
-            is_match = search_str == record.record_uid
-            if not is_match and not type_filter:
-                is_match = pattern.search(record.record_type)
-            if not is_match:
-                for _, value in record.enumerate_fields():
-                    if not value:
-                        continue
-                    if is_match:
-                        break
-                    if isinstance(value, str):
-                        is_match = pattern.search(value)
-                    elif isinstance(value, list):
-                        for token in value:
-                            if is_match:
-                                break
-                            if isinstance(token, str):
-                                is_match = pattern.search(token)
-            if is_match:
-                yield record
 
 
 def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[str]
@@ -69,29 +97,67 @@ def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[s
     if isinstance(record, vault.TypedRecord):
         field = next((x for x in record.fields if x.type == 'login'), None)
         if field:
-            comps.append(field.get_default_value() or '')
-            field = next((x for x in record.fields if x.type == 'url'), None)
-            if field:
-                comps.append(field.get_default_value())
-            else:
-                field = next((x for x in record.fields if x.type == 'host'), None)
+            value = field.get_default_value()
+            if value:
+                comps.append(field.get_default_value() or '')
+                field = next((x for x in record.fields if x.type == 'url'), None)
                 if field:
-                    host = field.get_default_value()
-                    if isinstance(host, dict):
-                        address = host.get('hostName')
-                        if address:
-                            port = host.get('port')
-                            if port:
-                                address = f'{address}:{port}'
-                            comps.append(address)
-            return ' @ '.join((str(x) for x in comps if x))
+                    comps.append(field.get_default_value())
+                else:
+                    field = next((x for x in record.fields if x.type == 'host'), None)
+                    if field:
+                        host = field.get_default_value()
+                        if isinstance(host, dict):
+                            address = host.get('hostName')
+                            if address:
+                                port = host.get('port')
+                                if port:
+                                    address = f'{address}:{port}'
+                                comps.append(address)
+                return ' @ '.join((str(x) for x in comps if x))
 
-        field = next((x for x in record.fields if x.type == 'name'), None)
+        field = next((x for x in record.fields if x.type == 'paymentCard'), None)
         if field:
             value = field.get_default_value()
             if isinstance(value, dict):
-                comps.extend((value.get('first', ''), value.get('middle', ''), value.get('last', '')))
-            return ' '.join((str(x) for x in comps if x))
+                number = value.get('cardNumber') or ''
+                if isinstance(number, str):
+                    if len(number) > 4:
+                        number = '*' + number[-4:]
+                        comps.append(number)
+
+                field = next((x for x in record.fields if x.type == 'text' and x.label == 'cardholderName'), None)
+                if field:
+                    name = field.get_default_value()
+                    if name and isinstance(name, str):
+                        comps.append(name.upper())
+                return ' / '.join((str(x) for x in comps if x))
+
+        field = next((x for x in record.fields if x.type == 'bankAccount'), None)
+        if field:
+            value = field.get_default_value()
+            if isinstance(value, dict):
+                routing = value.get('routingNumber') or ''
+                if routing:
+                    routing = '*' + routing[-3:]
+                account = value.get('accountNumber') or ''
+                if account:
+                    account = '*' + account[-3:]
+                if routing or account:
+                    if routing and account:
+                        return f'{routing} / {account}'
+                    else:
+                        return routing if routing else account
+
+        field = next((x for x in record.fields if x.type == 'keyPair'), None)
+        if field:
+            value = field.get_default_value()
+            if isinstance(value, dict):
+                if value.get('privateKey'):
+                    comps.append('<Private Key>')
+                if value.get('publicKey'):
+                    comps.append('<Public Key>')
+            return ' / '.join((str(x) for x in comps if x))
 
         field = next((x for x in record.fields if x.type == 'address'), None)
         if field:
@@ -104,32 +170,12 @@ def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[s
                     f'{value.get("country", "")}'))
             return ', '.join((str(x) for x in comps if x))
 
-        field = next((x for x in record.fields if x.type == 'paymentCard'), None)
+        field = next((x for x in record.fields if x.type == 'name'), None)
         if field:
             value = field.get_default_value()
             if isinstance(value, dict):
-                number = value.get('cardNumber', '')
-                if isinstance(number, str):
-                    if len(number) > 4:
-                        number = 'x' + number[-4:]
-                        comps.append(number)
-
-            field = next((x for x in record.fields if x.type == 'text' and x.label == 'cardholderName'), None)
-            if field:
-                name = field.get_default_value()
-                if name and isinstance(name, str):
-                    comps.append(name.upper())
-            return ' / '.join((str(x) for x in comps if x))
-
-        field = next((x for x in record.fields if x.type == 'keyPair'), None)
-        if field:
-            value = field.get_default_value()
-            if isinstance(value, dict):
-                if value.get('privateKey'):
-                    comps.append('<Private Key>')
-                if value.get('publicKey'):
-                    comps.append('<Public Key>')
-            return ' / '.join((str(x) for x in comps if x))
+                comps.extend((value.get('first', ''), value.get('middle', ''), value.get('last', '')))
+                return ' '.join((str(x) for x in comps if x))
 
     if isinstance(record, vault.FileRecord):
         comps.extend((record.name, utils.size_to_str(record.size)))

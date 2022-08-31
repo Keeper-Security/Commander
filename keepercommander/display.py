@@ -11,7 +11,7 @@ import json
 import shutil
 
 from collections import OrderedDict as OD
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Any
 
 from asciitree import LeftAligned
 from colorama import init, Fore, Back, Style
@@ -19,6 +19,7 @@ from tabulate import tabulate
 
 from keepercommander import __version__
 from .subfolder import BaseFolderNode, SharedFolderNode
+from . import vault, vault_extensions
 
 init()
 

@@ -283,7 +283,7 @@ def export(params, file_format, filename, **kwargs):
 
     force = kwargs.get('force', False)
     if not force and not exporter.supports_v3_record():
-        answer = base.user_choice(f'Export to {file_format} does not fully support typed records\n\n'
+        answer = base.user_choice(f'Export to {file_format} format may not support all custom fields, data will be exported as best effort\n\n'
                                   'Do you want to continue?', 'yn', 'n')
         if answer.lower() != 'y':
             return
