@@ -140,6 +140,7 @@ class CustomField(object):
         cf.value = value
         return cf
 
+
 class AttachmentFileThumb:
     def __init__(self, thumb_field=None):      # type: (Optional[dict]) -> None
         self.id = thumb_field.get('id', '') if thumb_field else ''
@@ -262,7 +263,7 @@ class TypedField(object):
         rf = record_types.RecordFields.get(field_type)
         ft = record_types.FieldTypes.get(rf.type) if rf else None
         if isinstance(field_value, int):
-            if ft.name == 'date':
+            if ft and ft.name == 'date':
                 if field_value != 0:
                     dt = datetime.datetime.fromtimestamp(int(field_value // 1000)).date()
                     yield str(dt)
@@ -273,75 +274,75 @@ class TypedField(object):
                 for ev in TypedField.get_exported_value(field_type, elem):
                     yield ev
         elif isinstance(field_value, dict):
-            if ft.name == 'host':
-                hostname = field_value.get('hostname') or ''
-                port = field_value.get('port') or ''
-                if hostname or port:
-                    if port:
-                        hostname = f'{hostname}:{port}'
-                yield hostname
-            elif ft.name == 'phone':
-                phone = field_value.get('type') or ''
-                if phone:
-                    phone += ':'
-                for key in ('region', 'number', 'ext'):
-                    if key in field_value:
-                        value = field_value[key]
-                        if value:
-                            phone += f' {value}'
-                yield phone
-            elif ft.name == 'name':
-                last = field_value.get('last') or ''
-                first = field_value.get('first') or ''
-                middle = field_value.get('middle') or ''
-                if last or first or middle:
-                    name = f'{last},'
-                    if first:
-                        name += f' {first}'
-                    if middle:
-                        name += f' {middle}'
-                    yield name
-            elif ft.name == 'address':
-                street = ' '.join(x for x in (field_value.get('street1'), field_value.get('street1')) if x)
-                city = field_value.get('city') or ''
-                state = ' '.join(x for x in (field_value.get('state'), field_value.get('zip')) if x)
-                country = field_value.get('country') or ''
-                if street or city or state or country:
-                    address = ', '.join((street, city, state, country))
-                    while address.endswith(', '):
-                        address = address.rstrip(', ')
-                    yield address
-            elif ft.name == 'securityQuestion':
-                q = (field_value.get('question') or '').rstrip('?')
-                a = field_value.get('answer') or ''
-                if q or a:
-                    yield f'{q}? {a}'
-            elif ft.name == 'paymentCard':
-                number = field_value.get('cardNumber') or ''
-                expiration = field_value.get('cardExpirationDate') or ''
-                cvv = field_value.get('cardSecurityCode') or ''
-                if number or expiration or cvv:
-                    if expiration:
-                        number += f' EXP:{expiration}'
-                    if cvv:
-                        number += f' {cvv}'
-                    yield cvv
-            elif ft.name == 'bankAccount':
-                account = field_value.get('accountType') or ''
-                if account:
-                    account += ':'
-                for key in ('routingNumber', 'accountNumber'):
-                    if key in field_value:
-                        value = field_value[key]
-                        if value:
-                            account += f' {value}'
-                if account:
-                    yield account
-
-            elif ft.name == 'privateKey':
-                private_key = field_value.get('privateKey') or ''
-                if private_key:
-                    yield private_key
+            if ft:
+                if ft.name == 'host':
+                    hostname = field_value.get('hostname') or ''
+                    port = field_value.get('port') or ''
+                    if hostname or port:
+                        if port:
+                            hostname = f'{hostname}:{port}'
+                    yield hostname
+                elif ft.name == 'phone':
+                    phone = field_value.get('type') or ''
+                    if phone:
+                        phone += ':'
+                    for key in ('region', 'number', 'ext'):
+                        if key in field_value:
+                            value = field_value[key]
+                            if value:
+                                phone += f' {value}'
+                    yield phone
+                elif ft.name == 'name':
+                    last = field_value.get('last') or ''
+                    first = field_value.get('first') or ''
+                    middle = field_value.get('middle') or ''
+                    if last or first or middle:
+                        name = f'{last},'
+                        if first:
+                            name += f' {first}'
+                        if middle:
+                            name += f' {middle}'
+                        yield name
+                elif ft.name == 'address':
+                    street = ' '.join(x for x in (field_value.get('street1'), field_value.get('street1')) if x)
+                    city = field_value.get('city') or ''
+                    state = ' '.join(x for x in (field_value.get('state'), field_value.get('zip')) if x)
+                    country = field_value.get('country') or ''
+                    if street or city or state or country:
+                        address = ', '.join((street, city, state, country))
+                        while address.endswith(', '):
+                            address = address.rstrip(', ')
+                        yield address
+                elif ft.name == 'securityQuestion':
+                    q = (field_value.get('question') or '').rstrip('?')
+                    a = field_value.get('answer') or ''
+                    if q or a:
+                        yield f'{q}? {a}'
+                elif ft.name == 'paymentCard':
+                    number = field_value.get('cardNumber') or ''
+                    expiration = field_value.get('cardExpirationDate') or ''
+                    cvv = field_value.get('cardSecurityCode') or ''
+                    if number or expiration or cvv:
+                        if expiration:
+                            number += f' EXP:{expiration}'
+                        if cvv:
+                            number += f' {cvv}'
+                        yield cvv
+                elif ft.name == 'bankAccount':
+                    account = field_value.get('accountType') or ''
+                    if account:
+                        account += ':'
+                    for key in ('routingNumber', 'accountNumber'):
+                        if key in field_value:
+                            value = field_value[key]
+                            if value:
+                                account += f' {value}'
+                    if account:
+                        yield account
+                elif ft.name == 'privateKey':
+                    private_key = field_value.get('privateKey') or ''
+                    if private_key:
+                        yield private_key
 
     def get_external_value(self):   # type: () -> Iterable[str]
         for value in self.get_exported_value(self.type, self.value):

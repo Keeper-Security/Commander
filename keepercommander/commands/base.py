@@ -22,7 +22,7 @@ import re
 import shlex
 import sys
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List
+from typing import Optional, Sequence, Callable, List, Union, Any
 
 from tabulate import tabulate
 

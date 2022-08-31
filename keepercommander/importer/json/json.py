@@ -15,6 +15,7 @@ import sys
 from typing import List
 
 from ..importer import BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission
+from ... import record_types
 
 
 class KeeperJsonImporter(BaseFileImporter):
@@ -83,11 +84,28 @@ class KeeperJsonImporter(BaseFileImporter):
                                 field_type = ''
                                 field_name = name
 
-                            field = RecordField()
-                            field.type = field_type
-                            field.label = field_name
-                            field.value = value
-                            record.fields.append(field)
+                            ft = record_types.RecordFields.get(field_type or 'text')
+                            if ft:
+                                is_multiple = ft.multiple != record_types.Multiple.Never
+                            else:
+                                is_multiple = False
+                                if not field_name:
+                                    field_name = name
+                                    field_type = ''
+
+                            if isinstance(value, list) and not is_multiple:
+                                for v in value:
+                                    field = RecordField()
+                                    field.type = field_type
+                                    field.label = field_name
+                                    field.value = v
+                                    record.fields.append(field)
+                            else:
+                                field = RecordField()
+                                field.type = field_type
+                                field.label = field_name
+                                field.value = value
+                                record.fields.append(field)
                     if 'schema' in r:
                         record.schema = []
                         for s in r['schema']:
@@ -219,6 +237,8 @@ class KeeperJsonExporter(BaseExporter):
             if r.fields:
                 ro['custom_fields'] = {}
                 for field in r.fields:
+                    if not field.type and field.label and field.label.startswith('$'):
+                        field.type = 'text'
                     if field.type and field.label:
                         name = f'${field.type}:{field.label}'
                     elif field.type:

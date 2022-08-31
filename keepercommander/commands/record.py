@@ -19,6 +19,7 @@ import re
 from typing import Dict, Any, List, Optional, Iterator, Tuple, Set
 
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
+from .recordv3 import RecordGetUidCommand
 from .. import api, display, crypto, utils, vault, vault_extensions
 from ..error import CommandError
 from ..params import KeeperParams
@@ -163,7 +164,7 @@ class SearchCommand(Command):
         return search_parser
 
     def execute(self, params, **kwargs):
-        pattern = (kwargs['pattern'] if 'pattern' in kwargs else None) or ''
+        pattern = kwargs.get('pattern') or ''
         if pattern == '*':
             pattern = '.*'
 
@@ -173,10 +174,22 @@ class SearchCommand(Command):
 
         # Search records
         if 'r' in categories:
-            results = api.search_records(params, pattern)
-            if results:
+            records = list(vault_extensions.find_records(params, pattern))
+            if records:
                 print('')
-                display.formatted_records(results, verbose=verbose)
+                table = []
+                headers = ['Record UID', 'Type', 'Title', 'Description']
+                for record in records:
+                    row = [record.record_uid, record.record_type, record.title,
+                           vault_extensions.get_record_description(record)]
+                    table.append(row)
+                table.sort(key=lambda x: (x[2] or '').lower())
+
+                dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
+                if len(records) < 5:
+                    get_command = RecordGetUidCommand()
+                    for record in records:
+                        get_command.execute(params, uid=record.record_uid)
 
         # Search shared folders
         if 's' in categories:
@@ -200,11 +213,29 @@ class RecordListCommand(Command):
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose', False)
         fmt = kwargs.get('format', 'table')
-        pattern = kwargs['pattern'] if 'pattern' in kwargs else None
-        record_type = kwargs['record_type'] if 'record_type' in kwargs else None
+        pattern = kwargs.get('pattern')
+        record_types = kwargs.get('record_type')
+        if record_types:
+            record_version = set()
+            record_type = set()
+            if isinstance(record_types, str):
+                record_types = [record_types]
+            for rt in record_types:
+                if rt == 'app':
+                    record_version.add(5)
+                elif rt == 'file':
+                    record_version.update((3, 4))
+                    record_type.add('file')
+                elif rt == 'general':
+                    record_version.update((1, 2))
+                else:
+                    record_version.add(3)
+                    record_type.add(rt)
+        else:
+            record_version = None if verbose else (1, 2, 3)
+            record_type = None
 
-        records = [x for x in vault_extensions.find_records(params, pattern, record_type)
-                   if (True if (verbose or record_type) else x.version in {2, 3})]
+        records = [x for x in vault_extensions.find_records(params, pattern, record_type=record_type, record_version=record_version)]
         if any(records):
             table = []
             headers = ['record_uid', 'type', 'title', 'description'] if fmt == 'json' else \
