@@ -10,12 +10,13 @@
 #
 
 import argparse
+import collections
 import json
 import logging
 import re
 
 from .. import api, crypto
-from .base import RecordMixin, raise_parse_exception, suppress_exit
+from .base import RecordMixin, raise_parse_exception, suppress_exit, try_resolve_path
 from .enterprise import EnterpriseCommand
 from ..loginv3 import LoginV3API
 from ..constants import EMAIL_PATTERN
@@ -147,3 +148,22 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                 pass
 
         api.query_enterprise(params)
+
+    @staticmethod
+    def resolve_records(params, record_name):  # type: (KeeperParams, str) -> collections.Iterator[str]
+        if not record_name:
+            return
+
+        if record_name in params.record_cache:
+            yield record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.casefold() == record_name.casefold():
+                                yield uid
