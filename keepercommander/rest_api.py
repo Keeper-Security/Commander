@@ -177,7 +177,7 @@ def execute_rest(context, endpoint, payload):
                             run_request = True
                             continue
                 elif rs.status_code == 403:
-                    if failure.get('error') == 'throttled':
+                    if failure.get('error') == 'throttled' and not context.fail_on_throttle:
                         logging.info('Throttled. sleeping for 10 seconds')
                         time.sleep(10)
                         run_request = True

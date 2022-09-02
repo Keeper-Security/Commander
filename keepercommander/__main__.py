@@ -107,6 +107,11 @@ def get_params_from_config(config_filename):
                         if isinstance(check, bool):
                             params.rest_context.certificate_check = check
 
+                    if 'fail_on_throttle' in params.config:
+                        on_throttle = params.config['fail_on_throttle']
+                        if isinstance(on_throttle, bool):
+                            params.rest_context._fail_on_throttle = on_throttle
+
             except Exception as e:
                 logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
                 answer = input('Do you want to delete it (y/N): ')

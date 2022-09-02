@@ -31,6 +31,7 @@ class RestApiContext:
         self.__store_server_key = False
         self.proxies = None
         self._certificate_check = True
+        self._fail_on_throttle = False
 
     def __get_server_base(self):
         return self.__server_base
@@ -78,11 +79,15 @@ class RestApiContext:
             else:
                 warnings.simplefilter('ignore', InsecureRequestWarning)
 
+    def get_fail_on_throttle(self):
+        return self._fail_on_throttle
+
     server_base = property(__get_server_base, __set_server_base)
     device_id = property(__get_device_id, __set_device_id)
     server_key_id = property(__get_server_key_id, __set_server_key_id)
     store_server_key = property(__get_store_server_key)
     certificate_check = property(get_certificate_check, set_certificate_check)
+    fail_on_throttle = property(get_fail_on_throttle)
 
 
 class KeeperParams:
