@@ -20,13 +20,13 @@ import logging
 import os
 import re
 import shlex
-import sys
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List, Union, Any
+from typing import Optional, Sequence, Callable, List
 
+import sys
 from tabulate import tabulate
 
-from .. import api, vault
+from .. import vault
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -89,6 +89,10 @@ def register_commands(commands, aliases, command_info):
     from .. import plugins
     plugins.register_commands(commands)
     plugins.register_command_info(aliases, command_info)
+
+    from .. import rsync
+    rsync.register_commands(commands)
+    rsync.register_command_info(aliases, command_info)
 
 
 def register_enterprise_commands(commands, aliases, command_info):
@@ -467,23 +471,26 @@ class RecordMixin:
     CUSTOM_FIELD_TYPES = {'text', 'secret', 'email', 'url', 'multiline', 'pinCode'}
 
     @staticmethod
-    def resolve_records(params, record_name):  # type: (KeeperParams, str) -> collections.Iterator[str]
+    def resolve_single_record(params, record_name):  # type: (KeeperParams, str) -> Optional[vault.KeeperRecord]
         if not record_name:
             return
 
         if record_name in params.record_cache:
-            yield record_name
-        else:
-            rs = try_resolve_path(params, record_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder is not None and record_name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.casefold() == record_name.casefold():
-                                yield uid
+            return vault.KeeperRecord.load(params, record_name)
+
+        rs = try_resolve_path(params, record_name)
+        if rs is None:
+            return
+        folder, record_name = rs
+        if folder is None or record_name is None:
+            return
+
+        folder_uid = folder.uid or ''
+        if folder_uid in params.subfolder_record_cache:
+            for uid in params.subfolder_record_cache[folder_uid]:
+                record = vault.KeeperRecord.load(params, uid)
+                if record and record.title.casefold() == record_name.casefold():
+                    return record
 
     @staticmethod
     def get_custom_field(record, field_name):     # type: (vault.KeeperRecord, str) -> str
