@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import logging
 import os
 import sqlite3
 from typing import Dict
@@ -41,14 +42,15 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 return link
 
             user_ent = to_user_entity(user_data, username_lookup)
-            record_ents = {to_record_entity(x) for x in user_data.auditUserRecords}
+            record_ents = [to_record_entity(x) for x in user_data.auditUserRecords if x.encryptedData]
             user_rec_links = {to_user_record_link(user_ent.user_uid, record_ent.record_uid) for record_ent in
                               record_ents}
             return user_ent, record_ents, user_rec_links
 
-        async def fetch_entities():
+        def sync_all():
             print('Loading record information.', end='', flush=True)
             user_ids = list(user_lookup.keys())
+            users, records, links = [], [], []
             while user_ids:
                 print('.', end='', flush=True)
                 token = b''
@@ -59,24 +61,23 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 rq.includeNonShared = True
                 has_more = True
                 while has_more:
-                    print('.', end='', flush=True)
                     rq.continuationToken = token or rq.continuationToken
-                    rs = api.communicate_rest(params, rq, 'enterprise/get_preliminary_compliance_data',
-                                              rs_type=enterprise_pb2.PreliminaryComplianceDataResponse)
+                    endpoint = 'enterprise/get_preliminary_compliance_data'
+                    rs_type = enterprise_pb2.PreliminaryComplianceDataResponse
+                    rs = api.communicate_rest(params, rq, endpoint, rs_type=rs_type)
+                    print('.', end='', flush=True)
                     has_more = rs.hasMore
                     token = rs.continuationToken
-                    await asyncio.gather(*[save_data(*to_storage_types(ud, name_by_id)) for ud in rs.auditUserData])
+                    for user_data in rs.auditUserData:
+                        t_user, t_recs, t_links = to_storage_types(user_data, name_by_id)
+                        users += [t_user]
+                        records += t_recs
+                        links += t_links
 
-        async def save_data(user, records, links):
-            await store.async_put_prelim_data([user], records, links)
-            print('.', end='', flush=True)
+            store.rebuild_prelim_data(users, records, links)
 
-        store.clear_non_aging_data()
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(fetch_entities())
+        sync_all()
         print('.')
-        store.set_prelim_data_updated()
 
     enterprise_id = enterprise_id or next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
     path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
@@ -98,53 +99,70 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
-        users_uids = [int(uid) for uid in sdata.get_users().keys()]
-        record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
-        anon_id = 0
+        def run_sync_tasks():
+            async def do_tasks():
+                print('Loading compliance data.', end='', flush=True)
+                users_uids = [int(uid) for uid in sdata.get_users()]
+                record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
+                limit = asyncio.Semaphore(10)
+                max_len = API_SOX_REQUEST_USER_LIMIT
+                total_ruids = len(record_uids_raw)
+                ruid_chunks = [record_uids_raw[x:x + max_len] for x in range(0, total_ruids, max_len)]
+                tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
+                await asyncio.gather(*tasks)
 
-        def sync_all():
+            old_loop = asyncio.get_event_loop()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(start_sync())
-
-        async def start_sync():
-            limit = asyncio.Semaphore(10)
-            max_len = API_SOX_REQUEST_USER_LIMIT
-            total_ruids = len(record_uids_raw)
-            ruid_chunks = [record_uids_raw[x:x + max_len] for x in range(0, total_ruids, max_len)]
-            tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
-            await asyncio.gather(*tasks)
+            try:
+                loop.run_until_complete(do_tasks())
+                sdata.storage.set_compliance_data_updated()
+                print('.')
+            except KeyboardInterrupt:
+                logging.info('SIGINT received: cancelling pending tasks')
+            finally:
+                pending = [task for task in asyncio.Task.all_tasks() if not task.done()]
+                for task in pending:
+                    task.cancel()
+                asyncio.set_event_loop(old_loop)
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.stop()
+                loop.close()
 
         async def sync_chunk(chunk, uuids, limit):
-            async with limit:
-                rs = await fetch_response(raw_ruids=chunk, user_uids=uuids, limit=limit)
-                await save_response(rs)
-
-        async def fetch_response(raw_ruids, user_uids, limit=10):
-            rq = enterprise_pb2.ComplianceReportRequest()
-            rq.saveReport = False
-            rq.reportName = f'Compliance Report on {datetime.datetime.now()}'
-            report_run = rq.complianceReportRun
-            report_run.users.extend(user_uids)
-            report_run.records.extend(raw_ruids)
-            caf = report_run.reportCriteriaAndFilter
-            caf.nodeId = node_uid
             print('.', end='', flush=True)
-            endpoint = 'enterprise/run_compliance_report'
-            return api.communicate_rest(params, rq, endpoint, rs_type=enterprise_pb2.ComplianceReportResponse)
+            rs = await fetch_response(raw_ruids=chunk, user_uids=uuids, limit=limit)
+            print('.', end='', flush=True)
+            await save_response(rs)
+            print(':', end='', flush=True)
+
+        async def fetch_response(raw_ruids, user_uids, limit=None):
+            async with limit:
+                rq = enterprise_pb2.ComplianceReportRequest()
+                rq.saveReport = False
+                rq.reportName = f'Compliance Report on {datetime.datetime.now()}'
+                report_run = rq.complianceReportRun
+                report_run.users.extend(user_uids)
+                report_run.records.extend(raw_ruids)
+                caf = report_run.reportCriteriaAndFilter
+                caf.nodeId = node_uid
+                endpoint = 'enterprise/run_compliance_report'
+                return api.communicate_rest(params, rq, endpoint, rs_type=enterprise_pb2.ComplianceReportResponse)
+
+        anon_id = 0
 
         async def save_response(rs):
             def hash_anon_ids(response):
                 # create new user uid for each anonymous user (uid >> 32 == 0)
                 anon_ids = dict()
                 nonlocal anon_id
-                anon_id += API_SOX_REQUEST_USER_LIMIT
                 for up in rs.userProfiles:
                     user_id = up.enterpriseUserId
                     if not user_id >> 32:
                         new_id = user_id + anon_id
                         anon_ids[user_id] = new_id
                         up.enterpriseUserId = new_id
+                        anon_id = new_id
                 for ur in rs.userRecords:
                     user_id = ur.enterpriseUserId
                     ur.enterpriseUserId = anon_ids.get(user_id, user_id)
@@ -153,20 +171,20 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                         folder.enterpriseUserIds[idx] = anon_ids.get(user_id, user_id)
                 return response
 
-            rs = hash_anon_ids(rs)
-            tasks = [
-                sync_users(rs.userProfiles),
-                sync_records(rs.auditRecords),
-                sync_teams(rs.auditTeams),
-                sync_shared_folders_records(rs.sharedFolderRecords),
-                sync_shared_folder_users(rs.sharedFolderUsers),
-                sync_shared_folder_teams(rs.sharedFolderTeams),
-                sync_record_permissions(rs.sharedFolderRecords, rs.userRecords),
-                sync_team_users(rs.auditTeamUsers)
-            ]
-            await asyncio.gather(*tasks)
+            await save_all_types(hash_anon_ids(rs))
+            print('.', end='', flush=True)
 
-        async def sync_users(user_profiles):
+        async def save_all_types(rs):
+            save_users(rs.userProfiles)
+            save_records(rs.auditRecords)
+            save_teams(rs.auditTeams)
+            save_shared_folders_records(rs.sharedFolderRecords)
+            save_shared_folder_users(rs.sharedFolderUsers)
+            save_shared_folder_teams(rs.sharedFolderTeams)
+            sync_record_permissions(rs.sharedFolderRecords, rs.userRecords)
+            save_team_users(rs.auditTeamUsers)
+
+        def save_users(user_profiles):
             entities = []
             for up in user_profiles:
                 entity = sdata.storage.users.get_entity(up.enterpriseUserId) or StorageUser()
@@ -177,10 +195,9 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 user_node = user_node_id_lookup.get(up.enterpriseUserId)
                 entity.node_id = user_node
                 entities.append(entity)
-            await sdata.storage.users.async_put_entities(entities)
-            print('.', end='', flush=True)
+            sdata.storage.users.put_entities(entities)
 
-        async def sync_teams(audit_teams):
+        def save_teams(audit_teams):
             entities = []
             for team in audit_teams:
                 team_uid = utils.base64_url_encode(team.teamUid)
@@ -188,18 +205,16 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 entity.team_uid = team_uid
                 entity.team_name = team.teamName
                 entities.append(entity)
-            await sdata.storage.teams.async_put_entities(entities)
-            print('.', end='', flush=True)
+            sdata.storage.teams.put_entities(entities)
 
-        async def sync_team_users(audit_team_users):
+        def save_team_users(audit_team_users):
             links = []
             for team in audit_team_users:
                 team_uid = utils.base64_url_encode(team.teamUid)
                 links.extend([StorageTeamUserLink(team_uid, user_uid) for user_uid in team.enterpriseUserIds])
-            await sdata.storage.get_team_user_links().async_put_links(links)
-            print('.', end='', flush=True)
+            sdata.storage.get_team_user_links().put_links(links)
 
-        async def sync_shared_folders_records(sf_records):
+        def save_shared_folders_records(sf_records):
             links = []
             for folder in sf_records:
                 folder_uid = utils.base64_url_encode(folder.sharedFolderUid)
@@ -207,10 +222,9 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                     record_uid = utils.base64_url_encode(rp.recordUid)
                     link = StorageSharedFolderRecordLink(folder_uid, record_uid, rp.permissionBits)
                     links.append(link)
-            await sdata.storage.get_sf_record_links().async_put_links(links)
-            print('.', end='', flush=True)
+            sdata.storage.get_sf_record_links().put_links(links)
 
-        async def sync_record_permissions(sf_records, user_records):
+        def sync_record_permissions(sf_records, user_records):
             def to_rec_perm_links(user_uid, record_permissions):
                 rp_links = []
                 for rp in record_permissions:
@@ -228,41 +242,36 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                     user_uid = sar.enterpriseUserId
                     rec_perm_idxs = sar.recordPermissionIndexes
                     links.extend([to_rec_perm_links(user_uid, rec_perms[index]) for index in rec_perm_idxs])
-            await sdata.storage.get_record_permissions().async_put_links(links)
-            print('.', end='', flush=True)
+            sdata.storage.get_record_permissions().put_links(links)
 
-        async def sync_shared_folder_users(sf_users):
+        def save_shared_folder_users(sf_users):
             links = []
             for folder in sf_users:
                 folder_uid = utils.base64_url_encode(folder.sharedFolderUid)
                 links.extend([StorageSharedFolderUserLink(folder_uid, uuid) for uuid in folder.enterpriseUserIds])
-            await sdata.storage.get_sf_user_links().async_put_links(links)
-            print('.', end='', flush=True)
+            sdata.storage.get_sf_user_links().put_links(links)
 
-        async def sync_shared_folder_teams(sf_teams):
+        def save_shared_folder_teams(sf_teams):
             links = []
             for folder in sf_teams:
                 folder_uid = utils.base64_url_encode(folder.sharedFolderUid)
                 for tuid in folder.teamUids:
                     team_uid = utils.base64_url_encode(tuid)
                     links.append(StorageSharedFolderTeamLink(folder_uid, team_uid))
-            await sdata.storage.get_sf_team_links().async_put_links(links)
-            print('.', end='', flush=True)
+            sdata.storage.get_sf_team_links().put_links(links)
 
-        async def sync_records(records):
+        def save_records(records):
             entities = []
             for record in records:
                 rec_uid = utils.base64_url_encode(record.recordUid)
                 entity = sdata.storage.records.get_entity(rec_uid)
-                entity.in_trash = record.inTrash
-                entity.has_attachments = record.hasAttachments
-                entities.append(entity)
-            await sdata.storage.records.async_put_entities(entities)
-            print('.', end='', flush=True)
+                if entity:
+                    entity.in_trash = record.inTrash
+                    entity.has_attachments = record.hasAttachments
+                    entities.append(entity)
+            sdata.storage.records.put_entities(entities)
 
-        print('Loading compliance data.', end='', flush=True)
-        sync_all()
-        sdata.storage.set_compliance_data_updated()
+        run_sync_tasks()
 
     sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated)
     last_compliance_data_update = sd.storage.last_compliance_data_update

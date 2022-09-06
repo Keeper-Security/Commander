@@ -39,9 +39,6 @@ class SqliteEntityStorage(sqlite_dao.SqliteStorage, IEntityStorage):
     def put_entities(self, entities):
         self.put(entities)
 
-    async def async_put_entities(self, entities):
-        return self.put(entities)
-
     def delete_uids(self, uids):
         self.delete_by_filter(self.schema.primary_key, uids, multiple_criteria=True)
 
@@ -67,9 +64,6 @@ class SqliteLinkStorage(sqlite_dao.SqliteStorage, ILinkStorage):
 
     def put_links(self, links):
         self.put(links)
-
-    async def async_put_links(self, links):
-        return self.put(links)
 
     @staticmethod
     def expand_link_to_tuple(links):

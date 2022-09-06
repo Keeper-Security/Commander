@@ -8,7 +8,6 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.coms
 #
-import asyncio
 import datetime
 import logging
 import os
@@ -181,22 +180,15 @@ class SqliteSoxStorage:
         self._user_record_links.put_links(links)
         self.set_prelim_data_updated()
 
-    async def async_put_prelim_data(self, users, records, links):
-        await asyncio.gather(
-            self._users.async_put_entities(users),
-            self._records.async_put_entities(records),
-            self._user_record_links.async_put_links(links)
-        )
-
     def clear_all(self):
         self.clear_non_aging_data()
         self._record_aging.delete_all()
 
     def delete_db(self):
-        conn = self.get_connection()
-        conn.close()
         try:
-            # delete storage in local filesystem
+            conn = self.get_connection()
+            conn.close()
             os.remove(self.database_name)
-        except Exception:
+        except Exception as e:
             logging.info(f'could not delete db from filesystem, name = {self.database_name}')
+            logging.info(f'Exception e:\n{e}')
