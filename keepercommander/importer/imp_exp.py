@@ -223,6 +223,9 @@ def export(params, file_format, filename, **kwargs):
     if 'max_size' in kwargs:
         exporter.max_size = int(kwargs['max_size'])
 
+    if not filename and not exporter.supports_stdout():
+        raise CommandError('export', 'File name parameter is required.')
+
     folder_filter = None      # type: Optional[Set[str]]
     record_filter = None      # type: Optional[Set[str]]
     folder_path = kwargs.get('folder')
@@ -294,7 +297,6 @@ def export(params, file_format, filename, **kwargs):
     # for record_uid in params.record_cache.keys():
     #     ext_id += 1
     #     external_ids[record_uid] = ext_id
-
     for record_uid in params.record_cache:
         if record_filter:
             if record_uid not in record_filter:
