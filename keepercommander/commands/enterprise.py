@@ -86,6 +86,7 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['sar'] = 'security-audit-report'
     aliases['tu'] = 'transfer-user'
+    aliases['cr'] = 'compliance-report'
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,

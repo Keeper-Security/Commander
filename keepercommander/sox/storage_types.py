@@ -19,7 +19,8 @@ class StorageUser(IUid):
 class StorageRecord(IUid):
     def __init__(self):
         self.record_uid = ''
-        self.encrypted_data = ''
+        self.record_uid_bytes = b''
+        self.encrypted_data = b''
         self.shared = True
         self.in_trash = False
         self.has_attachments = False

@@ -1,8 +1,9 @@
+import logging
 from typing import Dict, Any, List
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
-from .. import crypto, utils
+from .. import crypto
 from ..proto import enterprise_pb2
 import json
 
@@ -31,8 +32,9 @@ class EnterpriseUser:
 
 
 class Record:
-    def __init__(self):
+    def __init__(self, data_source=None, ec_key=None):
         self.record_uid = ''
+        self.record_uid_bytes = b''
         self.data = {}
         self.created = 0
         self.last_pw_change = 0
@@ -40,19 +42,24 @@ class Record:
         self.in_trash = False
         self.has_attachments = False
         self.user_permissions = dict()
+        data_source and self.update_properties(data_source, ec_key)
 
-    @staticmethod
-    def load(entity, ec_key):    # type: (StorageRecord, EllipticCurvePrivateKey) -> Record
-        def decrypt_data(encrypted, key):   # type: (str, EllipticCurvePrivateKey) -> Dict['str', Any]
-            data_json = crypto.decrypt_ec(utils.base64_url_decode(encrypted), key) if encrypted else b'{}'
-            return json.loads(data_json.decode())
-        record = Record()
-        record.record_uid = entity.record_uid
-        record.data = decrypt_data(entity.encrypted_data, ec_key)
-        record.shared = entity.shared
-        record.in_trash = entity.in_trash
-        record.has_attachments = entity.has_attachments
-        return record
+    def update_properties(self, entity, ec_key):  # type: (StorageRecord, EllipticCurvePrivateKey) -> None
+        def decrypt_data(encrypted, key):  # type: (bytes, EllipticCurvePrivateKey) -> Dict['str', Any]
+            decrypted = {}
+            try:
+                data_json = crypto.decrypt_ec(encrypted, key) if encrypted else b'{}'
+                decrypted = json.loads(data_json.decode())
+            except:
+                logging.debug('Cannot decrypt record \"%s\" info.', self.record_uid)
+            return decrypted
+
+        self.record_uid = entity.record_uid if not self.record_uid else self.record_uid
+        self.record_uid_bytes = entity.record_uid_bytes if not self.record_uid_bytes else self.record_uid_bytes
+        self.data = decrypt_data(entity.encrypted_data, ec_key) if not self.data else self.data
+        self.shared = entity.shared
+        self.in_trash = entity.in_trash
+        self.has_attachments = entity.has_attachments
 
 
 class UserRecord:
@@ -62,7 +69,7 @@ class UserRecord:
 
 
 class RecordPermissions:
-    def __init__(self, record_uid, permissions):    # type: (int, int) -> None
+    def __init__(self, record_uid, permissions):    # type: (str, int) -> None
         self.record_uid = record_uid
         self.permission_bits = permissions
         self.user_uid = -1
@@ -74,7 +81,7 @@ class RecordPermissions:
     @staticmethod
     def to_permissions_str(permission_bits):
         # type: (int) -> str
-        permission_masks = {1: 'owner',  2: 'mask', 4: 'edit', 8: 'share', 16: 'share_admin'}
+        permission_masks = {1: 'owner', 2: 'mask', 4: 'edit', 8: 'share', 16: 'share_admin'}
         permissions = [permission for mask, permission in permission_masks.items() if (permission_bits & mask)]
         if not permissions:
             permissions.append('read-only')

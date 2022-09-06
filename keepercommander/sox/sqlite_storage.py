@@ -9,6 +9,8 @@
 # Contact: ops@keepersecurity.coms
 #
 import datetime
+import logging
+import os
 
 from ..storage import sqlite_dao, sqlite
 from .storage_types import StorageRecord, StorageUser, StorageUserRecordLink, StorageTeam, StorageRole, \
@@ -26,9 +28,10 @@ class Metadata:
 
 
 class SqliteSoxStorage:
-    def __init__(self, get_connection, owner):
+    def __init__(self, get_connection, owner, database_name=''):
         self.get_connection = get_connection
         self.owner = owner
+        self.database_name = database_name
 
         metadata_schema = sqlite_dao.TableSchema.load_schema(Metadata, [], owner_column='account_uid')
         user_schema = sqlite_dao.TableSchema.load_schema(StorageUser, 'user_uid')
@@ -142,7 +145,7 @@ class SqliteSoxStorage:
         return self._sf_team_links
 
     @property
-    def records(self):  # type: () -> IEntityStorage[StorageRecord]
+    def records(self):  # type: () -> IEntityStorage
         return self.get_records()
 
     @property
@@ -150,14 +153,14 @@ class SqliteSoxStorage:
         return self.get_record_aging()
 
     @property
-    def users(self):  # type: () -> IEntityStorage[StorageUser]
+    def users(self):  # type: () -> IEntityStorage
         return self.get_users()
 
     @property
-    def teams(self):  # type: () -> IEntityStorage[StorageTeam]
+    def teams(self):  # type: () -> IEntityStorage
         return self.get_teams()
 
-    def clear(self):
+    def clear_non_aging_data(self):
         self._records.delete_all()
         self._users.delete_all()
         self._user_record_links.delete_all()
@@ -171,8 +174,21 @@ class SqliteSoxStorage:
         self._metadata.delete_all()
 
     def rebuild_prelim_data(self, users, records, links):
-        self.clear()
+        self.clear_non_aging_data()
         self._users.put_entities(users)
         self._records.put_entities(records)
         self._user_record_links.put_links(links)
         self.set_prelim_data_updated()
+
+    def clear_all(self):
+        self.clear_non_aging_data()
+        self._record_aging.delete_all()
+
+    def delete_db(self):
+        try:
+            conn = self.get_connection()
+            conn.close()
+            os.remove(self.database_name)
+        except Exception as e:
+            logging.info(f'could not delete db from filesystem, name = {self.database_name}')
+            logging.info(f'Exception e:\n{e}')

@@ -104,6 +104,8 @@ audit_log_parser.exit = suppress_exit
 aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.')
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
+aging_report_parser.add_argument('--no-cache', '-nc', action='store_true',
+                                 help='remove any local non-memory storage of data upon command completion')
 aging_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                  default='table', help='output format.')
 aging_report_parser.add_argument('--output', dest='output', action='store',
@@ -132,11 +134,17 @@ action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=Fal
 
 compliance_report_parser = argparse.ArgumentParser(prog='compliance-report', description='Run a SOX compliance report.')
 compliance_report_parser.add_argument('--rebuild', '-r', action='store_true', help='Rebuild local data from source')
+compliance_report_parser.add_argument('--no-cache', '-nc', action='store_true',
+                                      help='remove any local non-memory storage of data after report is generated')
 compliance_report_parser.add_argument('--node', action='store', help='ID or name of node (defaults to root node)')
 compliance_report_parser.add_argument('--username', '-u', action='append',
                                   help='user(s) to include in report (set option once for each user to include)')
 compliance_report_parser.add_argument('--job-title', '-jt', action='append',
                                   help='job titles to include in report (set option once for each title to include)')
+compliance_report_parser.add_argument('--record', action='append',
+                                  help='UID or title of record(s) to include in report (set once for each record)')
+compliance_report_parser.add_argument('--url', action='append',
+                                  help='URL of record(s) to include in report (set once for each record)')
 compliance_report_parser.add_argument('--shared', action='store_true',
                                       help='flag for excluding non-shared records from report')
 compliance_report_parser.add_argument('--output', dest='output', action='store',
@@ -1397,11 +1405,16 @@ class AgingReportCommand(Command):
         sd = get_prelim_data(params, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=period_min_ts)
         sd = self.update_aging_data(params, sd, period_start_ts=period_min_ts)
 
+        def clean_up():
+            if kwargs.get('no_cache') and sd:
+                sd.storage.delete_db()
+
         users = {uid: user for uid, user in sd.get_users().items() if user.status == enterprise_pb2.OK}
         uid_lookup = {user.email: uid for uid, user in users.items()}
         username = kwargs.get('username')
         if username and username not in uid_lookup:
             logging.info(f'user {username} is not a valid enterprise user')
+            clean_up()
             return
         else:
             user_uids = [uid_lookup.get(username)] if username is not None else None
@@ -1425,6 +1438,7 @@ class AgingReportCommand(Command):
                 record_url = f'https://{params.server}/value/#detail/{ur.record.record_uid}'
                 row = [email, ur.record.data.get('title'), change_dt, ur.record.shared, record_url]
                 table.append(row)
+        clean_up()
         return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'))
 
     @staticmethod
@@ -1654,11 +1668,52 @@ class ComplianceReportCommand(EnterpriseCommand):
         min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
 
         from ..sox import get_compliance_data
-        sd = get_compliance_data(params, node_id, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=min_data_ts)
+
+        opts_set = [val for opt, val in kwargs.items() if val and opt != 'command' and opt != 'format']
+        def show_help_text(local_data):  # type: (sox_data.SoxData) -> None
+            last_update_ts = local_data.storage.last_compliance_data_update
+            if not last_update_ts:
+                logging.info("Cache last update: NONE -- to build the cache, call the following command:"
+                             "\n\t'compliance-report --rebuild'")
+            else:
+                last_update = datetime.datetime.fromtimestamp(last_update_ts)
+                num_users = len(local_data.get_users())
+                num_shared = len([rec for rec in local_data.get_records().values() if rec.shared])
+                msg = f'cache last update: {last_update} Total records: {local_data.record_count} ' \
+                      f'Total Users: {num_users} Total shared records: {num_shared}'
+                logging.info(msg)
+            help_txt = "\nGet record and sharing information from all vaults in the enterprise\n" \
+                       "Format:\ncompliance-report [-h] [--rebuild] [--node NODE] [--username USERNAME] " \
+                       "[--job-title JOB_TITLE] [--shared] [--output OUTPUT] [--format {table,csv,json}]" \
+                       "\n\nExamples:" \
+                       "\nSee all records for a user" \
+                       "\n\t'compliance-report --username USERNAME'" \
+                       "\nFind all records for a specific URL that have been shared" \
+                       "\n\t'compliance-report --shared --url URL'" \
+                       "\nExport report of all shared records in a node" \
+                       "\n\t'compliance-report --shared --output compliance_share_report.csv --format csv " \
+                       "--node NODE_NAME_OR_ID'" \
+                       "\n\t* use 'enterprise-info --node' to see a list of available nodes" \
+                       "\nCache controls" \
+                       "\n\t'compliance-report --rebuild'  " \
+                       "\tUpdate and rebuild the cache with new compliance information." \
+                       "\n\t'compliance-report --no-cache'\tDelete the cache entirely.The cache will be rebuilt if " \
+                       "compliance-report is run again."
+            logging.info(help_txt)
+
+        if not opts_set:
+            local_sox_data = get_compliance_data(params, node_id, enterprise_id, False, min_updated=0)
+            show_help_text(local_sox_data)
+            return
+
+        no_cache = kwargs.get('no_cache')
+        sd = get_compliance_data(
+            params, node_id, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=min_data_ts, no_cache=no_cache
+        )
 
         report_fmt = kwargs.get('format', 'table')
-        headers = ['record_uid', 'username', 'permissions'] if report_fmt == 'json' \
-            else ['Record UID', 'Username', 'Permissions']
+        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url'] if report_fmt == 'json' \
+            else ['Record UID', 'Title', 'Type', 'Username', 'Permissions', 'URL']
         table = []
 
         def filter_owners(owners):
@@ -1670,7 +1725,14 @@ class ComplianceReportCommand(EnterpriseCommand):
 
         def filter_records(records):
             shared_only = kwargs.get('shared')
-            return [record for record in records if not shared_only or record.shared]
+            filtered = [r for r in records if not shared_only or r.shared]
+            urls = kwargs.get('url')
+            filtered = [r for r in filtered for url in urls if r.data.get('url') and url in r.data.get('url')] if urls \
+                else filtered
+            r_refs = kwargs.get('record')
+            filtered = [r for r in filtered if r.data.get('title') in r_refs or r.record_uid in r_refs] if r_refs \
+                else filtered
+            return filtered
 
         owners = filter_owners(sd.get_users().values())
         shared_folders = sd.get_shared_folders()
@@ -1710,13 +1772,17 @@ class ComplianceReportCommand(EnterpriseCommand):
             formatted_rows = []
             for row in rows:
                 r_uid = row.get('record_uid')
+                rec = sd.get_records().get(r_uid)
+                r_title = rec.data.get('title')
+                r_type = rec.data.get('record_type')
+                r_url = rec.data.get('url')
                 formatted_ruid = r_uid if report_fmt != 'json' and r_uid != last_ruid else ''
+                u_email = row.get('email')
                 permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
-                formatted_rows.append([formatted_ruid, row.get('email'), permissions])
+                fmt_row = [formatted_ruid, r_title, r_type, u_email, permissions, r_url]
+                formatted_rows.append(fmt_row)
                 last_ruid = r_uid
             return formatted_rows
 
         table = format_table(table)
-        print(f'num rows in report = {len(table)}')
-        print(f'num unique records in report = {len([row for row in table if row[0]])}')
-        return dump_report_data(table, headers, fmt=report_fmt, filename=kwargs.get('output'))
+        return dump_report_data(table, headers, fmt=report_fmt, filename=kwargs.get('output'), column_width=20)
