@@ -36,20 +36,19 @@ def get_params_from_config(config_filename):
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
 
-    if os.getenv('KEEPER_CONFIG_FILE'):
+    def get_env_config():
         logging.debug("Setting config file from KEEPER_CONFIG_FILE env variable %s" % os.getenv('KEEPER_CONFIG_FILE'))
-        params.config_filename = os.getenv('KEEPER_CONFIG_FILE')
-    elif opts.launched_with_shortcut:
-        launcher_keeper_folder_path = Path.home().joinpath('.keeper')
-        launcher_keeper_folder_path.mkdir(parents=True, exist_ok=True)
+        return os.getenv('KEEPER_CONFIG_FILE')
 
-        # unix: /Users/username/.keeper/
-        # win: C:\\Users\\username\\.keeper\\
+    def get_shortcut_config():
+        path = None
+        if opts.launched_with_shortcut:
+            launcher_keeper_folder_path = Path.home().joinpath('.keeper')
+            launcher_keeper_folder_path.mkdir(parents=True, exist_ok=True)
+            path = str(launcher_keeper_folder_path.joinpath('config.json'))
+        return path
 
-        params.config_filename = str(launcher_keeper_folder_path.joinpath('config.json'))
-    else:
-        params.config_filename = config_filename or 'config.json'
-
+    params.config_filename = config_filename or get_env_config() or get_shortcut_config() or 'config.json'
     if os.path.exists(params.config_filename):
         try:
             try:
