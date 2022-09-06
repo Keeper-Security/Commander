@@ -70,9 +70,6 @@ class OnePasswordImporter(BaseImporter):
                 export_data = json.load(data_file)
             if 'accounts' in export_data:
                 for account in export_data['accounts']:
-                    account_name = None      # type: Optional[str]
-                    if 'attrs' in account:
-                        account_name = account['attrs'].get('accountName')
                     for vault in account.get('vaults', []):
                         vault_name = None
                         is_shared = False
@@ -270,7 +267,7 @@ class OnePasswordImporter(BaseImporter):
                                                     if username:
                                                         record.fields.append(RecordField(type='login', label=f'{account_type} Username', value=username))
                                                     if password:
-                                                        record.fields.append(RecordField(type='password', label=f'{account_type} Password', value=password))
+                                                        record.fields.append(RecordField(type='secret', label=f'{account_type} Password', value=password))
                                                     if host:
                                                         record.fields.append(RecordField(type='host', label=f'{account_type} Server', value=host))
                                                 if security_value and security_value[1]:
@@ -406,7 +403,7 @@ class OnePasswordImporter(BaseImporter):
                                                         field_id == 'credential' or \
                                                         (field_id == 'pin' and record.type == 'membership'):
                                                     if record.password:
-                                                        ft = 'password'
+                                                        ft = 'secret'
                                                     else:
                                                         record.password = field_value
                                                         continue
