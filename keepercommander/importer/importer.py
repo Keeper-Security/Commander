@@ -519,8 +519,7 @@ class BaseExporter(abc.ABC):
                 if ext:
                     filename = filename + '.' + ext
         elif not self.supports_stdout():
-            logging.error("stdout is not supported for this file format")
-            return
+            raise CommandError('export', 'File name parameter is required.')
 
         self.do_export(filename, items, file_password)
 
