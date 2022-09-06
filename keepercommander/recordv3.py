@@ -1609,7 +1609,7 @@ class RecordV3:
             flds = c.get('value') or []
             fval = flds
             fkey = '{} ({})'.format(flab, ftyp)
-            if ftyp in ['securityQuestion', 'paymentCard', 'host', 'keyPair', 'bankAccount']:
+            if ftyp in ['securityQuestion', 'paymentCard', 'host', 'keyPair', 'bankAccount', 'phone']:
                 if not isinstance(flds, list):
                     flds = [flds]
                 fval = []
@@ -1642,6 +1642,19 @@ class RecordV3:
                                 hostname += f':{port}'
                             if hostname:
                                 fval.append(hostname)
+                        elif ftyp == 'phone':
+                            number = ''
+                            phone_type = x.get('type') or ''
+                            if phone_type:
+                                number = f'{phone_type}: '
+                            region = x.get('region') or ''
+                            if region:
+                                number += f'{region} '
+                            number += x.get('number') or ''
+                            ext = x.get('ext') or ''
+                            if ext:
+                                number += f' ({ext})'
+                            fval.append(number)
                         elif ftyp == 'bankAccount':
                             account_type = x.get('accountType') or ''
                             routing_number = x.get('routingNumber') or ''
@@ -1667,8 +1680,8 @@ class RecordV3:
                         fval = (' ' if ftyp.lower() == 'name' else ' | ').join((str(x) for x in flds[0].values()))
                     elif RecordV3.get_field_type(ftyp).get('type') == 'date' and bool(
                             re.match('^[+-]?[0-9]+$', str(flds[0]).strip())):
-                        dt = datetime.datetime.fromtimestamp(flds[0] / 1000.0)
-                        fval = str(dt)
+                        dt = datetime.datetime.fromtimestamp(int(flds[0] / 1000), tz=datetime.timezone.utc)
+                        fval = str(dt.date())
                     elif record_type == 'ssnCard' and ftyp == 'accountNumber' and flab == 'identityNumber':
                         fval = flds[0] if unmask else '********'
                     else:

@@ -133,6 +133,7 @@ To load the sample file into your vault, run this command:
 import --format=json sample_data/import.json.txt
 '''
 
+
 class ImporterCommand(Command):
     def execute_args(self, params, args, **kwargs):
         if args.find('--display-csv') >= 0 or args.find('-dc') >= 0:
