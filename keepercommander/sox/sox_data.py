@@ -1,5 +1,5 @@
 import logging
-from typing import Iterable, Dict, Set, List
+from typing import Iterable, Dict, Set, List, Optional
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
@@ -20,8 +20,8 @@ class RebuildTask:
 
 
 class SoxData:
-    def __init__(self, ec_private_key, storage):
-        # type: (EllipticCurvePrivateKey, sqlite_storage.SqliteSoxStorage) -> None
+    def __init__(self, ec_private_key, storage, no_cache=False):
+        # type: (EllipticCurvePrivateKey, sqlite_storage.SqliteSoxStorage, Optional[bool]) -> None
         self.ec_private_key = ec_private_key    # type: EllipticCurvePrivateKey
         self.storage = storage                  # type: sqlite_storage.SqliteSoxStorage
         self._records = {}                      # type: Dict[str, sox_types.Record]
@@ -29,7 +29,7 @@ class SoxData:
         self._teams = {}                        # type: Dict[str, sox_types.Team]
         self._shared_folders = {}               # type: Dict[str, sox_types.SharedFolder]
         task = RebuildTask(True)
-        self.rebuild_data(task)
+        self.rebuild_data(task, no_cache)
 
     def get_records(self, record_ids=None):
         return self._records if record_ids is None else {uid: self._records.get(uid) for uid in record_ids}
@@ -61,7 +61,7 @@ class SoxData:
     def record_count(self):   # type: () -> int
         return len(self._records)
 
-    def rebuild_data(self, changes):   # type: (RebuildTask) -> None
+    def rebuild_data(self, changes, no_cache=False):   # type: (RebuildTask, Optional[bool]) -> None
         def link_record_permissions(store, record_lookup):
             links = store.get_record_permissions().get_all_links()
             for link in links:
@@ -86,12 +86,10 @@ class SoxData:
 
             record_lookup = {}
             for entity in entities:
-                try:
-                    record = sox_types.Record.load(entity, self.ec_private_key)
-                    if record:
-                        record_lookup[record.record_uid] = record
-                except:
-                    logging.debug('Cannot decrypt record \"%s\" info.', entity.record_uid)
+                record = self._records.get(entity.record_uid) or sox_types.Record()
+                record.update_properties(entity, self.ec_private_key)
+                record_lookup[record.record_uid] = record
+
             record_lookup = link_record_aging(store, record_lookup)
             return link_record_permissions(store, record_lookup) if changes.load_compliance_data else record_lookup
 
@@ -122,7 +120,6 @@ class SoxData:
             teams = [sox_types.Team.load(entity) for entity in store.teams.get_all()]
             team_lookup = {team.team_uid: team for team in teams}
             return link_team_users(store, team_lookup)
-            # return update_team_users(store, link_sf_teams(store, team_lookup))
 
         def link_team_users(store, team_lookup):
             links = store.get_team_user_links().get_all_links()
@@ -163,3 +160,5 @@ class SoxData:
         self._records.update(load_records(self.storage, changes))
         if changes.is_full_sync or changes.load_compliance_data:
             self._users.update(load_users(self.storage))
+        if no_cache:
+            self.storage.delete_db()
