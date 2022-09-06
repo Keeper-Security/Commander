@@ -37,8 +37,9 @@ def get_params_from_config(config_filename):
     opts, flags = parser.parse_known_args(sys.argv[1:])
 
     def get_env_config():
-        logging.debug("Setting config file from KEEPER_CONFIG_FILE env variable %s" % os.getenv('KEEPER_CONFIG_FILE'))
-        return os.getenv('KEEPER_CONFIG_FILE')
+        path = os.getenv('KEEPER_CONFIG_FILE')
+        path and logging.debug(f'Setting config file from KEEPER_CONFIG_FILE env variable {path}')
+        return path
 
     def get_shortcut_config():
         path = None
