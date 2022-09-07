@@ -150,11 +150,8 @@ def execute_rest(context, endpoint, payload):
         request_data = api_request.SerializeToString()
         url = context.server_base + endpoint
 
-        logging.debug('>>> Request URL: [%s]', url)
         rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'},
                            proxies=context.proxies, verify=context.certificate_check)
-        logging.debug('<<< Response Code: [%d]', rs.status_code)
-        logging.debug('<<< Response Headers: [%s]', str(rs.headers))
 
         content_type = rs.headers.get('Content-Type') or ''
         if rs.status_code == 200:
@@ -184,10 +181,11 @@ def execute_rest(context, endpoint, payload):
                         continue
                 return failure
             else:
-                logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
                 if logging.getLogger().level <= logging.DEBUG:
                     if rs.text:
-                        logging.debug('<<< Response Content: [%s]', str(rs.text))
+                        logging.debug('<<< Response Content: [%s]', rs.text)
+                    else:
+                        logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
                 raise CommunicationError('Code {0}: {1}'.format(rs.status_code, rs.reason))
 
 
