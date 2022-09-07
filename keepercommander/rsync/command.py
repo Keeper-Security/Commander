@@ -35,11 +35,8 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-_dir = os.path.dirname(__file__)
-_plugins = [x for x in os.listdir(_dir) if os.path.isdir(os.path.join(_dir, x)) and x[0] not in {'.', '_'}]
-
 rsync_parser = argparse.ArgumentParser(prog='rsync', description='Remote file storage sync.')
-rsync_parser.add_argument('--plugin', dest='plugin', action='store', choices=_plugins,
+rsync_parser.add_argument('--plugin', dest='plugin', action='store', choices=['sftp'],
                           help='rsync plugin. Optional once configured.')
 rsync_parser.add_argument('--remote-path', dest='remote_path', action='store',
                           help='remote root directory. Optional once configured.')
