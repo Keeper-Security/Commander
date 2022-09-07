@@ -1324,6 +1324,9 @@ def communicate_rest(params, request, endpoint, rs_type=None):
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
     if request:
+        if logging.getLogger().level <= logging.DEBUG:
+            js = google.protobuf.json_format.MessageToJson(request)
+            logging.debug('>>> [RQ] %s: %s', endpoint, js)
         api_request_payload.payload = request.SerializeToString()
 
     rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
@@ -1332,6 +1335,9 @@ def communicate_rest(params, request, endpoint, rs_type=None):
         if rs_type:
             proto_rs = rs_type()
             proto_rs.ParseFromString(rs)
+            if logging.getLogger().level <= logging.DEBUG:
+                js = google.protobuf.json_format.MessageToJson(proto_rs)
+                logging.debug('>>> [RS] %s: %s', endpoint, js)
             return proto_rs
         else:
             return rs
