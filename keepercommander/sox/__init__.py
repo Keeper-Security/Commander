@@ -100,7 +100,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
         def run_sync_tasks():
-            async def do_tasks():
+            async def do_tasks(return_exceptions=False):
                 print('Loading compliance data.', end='', flush=True)
                 users_uids = [int(uid) for uid in sdata.get_users()]
                 record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
@@ -109,25 +109,33 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 total_ruids = len(record_uids_raw)
                 ruid_chunks = [record_uids_raw[x:x + max_len] for x in range(0, total_ruids, max_len)]
                 tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
-                await asyncio.gather(*tasks)
+                await asyncio.gather(*tasks, return_exceptions=return_exceptions)
 
-            old_loop = asyncio.get_event_loop()
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(do_tasks())
-                sdata.storage.set_compliance_data_updated()
-                print('.')
-            except KeyboardInterrupt:
-                logging.info('SIGINT received: cancelling pending tasks')
-            finally:
-                pending = [task for task in asyncio.Task.all_tasks() if not task.done()]
-                for task in pending:
-                    task.cancel()
-                asyncio.set_event_loop(old_loop)
-                loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.stop()
-                loop.close()
+            py_version_3_6 = not hasattr(asyncio, 'run')
+            if not py_version_3_6:
+                try:
+                    asyncio.run(do_tasks(True))
+                finally:
+                    print('')
+            else:
+                old_loop = asyncio.get_event_loop()
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(do_tasks())
+                    sdata.storage.set_compliance_data_updated()
+                except KeyboardInterrupt:
+                    logging.info('SIGINT received: cancelling pending tasks')
+                finally:
+                    try:
+                        pending = [task for task in asyncio.Task.all_tasks() if not task.done()]
+                        for task in pending:
+                            task.cancel()
+                        loop.run_until_complete(loop.shutdown_asyncgens())
+                    finally:
+                        asyncio.set_event_loop(old_loop)
+                        loop.stop()
+                        loop.close()
 
         async def sync_chunk(chunk, uuids, limit):
             print('.', end='', flush=True)
