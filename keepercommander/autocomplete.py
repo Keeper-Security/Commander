@@ -20,7 +20,7 @@ from .params import KeeperParams
 from .commands.folder import mv_parser
 from .commands.base import GroupCommand, Command
 from .commands.connect import ConnectCommand
-from .commands import commands, enterprise_commands
+from .commands import commands, enterprise_commands, msp_commands
 from . import api
 from .subfolder import try_resolve_path as sf_try_resolve_path
 
@@ -70,7 +70,6 @@ def unescape_string(have_initial_double_quote, string):
     for from_str, to_str in tuple_:
         string = string.replace(from_str, to_str)
     return string
-
 
 
 def escape_string(have_initial_double_quote, string):
@@ -140,6 +139,10 @@ class CommandCompleter(Completer):
                     if self.params.enterprise:
                         e_cmds = [x for x in enterprise_commands if x.startswith(document.text)]
                         cmds.extend(e_cmds)
+                        if len(msp_commands) > 0:
+                            msp_cmds = [x for x in msp_commands if x.startswith(document.text)]
+                            cmds.extend(msp_cmds)
+
                     if len(cmds) > 0:
                         cmds.sort()
                         for c in cmds:

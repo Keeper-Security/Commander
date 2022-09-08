@@ -783,14 +783,15 @@ class _EnterpriseManagedCompanyEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'tree_key', proto_entity.treeKey if proto_entity.treeKey else None)
         _set_or_remove(keeper_entity, 'tree_key_role', proto_entity.tree_key_role)
         _set_or_remove(keeper_entity, 'file_plan_type', proto_entity.filePlanType)
-        if proto_entity.addOns:
-            _set_or_remove(keeper_entity, 'add_ons', [{
-                'name': x.name,
-                'enabled': x.enabled,
-                'is_trial': x.isTrial,
-                'created': x.created,
-                'expiration': x.expiration,
-            } for x in proto_entity.addOns])
+        _set_or_remove(keeper_entity, 'add_ons', [{
+            'name': x.name,
+            'seats': x.seats,
+            'enabled': x.enabled,
+            'is_trial': x.isTrial,
+            'created': x.created,
+            'expiration': x.expiration,
+            'activation_time': x.activationTime,
+        } for x in proto_entity.addOns])
 
     def get_keeper_entity_id(self, entity):  # type: (dict) -> any
         return entity.get('mc_enterprise_id')

@@ -11,19 +11,19 @@
 
 import argparse
 import calendar
+import datetime
 import json
 import logging
 import os
-import string
-from datetime import datetime, timedelta
-from typing import Set, Dict, List
+from typing import Set, Dict, List, Iterable, Any, Tuple, Union
+from urllib.parse import urlparse, urlunparse
 
-from .base import suppress_exit, raise_parse_exception, dump_report_data, user_choice
+from .base import dump_report_data, user_choice, field_to_title
 from .enterprise import EnterpriseCommand
-from ..proto import enterprise_pb2
-from .. import api, crypto, utils, loginv3, error
-from ..display import format_managed_company, format_msp_licenses, bcolors
+from .. import api, crypto, utils, loginv3, error, constants
+from ..display import bcolors
 from ..error import CommandError
+from ..proto import enterprise_pb2, BI_pb2
 
 
 def register_commands(commands):
@@ -31,8 +31,9 @@ def register_commands(commands):
     commands['msp-info'] = MSPInfoCommand()
     commands['msp-add'] = MSPAddCommand()
     commands['msp-remove'] = MSPRemoveCommand()
-    commands['msp-license'] = MSPLicenseCommand()
-    commands['msp-license-report'] = MSPLicensesReportCommand()
+    commands['msp-update'] = MSPUpdateCommand()
+    commands['msp-legacy-report'] = MSPLegacyReportCommand()
+    commands['msp-billing-report'] = MSPBillingReportCommand()
     commands['msp-convert-node'] = MSPConvertNodeCommand()
 
 
@@ -41,67 +42,88 @@ def register_command_info(aliases, command_info):
     aliases['mi'] = 'msp-info'
     aliases['ma'] = 'msp-add'
     aliases['mrm'] = 'msp-remove'
-    aliases['ml'] = 'msp-license'
-    aliases['mlr'] = 'msp-license-report'
+    aliases['mu'] = 'msp-update'
+    aliases['mlr'] = 'msp-legacy-report'
+    aliases['mbr'] = 'msp-billing-report'
 
-    for p in [msp_data_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_license_parser, msp_license_report_parser]:
+    for p in [msp_data_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_update_parser,
+              msp_legacy_report_parser, msp_billing_report_parser]:
         command_info[p.prog] = p.description
 
 
-msp_data_parser = argparse.ArgumentParser(prog='msp-down|md',
-                                          description='Download current MSP data from the Keeper Cloud.',
-                                          usage='msp-down')
-msp_data_parser.error = raise_parse_exception
-msp_data_parser.exit = suppress_exit
+msp_data_parser = argparse.ArgumentParser(prog='msp-down|md', usage='msp-down',
+                                          description='Download current MSP data from the Keeper Cloud.')
 
-msp_info_parser = argparse.ArgumentParser(prog='msp-info|mi',
-                                          description='Displays MSP details, such as licenses and managed companies.',
-                                          usage='msp-info')
-# msp_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
+msp_info_parser = argparse.ArgumentParser(prog='msp-info|mi', usage='msp-info',
+                                          description='Displays MSP details, such as managed companies and pricing.')
+msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_true', help='Display pricing information')
+msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Print details')
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
-msp_info_parser.error = raise_parse_exception
-msp_info_parser.exit = suppress_exit
 
-msp_license_parser = argparse.ArgumentParser(prog='msp-license', description='View and Manage MSP licenses.', usage='msp-license --add --seats=4')
-msp_license_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'reduce', 'usage'], help='Action to perform on the licenses', default='usage')
-msp_license_parser.add_argument('--mc', dest='mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
-# msp_license_parser.add_argument('--product_id', dest='product_id', action='store', choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'], help='Plan Id.')
-msp_license_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, help='Number of seats to add or reduce.')
-msp_license_parser.error = raise_parse_exception
-msp_license_parser.exit = suppress_exit
+msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update',
+                                            description='Modify Managed Company license.')
+msp_update_parser.add_argument('-p', '--plan', dest='plan', action='store',
+                               choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
+                               help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
+msp_update_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
+                               help='Maximum licences allowed. -1: unlimited')
+msp_update_parser.add_argument('-f', '--file-plan', dest='file_plan', action='store',
+                               help=f'File storage plan: {", ".join((x[2].lower() for x in constants.MSP_FILE_PLANS))}')
+msp_update_parser.add_argument('-aa', '--add-addon', dest='add_addon', action='append', metavar='ADDON[:SEATS]',
+                               help=f'Add add-ons: {", ".join(((x[0]+(":N" if x[2] else "")) for x in constants.MSP_ADDONS))}')
+msp_update_parser.add_argument('-ra', '--remove-addon', dest='remove_addon', action='append', metavar='ADDON',
+                               help=f'Add add-ons: {", ".join((x[0] for x in constants.MSP_ADDONS))}')
+msp_update_parser.add_argument('mc', action='store',
+                               help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 
 ranges = ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']
+msp_legacy_report_parser = argparse.ArgumentParser(prog='msp-legacy-report',
+                                                   description='Generate MSP Legacy Report.')
+msp_legacy_report_parser.add_argument('--format', dest='format', choices=['table', 'csv', 'json'], default='table',
+                                      help='Format of the report output')
+msp_legacy_report_parser.add_argument('--output', dest='output', action='store',
+                                      help='Output file name. (ignored for table format)')
+group = msp_legacy_report_parser.add_argument_group('Pre-defined date ranges')
+group.add_argument('--range', dest='range', choices=ranges, default='last_30_days',
+                   help="Pre-defined data ranges to run the report.")
+group = msp_legacy_report_parser.add_argument_group('Custom date ranges')
+group.add_argument('--from', dest='from_date',
+                   help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. '
+                        'Only applicable to the `audit` report AND when there is no `range` specified. '
+                        'Example: `2020-08-18` or `1596265200`')
+group.add_argument('--to', dest='to_date',
+                   help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) '
+                        'or Unix timestamp format. Only applicable to the `audit` report AND '
+                        'when there is no `range` specified.'
+                        'Example: `2020-08-18` or `1596265200`')
 
-msp_license_report_parser = argparse.ArgumentParser(prog='msp-license-report',
-                                                    description='Generate MSP License Reports.')
-msp_license_report_parser.add_argument('--type',
-                                       dest='report_type',
-                                       choices=['allocation', 'audit'],
-                                       help='Type of the report',
-                                       default='allocation')
-msp_license_report_parser.add_argument('--format', dest='report_format', choices=['table', 'csv', 'json'],
-                                       help='Format of the report output', default='table')
-msp_license_report_parser.add_argument('--range', dest='range', choices=ranges, default='last_30_days',
-                                       help="Pre-defined data ranges to run the report.")
-msp_license_report_parser.add_argument('--from', dest='from_date',
-                                       help='Run report from this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only applicable to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
-msp_license_report_parser.add_argument('--to', dest='to_date',
-                                       help='Run report until this date. Value in ISO 8601 format (YYYY-mm-dd) or Unix timestamp format. Only applicable to the `audit` report AND when there is no `range` specified. Example: `2020-08-18` or `1596265200`Example: 2020-08-18 or 1596265200')
-msp_license_report_parser.add_argument('--output', dest='output', action='store', help='Output file name. (ignored for table format)')
-msp_license_report_parser.error = raise_parse_exception
-msp_license_report_parser.exit = suppress_exit
+msp_billing_report_parser = argparse.ArgumentParser(prog='msp-billing-report',
+                                                    description='Generate MSP Billing Reports.')
+msp_billing_report_parser.add_argument('--format', dest='format', choices=['table', 'csv', 'json'], default='table',
+                                       help='Format of the report output')
+msp_billing_report_parser.add_argument('--output', dest='output', action='store',
+                                       help='Output file name. (ignored for table format)')
+msp_billing_report_parser.add_argument('--month', dest='month', action='store', metavar='YYYY-MM', help='Month for billing report: 2022-02')
+msp_billing_report_parser.add_argument('-d', '--show-date', dest='show_date', action='store_true', help='Breakdown report by date')
+msp_billing_report_parser.add_argument('-c', '--show-company', dest='show_company', action='store_true', help='Breakdown report by managed company')
+
 
 msp_add_parser = argparse.ArgumentParser(prog='msp-add', description='Add Managed Company.')
 msp_add_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
-msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', required=True, type=int,
-                            help='Number of seats')
+msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, required=True,
+                            help='Maximum licences allowed. -1: unlimited')
 msp_add_parser.add_argument('-p', '--plan', dest='plan', action='store', required=True,
                             choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
-                            help='License Plan')
+                            help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
+msp_add_parser.add_argument('-f', '--file-plan', dest='file_plan', action='store',
+                            help=f'File storage plan: {", ".join((x[2].lower() for x in constants.MSP_FILE_PLANS))}')
+msp_add_parser.add_argument('-a', '--addon', dest='addon', action='append', metavar='ADDON[:SEATS]',
+                            help=f'Add-ons: {", ".join((x[0]+(":N" if x[2] else "") for x in constants.MSP_ADDONS))}')
 msp_add_parser.add_argument('name', action='store', help='Managed Company name')
 
 msp_remove_parser = argparse.ArgumentParser(prog='msp-remove', description='Remove Managed Company.')
-msp_remove_parser.add_argument('mc', action='store', help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
+msp_remove_parser.add_argument('mc', action='store',
+                               help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 
 msp_convert_node_parser = argparse.ArgumentParser(prog='msp-convert-node', description='Converts MSP node into Managed Company.')
 msp_convert_node_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
@@ -110,6 +132,11 @@ msp_convert_node_parser.add_argument('-p', '--plan', dest='plan', action='store'
                                      choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
                                      help='License Plan')
 msp_convert_node_parser.add_argument('node', action='store', help='node name or node ID')
+
+
+def bi_url(params, endpoint):
+    p = urlparse(params.rest_context.server_base)
+    return urlunparse((p.scheme, p.netloc, '/bi_api/v2/enterprise_console/' + endpoint, None, None, None))
 
 
 class GetMSPDataCommand(EnterpriseCommand):
@@ -121,179 +148,516 @@ class GetMSPDataCommand(EnterpriseCommand):
         api.query_enterprise(params)
 
 
-class MSPInfoCommand(EnterpriseCommand):
+class MSPMixin:
+    @staticmethod
+    def price_text_short(price_info):
+        price = ''
+        if isinstance(price_info, dict):
+            if 'amount' in price_info:
+                currency = price_info.get('currency')
+                if currency:
+                    if currency == 'USD':
+                        currency = '$'
+                    elif currency == 'EUR':
+                        currency = '\u20AC'
+                    elif currency == 'GBP':
+                        currency = '\u00a3'
+                    elif currency == 'JPY':
+                        currency = '\u00a5'
+                    price += currency
+
+                price += str(price_info['amount'])
+        return price
+
+    @staticmethod
+    def price_text(price_info):
+        price = MSPMixin.price_text_short(price_info)
+        if price and isinstance(price_info, dict):
+            unit = price_info.get('unit')
+            if unit:
+                if unit == 'USER_MONTH':
+                    unit = 'user/month'
+                elif unit == 'MONTH':
+                    unit = 'month'
+                elif unit == 'USER_CONSUMED_MONTH':
+                    unit = '50k API calls/month'
+                price += '/' + unit
+        return price
+
+    @staticmethod
+    def get_msp_addons(params):   # type: (Any) -> Dict[int, str]
+        if 'msp_addons' not in params.enterprise:
+            url = bi_url(params, 'mapping/addons')
+            rq = BI_pb2.MappingAddonsRequest()
+            rs = api.communicate_rest(params, rq, url, rs_type=BI_pb2.MappingAddonsResponse)
+            addon_map = {x.id: x.name for x in rs.addons}
+            params.enterprise['msp_addons'] = addon_map
+        return params.enterprise['msp_addons']
+
+    @staticmethod
+    def get_msp_pricing(params):
+        if 'msp_pricing' not in params.enterprise:
+            plan_map = {x[0]: x[1] for x in constants.MSP_PLANS}
+            file_map = {x[0]: x[1] for x in constants.MSP_FILE_PLANS}
+            addon_map = MSPMixin.get_msp_addons(params)
+
+            pricing = {}
+            params.enterprise['msp_pricing'] = pricing
+
+            url = bi_url(params, 'subscription/mc_pricing')
+            rq = BI_pb2.SubscriptionMcPricingRequest()
+            rs = api.communicate_rest(params, rq, url, rs_type=BI_pb2.SubscriptionMcPricingResponse)
+
+            units = BI_pb2.Cost.AmountPer.keys()
+            currencies = BI_pb2.Currency.keys()
+            pricing['mc_base_plans'] = {}
+            for p in rs.basePlans:
+                if p.id in plan_map:
+                    pricing['mc_base_plans'][plan_map[p.id]] = {
+                        'amount': p.cost.amount,
+                        'unit': units[p.cost.amountPer],
+                        'currency': currencies[p.cost.currency]
+                    }
+            pricing['mc_addons'] = {}
+            for p in rs.addons:
+                if p.id in addon_map:
+                    pricing['mc_addons'][addon_map[p.id]] = {
+                        'amount': p.cost.amount,
+                        'unit': units[p.cost.amountPer],
+                        'currency': currencies[p.cost.currency]
+                    }
+            pricing['mc_file_plans'] = {}
+            for p in rs.filePlans:
+                if p.id in file_map:
+                    pricing['mc_file_plans'][file_map[p.id]] = {
+                        'amount': p.cost.amount,
+                        'unit': units[p.cost.amountPer],
+                        'currency': currencies[p.cost.currency]
+                    }
+
+        return params.enterprise['msp_pricing']
+
+
+class MSPInfoCommand(EnterpriseCommand, MSPMixin):
     def get_parser(self):
         return msp_info_parser
 
     def execute(self, params, **kwargs):
+        if kwargs.get('pricing'):
+            pricing = MSPMixin.get_msp_pricing(params)
 
-        # MSP license pool
-        licenses = params.enterprise['licenses']
-        if licenses:
-            format_msp_licenses(licenses)
+            header = ['Name', 'Code', 'Price']
+            table = []
+            if 'mc_base_plans' in pricing:
+                plans = pricing['mc_base_plans']
+                for plan in constants.MSP_PLANS:
+                    code = plan[1]
+                    if code in plans:
+                        info = plans[code]
+                        row = [plan[2], code, MSPMixin.price_text(info)]
+                        table.append(row)
+            if 'mc_addons' in pricing:
+                table.append([])
+                table.append(['Addons'])
+                addons = pricing['mc_addons']
+                for addon in constants.MSP_ADDONS:
+                    code = addon[0]
+                    if code in addons:
+                        info = addons[code]
+                        row = [addon[1], code, MSPMixin.price_text(info)]
+                        table.append(row)
 
-        mcs = None
+            if 'mc_file_plans' in pricing:
+                table.append([])
+                table.append(['File Plans'])
+                plans = pricing['mc_file_plans']
+                for addon in constants.MSP_FILE_PLANS:
+                    plan = addon[1]
+                    if plan in plans:
+                        info = plans[plan]
+                        row = [addon[2], plan, MSPMixin.price_text(info)]
+                        table.append(row)
 
-        if 'managed_companies' in params.enterprise:
-            mcs = params.enterprise['managed_companies']
-
-        if mcs:
-            format_managed_company(mcs)
-        else:
-            print("No Managed Companies\n")
-
-
-class MSPLicenseCommand(EnterpriseCommand):
-
-    def get_parser(self):
-        return msp_license_parser
-
-    def execute(self, params, **kwargs):
-
-        # product_id = kwargs['product_id']
-        action = kwargs['action']
-
-        enterprise = params.enterprise
-
-        if action == 'usage':
-            licenses = enterprise['licenses']
-            if licenses:
-                format_msp_licenses(licenses)
+            dump_report_data(table, header)
             return
 
-        elif action == 'add' or action == 'reduce':
-            seats = kwargs['seats']
-
-            mc_input = kwargs['mc'] if kwargs['mc'] else -1
-
-            msp_license_pool = enterprise['licenses'][0]['msp_pool']
-            managed_companies = enterprise['managed_companies']
-
-            current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
-
-            if current_mc is None:
-                raise CommandError('msp-license', 'No managed company found for given company id or name')
-
-            current_product_id = current_mc['product_id']
-            seats_to_set = 0
-
-            license_from_pool = find(lambda lic: lic['product_id'] == current_product_id, msp_license_pool)
-
-            if action == 'add':
-                if license_from_pool['availableSeats'] < seats:
-                    error_message = "Cannot add more than allowed seats. Currently available seats " + str(license_from_pool['availableSeats']) + " trying to add " + str(seats)
-                    raise CommandError('msp-license', error_message)
+        if 'managed_companies' in params.enterprise:
+            sort_dict = {x[0]: i for i, x in enumerate(constants.MSP_ADDONS)}
+            verbose = kwargs.get('verbose')
+            header = ['ID', 'Name', 'Node', 'Plan', 'Storage', 'Addons', 'Allocated', 'Active']
+            table = []
+            plan_map = {x[1]: x[2] for x in constants.MSP_PLANS}
+            file_plan_map = {x[1]: x[2] for x in constants.MSP_FILE_PLANS}
+            for mc in params.enterprise['managed_companies']:
+                node_id = mc['msp_node_id']
+                if verbose:
+                    node_path = str(node_id)
                 else:
-                    seats_to_set = current_mc['number_of_seats'] + seats
-            elif action == 'reduce':
-                seats_to_set = current_mc['number_of_seats'] - seats
-
-                if seats_to_set < 0:
-                    seats_to_set = 0
-
-            rq = {
-                'command': 'enterprise_update_by_msp',
-                'enterprise_id': current_mc['mc_enterprise_id'],
-                'enterprise_name': current_mc['mc_enterprise_name'],
-                'product_id': current_mc['product_id'],
-                'seats': seats_to_set
-            }
-
-            rs = api.communicate(params, rq)
-
-            if rs['result'] == 'success':
-                mc_from_rs = find(lambda mc: mc['mc_enterprise_id'] == rs["enterprise_id"], managed_companies)
-                print("Successfully updated '%s' id=%d" % (mc_from_rs['mc_enterprise_name'], mc_from_rs['mc_enterprise_id']))
-                api.query_enterprise(params)
+                    node_path = self.get_node_path(params, node_id, True)
+                file_plan = mc['file_plan_type']
+                file_plan = file_plan_map.get(file_plan, file_plan)
+                addons = [x['name'] for x in mc.get('add_ons', [])]
+                addons.sort(key=lambda x: sort_dict.get(x, -1))
+                if not verbose:
+                    addons = len(addons)
+                plan = mc['product_id']
+                if not verbose:
+                    plan = plan_map.get(plan, plan)
+                seats = mc['number_of_seats']
+                if seats > 2000000:
+                    seats = None
+                table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
+                              plan, file_plan, addons, seats, mc['number_of_users']])
+            table.sort(key=lambda x: x[1].lower())
+            dump_report_data(table, header, row_number=True)
+        else:
+            logging.info("No Managed Companies")
 
 
-class MSPLicensesReportCommand(EnterpriseCommand):
+class MSPUpdateCommand(EnterpriseCommand):
     def get_parser(self):
-        return msp_license_report_parser
+        return msp_update_parser
 
     def execute(self, params, **kwargs):
+        managed_companies = params.enterprise['managed_companies']
+        mc_input = kwargs.get('mc')
+        current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
+        if not current_mc:
+            raise error.CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
 
-        report_output_file = kwargs['output']
-        report_type = kwargs['report_type']
-        report_format = kwargs['report_format']
-        from_date_str = kwargs['from_date']
-        to_date_str = kwargs['to_date']
+        rq = {
+            'command': 'enterprise_update_by_msp',
+            'enterprise_id': current_mc['mc_enterprise_id'],
+            'enterprise_name': current_mc['mc_enterprise_name'],
+        }
 
-        to_append = False
+        plan_name = kwargs.get('plan') or current_mc['product_id']
+        plan_name = plan_name.lower()
+        product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
+        if not product_plan:
+            logging.warning('Managed Company plan \"%s\" is not found', plan_name)
+            return
+        rq['product_id'] = product_plan[1]
 
-        rows = []
-
-        if report_type == 'allocation':
-            licenses = params.enterprise['licenses']
-
-            headers = ['plan_id', 'available_licenses', 'total_licenses', 'stash']
-
-            if len(licenses) > 0:
-                for i, lic in enumerate(licenses):
-                    rows = [
-                        [
-                            ml.get('product_id') or '-',
-                            ml.get('availableSeats') or '-',
-                            ml.get('seats') or '-',
-                            ml.get('stash') or '-'
-                        ] for j, ml in enumerate(lic.get('msp_pool'))]
+        seats = kwargs.get('seats')
+        if isinstance(seats, int):
+            rq['seats'] = seats if seats >= 0 else 2147483647
         else:
+            rq['seats'] = current_mc['number_of_seats']
 
-            if not from_date_str or not to_date_str:
-                # will use data range to query
+        plan_name = kwargs.get('file_plan')
+        if plan_name:
+            plan_name = plan_name.lower()
+            file_plan = next((x for x in constants.MSP_FILE_PLANS if plan_name in (y.lower() for y in x if isinstance(y, str))), None)
+            if not file_plan:
+                logging.warning('File plan \"%s\" is not found', plan_name)
+                return
+            if product_plan[3] < file_plan[0]:
+                rq['file_plan_type'] = file_plan[1]
 
-                rng = kwargs['range']
-                from_date1, end_date1 = date_range_str_to_dates(rng)
-
-                from_date = from_date1
-                to_date = end_date1
-            else:
-                # will use start and end data
-                if loginv3.CommonHelperMethods.check_int(from_date_str):
-                    from_date = datetime.fromtimestamp(int(from_date_str))
-                else:
-                    from_date = datetime.strptime(from_date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")
-
-                if loginv3.CommonHelperMethods.check_int(to_date_str):
-                    to_date = datetime.fromtimestamp(int(to_date_str))
-                else:
-                    to_date = datetime.strptime(to_date_str + " 11:59:59", "%Y-%m-%d %H:%M:%S")
-
-            from_date_timestamp = int(from_date.timestamp() * 1000)
-            to_date_timestamp = int(to_date.timestamp() * 1000)
-
-            rq = {
-                'command': 'get_mc_license_adjustment_log',
-                'from': from_date_timestamp,
-                'to': to_date_timestamp
+        addons = {}
+        for ao in current_mc.get('add_ons', []):
+            if not ao['enabled']:
+                continue
+            addon_name = ao['name']
+            keep_addon = {
+                'add_on': addon_name
             }
+            seats = ao.get('seats')
+            if seats > 0:
+                keep_addon['seats'] = seats
+            addons[addon_name] = keep_addon
 
-            rs = api.communicate(params, rq)
+        for action in ('add_addon', 'remove_addon'):
+            action_addons = kwargs.get(action)
+            if isinstance(action_addons, list):
+                for aon in action_addons:
+                    addon_name, sep, seats = aon.partition(':')
+                    addon_name = addon_name.lower()
+                    addon = next((x for x in constants.MSP_ADDONS if addon_name == x[0]), None)
+                    if addon is None:
+                        logging.warning('Addon \"%s\" is not found', addon_name)
+                        return
+                    addon_seats = 0
+                    if sep == ':' and addon[2] and action == 'add_addon':
+                        try:
+                            addon_seats = int(seats)
+                        except:
+                            logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
+                            return
+                    if action == 'add_addon':
+                        add_addon = {
+                            'add_on': addon_name
+                        }
+                        if addon_seats > 0:
+                            add_addon['seats'] = seats
+                        addons[addon_name] = add_addon
+                    else:
+                        if addon_name in addons:
+                            del addons[addon_name]
+        rq['add_ons'] = list(addons.values())
+        rs = api.communicate(params, rq)
+        if rs['result'] == 'success':
+            mc_from_rs = find(lambda mc: mc['mc_enterprise_id'] == rs["enterprise_id"], managed_companies)
+            print("Successfully updated '%s' id=%d" % (mc_from_rs['mc_enterprise_name'], mc_from_rs['mc_enterprise_id']))
+            api.query_enterprise(params)
 
-            headers = ['id', 'time', 'company_id', 'company_name', 'status', 'number_of_allocations', 'plan',
-                       'transaction_notes', 'price_estimate']
 
-            for log in rs['log']:
-                rows.append([log['id'],
-                             log['date'],
-                             log['enterprise_id'],
-                             log['enterprise_name'],
-                             log['status'],
-                             log['new_number_of_seats'],
-                             log['new_product_type'],
-                             log['note'],
-                             log['price']])
+class DailySnapshot(object):
+    def __init__(self, mc_id, date_no):
+        self.mc_enterprise_id = mc_id
+        self.date_no = date_no
 
-        if kwargs.get('format') != 'json':
-            headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+    def __eq__(self, other):
+        if isinstance(other, DailySnapshot):
+            return self.mc_enterprise_id == other.mc_enterprise_id and self.date_no == other.date_no
+        return False
 
-        output = dump_report_data(rows, headers, fmt=report_format, filename=report_output_file, append=to_append)
+    def __str__(self):
+        return f'MC ID: {self.mc_enterprise_id}; Date: {self.date_no}'
 
-        if report_format != 'table' and not output:
-            print("Successfully saved report to", report_generation_message(report_output_file, report_format))
-            print()
+    def __hash__(self):
+        b = (self.mc_enterprise_id << 32) + self.date_no
+        return b.__hash__()
 
-        return output
+    @staticmethod
+    def merge_units(unit_iter):    # type: (Iterable[Dict[int, Union[int, Tuple[int, int]]]]) -> Dict[int, Tuple[int, int]]
+        ret = {}   # type: Dict[int, Tuple[int, int]]
+        for units in unit_iter:
+            if not isinstance(units, dict):
+                continue
+            for unit in units:
+                if not isinstance(unit, int):
+                    continue
+                count = units[unit]
+                if not isinstance(count, (int, tuple)):
+                    continue
+                if isinstance(count, int):
+                    qty = count
+                    days = 1
+                else:
+                    qty = count[0]
+                    days = count[1]
+                if unit in ret:
+                    q1, d1 = ret[unit]
+                    ret[unit] = (q1 + qty, d1 + days)
+                else:
+                    ret[unit] = (qty, days)
+        return ret
+
+
+class MSPBillingReportCommand(EnterpriseCommand):
+    LAST_USER = ''
+    SNAPSHOT_CACHE = {}  # type: Dict[str, Dict[DailySnapshot, Dict[int, int]]]
+    COMPANY_CACHE = {}
+
+    def get_parser(self):
+        return msp_billing_report_parser
+
+    @staticmethod
+    def is_plan_id(msp_id):   # type: (int) -> bool
+        return 0 < msp_id < 100
+
+    @staticmethod
+    def is_storage_plan_id(msp_id):   # type: (int) -> bool
+        return 100 < msp_id < 10000
+
+    @staticmethod
+    def is_addon_id(msp_id):   # type: (int) -> bool
+        return 10000 < msp_id
+
+    @staticmethod
+    def get_count_id(msp_id):
+        if 0 < msp_id < 100:
+            return msp_id
+        if 100 < msp_id < 10000:
+            return msp_id // 100
+        if msp_id > 10000:
+            return msp_id // 10000
+        return 0
+
+    @staticmethod
+    def get_daily_snapshots(params, year, month):
+        if MSPBillingReportCommand.LAST_USER:
+            if MSPBillingReportCommand.LAST_USER != params.user:
+                MSPBillingReportCommand.SNAPSHOT_CACHE.clear()
+                MSPBillingReportCommand.COMPANY_CACHE.clear()
+        MSPBillingReportCommand.LAST_USER = params.user
+
+        key = f'{year}-{month}'
+        if key not in MSPBillingReportCommand.SNAPSHOT_CACHE:
+            rq = BI_pb2.ReportingDailySnapshotRequest()
+            rq.year = year
+            rq.month = month
+            url = bi_url(params, 'reporting/daily_snapshot')
+            rs = api.communicate_rest(params, rq, url, rs_type=BI_pb2.ReportingDailySnapshotResponse)
+            for company in rs.mcEnterprises:
+                MSPBillingReportCommand.COMPANY_CACHE[company.id] = company.name
+
+            snapshot = {}
+            for record in rs.records:
+                units = {}
+                if record.maxLicenseCount > 0:
+                    if record.maxBasePlanId > 0:
+                        units[record.maxBasePlanId] = record.maxLicenseCount
+                    if record.maxFilePlanTypeId > 0:
+                        units[record.maxFilePlanTypeId * 100] = record.maxLicenseCount
+                    for addon in record.addons:
+                        if addon.maxAddonId > 0:
+                            units[addon.maxAddonId * 10000] = addon.units
+                mc_id = record.mcEnterpriseId
+                ds = datetime.datetime.utcfromtimestamp(record.date // 1000)
+                dt = ds.date()
+                daily = DailySnapshot(mc_id, dt.toordinal())
+                snapshot[daily] = units
+            MSPBillingReportCommand.SNAPSHOT_CACHE[key] = snapshot
+        return MSPBillingReportCommand.SNAPSHOT_CACHE[key]
+
+    def execute(self, params, **kwargs):
+        month_str = kwargs.get('month')
+        if not month_str:
+            dt = datetime.datetime.now()
+            month = dt.month
+            year = dt.year
+            month -= 1
+            if month < 1:
+                month += 12
+                year -= 1
+        else:
+            year_part, sep, month_part = month_str.partition('-')
+            try:
+                year = int(year_part)
+                month = int(month_part)
+            except:
+                logging.warning('Given month \"%s\" is not valid. YYYY-MM', month_str)
+                return
+        daily_counts = MSPBillingReportCommand.get_daily_snapshots(params, year, month)
+        title = f'Consumption Billing Statement: {calendar.month_name[month]} {year}'
+        headers = []
+        table = []
+
+        show_date = kwargs.get('show_date', False)
+        show_company = kwargs.get('show_company', False)
+        merged_counts = {}  # type: Dict[DailySnapshot, Dict[int, Tuple[int, int]]]
+        for dc in daily_counts:
+            d = DailySnapshot(dc.mc_enterprise_id if show_company else 0, dc.date_no if show_date else 0)
+            merged_counts[d] = DailySnapshot.merge_units((merged_counts.get(d), daily_counts[dc]))
+
+        if show_date:
+            headers.append('date')
+        if show_company:
+            headers.extend(('company', 'company_id'))
+        headers.extend(('product', 'licenses', 'rate'))
+        if not show_date:
+            headers.append('avg_per_day')
+        plan_lookup = {x[0]: x for x in constants.MSP_PLANS}
+        storage_lookup = {x[0]: x for x in constants.MSP_FILE_PLANS}
+        addon_lookup = {}
+        addons = {x[0]: x for x in constants.MSP_ADDONS}
+        for a_id, a_name in MSPMixin.get_msp_addons(params).items():
+            if a_name in addons:
+                addon_lookup[a_id] = addons[a_name]
+        pricing = MSPMixin.get_msp_pricing(params)
+        for point in merged_counts:
+            day_str = str(datetime.date.fromordinal(point.date_no)) if show_date else ''
+            company = MSPBillingReportCommand.COMPANY_CACHE.get(point.mc_enterprise_id, '') if show_company else ''
+            counts = merged_counts[point]
+            products = list(counts.keys())
+            products.sort()
+            for product in products:
+                row = []
+                if show_date:
+                    row.append(day_str)
+                if show_company:
+                    row.extend((company, point.mc_enterprise_id))
+                count_id = MSPBillingReportCommand.get_count_id(product)
+                count, days = counts[product]
+
+                product_name = ''
+                rate_text = ''
+                if MSPBillingReportCommand.is_plan_id(product):
+                    plan = plan_lookup.get(count_id)
+                    product_name = plan[2] if plan else str(count_id)
+                    if 'mc_base_plans' in pricing:
+                        if plan[1] in pricing['mc_base_plans']:
+                            rate = pricing['mc_base_plans'][plan[1]]
+                            rate_text = MSPMixin.price_text_short(rate)
+                elif MSPBillingReportCommand.is_storage_plan_id(product):
+                    plan = storage_lookup.get(count_id)
+                    product_name = plan[2] if plan else str(count_id)
+                    if 'mc_file_plans' in pricing:
+                        if plan[1] in pricing['mc_file_plans']:
+                            rate = pricing['mc_file_plans'][plan[1]]
+                            rate_text = MSPMixin.price_text_short(rate)
+                elif MSPBillingReportCommand.is_addon_id(product):
+                    addon = storage_lookup.get(count_id)
+                    product_name = addon[1] if addon else str(count_id)
+                    if 'mc_addons' in pricing:
+                        if addon[0] in pricing['mc_addons']:
+                            rate = pricing['mc_addons'][addon[0]]
+                            rate_text = MSPMixin.price_text_short(rate)
+                else:
+                    product_name = str(product)
+
+                row.extend((product_name, count, rate_text))
+                if not show_date:
+                    row.append(count // days)
+
+                table.append(row)
+
+        output_format = kwargs.get('format')
+        if output_format == 'table':
+            headers = [field_to_title(x) for x in headers]
+        return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'), title=title)
+
+
+class MSPLegacyReportCommand(EnterpriseCommand):
+    def get_parser(self):
+        return msp_legacy_report_parser
+
+    def execute(self, params, **kwargs):
+        from_date_str = kwargs.get('from_date')
+        to_date_str = kwargs.get('to_date')
+        if not from_date_str or not to_date_str:
+            # will use data range to query
+            rng = kwargs.get('range')
+            from_date, to_date = date_range_str_to_dates(rng)
+        else:
+            # will use start and end data
+            if loginv3.CommonHelperMethods.check_int(from_date_str):
+                from_date = datetime.datetime.fromtimestamp(int(from_date_str))
+            else:
+                from_date = datetime.datetime.strptime(from_date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S")
+
+            if loginv3.CommonHelperMethods.check_int(to_date_str):
+                to_date = datetime.datetime.fromtimestamp(int(to_date_str))
+            else:
+                to_date = datetime.datetime.strptime(to_date_str + " 11:59:59", "%Y-%m-%d %H:%M:%S")
+
+        from_date_timestamp = int(from_date.timestamp() * 1000)
+        to_date_timestamp = int(to_date.timestamp() * 1000)
+
+        rq = {
+            'command': 'get_mc_license_adjustment_log',
+            'from': from_date_timestamp,
+            'to': to_date_timestamp
+        }
+
+        rs = api.communicate(params, rq)
+
+        title = None
+        headers = []
+        table = []
+        for log in rs['log']:
+            table.append([log['id'], log['date'], log['enterprise_id'], log['enterprise_name'], log['status'],
+                          log['new_number_of_seats'], log['new_product_type'], log['note'], log['price']])
+
+        headers.extend(('id', 'time', 'company_id', 'company_name', 'status', 'number_of_allocations', 'plan', 'transaction_notes', 'price_estimate'))
+
+        output_format = kwargs.get('format')
+        if output_format == 'table':
+            headers = [field_to_title(x) for x in headers]
+        return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'), title=title)
 
 
 class MSPAddCommand(EnterpriseCommand):
@@ -317,13 +681,23 @@ class MSPAddCommand(EnterpriseCommand):
             if len(root_nodes) == 0:
                 raise CommandError('msp-create', 'No root nodes were detected. Specify --node parameter')
             node_id = root_nodes[0]
+
+        plan_name = kwargs.get('plan')
+        if plan_name:
+            plan_name = plan_name.lower()
+            product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
+            if not product_plan:
+                logging.warning('Managed Company plan \"%s\" is not found', plan_name)
+                return
+        else:
+            product_plan = constants.MSP_PLANS[0]
+
         name = kwargs['name']
         tree_key = utils.generate_aes_key()
         rq = {
             'command': 'enterprise_registration_by_msp',
             'node_id': node_id,
-            'seats': kwargs['seats'],
-            'product_id': kwargs['plan'],
+            'product_id': product_plan[1],
             'enterprise_name': name,
             'encrypted_tree_key': utils.base64_url_encode(
                 crypto.encrypt_aes_v2(tree_key, params.enterprise['unencrypted_tree_key'])),
@@ -332,6 +706,45 @@ class MSPAddCommand(EnterpriseCommand):
             'root_node': utils.base64_url_encode(
                 crypto.encrypt_aes_v1(json.dumps({'displayname': 'root'}).encode(), tree_key))
         }
+
+        seats = kwargs.get('seats')
+        if isinstance(seats, int):
+            rq['seats'] = seats if seats >= 0 else 2147483647
+
+        plan_name = kwargs.get('file_plan')
+        if plan_name:
+            plan_name = plan_name.lower()
+            file_plan = next((x for x in constants.MSP_FILE_PLANS if plan_name in (y.lower() for y in x if isinstance(y, str))), None)
+            if not file_plan:
+                logging.warning('File plan \"%s\" is not found', plan_name)
+                return
+            if product_plan[3] < file_plan[0]:
+                rq['file_plan_type'] = file_plan[1]
+
+        addons = kwargs.get('addon')
+        if isinstance(addons, list):
+            rq['add_ons'] = []
+            for v in addons:
+                addon_name, sep, seats = v.partition(':')
+                addon_name = addon_name.lower()
+                addon = next((x for x in constants.MSP_ADDONS if x[0] == addon_name), None)
+                if addon is None:
+                    logging.warning('Addon \"%s\" is not found', addon_name)
+                    return
+                addon_seats = 0
+                if sep == ':' and addon[2]:
+                    try:
+                        addon_seats = int(seats)
+                    except:
+                        logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
+                        return
+                rqa = {
+                    'add_on': addon[0]
+                }
+                if addon_seats > 0:
+                    rqa['seats'] = addon_seats
+                rq['add_ons'].append(rqa)
+
         company_id = -1
         rs = api.communicate(params, rq)
         if rs:
@@ -340,6 +753,7 @@ class MSPAddCommand(EnterpriseCommand):
             logging.info('Managed company \"%s\" added. ID=%d', name, company_id)
         api.query_enterprise(params)
         return company_id
+
 
 class MSPRemoveCommand(EnterpriseCommand):
     def get_parser(self):
@@ -369,12 +783,9 @@ class MSPRemoveCommand(EnterpriseCommand):
 
 
 def get_mc_by_name_or_id(msc, name_or_id):
-
-    found_mc = None
     if loginv3.CommonHelperMethods.check_int(name_or_id):
         # get by id
         found_mc = find(lambda mc: mc['mc_enterprise_id'] == int(name_or_id), msc)
-
     else:
         # get by company name (all lower case)
         found_mc = find(lambda mc: mc['mc_enterprise_name'].lower() == name_or_id.lower(), msc)
@@ -403,7 +814,7 @@ def date_range_str_to_dates(range_str):
     if range_str not in ranges:
         raise CommandError('', "Given range %s is not supported. Supported ranges: %s" % (range_str, ranges))
 
-    current_time = datetime.now()
+    current_time = datetime.datetime.now()
 
     today_start_dt = current_time.replace(hour=0, minute=0, second=0)
     today_end_dt = current_time.replace(hour=11, minute=59, second=59)
@@ -426,15 +837,15 @@ def date_range_str_to_dates(range_str):
         end_date = today_end_dt
 
     elif range_str == 'yesterday':
-        start_date = today_start_dt - timedelta(1)
-        end_date = today_end_dt - timedelta(1)
+        start_date = today_start_dt - datetime.timedelta(1)
+        end_date = today_end_dt - datetime.timedelta(1)
 
     elif range_str == 'last_7_days':
-        start_date = today_start_dt - timedelta(7)
+        start_date = today_start_dt - datetime.timedelta(7)
         end_date = today_end_dt
 
     elif range_str == 'last_30_days':
-        start_date = today_start_dt - timedelta(30)
+        start_date = today_start_dt - datetime.timedelta(30)
         end_date = today_end_dt
 
     elif range_str == 'month_to_date':
@@ -583,29 +994,16 @@ class MSPConvertNodeCommand(EnterpriseCommand):
                 nodename = self.get_node_path(params, node_id)
                 errors.append(f'Conflicting admin role management: Node: {nodename}, Role: {rolename}')
 
-        msp_license_pool = params.enterprise['licenses'][0]['msp_pool']
+        if len(errors) > 0:
+            print('\n'.join(errors))
+            return
+
         seats = kwargs.get('seats') or 0
         if seats < len(users_to_move):
             seats = len(users_to_move)
         if seats == 0:
             seats = 1
         plan = kwargs.get('plan')
-        if plan:
-            pool = next((x for x in msp_license_pool if x['product_id'] == plan), None)
-            if pool:
-                if pool['availableSeats'] < seats:
-                    errors.append(f'Not enough seats ({seats}) in the selected plan {plan}')
-            else:
-                errors.append(f'Invalid plan {plan}')
-
-        else:
-            plan = next((x['product_id'] for x in msp_license_pool if x['availableSeats'] >= seats), None)
-            if not plan:
-                errors.append(f'There is no plan with {seats} available seats')
-
-        if len(errors) > 0:
-            print('\n'.join(errors))
-            return
 
         msp_node = node_lookup[msp_node_id]
         msp_node_name = msp_node['data'].get('displayname')
@@ -700,5 +1098,5 @@ class MSPConvertNodeCommand(EnterpriseCommand):
                 mc_rq.teamKeys.append(etkr)
 
         api.communicate_rest(params, mc_rq, 'enterprise/node_to_managed_company')
-        logging.info(f'Node \"{msp_node_name}\" was converted to Managed Company' )
+        logging.info(f'Node \"{msp_node_name}\" was converted to Managed Company')
         api.query_enterprise(params)
