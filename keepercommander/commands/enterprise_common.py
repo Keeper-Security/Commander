@@ -315,14 +315,16 @@ class EnterpriseCommand(Command):
         if rs['result'] == 'success':
             return rs['base_id']
 
-    def get_node_path(self, params, node_id):
+    def get_node_path(self, params, node_id, omit_root=False):
         if self.nodes is None:
-            self.nodes = {}
-        for node in params.enterprise['nodes']:
-            self.nodes[node['node_id']] = (node['data'].get('displayname') or params.enterprise['enterprise_name'], node.get('parent_id') or 0)
+            self.nodes = {
+                x['node_id']: (x['data'].get('displayname') if x.get('parent_id', 0) > 0 else params.enterprise['enterprise_name'], x.get('parent_id', 0))
+                for x in params.enterprise['nodes']}
         path = ''
         node = self.nodes.get(node_id)
         while node:
+            if omit_root and node[1] == 0:
+                break
             path = '{0}{1}{2}'.format(node[0], '\\' if path else '', path)
             node = self.nodes.get(node[1])
         return path
