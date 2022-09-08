@@ -193,11 +193,11 @@ class PasswordRecord(KeeperRecord):
         return ''
 
     def load_record_data(self, data, extra=None):
-        self.title = data.get('title', '').strip()
-        self.login = data.get('secret1', '').strip()
-        self.password = data.get('secret2', '')
-        self.link = data.get('link', '')
-        self.notes = data.get('notes', '')
+        self.title = (data.get('title') or '').strip()
+        self.login = (data.get('secret1') or '').strip()
+        self.password = data.get('secret2') or ''
+        self.link = data.get('link') or ''
+        self.notes = data.get('notes') or ''
         custom = data.get('custom')
         if isinstance(custom, list):
             self.custom.extend((CustomField(x) for x in custom if isinstance(x, dict) and 'name' in x))
