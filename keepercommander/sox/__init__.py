@@ -110,6 +110,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 ruid_chunks = [record_uids_raw[x:x + max_len] for x in range(0, total_ruids, max_len)]
                 tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
                 await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+                sdata.storage.set_compliance_data_updated()
 
             py_version_3_6 = not hasattr(asyncio, 'run')
             if not py_version_3_6:
@@ -123,7 +124,6 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 asyncio.set_event_loop(loop)
                 try:
                     loop.run_until_complete(do_tasks())
-                    sdata.storage.set_compliance_data_updated()
                 except KeyboardInterrupt:
                     logging.info('SIGINT received: cancelling pending tasks')
                 finally:
