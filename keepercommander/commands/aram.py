@@ -1770,16 +1770,18 @@ class ComplianceReportCommand(EnterpriseCommand):
             rows.sort(key=operator.itemgetter('record_uid'))
             last_ruid = ''
             formatted_rows = []
+            record_lookup = sd.get_records()
             for row in rows:
                 r_uid = row.get('record_uid')
-                rec = sd.get_records().get(r_uid)
-                r_title = rec.data.get('title')
-                r_type = rec.data.get('record_type')
-                r_url = rec.data.get('url')
-                formatted_ruid = r_uid if report_fmt != 'json' and r_uid != last_ruid else ''
+                rec = record_lookup.get(r_uid)
+                r_data = rec.data
+                r_title = r_data.get('title', '')
+                r_type = r_data.get('record_type', '')
+                r_url = r_data.get('url', '')
+                formatted_ruid = r_uid if report_fmt != 'table' or last_ruid != r_uid else ''
                 u_email = row.get('email')
                 permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
-                fmt_row = [formatted_ruid, r_title, r_type, u_email, permissions, r_url]
+                fmt_row = [formatted_ruid, r_title, r_type, u_email, permissions, r_url.rstrip('/')]
                 formatted_rows.append(fmt_row)
                 last_ruid = r_uid
             return formatted_rows
