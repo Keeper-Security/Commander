@@ -1683,8 +1683,9 @@ class ComplianceReportCommand(EnterpriseCommand):
                       f'Total Users: {num_users} Total shared records: {num_shared}'
                 logging.info(msg)
             help_txt = "\nGet record and sharing information from all vaults in the enterprise\n" \
-                       "Format:\ncompliance-report [-h] [--rebuild] [--node NODE] [--username USERNAME] " \
-                       "[--job-title JOB_TITLE] [--shared] [--output OUTPUT] [--format {table,csv,json}]" \
+                       "Format:\ncompliance-report [-h] [--rebuild] [--no-cache] [--node NODE] [--username USERNAME] " \
+                       "[--job-title JOB_TITLE] [--url DOMAIN] [--shared] [--output OUTPUT] " \
+                       "[--format {table,csv,json}]" \
                        "\n\nExamples:" \
                        "\nSee all records for a user" \
                        "\n\t'compliance-report --username USERNAME'" \
