@@ -111,6 +111,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
                 await asyncio.gather(*tasks, return_exceptions=return_exceptions)
                 sdata.storage.set_compliance_data_updated()
+                print('')
 
             py_version_3_6 = not hasattr(asyncio, 'run')
             if not py_version_3_6:
