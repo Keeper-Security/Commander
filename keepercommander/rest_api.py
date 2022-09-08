@@ -148,7 +148,10 @@ def execute_rest(context, endpoint, payload):
         api_request.encryptedPayload = encrypt_aes(payload.SerializeToString(), context.transmission_key)
 
         request_data = api_request.SerializeToString()
-        url = context.server_base + endpoint
+        if endpoint.startswith('https://'):
+            url = endpoint
+        else:
+            url = context.server_base + endpoint
 
         rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'},
                            proxies=context.proxies, verify=context.certificate_check)

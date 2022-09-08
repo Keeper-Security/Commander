@@ -4,7 +4,28 @@ from typing import List, Tuple
 from datetime import timedelta
 from urllib.parse import urlparse
 
-# Managed Role privileges
+MSP_FILE_PLANS = [
+    (4, 'STORAGE_100GB', '100GB'),
+    (7, 'STORAGE_1000GB', '1TB'),
+    (8, 'STORAGE_10000GB', '10TB'),
+]
+
+MSP_PLANS = [
+    (1, 'business', 'Business', 4),
+    (2, 'businessPlus', 'Business Plus', 7),
+    (10, 'enterprise', 'Enterprise', 4),
+    (11, 'enterprisePlus', 'Enterprise Plus', 7),
+]
+
+MSP_ADDONS = [
+    ('enterprise_breach_watch', 'BreachWatch', False),
+    ('compliance_report', 'Compliance Reporting', False),
+    ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False),
+    ('msp_service_and_support', 'MSP Dedicated Service & Support', False),
+    ('secrets_manager', 'Keeper Secrets Manager (KSM)', False),
+    ('connection_manager', 'Keeper Connection Manager (KCM)', True),
+    ('chat', 'KeeperChat', False),
+]
 
 
 class PrivilegeScope(enum.IntEnum):
@@ -12,6 +33,7 @@ class PrivilegeScope(enum.IntEnum):
     MSP = 2,
     Hidden = 3,
 
+# Managed Role privileges
 
 ROLE_PRIVILEGES = [
     ('Manage Nodes', 'MANAGE_NODES', PrivilegeScope.All),
