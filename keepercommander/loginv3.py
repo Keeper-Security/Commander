@@ -744,7 +744,7 @@ class LoginV3Flow:
                                 "signature": utils.base64_url_encode(response['signature']),
                             },
                             "type": "public-key",
-                            "clientExtensionResults": response['extensionResults']
+                            "clientExtensionResults": response['extensionResults'] or {}
                         }
                         key_value_type = proto.TWO_FA_RESP_WEBAUTHN
 
