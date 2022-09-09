@@ -753,13 +753,17 @@ class SharedRecordsReport(Command):
             3: "Share Team Folder"
         }
 
-        team_records = set()    # type: Set[Tuple[str, str]]
-
-        def get_share_team(rec_uid):
+        def get_share_teams(rec_uid):
+            sf_cache = params.shared_folder_cache
+            teams = []
             for folder in find_folders(params, rec_uid):
-                if folder in params.shared_folder_cache:
-                    return params.shared_folder_cache.get(folder).get('teams')[0]
+                shared_folder = sf_cache.get(folder)
+                sf_teams = shared_folder.get('teams', []) if shared_folder else []
+                teams += sf_teams
+            return teams
 
+        show_team_users = kwargs.get('show_team_users')
+        team_records = set()    # type: Set[Tuple[Union[str, None], str]]
         rows = []
         for e in shared_records_data_rs.events:
             record_uid = api.decode_uid_to_str(e.recordUid)
@@ -792,20 +796,21 @@ class SharedRecordsReport(Command):
                 'record_uid': record_uid,
                 'title': cached_record.title,
                 'share_to': e.userName,
-                'shared_from': shared_from_mapping[e.shareFrom] if e.shareFrom in shared_from_mapping else "Other Share",
+                'shared_from': shared_from_mapping.get(e.shareFrom, 'Other Share'),
                 'permissions': permissions,
                 'folder_path': path_str
             }
 
             if e.shareFrom == 3:
                 # Show team info for records shared via share team folders
-                share_team = get_share_team(record_uid)
-                team_record = share_team.get('team_uid'), record_uid
-                if team_record not in team_records:
-                    team_records.add(team_record)
-                    team_row = {**user_row, 'share_to': '(Team) ' + share_team.get('name')}
-                    rows.append(team_row)
-                if kwargs.get('show_team_users'):
+                for share_team in get_share_teams(record_uid):
+                    if isinstance(share_team, dict):
+                        team_record = share_team.get('team_uid'), record_uid
+                        if team_record not in team_records:
+                            team_records.add(team_record)
+                            team_row = {**user_row, 'share_to': '(Team) ' + share_team.get('name', '')}
+                            rows.append(team_row)
+                if show_team_users:
                     user_row['share_to'] = '(Team User) ' + user_row.get('share_to')
                     rows.append(user_row)
             else:
