@@ -10,7 +10,7 @@
 #
 import argparse
 import ipaddress
-from typing import Set, Dict
+from typing import Set, Dict, Optional, List
 
 import itertools
 import json
@@ -46,7 +46,8 @@ from ..generator import generate
 from ..error import CommandError
 from ..proto import record_pb2 as record_proto
 from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
+                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest,
+                                    GetSharingAdminsRequest, GetSharingAdminsResponse)
 from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
                                     SecurityReportResponse)
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
@@ -1552,6 +1553,25 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 print('{0:>16s}: {1:<24s}{2}'.format(
                     'Queued Team' if i == 0 else '', team_node['name'],
                     f' [{team_node["team_uid"]}]' if is_verbose else ''))
+
+        share_admins = self.get_share_administrators(params, user)
+        if share_admins:
+            for no, email in enumerate(share_admins):
+                print('{0:>16s}: {1:<24s}'.format('Share Admins' if no == 0 else '', email))
+
+    @staticmethod
+    def get_share_administrators(params, user):   # type: (KeeperParams, dict) -> Optional[List[str]]
+        try:
+            if isinstance(user, dict):
+                if 'share_admins' not in user:
+                    rq = GetSharingAdminsRequest()
+                    rq.username = user['username']
+                    rs = api.communicate_rest(params, rq, 'enterprise/get_sharing_admins', rs_type=GetSharingAdminsResponse)
+                    user['share_admins'] = [x.email for x in rs.userProfileExts
+                                            if x.isShareAdminForRequestedObject or x.isMSPMCAdmin]
+                return [x for x in user['share_admins']]
+        except Exception as e:
+            logging.debug(e)
 
 
 class EnterpriseRoleCommand(EnterpriseCommand):
@@ -3077,7 +3097,7 @@ class UserReportCommand(EnterpriseCommand):
 
         look_back_days = kwargs.get('days')
         report_filter = {'audit_event_type': 'login'}
-        if look_back_days > 0:
+        if isinstance(look_back_days, int) and look_back_days > 0:
             logging.info(f'Querying latest login for the last {look_back_days} days')
             from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
             report_filter['created'] = {'min': int(from_date.timestamp())}

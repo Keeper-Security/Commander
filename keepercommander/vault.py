@@ -26,6 +26,7 @@ class KeeperRecord(abc.ABC):
         self.client_time_modified = 0
         self.record_key = b''
         self.revision = 0
+        self.shared = False
 
     @abc.abstractmethod
     def get_version(self):  # type: () -> int
@@ -98,6 +99,7 @@ class KeeperRecord(abc.ABC):
         keeper_record.revision = record.get('revision', 0)
         keeper_record.record_key = record['record_key_unencrypted']
         keeper_record.client_time_modified = record.get('client_modified_time', 0)
+        keeper_record.shared = record.get('shared', False)
 
         data = json.loads(record['data_unencrypted'])
         extra = json.loads(record['extra_unencrypted']) if 'extra_unencrypted' in record else None

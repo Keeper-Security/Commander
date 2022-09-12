@@ -19,8 +19,7 @@ import re
 from typing import Dict, Any, List, Optional, Iterator, Tuple, Set
 
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
-from .recordv3 import RecordGetUidCommand
-from .. import api, display, crypto, utils, vault, vault_extensions
+from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3
 from ..error import CommandError
 from ..params import KeeperParams
 from ..record_management import update_record
@@ -31,6 +30,7 @@ from ..team import Team
 
 def register_commands(commands):
     commands['search'] = SearchCommand()
+    commands['get'] = RecordGetUidCommand()
     commands['trash'] = TrashCommand()
     commands['list'] = RecordListCommand()
     commands['list-sf'] = RecordListSfCommand()
@@ -40,6 +40,7 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
+    aliases['g'] = 'get'
     aliases['s'] = 'search'
     aliases['l'] = 'list'
     aliases['lsf'] = 'list-sf'
@@ -47,9 +48,16 @@ def register_command_info(aliases, command_info):
     aliases['rh'] = 'record-history'
     aliases['srr'] = 'shared-records-report'
 
-    for p in [search_parser, list_parser, list_sf_parser, list_team_parser, record_history_parser, shared_records_report_parser]:
+    for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
+              record_history_parser, shared_records_report_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
+
+
+get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID')
+get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
+get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format')
+get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 
 
 search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Can use a regular expression.')
@@ -99,14 +107,18 @@ record_history_parser.add_argument('-v', '--verbose', dest='verbose', action='st
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
-shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
-shared_records_report_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
-shared_records_report_parser.add_argument('-tu', '--show-team-users', action='store_true',
-                                          help='show members of team for records shared via share team folders')
+shared_records_report_parser = argparse.ArgumentParser(
+    prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
+shared_records_report_parser.add_argument(
+    '--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
+shared_records_report_parser.add_argument(
+    '-tu', '--show-team-users', action='store_true',
+    help='show members of team for records shared via share team folders')
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 
 
-def find_record(params, record_name, types=None):  # type: (KeeperParams, str, Optional[Iterator[str]]) -> Optional[vault.KeeperRecord]
+def find_record(params, record_name, types=None):
+    # type: (KeeperParams, str, Optional[Iterator[str]]) -> Optional[vault.KeeperRecord]
     if not record_name:
         raise Exception(f'Record name cannot be empty.')
 
@@ -157,6 +169,270 @@ def find_record(params, record_name, types=None):  # type: (KeeperParams, str, O
             except:
                 pass
     raise Exception(f'Record "{record_name}" not found.')
+
+
+class RecordGetUidCommand(Command):
+    def get_parser(self):
+        return get_info_parser
+
+    def execute(self, params, **kwargs):
+        uid = kwargs.get('uid')
+        if not uid:
+            raise CommandError('get', 'UID parameter is required')
+
+        fmt = kwargs.get('format') or 'detail'
+
+        if api.is_shared_folder(params, uid):
+            admins = api.get_share_admins_for_shared_folder(params, uid)
+            sf = api.get_shared_folder(params, uid)
+            if fmt == 'json':
+                sfo = {
+                    "shared_folder_uid": sf.shared_folder_uid,
+                    "name": sf.name,
+                    "manage_users": sf.default_manage_users,
+                    "manage_records": sf.default_manage_records,
+                    "can_edit": sf.default_can_edit,
+                    "can_share": sf.default_can_share
+                }
+                if sf.records:
+                    sfo['records'] = [{
+                        'record_uid': r['record_uid'],
+                        'can_edit': r['can_edit'],
+                        'can_share': r['can_share']
+                    } for r in sf.records]
+                if sf.users:
+                    sfo['users'] = [{
+                        'username': u['username'],
+                        'manage_records': u['manage_records'],
+                        'manage_users': u['manage_users']
+                    } for u in sf.users]
+                if sf.teams:
+                    sfo['teams'] = [{
+                        'name': t['name'],
+                        'manage_records': t['manage_records'],
+                        'manage_users': t['manage_users']
+                    } for t in sf.teams]
+
+                if admins:
+                    sfo['share_admins'] = admins
+
+                print(json.dumps(sfo, indent=2))
+            else:
+                if admins:
+                    sf.share_admins = admins
+                sf.display()
+            return
+
+        if uid in params.folder_cache:
+            f = params.folder_cache[uid]
+            if fmt == 'json':
+                fo = {
+                    'folder_uid': f.uid,
+                    'type': f.type,
+                    'name': f.name
+                }
+                if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
+                    fo['shared_folder_uid'] = f.shared_folder_uid
+                if f.parent_uid:
+                    fo['parent_folder_uid'] = f.parent_uid
+                print(json.dumps(fo, indent=2))
+            else:
+                f.display()
+            return
+
+        if api.is_team(params, uid):
+            team = api.get_team(params, uid)
+            if fmt == 'json':
+                to = {
+                    'team_uid': team.team_uid,
+                    'name': team.name,
+                    'restrict_edit': team.restrict_edit,
+                    'restrict_view': team.restrict_view,
+                    'restrict_share': team.restrict_share
+                }
+                print(json.dumps(to, indent=2))
+            else:
+                team.display()
+            return
+
+        if params.available_team_cache is None:
+            api.load_available_teams(params)
+
+        if params.available_team_cache:
+            for team in params.available_team_cache:
+                if team.get('team_uid') == uid:
+                    team_uid = team['team_uid']
+                    team_name = team['team_name']
+                    if fmt == 'json':
+                        fo = {
+                            'team_uid': team_uid,
+                            'name': team_name
+                        }
+                        print(json.dumps(fo, indent=2))
+                    else:
+                        print('')
+                        print('User {0} does not belong to team {1}'.format(params.user, team_name))
+                        print('')
+                        print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
+                        print('{0:>20s}: {1}'.format('Name', team_name))
+                        print('')
+                    return
+
+        if uid not in params.record_cache:
+            if params.config and 'skip_records' in params.config and params.config['skip_records'] is True:
+                for shared_folder_uid in params.shared_folder_cache:
+                    sf = params.shared_folder_cache[shared_folder_uid]
+                    if 'records' in sf:
+                        if any((True for x in sf['records'] if x['record_uid'] == uid)):
+                            api.load_records_in_shared_folder(params, shared_folder_uid, (uid,))
+                            break
+        if uid in params.record_cache:
+            api.get_record_shares(params, [uid])
+            rec = params.record_cache[uid]
+            admins = api.get_share_admins_for_record(params, uid)
+            version = rec.get('version', 0)
+            r = api.get_record(params, uid)
+            if r:
+                params.queue_audit_event('open_record', record_uid=uid)
+                if fmt == 'json':
+                    ro = {
+                        'record_uid': r.record_uid,
+                        'title': r.title
+                    }
+                    if version < 3:
+                        if r.login:
+                            ro['login'] = r.login
+                        if r.password:
+                            ro['password'] = r.password
+                        if r.login_url:
+                            ro['login_url'] = r.login_url
+                        if r.custom_fields:
+                            ro['custom_fields'] = r.custom_fields
+                        if r.totp:
+                            ro['totp'] = r.totp
+                        if r.attachments:
+                            ro['attachments'] = [{
+                                'id': a.get('id'),
+                                'name': a.get('name'),
+                                'size': a.get('size')
+                            } for a in r.attachments]
+                    else:
+                        data = rec['data_unencrypted'] if 'data_unencrypted' in rec else b'{}'
+                        data = json.loads(data.decode())
+                        ro['fields'] = data.get('fields') or []
+                        ro['custom'] = data.get('custom') or []
+
+                    if r.notes:
+                        ro['notes'] = r.notes
+                    ro['version'] = r.version
+                    ro['shared'] = rec.get('shared', False)
+
+                    if 'shares' in rec:
+                        if 'user_permissions' in rec['shares']:
+                            ro['user_permissions'] = rec['shares']['user_permissions'].copy()
+                        if 'shared_folder_permissions' in rec['shares']:
+                            ro['shared_folder_permissions'] = rec['shares']['shared_folder_permissions'].copy()
+                    if admins:
+                        ro['share_admins'] = admins
+
+                    ro['revision'] = r.revision
+
+                    print(json.dumps(ro, indent=2))
+                elif fmt == 'password':
+                    print(r.password)
+                else:
+                    if version < 3:
+                        r.display(unmask=kwargs.get('unmask', False))
+                    else:
+                        recordv3.RecordV3.display(rec, **{'params': params, 'format': fmt})
+
+                    folders = [get_folder_path(params, x) for x in find_folders(params, uid)]
+                    for i in range(len(folders)):
+                        print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
+
+                    if 'client_modified_time' in rec:
+                        dt = datetime.datetime.fromtimestamp(rec['client_modified_time'] / 1000.0)
+                        print('{0:>20s}: {1:<20s}'.format('Last Modified', dt.strftime('%Y-%m-%d %H:%M:%S')))
+
+                    if 'shared' in rec:
+                        print('{0:>20s}: {1:<20s}'.format('Shared', str(rec['shared'])))
+                    if 'shares' in rec:
+                        if 'user_permissions' in rec['shares']:
+                            perm = rec['shares']['user_permissions'].copy()
+                            perm.sort(key=lambda r: (' 1' if r.get('owner') else
+                                                     ' 2' if r.get('editable') else
+                                                     ' 3' if r.get('sharable') else
+                                                     '') + r.get('username'))
+                            for no, uo in enumerate(perm):
+                                flags = ''
+                                if uo.get('owner'):
+                                    flags = 'Owner'
+                                elif uo.get('awaiting_approval'):
+                                    flags = 'Awaiting Approval'
+                                else:
+                                    if uo.get('editable'):
+                                        flags = 'Can Edit'
+                                    if uo.get('sharable'):
+                                        if flags:
+                                            flags = flags + ' & '
+                                        else:
+                                            flags = 'Can '
+                                        flags = flags + 'Share'
+                                if not flags:
+                                    flags = 'Read Only'
+                                print('{0:>21s} {1:<26s} ({2}) {3}'.format(
+                                    'Shared Users:' if no == 0 else '', uo['username'], flags,
+                                    'self' if uo['username'] == params.user else ''))
+
+                        if 'shared_folder_permissions' in rec['shares']:
+                            for no, sfo in enumerate(rec['shares']['shared_folder_permissions']):
+                                flags = ''
+                                if sfo.get('editable'):
+                                    flags = 'Can Edit'
+                                if sfo.get('reshareable'):
+                                    if flags:
+                                        flags = flags + ' & '
+                                    else:
+                                        flags = 'Can '
+                                    flags += 'Share'
+                                if not flags:
+                                    flags = 'Read Only'
+                                sf_uid = sfo['shared_folder_uid']
+                                folder_paths = []
+                                for f_uid in find_folders(params, uid):
+                                    if f_uid in params.subfolder_cache:
+                                        fol = params.folder_cache[f_uid]
+                                        if fol.type in {subfolder.BaseFolderNode.SharedFolderType,
+                                                        subfolder.BaseFolderNode.SharedFolderFolderType}:
+                                            sfid = fol.uid \
+                                                if fol.type == subfolder.BaseFolderNode.SharedFolderType \
+                                                else fol.shared_folder_uid
+                                            if sf_uid == sfid:
+                                                folder_paths.append(fol.name)
+                                if len(folder_paths) == 0:
+                                    if sf_uid in params.shared_folder_cache:
+                                        folder_paths.append(params.shared_folder_cache[sf_uid]['name_unencrypted'])
+                                for path in folder_paths:
+                                    print('{0:>21s} {1:<26s} ({2})'.format(
+                                        'Shared Folders:' if no == 0 else '', path, flags))
+
+                    if admins:
+                        for no, admin in enumerate(admins):
+                            print('{0:>21s} {1:<26s}'.format('Share Admins:' if no == 0 else '', admin))
+
+                    if params.breach_watch:
+                        bw_status = params.breach_watch.get_record_status(params, uid)
+                        if bw_status and 'status' in bw_status:
+                            status = bw_status['status']
+                            if status:
+                                if status in {'WEAK', 'BREACHED'}:
+                                    status = 'High-Risk Password'
+                                elif status == 'IGNORE':
+                                    status = 'Ignored'
+                                print('{0:>20s}: {1:<20s}'.format('BreachWatch', status))
+            return
+
+        raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 
 
 class SearchCommand(Command):
@@ -237,12 +513,13 @@ class RecordListCommand(Command):
 
         records = [x for x in vault_extensions.find_records(params, pattern, record_type=record_type, record_version=record_version)]
         if any(records):
+            headers = ['record_uid', 'type', 'title', 'description', 'shared']
+            if fmt == 'table':
+                headers = [field_to_title(x) for x in headers]
             table = []
-            headers = ['record_uid', 'type', 'title', 'description'] if fmt == 'json' else \
-                ['Record UID', 'Type', 'Title', 'Description']
             for record in records:
                 row = [record.record_uid, record.record_type, record.title,
-                       vault_extensions.get_record_description(record)]
+                       vault_extensions.get_record_description(record), record.shared]
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
 

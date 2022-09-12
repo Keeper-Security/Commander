@@ -34,7 +34,7 @@ class EnterpriseCommand(Command):
         super(EnterpriseCommand, self).__init__()
         self.public_keys = {}
         self.team_keys = {}
-        self.nodes = None
+        self._node_map = None
 
     def execute_args(self, params, args, **kwargs):
         if params.enterprise:
@@ -316,17 +316,17 @@ class EnterpriseCommand(Command):
             return rs['base_id']
 
     def get_node_path(self, params, node_id, omit_root=False):
-        if self.nodes is None:
-            self.nodes = {
+        if self._node_map is None:
+            self._node_map = {
                 x['node_id']: (x['data'].get('displayname') if x.get('parent_id', 0) > 0 else params.enterprise['enterprise_name'], x.get('parent_id', 0))
                 for x in params.enterprise['nodes']}
         path = ''
-        node = self.nodes.get(node_id)
+        node = self._node_map.get(node_id)
         while node:
             if omit_root and node[1] == 0:
                 break
             path = '{0}{1}{2}'.format(node[0], '\\' if path else '', path)
-            node = self.nodes.get(node[1])
+            node = self._node_map.get(node[1])
         return path
 
     @staticmethod

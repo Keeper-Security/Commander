@@ -35,7 +35,7 @@ from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
 from .helpers.whoami import get_hostname, get_environment, get_data_center
-from .recordv3 import get_record, RecordRemoveCommand
+from .recordv3 import RecordRemoveCommand
 from .. import __version__
 from .. import api, rest_api, loginv3, crypto, utils
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
@@ -1272,8 +1272,7 @@ class KSMCommand(Command):
         search_results_rec_data = []
 
         for record_uid in params.record_cache:
-
-            rec = get_record(params, record_uid)
+            rec = params.record_cache[record_uid]
 
             if rec.get('version') == 5:
                 data = json.loads(rec.get('data_unencrypted'))

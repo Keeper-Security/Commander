@@ -5,9 +5,11 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2017 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+from typing import List, Optional
+
 
 class SharedFolder:
     """Defines a Keeper Shared Folder"""
@@ -25,8 +27,9 @@ class SharedFolder:
         self.records = records or []
         self.users = users or []
         self.teams = teams or []
+        self.share_admins = None
 
-    def load(self,sf,revision=''):
+    def load(self, sf, revision=''):
         self.default_manage_records = sf['default_manage_records']
         self.default_manage_users = sf['default_manage_users']
         self.default_can_edit = sf['default_can_edit']
@@ -52,32 +55,64 @@ class SharedFolder:
 
     def display(self):
         print('') 
-        print('{0:>25s}: {1:<20s}'.format('Shared Folder UID',self.shared_folder_uid))
-        print('{0:>25s}: {1}'.format('Name',self.name))
-        print('{0:>25s}: {1}'.format('Default Manage Records',self.default_manage_records))
-        print('{0:>25s}: {1}'.format('Default Manage Users',self.default_manage_users))
-        print('{0:>25s}: {1}'.format('Default Can Edit',self.default_can_edit))
-        print('{0:>25s}: {1}'.format('Default Can Share',self.default_can_share))
+        print('{0:>25s}: {1:<20s}'.format('Shared Folder UID', self.shared_folder_uid))
+        print('{0:>25s}: {1}'.format('Name', self.name))
+        print('{0:>25s}: {1}'.format('Default Manage Records', self.default_manage_records))
+        print('{0:>25s}: {1}'.format('Default Manage Users', self.default_manage_users))
+        print('{0:>25s}: {1}'.format('Default Can Edit', self.default_can_edit))
+        print('{0:>25s}: {1}'.format('Default Can Share', self.default_can_share))
 
         if len(self.records) > 0:
             print('')
             print('{0:>25s}:'.format('Record Permissions'))
             for r in self.records:
-                print('{0:>25s}: {1}: {2}, {3}: {4}'.format(r['record_uid'],'Can Edit',r['can_edit'],'Can Share',r['can_share']))
+                print('{0:>25s}: {1}'.format(r['record_uid'], SharedFolder.record_permission_to_string(r)))
 
         if len(self.users) > 0:
             print('')
             print('{0:>25s}:'.format('User Permissions'))
             for u in self.users:
-                print('{0:>25s}: {1}: {2}, {3}: {4}'.format(u['username'],'Can Manage Records',u['manage_records'],'Can Manage Users',u['manage_users']))
+                print('{0:>25s}: {1}'.format(u['username'], SharedFolder.user_permission_to_string(u)))
 
         if len(self.teams) > 0:
             print('')
             print('{0:>25s}:'.format('Team Permissions'))
             for t in self.teams:
-                print('{0:>25s}: {1}: {2}, {3}: {4}'.format(t['name'],'Can Manage Records',t['manage_records'],'Can Manage Users',t['manage_users']))
+                print('{0:>25s}: {1}'.format(t['name'], SharedFolder.user_permission_to_string(t)))
+
+        if self.share_admins:
+            print('')
+            print('{0:>25s}:'.format('Share Administrators'))
+            for email in self.share_admins:
+                print('{0:>25s}: {1}'.format(email, 'Can Manage Users & Records'))
 
         print('')
+
+    @staticmethod
+    def user_permission_to_string(permission):
+        if isinstance(permission, dict):
+            manage_users = permission.get('manage_users', False)
+            manage_records = permission.get('manage_records', False)
+            if manage_users and manage_records:
+                return 'Can Manage Users & Records'
+            if not manage_users and not manage_records:
+                return 'No Folder Permissions'
+            if manage_users:
+                return 'Can Manage Users'
+            return 'Can Manage Records'
+
+    @staticmethod
+    def record_permission_to_string(permission):
+        if isinstance(permission, dict):
+            can_edit = permission.get('can_edit', False)
+            can_share = permission.get('can_share', False)
+            if can_edit and can_share:
+                return 'Can Edit & Share'
+            if not can_edit and not can_share:
+                return 'Read Only'
+            if can_edit:
+                return 'Can Edit'
+            return 'Can Share'
 
     def to_string(self):
         target = self.shared_folder_uid + str(self.users) + str(self.teams)

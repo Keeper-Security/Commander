@@ -23,7 +23,8 @@ from Cryptodome.Cipher import AES
 from tabulate import tabulate
 
 from . import record_common
-from .base import user_choice, suppress_exit, raise_parse_exception, Command
+from . import base
+from .base import suppress_exit, raise_parse_exception, Command
 from .. import api, generator
 from .. import attachment
 from ..display import bcolors
@@ -38,7 +39,6 @@ def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['edit'] = RecordEditCommand()
     commands['rm'] = RecordRemoveCommand()
-    commands['get'] = RecordGetUidCommand()
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
@@ -49,7 +49,6 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['a'] = 'add'
-    aliases['g'] = 'get'
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
@@ -57,7 +56,7 @@ def register_command_info(aliases, command_info):
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
     aliases['rh'] = 'record-history'
 
-    for p in [get_info_parser, clipboard_copy_parser, totp_parser,  add_parser, edit_parser, rm_parser,
+    for p in [clipboard_copy_parser, totp_parser,  add_parser, edit_parser, rm_parser,
               append_parser, download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
 
@@ -495,7 +494,7 @@ class RecordRemoveCommand(Command):
                 'delete_records': [record_uid]
             }
             if not kwargs.get('force'):
-                answer = user_choice('Do you want to proceed with record purge?', 'yn', default='n')
+                answer = base.user_choice('Do you want to proceed with record purge?', 'yn', default='n')
                 if answer.lower() != 'y':
                     return
             rs = api.communicate(params, rq)
@@ -532,7 +531,7 @@ class RecordRemoveCommand(Command):
                     summary = pdr['would_delete']['deletion_summary']
                     for x in summary:
                         print(x)
-                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                    np = base.user_choice('Do you want to proceed with deletion?', 'yn', default='n')
                 if np.lower() == 'y':
                     rq = {
                         'command': 'delete',
@@ -540,158 +539,6 @@ class RecordRemoveCommand(Command):
                     }
                     api.communicate(params, rq)
                     params.sync_data = True
-
-
-class RecordGetUidCommand(Command):
-    def get_parser(self):
-        return get_info_parser
-
-    def execute(self, params, **kwargs):
-        uid = kwargs['uid'] if 'uid' in kwargs else None
-        if not uid:
-            raise CommandError('get', 'UID parameter is required')
-
-        fmt = kwargs.get('format') or 'detail'
-
-        if api.is_shared_folder(params, uid):
-            sf = api.get_shared_folder(params, uid)
-            if fmt == 'json':
-                sfo = {
-                    "shared_folder_uid": sf.shared_folder_uid,
-                    "name": sf.name,
-                    "manage_users": sf.default_manage_users,
-                    "manage_records": sf.default_manage_records,
-                    "can_edit": sf.default_can_edit,
-                    "can_share": sf.default_can_share
-                }
-                if sf.records:
-                    sfo['records'] = [{
-                        'record_uid': r['record_uid'],
-                        'can_edit': r['can_edit'],
-                        'can_share': r['can_share']
-                    } for r in sf.records]
-                if sf.users:
-                    sfo['users'] = [{
-                        'username': u['username'],
-                        'manage_records': u['manage_records'],
-                        'manage_users': u['manage_users']
-                    } for u in sf.users]
-                if sf.teams:
-                    sfo['teams'] = [{
-                        'name': t['name'],
-                        'manage_records': t['manage_records'],
-                        'manage_users': t['manage_users']
-                    } for t in sf.teams]
-
-                print(json.dumps(sfo, indent=2))
-            else:
-                sf.display()
-            return
-
-        if api.is_team(params, uid):
-            team = api.get_team(params, uid)
-            if fmt == 'json':
-                to = {
-                    'team_uid': team.team_uid,
-                    'name': team.name,
-                    'restrict_edit': team.restrict_edit,
-                    'restrict_view': team.restrict_view,
-                    'restrict_share': team.restrict_share
-                }
-                print(json.dumps(to, indent=2))
-            else:
-                team.display()
-            return
-
-        if uid in params.folder_cache:
-            f = params.folder_cache[uid]
-            if fmt == 'json':
-                fo = {
-                    'folder_uid': f.uid,
-                    'type': f.type,
-                    'name': f.name
-                }
-                if isinstance(f, (SharedFolderFolderNode, SharedFolderNode)):
-                    fo['shared_folder_uid'] = f.shared_folder_uid
-                if f.parent_uid:
-                    fo['parent_folder_uid'] = f.parent_uid
-                print(json.dumps(fo, indent=2))
-            else:
-                f.display(params=params)
-            return
-
-        if uid in params.record_cache:
-            api.get_record_shares(params, [uid])
-            r = api.get_record(params, uid)
-            if r:
-                params.queue_audit_event('open_record', record_uid=uid)
-                if fmt == 'json':
-                    ro = {
-                        'record_uid': r.record_uid,
-                        'title': r.title
-                    }
-                    if r.login:
-                        ro['login'] = r.login
-                    if r.password:
-                        ro['password'] = r.password
-                    if r.login_url:
-                        ro['login_url'] = r.login_url
-                    if r.notes:
-                        ro['notes'] = r.notes
-                    if r.custom_fields:
-                        ro['custom_fields'] = r.custom_fields
-                    if r.totp:
-                        ro['totp'] = r.totp
-                    if r.attachments:
-                        ro['attachments'] = [{
-                            'id': a.get('id'),
-                            'name': a.get('name'),
-                            'size': a.get('size')
-                        } for a in r.attachments]
-
-                    if r.record_uid in params.record_cache:
-                        rec = params.record_cache[r.record_uid]
-                        if 'shares' in rec:
-                            if 'user_permissions' in rec['shares']:
-                                permissions = rec['shares']['user_permissions']
-                                ro['shared_with'] = [{
-                                    'username': su['username'],
-                                    'owner': su.get('owner') or False,
-                                    'editable': su.get('editable') or False,
-                                    'sharable': su.get('sharable') or False
-                                } for su in permissions]
-
-                    print(json.dumps(ro, indent=2))
-                elif fmt == 'password':
-                    print(r.password)
-                else:
-                    r.display(params=params, unmask=kwargs.get('unmask', False))
-                return
-
-        if params.available_team_cache is None:
-            api.load_available_teams(params)
-
-        if params.available_team_cache:
-            for team in params.available_team_cache:
-                if team.get('team_uid') == uid:
-                    team_uid = team['team_uid']
-                    team_name = team['team_name']
-                    if fmt == 'json':
-                        fo = {
-                            'team_uid': team_uid,
-                            'name': team_name
-                        }
-                        print(json.dumps(fo, indent=2))
-                    else:
-                        print('')
-                        print('User {0} does not belong to team {1}'.format(params.user, team_name))
-                        print('')
-                        print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
-                        print('{0:>20s}: {1}'.format('Name', team_name))
-                        print('')
-                    return
-
-        raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 
 
 class RecordDownloadAttachmentCommand(Command):

@@ -25,7 +25,8 @@ from tabulate import tabulate
 
 from . import record_common
 from . import recordv2 as recordv2
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from . import base
+from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
 from .register import FileReportCommand
 from .. import api, crypto, generator
 from .. import recordv3, loginv3
@@ -44,7 +45,6 @@ def register_commands(commands):
     commands['add'] = RecordAddCommand()
     commands['edit'] = RecordEditCommand()
     commands['rm'] = RecordRemoveCommand()
-    commands['get'] = RecordGetUidCommand()
     commands['append-notes'] = RecordAppendNotesCommand()
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
@@ -58,7 +58,6 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['a'] = 'add'
-    aliases['g'] = 'get'
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
@@ -67,7 +66,7 @@ def register_command_info(aliases, command_info):
     aliases['rti'] = 'record-type-info'
     aliases['rt'] = 'record-type'
 
-    for p in [add_parser, edit_parser, rm_parser,  list_parser, get_info_parser, append_parser,
+    for p in [add_parser, edit_parser, rm_parser,  list_parser, append_parser,
               download_parser, upload_parser, delete_attachment_parser, clipboard_copy_parser,
               totp_parser, record_type_info_parser, record_type_parser,
               file_report_parser]:
@@ -147,15 +146,6 @@ list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
 #list_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
-
-
-get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID')
-get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
-get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format')
-get_info_parser.add_argument('uid', type=str, action='store', help='UID')
-get_info_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
-get_info_parser.error = raise_parse_exception
-get_info_parser.exit = suppress_exit
 
 
 append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to an existing record')
@@ -928,7 +918,7 @@ class RecordRemoveCommand(Command):
                 'delete_records': [record_uid]
             }
             if not kwargs.get('force'):
-                answer = user_choice('Do you want to proceed with record purge?', 'yn', default='n')
+                answer = base.user_choice('Do you want to proceed with record purge?', 'yn', default='n')
                 if answer.lower() != 'y':
                     return
             rs = api.communicate(params, rq)
@@ -965,7 +955,7 @@ class RecordRemoveCommand(Command):
                     summary = pdr['would_delete']['deletion_summary']
                     for x in summary:
                         print(x)
-                    np = user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                    np = base.user_choice('Do you want to proceed with deletion?', 'yn', default='n')
                 if np.lower() == 'y':
                     rq = {
                         'command': 'delete',
@@ -1945,69 +1935,6 @@ class RecordFileReportCommand(Command):
             for row in table:
                 del row[4] 
         return dump_report_data(table, headers)
-
-
-class RecordGetUidCommand(Command):
-    def get_parser(self):
-        return get_info_parser
-
-    def execute(self, params, **kwargs):
-        uid = kwargs.get('uid')
-        if not uid:
-            raise CommandError('get', 'UID parameter is required')
-
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2 or uid not in params.record_cache:
-            recordv2.RecordGetUidCommand().execute(params, **kwargs)
-            return
-
-        version = params.record_cache[uid].get('version', 0)
-        if version < 3:
-            recordv2.RecordGetUidCommand().execute(params, **kwargs)
-            return
-
-        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-        if version in (3, 4) and not v3_enabled:
-            raise TypeError('Record ' + uid + ' not found. You don\'t have Record Types enabled.')
-
-        if version != 3:
-            raise CommandError('get', 'Record is not version 3 (record type)')
-
-        fmt = kwargs.get('format') or 'detail'
-        if uid in params.record_cache:
-            api.get_record_shares(params, [uid])
-            r = get_record(params, uid)
-            if r:
-                params.queue_audit_event('open_record', record_uid=uid)
-                if fmt == 'json':
-                    record_uid = r['record_uid'] if 'record_uid' in r else ''
-                    data = r['data_unencrypted'] if 'data_unencrypted' in r else ''
-                    data = data.decode('UTF-8') if isinstance(data, bytes) else str(data)
-                    data = json.loads(data)
-                    ro = {
-                        'record_uid': record_uid,
-                        'data': data
-                    }
-                    if record_uid in params.record_cache:
-                        rec = params.record_cache[record_uid]
-                        if 'shares' in rec:
-                            if 'user_permissions' in rec['shares']:
-                                permissions = rec['shares']['user_permissions']
-                                ro['shared_with'] = [{
-                                    'username': su['username'],
-                                    'owner': su.get('owner') or False,
-                                    'editable': su.get('editable') or False,
-                                    'sharable': su.get('sharable') or False
-                                } for su in permissions]
-
-                    print(json.dumps(ro, indent=2))
-                elif fmt == 'password':
-                    password = str(recordv3.RecordV3.get_record_password(r.get('data_unencrypted')) or '')
-                    if password and password.strip():
-                        print(password)
-                else:
-                    recordv3.RecordV3.display(r, **{'params': params, 'format': fmt, 'unmask': kwargs.get('unmask')})
-                return
 
 
 def get_record(params, record_uid):
