@@ -141,8 +141,10 @@ compliance_report_parser.add_argument('--username', '-u', action='append',
                                   help='user(s) to include in report (set option once for each user to include)')
 compliance_report_parser.add_argument('--job-title', '-jt', action='append',
                                   help='job titles to include in report (set option once for each title to include)')
-compliance_report_parser.add_argument('--record', action='append',
-                                  help='UID or title of record(s) to include in report (set once for each record)')
+record_search_help = 'UID or title of record(s) to include in report (set once per record). To allow non-exact ' \
+                     'matching on record titles, include "*" where appropriate (e.g., to include records with titles' \
+                     ' ending in "Login", set option value to "*Login")'
+compliance_report_parser.add_argument('--record', action='append', help=record_search_help)
 compliance_report_parser.add_argument('--url', action='append',
                                   help='URL of record(s) to include in report (set once for each record)')
 compliance_report_parser.add_argument('--shared', action='store_true',
@@ -1667,9 +1669,6 @@ class ComplianceReportCommand(EnterpriseCommand):
         max_data_age = datetime.timedelta(days=1)
         min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
 
-        from ..sox import get_compliance_data
-
-        opts_set = [val for opt, val in kwargs.items() if val and opt != 'command' and opt != 'format']
         def show_help_text(local_data):  # type: (sox_data.SoxData) -> None
             last_update_ts = local_data.storage.last_compliance_data_update
             if not last_update_ts:
@@ -1702,6 +1701,8 @@ class ComplianceReportCommand(EnterpriseCommand):
                        "compliance-report is run again."
             logging.info(help_txt)
 
+        from ..sox import get_compliance_data
+        opts_set = [val for opt, val in kwargs.items() if val and opt != 'command' and opt != 'format']
         if not opts_set:
             local_sox_data = get_compliance_data(params, node_id, enterprise_id, False, min_updated=0)
             show_help_text(local_sox_data)
@@ -1731,7 +1732,12 @@ class ComplianceReportCommand(EnterpriseCommand):
             filtered = [r for r in filtered for url in urls if r.data.get('url') and url in r.data.get('url')] if urls \
                 else filtered
             r_refs = kwargs.get('record')
-            filtered = [r for r in filtered if r.data.get('title') in r_refs or r.record_uid in r_refs] if r_refs \
+            from fnmatch import fnmatch
+
+            def title_match(title):
+                return any([ref for ref in r_refs if fnmatch(title, ref)])
+
+            filtered = [r for r in filtered if r.record_uid in r_refs or title_match(r.data.get('title'))] if r_refs \
                 else filtered
             return filtered
 
