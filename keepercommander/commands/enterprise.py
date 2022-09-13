@@ -2065,10 +2065,12 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             privilege = rq['privilege']
                             if rs['result'] == 'success':
                                 logging.info('Node \'%s\' in role \'%s\' has \'%s\' privilege %s',
-                                             node_name, role_name, privilege, 'assigned' if command == 'managed_node_privilege_add' else 'removed')
+                                             node_name, role_name, privilege,
+                                             'assigned' if command == 'managed_node_privilege_add' else 'removed')
                             else:
                                 logging.warning('Failed to %s \'%s\' privilege to node \'%s\' in role \'%s\': %s',
-                                                'assign' if command == 'role_managed_node_add' else 'remove', privilege, node_name, role_name, rs['message'])
+                                                'assign' if command == 'managed_node_privilege_add' else 'remove',
+                                                privilege, node_name, role_name, rs['message'])
 
                         elif command in {'role_enforcement_add', 'role_enforcement_update', 'role_enforcement_remove'}:
                             enforcement = rq['enforcement']
