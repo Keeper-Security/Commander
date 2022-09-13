@@ -511,7 +511,6 @@ class BaseExporter(abc.ABC):
 
     def execute(self, filename, items, file_password=None):
         # type: (str, List[Union[Record, SharedFolder, File]], Optional[str]) -> None
-
         if filename:
             filename = os.path.expanduser(filename)
             if filename.find('.') < 0:
@@ -522,9 +521,12 @@ class BaseExporter(abc.ABC):
             raise CommandError('export', 'File name parameter is required.')
 
         self.do_export(filename, items, file_password)
+        if os.path.isfile(filename):
+            logging.info('Vault has been exported to: %s', os.path.abspath(filename))
 
     @abc.abstractmethod
-    def do_export(self, filename, records, file_password=None):  # type: (str, List[Record, File], Optional[str]) -> None
+    def do_export(self, filename, records, file_password=None):
+        # type: (str, List[Record, File], Optional[str]) -> None
         pass
 
     def has_shared_folders(self):
