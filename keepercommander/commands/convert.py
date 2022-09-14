@@ -190,8 +190,8 @@ class ConvertCommand(Command):
         dry_run = kwargs.get('dry_run', False)
         if dry_run:
             print(
-                f'The following {len(record_uids)} records that you own were matched'
-                f' and would be converted to records with type "login":'
+                f'The following {len(record_uids)} record(s) that you own were matched'
+                f' and would be converted to records with type "{record_type}":'
             )
 
             print('\n'.join(f' {k}  {v}' for k, v in record_names.items()))
