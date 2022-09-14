@@ -190,7 +190,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             save_shared_folders_records(rs.sharedFolderRecords)
             save_shared_folder_users(rs.sharedFolderUsers)
             save_shared_folder_teams(rs.sharedFolderTeams)
-            sync_record_permissions(rs.sharedFolderRecords, rs.userRecords)
+            save_record_permissions(rs.sharedFolderRecords, rs.userRecords)
             save_team_users(rs.auditTeamUsers)
 
         def save_users(user_profiles):
@@ -233,7 +233,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                     links.append(link)
             sdata.storage.get_sf_record_links().put_links(links)
 
-        def sync_record_permissions(sf_records, user_records):
+        def save_record_permissions(sf_records, user_records):
             def to_rec_perm_links(user_uid, record_permissions):
                 rp_links = []
                 for rp in record_permissions:
@@ -248,9 +248,9 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             for folder in sf_records:
                 rec_perms = folder.recordPermissions
                 for sar in folder.shareAdminRecords:
-                    user_uid = sar.enterpriseUserId
                     rec_perm_idxs = sar.recordPermissionIndexes
-                    links.extend([to_rec_perm_links(user_uid, rec_perms[index]) for index in rec_perm_idxs])
+                    sar_perms = [rp for idx, rp in enumerate(rec_perms) if idx in rec_perm_idxs]
+                    links.extend(to_rec_perm_links(sar.enterpriseUserId, sar_perms))
             sdata.storage.get_record_permissions().put_links(links)
 
         def save_shared_folder_users(sf_users):
