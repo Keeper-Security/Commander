@@ -133,14 +133,16 @@ action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=Fal
                                   help='flag to enable dry-run mode')
 
 compliance_report_parser = argparse.ArgumentParser(prog='compliance-report', description='Run a SOX compliance report.')
-compliance_report_parser.add_argument('--rebuild', '-r', action='store_true', help='Rebuild local data from source')
+compliance_report_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
 compliance_report_parser.add_argument('--no-cache', '-nc', action='store_true',
                                       help='remove any local non-memory storage of data after report is generated')
 compliance_report_parser.add_argument('--node', action='store', help='ID or name of node (defaults to root node)')
-compliance_report_parser.add_argument('--username', '-u', action='append',
-                                  help='user(s) to include in report (set option once for each user to include)')
-compliance_report_parser.add_argument('--job-title', '-jt', action='append',
-                                  help='job titles to include in report (set option once for each title to include)')
+username_opt_help = 'user(s) whose records are to be included in report (set option once per user)'
+compliance_report_parser.add_argument('--username', '-u', action='append', help=username_opt_help)
+job_title_opt_help = 'job title(s) of users whose records are to be included in report (set option once per job title)'
+compliance_report_parser.add_argument('--job-title', '-jt', action='append', help=job_title_opt_help)
+team_opt_help = 'name(s) of team(s) whose members\' records are to be included in report (set once per team)'
+compliance_report_parser.add_argument('--team', action='append', help=team_opt_help)
 record_search_help = 'UID or title of record(s) to include in report (set once per record). To allow non-exact ' \
                      'matching on record titles, include "*" where appropriate (e.g., to include records with titles' \
                      ' ending in "Login", set option value to "*Login")'
@@ -149,10 +151,10 @@ compliance_report_parser.add_argument('--url', action='append',
                                   help='URL of record(s) to include in report (set once for each record)')
 compliance_report_parser.add_argument('--shared', action='store_true',
                                       help='flag for excluding non-shared records from report')
-compliance_report_parser.add_argument('--output', dest='output', action='store',
-                                  help='path to resulting output file (if any)')
 compliance_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                   default='table', help='format of output')
+compliance_report_parser.add_argument('--output', dest='output', action='store',
+                                  help='path to resulting output file (ignored for "table" format)')
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -1683,8 +1685,8 @@ class ComplianceReportCommand(EnterpriseCommand):
                 logging.info(msg)
             help_txt = "\nGet record and sharing information from all vaults in the enterprise\n" \
                        "Format:\ncompliance-report [-h] [--rebuild] [--no-cache] [--node NODE] [--username USERNAME] " \
-                       "[--job-title JOB_TITLE] [--url DOMAIN] [--shared] [--output OUTPUT] " \
-                       "[--format {table,csv,json}]" \
+                       "[--job-title JOB_TITLE] [--team TEAM] [--record RECORD] [--url DOMAIN] [--shared] " \
+                       "[--format {table,csv,json}] [--output OUTPUT] " \
                        "\n\nExamples:" \
                        "\nSee all records for a user" \
                        "\n\t'compliance-report --username USERNAME'" \
@@ -1718,12 +1720,26 @@ class ComplianceReportCommand(EnterpriseCommand):
             else ['Record UID', 'Title', 'Type', 'Username', 'Permissions', 'URL']
         table = []
 
-        def filter_owners(owners):
-            names = kwargs.get('username')
-            filtered = [o for o in owners if o.email in names] if names else owners
+        def filter_owners(rec_owners):
+            def filter_by_teams(users, teams):
+                def get_team_users(name):
+                    t_lookup = {t.get('name'): t.get('team_uid') for t in params.enterprise.get('teams', [])}
+                    t_users = params.enterprise.get('team_users', [])
+                    return {tu.get('enterprise_user_id') for tu in t_users if tu.get('team_uid') == t_lookup.get(name)}
+
+                team_users = set()
+                for team_name in teams:
+                    team_users.update(get_team_users(team_name))
+                return [u for u in users if u.user_uid in team_users]
+
+            usernames = kwargs.get('username')
+            filtered = [o for o in rec_owners if o.email in usernames] if usernames else rec_owners
             job_titles = kwargs.get('job_title')
             filtered = [o for o in filtered if o.job_title in job_titles] if job_titles else filtered
-            return [o for o in filtered if o.node_id == node_id] if node_id != root_node_id else filtered
+            filtered = [o for o in filtered if o.node_id == node_id] if node_id != root_node_id else filtered
+            team_names = kwargs.get('team')
+            filtered = filter_by_teams(filtered, team_names) if team_names else filtered
+            return filtered
 
         def filter_records(records):
             shared_only = kwargs.get('shared')
@@ -1774,6 +1790,7 @@ class ComplianceReportCommand(EnterpriseCommand):
 
         def format_table(rows):
             rows.sort(key=operator.itemgetter('permissions'), reverse=True)
+            rows.sort(key=lambda item: item.get('permissions') & 1, reverse=True)
             rows.sort(key=operator.itemgetter('record_uid'))
             last_ruid = ''
             formatted_rows = []
