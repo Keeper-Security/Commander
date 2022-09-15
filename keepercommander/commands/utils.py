@@ -42,7 +42,7 @@ from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
-from ..generator import KeeperPasswordGenerator
+from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2 as ssocloud
@@ -289,31 +289,35 @@ generate_parser.add_argument(
 generate_parser.add_argument(
     '--number', '-n', type=int, dest='number', action='store', help='Number of passwords', default=1
 )
-generate_parser.add_argument(
+
+random_group = generate_parser.add_mutually_exclusive_group()
+random_group.add_argument(
     '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=20
 )
-generate_parser.add_argument(
-    '--symbols', '-s', type=int, dest='symbols', action='store',
-    help='Minimum number of symbols in password or 0 for none'
-)
-generate_parser.add_argument(
-    '--digits', '-d', type=int, dest='digits', action='store',
-    help='Minimum number of digits in password or 0 for none'
-)
-generate_parser.add_argument(
-    '--uppercase', '-u', type=int, dest='uppercase', action='store',
-    help='Minimum number of uppercase letters in password or 0 for none'
-)
-generate_parser.add_argument(
-    '--lowercase', '-l', type=int, dest='lowercase', action='store',
-    help='Minimum number of lowercase letters in password or 0 for none'
-)
-generate_parser.add_argument(
+random_group.add_argument(
     '-r', '--rules', dest='rules', action='store',
     help='Use comma separated complexity integers (uppercase, lowercase, numbers, symbols)'
 )
-generate_parser.error = raise_parse_exception
-generate_parser.exit = suppress_exit
+random_group.add_argument(
+    '--symbols', '-s', type=int, dest='symbols', action='store',
+    help='Minimum number of symbols in password or 0 for none'
+)
+random_group.add_argument(
+    '--digits', '-d', type=int, dest='digits', action='store',
+    help='Minimum number of digits in password or 0 for none'
+)
+random_group.add_argument(
+    '--uppercase', '-u', type=int, dest='uppercase', action='store',
+    help='Minimum number of uppercase letters in password or 0 for none'
+)
+random_group.add_argument(
+    '--lowercase', '-l', type=int, dest='lowercase', action='store',
+    help='Minimum number of lowercase letters in password or 0 for none'
+)
+dice_group = generate_parser.add_mutually_exclusive_group()
+dice_group.add_argument(
+    '--dice-rolls', '-dr', type=int, dest='dice_rolls', action='store', help='Number of dice rolls'
+)
 
 reset_password_parser = argparse.ArgumentParser(prog='reset-password', description='Reset Master Password')
 reset_password_parser.add_argument('--delete-sso', dest='delete_alternate', action='store_true',
@@ -1863,19 +1867,24 @@ class GenerateCommand(Command):
             If True return tuple of password dict and formatted output string
         """
 
-        if rules and all(i is None for i in (symbols, digits, uppercase, lowercase)):
-            kpg = KeeperPasswordGenerator.create_from_rules(rules, length)
-            if kpg is None:
-                logging.warning('Using default password complexity rules')
-                kpg = KeeperPasswordGenerator(length=length)
+        dice_rolls = kwargs.get('dice_rolls')
+        if isinstance(dice_rolls, int) and dice_rolls > 0:
+            kpg = DicewarePasswordGenerator(dice_rolls)
         else:
-            if rules:
-                logging.warning(
-                    'Ignoring "rules" option used with "symbols", "digits", "uppercase", or "lowercase" option'
+            if rules and all(i is None for i in (symbols, digits, uppercase, lowercase)):
+                kpg = KeeperPasswordGenerator.create_from_rules(rules, length)
+                if kpg is None:
+                    logging.warning('Using default password complexity rules')
+                    kpg = KeeperPasswordGenerator(length=length)
+            else:
+                if rules:
+                    logging.warning(
+                        'Ignoring "rules" option used with "symbols", "digits", "uppercase", or "lowercase" option'
+                    )
+                kpg = KeeperPasswordGenerator(
+                    length=length, symbols=symbols, digits=digits, caps=uppercase, lower=lowercase
                 )
-            kpg = KeeperPasswordGenerator(
-                length=length, symbols=symbols, digits=digits, caps=uppercase, lower=lowercase
-            )
+
         get_new_password_count = number
         no_breachwatch = no_breachwatch or getattr(params, 'breach_watch', None) is None
 
