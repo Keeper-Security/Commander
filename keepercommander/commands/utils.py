@@ -22,7 +22,6 @@ import re
 import sys
 import urllib.parse
 from datetime import datetime, timedelta
-from distutils.util import strtobool
 from time import time
 from typing import Optional
 
@@ -951,6 +950,7 @@ class KSMCommand(Command):
 
             count = kwargs.get('count')
             unlock_ip = kwargs.get('unlockIp')
+
             client_name = kwargs.get('name')
             config_init = kwargs.get('config_init')
 
@@ -1495,8 +1495,19 @@ class KSMCommand(Command):
 
         if isinstance(unlock_ip, bool):
             is_ip_unlocked = unlock_ip
+        elif isinstance(unlock_ip, int):
+            is_ip_unlocked = unlock_ip > 0
+        elif isinstance(unlock_ip, str) and len(unlock_ip) > 0:
+            unlock_ip = unlock_ip.lower()
+            if unlock_ip == 't':
+                unlock_ip = 'true'
+            elif unlock_ip == 'y':
+                unlock_ip = 'yes'
+            elif unlock_ip == '1':
+                unlock_ip = 'true'
+            is_ip_unlocked = unlock_ip in ['yes', 'true']
         else:
-            is_ip_unlocked = bool(strtobool(unlock_ip))
+            is_ip_unlocked = False
 
         curr_ms = int(time() * 1000)
 
