@@ -21,7 +21,7 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List
+from typing import Optional, Sequence, Callable, List, Any
 
 import sys
 from tabulate import tabulate
@@ -328,6 +328,26 @@ def normalize_output_param(args: str) -> str:
                 args_list[i] = re.sub(r'\\(\w+)', r'/\1', args_grp)
         args = ' --'.join(args_list)
     return args
+
+
+def as_boolean(value, default=None):  # type: (Any, Optional[bool]) -> bool
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, int):
+        return value > 0
+
+    if isinstance(value, str) and len(value) > 0:
+        value = value.lower()
+        if value in ('yes', 'y', 'on', '1', 'true', 't'):
+            return True
+        if value in ('no', 'n', 'off', '0', 'false', 'f'):
+            return False
+
+    if default is not None and isinstance(default, bool):
+        return default
+
+    raise Exception("Unknown value. Available values 'yes'/'no', 'y'/'n', 'on'/'off', '1'/'0', 'true'/'false'")
 
 
 class CliCommand(abc.ABC):
