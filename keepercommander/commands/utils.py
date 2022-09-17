@@ -29,7 +29,7 @@ from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from . import aliases, commands, enterprise_commands, msp_commands
-from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data
+from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data, as_boolean
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
@@ -464,12 +464,7 @@ class ThisDeviceCommand(Command):
         value = value.lower()
 
         if name == 'persistent_login' or name == 'ip_disable_auto_approve':
-            if value and value.lower() in (val.lower() for val in ('yes', 'y', 'on', '1', 'true')):
-                final_val = '1'
-            elif value and value.lower() in (val.lower() for val in ('no', 'n', 'off', '0', 'false')):
-                final_val = '0'
-            else:
-                raise Exception("Unknown value. Available values 'yes'/'no', 'y'/'n', 'on'/'off', '1'/'0', 'true'/'false'")
+            final_val = '1' if as_boolean(value) else '0'
         elif name == 'logout_timer':
             final_val = parse_timeout(value)
         else:
@@ -1493,22 +1488,7 @@ class KSMCommand(Command):
     def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
                    client_name=None, config_init=None):
 
-        if isinstance(unlock_ip, bool):
-            is_ip_unlocked = unlock_ip
-        elif isinstance(unlock_ip, int):
-            is_ip_unlocked = unlock_ip > 0
-        elif isinstance(unlock_ip, str) and len(unlock_ip) > 0:
-            unlock_ip = unlock_ip.lower()
-            if unlock_ip == 't':
-                unlock_ip = 'true'
-            elif unlock_ip == 'y':
-                unlock_ip = 'yes'
-            elif unlock_ip == '1':
-                unlock_ip = 'true'
-            is_ip_unlocked = unlock_ip in ['yes', 'true']
-        else:
-            is_ip_unlocked = False
-
+        is_ip_unlocked = as_boolean(unlock_ip, False)
         curr_ms = int(time() * 1000)
 
         first_access_expire_on_ms = curr_ms + (int(first_access_expire_on) * 60 * 1000)
