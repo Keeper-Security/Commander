@@ -1751,7 +1751,7 @@ class ComplianceReportCommand(EnterpriseCommand):
             from fnmatch import fnmatch
 
             def title_match(title):
-                return any([ref for ref in r_refs if fnmatch(title, ref)])
+                return any([ref for ref in r_refs if fnmatch(title, ref)]) if title else False
 
             filtered = [r for r in filtered if r.record_uid in r_refs or title_match(r.data.get('title'))] if r_refs \
                 else filtered
