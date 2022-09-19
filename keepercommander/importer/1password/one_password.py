@@ -92,7 +92,7 @@ class OnePasswordImporter(BaseImporter):
                             record = Record()
                             record.uid = item.get('uuid') or utils.generate_uid()
                             category = item.get('categoryUuid', '')
-                            if category in ('001', '110', '112'):
+                            if category in ('001', '005', '110', '112'):
                                 record.type = 'login'
                             elif category == '002':
                                 record.type = 'bankCard'
@@ -102,6 +102,8 @@ class OnePasswordImporter(BaseImporter):
                                 record.type = 'contact'
                             elif category == '006':
                                 record.type = 'file'
+                            elif category == '100':
+                                record.type = 'softwareLicense'
                             elif category == '101':
                                 record.type = 'bankAccount'
                             elif category == '102':
@@ -180,6 +182,13 @@ class OnePasswordImporter(BaseImporter):
                                         record.login = value
                                     elif designation == 'password':
                                         record.password = value
+                            if 'password' in details:
+                                password = details['password']
+                                if password:
+                                    if record.password:
+                                        record.fields.append(RecordField(type='secret', label='Password', value=password))
+                                    else:
+                                        record.password = password
                             if 'notesPlain' in details:
                                 record.notes = details.get('notesPlain', '')
                             if 'documentAttributes' in details:
@@ -364,7 +373,7 @@ class OnePasswordImporter(BaseImporter):
                                             elif field_id.endswith('website'):
                                                 ft = 'url'
                                                 fv = field_value
-                                            elif field_id in ('number', 'membership_no'):
+                                            elif field_id in ('number', 'membership_no', 'reg_code'):
                                                 if record.type in ('ssnCard', 'membership', 'driverLicense', 'healthInsurance', 'passport'):
                                                     ft = 'accountNumber'
                                                 elif record.type == 'softwareLicense':
@@ -458,6 +467,9 @@ class OnePasswordImporter(BaseImporter):
                                                     elif field_id == 'issue_date':
                                                         ft = 'date'
                                                         fl = 'dateIssued'
+                                                    elif field_id == 'order_date':
+                                                        ft = 'date'
+                                                        fl = 'dateActive'
                                                     else:
                                                         ft = 'date'
                                                 else:
