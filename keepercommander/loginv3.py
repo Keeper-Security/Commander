@@ -46,7 +46,7 @@ class LoginV3Flow:
     warned_on_fido_package = False
 
     @staticmethod
-    def login(params, new_device=False):   # type: (KeeperParams, bool) -> None
+    def login(params, new_device=False, new_login=False):   # type: (KeeperParams, bool, bool) -> None
 
         logging.debug("Login v3 Start as '%s'", params.user)
 
@@ -59,6 +59,8 @@ class LoginV3Flow:
         if params.user and config_user:
             if params.user.lower() != config_user.lower():
                 clone_code_bytes = None
+        if new_login:
+            clone_code_bytes = None
 
         params.sso_login_info = None
         login_type = 'NORMAL'

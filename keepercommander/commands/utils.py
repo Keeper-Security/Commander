@@ -750,7 +750,7 @@ class LoginCommand(Command):
         params.password = password
 
         try:
-            api.login(params)
+            api.login(params, new_login=True)
             init_recordv3_commands(params)
         except Exception as exc:
             logging.warning(str(exc))
