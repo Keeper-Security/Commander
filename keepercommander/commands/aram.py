@@ -1722,14 +1722,19 @@ class ComplianceReportCommand(EnterpriseCommand):
 
         def filter_owners(rec_owners):
             def filter_by_teams(users, teams):
-                def get_team_users(name):
-                    t_lookup = {t.get('name'): t.get('team_uid') for t in params.enterprise.get('teams', [])}
-                    t_users = params.enterprise.get('team_users', [])
-                    return {tu.get('enterprise_user_id') for tu in t_users if tu.get('team_uid') == t_lookup.get(name)}
+                enterprise_teams = params.enterprise.get('teams', [])
+                team_uids = {t.get('team_uid') for t in enterprise_teams}
+                enterprise_team_users = params.enterprise.get('team_users', [])
+
+                def get_team_users(team_ref):
+                    team_ids = {team_ref} if team_ref in team_uids \
+                        else {t.get('team_uid') for t in enterprise_teams if team_ref == t.get('name')}
+                    return {u.get('enterprise_user_id') for u in enterprise_team_users if u.get('team_uid') in team_ids}
 
                 team_users = set()
-                for team_name in teams:
-                    team_users.update(get_team_users(team_name))
+                for t_ref in teams:
+                    team_users.update(get_team_users(t_ref))
+
                 return [u for u in users if u.user_uid in team_users]
 
             usernames = kwargs.get('username')
@@ -1737,8 +1742,8 @@ class ComplianceReportCommand(EnterpriseCommand):
             job_titles = kwargs.get('job_title')
             filtered = [o for o in filtered if o.job_title in job_titles] if job_titles else filtered
             filtered = [o for o in filtered if o.node_id == node_id] if node_id != root_node_id else filtered
-            team_names = kwargs.get('team')
-            filtered = filter_by_teams(filtered, team_names) if team_names else filtered
+            team_refs = kwargs.get('team')
+            filtered = filter_by_teams(filtered, team_refs) if team_refs else filtered
             return filtered
 
         def filter_records(records):
