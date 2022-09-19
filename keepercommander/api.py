@@ -75,12 +75,12 @@ def auth_verifier(password, salt, iterations):
     return au_ver.decode().rstrip('=')
 
 
-def login(params):
-    # type: (KeeperParams) -> None
+def login(params, new_login=False):
+    # type: (KeeperParams, bool) -> None
 
     logging.info('Logging in to Keeper Commander')
     try:
-        loginv3.LoginV3Flow.login(params)
+        loginv3.LoginV3Flow.login(params, new_login=new_login)
     except loginv3.InvalidDeviceToken:
         logging.warning('Registering new device')
         loginv3.LoginV3Flow.login(params, new_device=True)
