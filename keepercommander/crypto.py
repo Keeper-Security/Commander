@@ -10,7 +10,7 @@
 #
 
 import io
-import os
+import secrets
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -40,7 +40,7 @@ def unpad_data(data):     # type: (bytes) -> bytes
 
 
 def get_random_bytes(length):
-    return os.urandom(length)
+    return secrets.token_bytes(length)
 
 
 def generate_rsa_key():
