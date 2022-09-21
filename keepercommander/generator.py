@@ -7,91 +7,24 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
+
 import abc
 import logging
 import os
-import random
+import secrets
 import string
-from typing import Optional, List
 from secrets import choice
+from typing import Optional, List
 
 from Cryptodome.Random.random import shuffle
-
-from . import crypto
 
 DEFAULT_PASSWORD_LENGTH = 32
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 
 
-def randomSample(sampleLength=0, sampleString=''):
-    sample = ''
-
-    use_secrets = False
-
-    try:
-        # Older version of Python (before 3.6) don't have this module.
-        # If not installed, fall back to the original version of the code
-        import secrets
-        logging.debug("module 'secrets' is installed")
-        use_secrets = True
-    except ModuleNotFoundError:
-        logging.warning("module 'secrets' is not installed")
-
-    for i in range(sampleLength):
-        if use_secrets:
-            sample += secrets.choice(sampleString)
-        else:
-            pos = int.from_bytes(os.urandom(2), 'big') % len(sampleString)
-            sample += sampleString[pos]
-
-    return sample
-
-
-def rules(uppercase=0, lowercase=0, digits=0, special_characters=0):
-    """ Generate a password of specified length with specified number of """
-    """ uppercase, lowercase, digits and special characters """
-    
-    password = ''
-    
-    if uppercase:
-        password += randomSample(uppercase, string.ascii_uppercase)
-    if lowercase:
-        password += randomSample(lowercase, string.ascii_lowercase)
-    if digits:
-        password += randomSample(digits, string.digits)
-    if special_characters:
-        password += randomSample(special_characters, string.punctuation)
-    
-    newpass = ''.join(random.sample(password,len(password)))
-    return newpass
-
-
-def generateFromRules(rulestring):
-    """ Generate based on rules from a string similar to "4,5,2,5" """
-    uppercase, lowercase, digits, special = 0,0,0,0
-
-    ruleparams = filter(str.isdigit, rulestring)
-
-    rulecount = 0
-    for rule in ruleparams:
-        if rulecount == 0:
-            uppercase = int(rule)
-        elif rulecount == 1:
-            lowercase = int(rule)
-        elif rulecount == 2:
-            digits = int(rule)
-        elif rulecount == 3:
-            special = int(rule)
-        rulecount += 1
-
-    return rules(uppercase, lowercase, digits, special)
-
-
 def generate(length=64):
-    """ Generate password of specified len """
-    increment = length // 4
-    lastincrement = increment + (length % 4)
-    return rules(increment, increment, increment, lastincrement)
+    generator = KeeperPasswordGenerator(length=length)
+    return generator.generate()
 
 
 class PasswordGenerator(abc.ABC):
@@ -101,28 +34,33 @@ class PasswordGenerator(abc.ABC):
 
 
 class KeeperPasswordGenerator(PasswordGenerator):
-    def __init__(self, length: int = DEFAULT_PASSWORD_LENGTH, symbols: Optional[int] = None,
-                 digits: Optional[int] = None, caps: Optional[int] = None, lower: Optional[int] = None,
+    def __init__(self, length: int = DEFAULT_PASSWORD_LENGTH,
+                 symbols: Optional[int] = None,
+                 digits: Optional[int] = None,
+                 caps: Optional[int] = None,
+                 lower: Optional[int] = None,
                  special_characters: str = PW_SPECIAL_CHARACTERS):
-        none_count = (symbols, digits, caps, lower).count(None)
-        sum_categories = sum(0 if i is None or i <= 0 else i for i in (symbols, digits, caps, lower))
-        if none_count > 0:
-            # remaining length of password will be divided among unspecified categories
-            extra_count = length - sum_categories if length > sum_categories else 0
-            new_none_value = extra_count // none_count
-            symbols, digits, caps, lower = (new_none_value if i is None else i for i in (symbols, digits, caps, lower))
-            sum_categories += new_none_value * none_count
-        elif sum_categories == 0:
-            symbols, digits, caps, lower, sum_categories = 1, 1, 1, 1, 4
+
+        sum_categories = sum((abs(i) if isinstance(i, int) else 0) for i in (symbols, digits, caps, lower))
         extra_count = length - sum_categories if length > sum_categories else 0
+        extra_chars = ''
+        if symbols is None or isinstance(symbols, int) and symbols > 0:
+            extra_chars += special_characters
+        if digits is None or isinstance(digits, int) and digits > 0:
+            extra_chars += string.digits
+        if caps is None or isinstance(caps, int) and caps > 0:
+            extra_chars += string.ascii_uppercase
+        if lower is None or isinstance(lower, int) and lower > 0:
+            extra_chars += string.ascii_lowercase
+        if extra_count > 0 and not extra_chars:
+            extra_chars = special_characters + string.digits + string.ascii_uppercase + string.ascii_lowercase
         self.category_map = [
-            (symbols, special_characters),
-            (digits, string.digits),
-            (caps, string.ascii_uppercase),
-            (lower, string.ascii_lowercase),
+            (abs(symbols) if isinstance(symbols, int) else 0, special_characters),
+            (abs(digits) if isinstance(digits, int) else 0, string.digits),
+            (abs(caps) if isinstance(caps, int) else 0, string.ascii_uppercase),
+            (abs(lower) if isinstance(lower, int) else 0, string.ascii_lowercase),
+            (extra_count, extra_chars)
         ]
-        extra_chars = ''.join(c[1] for c in self.category_map if c[0] > 0)
-        self.category_map.append((extra_count, extra_chars))
 
     def generate(self) -> str:
         password_list = []
@@ -150,33 +88,41 @@ class KeeperPasswordGenerator(PasswordGenerator):
             rule_list = [int(n) for n in rule_list]
             upper, lower, digits, symbols = rule_list
             length = sum(rule_list) if length is None else length
-            return cls(
-                length=length, caps=upper, lower=lower, digits=digits, symbols=symbols,
-                special_characters=special_characters
-            )
+            return cls(length=length, caps=upper, lower=lower, digits=digits, symbols=symbols, special_characters=special_characters)
 
 
 class DicewarePasswordGenerator(PasswordGenerator):
-    def __init__(self, number_of_rolls):   # type: (int) -> None
+    def __init__(self, number_of_rolls, word_list_file=None):   # type: (int, Optional[str]) -> None
         self._number_of_rolls = number_of_rolls if number_of_rolls> 0 else 5
-        dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'diceware.wordlist.asc.txt')
+        if word_list_file:
+            dice_path = os.path.expanduser(word_list_file)
+        else:
+            dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'diceware.wordlist.asc.txt')
         self._vocabulary = None    # type: Optional[List[str]]
         if os.path.isfile(dice_path):
-
             with open(dice_path, 'r') as dw:
-                self._vocabulary = [x.split()[1].strip() for x in dw.readlines() if x]
+                self._vocabulary = []
+                line_count = 0
+                unique_words = set()
+                for line in dw.readlines():
+                    if not line:
+                        continue
+                    if line.startswith('--'):
+                        continue
+                    line_count += 1
+                    words = [x.strip() for x in line.split()]
+                    word = words[1] if len(words) >= 2 else words[0]
+                    self._vocabulary.append(word)
+                    unique_words.add(word.lower())
+                if line_count < 7776 or len(unique_words) < 7776:
+                    raise Exception(f'Word list file \"{dice_path}\" is not correct. Expected at least 7776 unique words.')
+        else:
+            raise Exception(f'Word list file \"{dice_path}\" not found.')
 
     def generate(self):
         if not self._vocabulary:
             raise Exception(f'Diceware word list was not loaded')
 
-        number_of_bytes = 2
-        random_bytes = crypto.get_random_bytes(self._number_of_rolls * number_of_bytes)
-        words = []
-        for i in range(self._number_of_rolls):
-            offset = i * number_of_bytes
-            rb = random_bytes[offset:offset+number_of_bytes]
-            rn = int.from_bytes(rb, byteorder='big', signed=False)
-            words.append(self._vocabulary[rn % len(self._vocabulary)])
-
+        words = [secrets.choice(self._vocabulary) for _ in range(self._number_of_rolls)]
+        shuffle(words)
         return ' '.join(words)
