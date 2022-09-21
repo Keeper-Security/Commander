@@ -40,7 +40,7 @@ def base64_url_decode(s):       # type: (str) -> bytes
 
 def base64_url_encode(b):       # type: (bytes) -> str
     bs = base64.urlsafe_b64encode(b)
-    return bs.decode('utf-8').rstrip('=')
+    return bs.rstrip(b'=').decode('ascii')
 
 
 def json_to_base64(json_str):

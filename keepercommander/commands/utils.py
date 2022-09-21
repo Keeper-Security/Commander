@@ -289,7 +289,7 @@ generate_parser.add_argument(
     '--number', '-n', type=int, dest='number', action='store', help='Number of passwords', default=1
 )
 
-random_group = generate_parser.add_mutually_exclusive_group()
+random_group = generate_parser.add_argument_group('Random')
 random_group.add_argument(
     '--count', '-c', type=int, dest='length', action='store', help='Length of password', default=20
 )
@@ -313,9 +313,13 @@ random_group.add_argument(
     '--lowercase', '-l', type=int, dest='lowercase', action='store',
     help='Minimum number of lowercase letters in password or 0 for none'
 )
-dice_group = generate_parser.add_mutually_exclusive_group()
+
+dice_group = generate_parser.add_argument_group('Diceware')
 dice_group.add_argument(
     '--dice-rolls', '-dr', type=int, dest='dice_rolls', action='store', help='Number of dice rolls'
+)
+dice_group.add_argument(
+    '--word-list',  dest='word_list', action='store', help='Optional. File path to word list'
 )
 
 reset_password_parser = argparse.ArgumentParser(prog='reset-password', description='Reset Master Password')
@@ -1831,13 +1835,13 @@ class GenerateCommand(Command):
         length : int
             Length of password. Default: 20
         symbols : int
-            Minimum number of symbols in password or 0 for none. Default: 1
+            Minimum number of symbols in password if positive exact if 0 or negative. Default: None
         digits : int
-            Minimum number of digits in password or 0 for none. Default: 1
+            Minimum number of digits in password if positive exact if 0 or negative. Default: None
         uppercase : int
-            Minimum number of uppercase letters in password or 0 for none. Default: 1
+            Minimum number of uppercase letters in password if positive exact if 0 or negative. Default: None
         lowercase : int
-            Minimum number of lowercase letters in password or 0 for none. Default: 1
+            Minimum number of lowercase letters in password if positive exact if 0 or negative. Default: None
         rules : str
             Use comma separated complexity integers (uppercase, lowercase, numbers, symbols)
         no_breachwatch : bool
@@ -1860,7 +1864,7 @@ class GenerateCommand(Command):
 
         dice_rolls = kwargs.get('dice_rolls')
         if isinstance(dice_rolls, int) and dice_rolls > 0:
-            kpg = DicewarePasswordGenerator(dice_rolls)
+            kpg = DicewarePasswordGenerator(dice_rolls, kwargs.get('word_list'))
         else:
             if rules and all(i is None for i in (symbols, digits, uppercase, lowercase)):
                 kpg = KeeperPasswordGenerator.create_from_rules(rules, length)
