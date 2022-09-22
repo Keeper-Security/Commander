@@ -496,6 +496,8 @@ class _EnterpriseRoleEntity(_EnterpriseEntity):
                 data_json = api.decrypt_data(encrypted_data, self.enterprise.tree_key)
                 data_json = self.fix_data(data_json)
                 data.update(json.loads(data_json.decode('utf-8')))
+                if proto_entity.roleType == "pool_manager":
+                    data['displayname'] = 'MSP Subscription Manager'
             except Exception as e:
                 logging.warning('Decrypt encryption data error: %s', e)
         keeper_entity['data'] = data

@@ -15,12 +15,12 @@ import datetime
 import json
 import logging
 import os
-from typing import Set, Dict, List, Iterable, Any, Tuple, Union
+from typing import Set, Dict, List, Iterable, Any, Tuple, Union, Optional
 from urllib.parse import urlparse, urlunparse
 
 from .base import dump_report_data, user_choice, field_to_title
 from .enterprise import EnterpriseCommand
-from .. import api, crypto, utils, loginv3, error, constants
+from .. import api, crypto, utils, loginv3, error, constants, params
 from ..display import bcolors
 from ..error import CommandError
 from ..proto import enterprise_pb2, BI_pb2
@@ -35,6 +35,7 @@ def register_commands(commands):
     commands['msp-legacy-report'] = MSPLegacyReportCommand()
     commands['msp-billing-report'] = MSPBillingReportCommand()
     commands['msp-convert-node'] = MSPConvertNodeCommand()
+    commands['msp-copy-role'] = MSPCopyRoleCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -47,7 +48,7 @@ def register_command_info(aliases, command_info):
     aliases['mbr'] = 'msp-billing-report'
 
     for p in [msp_data_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_update_parser,
-              msp_legacy_report_parser, msp_billing_report_parser]:
+              msp_copy_role_parser, msp_legacy_report_parser, msp_billing_report_parser]:
         command_info[p.prog] = p.description
 
 
@@ -132,6 +133,13 @@ msp_convert_node_parser.add_argument('-p', '--plan', dest='plan', action='store'
                                      choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
                                      help='License Plan')
 msp_convert_node_parser.add_argument('node', action='store', help='node name or node ID')
+
+msp_copy_role_parser = argparse.ArgumentParser(
+    prog='msp-copy-role', description='Copy role with enforcements to Managed Companies.')
+msp_copy_role_parser.add_argument('-r', '--role', dest='role', action='append',
+                                  help='Role Name or ID. Can be repeated.')
+msp_copy_role_parser.add_argument(
+    'mc', action='store', nargs='+', help='Managed Company identifier (name or id)."')
 
 
 def bi_url(params, endpoint):
@@ -1100,3 +1108,138 @@ class MSPConvertNodeCommand(EnterpriseCommand):
         api.communicate_rest(params, mc_rq, 'enterprise/node_to_managed_company')
         logging.info(f'Node \"{msp_node_name}\" was converted to Managed Company')
         api.query_enterprise(params)
+
+
+class MSPCopyRoleCommand(EnterpriseCommand):
+    def get_parser(self):
+        return msp_copy_role_parser
+
+    def execute(self, params, **kwargs):
+        src_roles = {}
+        roles = kwargs.get('role')
+        if not roles:
+            raise error.CommandError('msp-copy-role', f'Source role parameter is required')
+
+        if not isinstance(roles, list):
+            roles = [roles]
+
+        for role_name in roles:
+            if not isinstance(role_name, str):
+                role_name = str(role_name)
+            matched_roles = list(MSPCopyRoleCommand.find_roles(params, role_name))
+            if len(matched_roles) == 1:
+                role = matched_roles[0]
+                src_roles[role['role_id']] = role
+            elif len(matched_roles) > 1:
+                raise Exception(f'There are more than one roles with name \"{role_name}\". Use Role ID')
+            else:
+                raise Exception(f'Role \"{role_name}\" not found')
+
+        managed_companies = params.enterprise.get('managed_companies', [])
+        mcs = {}
+        for mc_name in kwargs.get('mc') or []:
+            mc = get_mc_by_name_or_id(managed_companies, mc_name)
+            if not mc:
+                raise error.CommandError('msp-copy-role', f'Managed Company \"{mc_name}\" not found')
+            mcs[mc['mc_enterprise_id']] = mc
+
+        for mc in mcs.values():
+            mc_id = mc['mc_enterprise_id']
+            mc_params = api.login_and_get_mc_params_login_v3(params, mc_id)
+            node_id = next((x['node_id'] for x in mc_params.enterprise.get('nodes', []) if not x.get('parent_id')), None)
+            mc_rqs = []
+            for role in src_roles.values():
+                src_role_id = role['role_id']
+                role_name = role['data'].get('displayname') or ''
+                if not role_name:
+                    continue
+                dst_roles = list(MSPCopyRoleCommand.find_roles(mc_params, role_name))
+                if len(dst_roles) > 1:
+                    logging.warning('MC # %d: There are more than one roles with name \"%s\". Skipping', mc_id, role_name)
+                    continue
+
+                if len(dst_roles) == 1:
+                    dst_role_id = dst_roles[0]['role_id']
+                else:
+                    dst_role_id = self.get_enterprise_id(mc_params)
+                    dt = { "displayname": role_name }
+                    mc_rqs.append({
+                        "command": 'role_add',
+                        "role_id": dst_role_id,
+                        "node_id": node_id,
+                        "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), mc_params.enterprise['unencrypted_tree_key']),
+                        "visible_below": role.get('visible_below', True),
+                        "new_user_inherit": role.get('new_user_inherit',  False)
+                    })
+                enf = next((x['enforcements'] for x in params.enterprise.get('role_enforcements') or [] if x.get('role_id') == src_role_id), None)
+                src_enforcements = enf.copy() if isinstance(enf, dict) else {}
+                enf = next((x['enforcements'] for x in mc_params.enterprise.get('role_enforcements') or [] if x.get('role_id') == dst_role_id), None)
+                dst_enforcements = enf.copy() if isinstance(enf, dict) else {}
+                for enforcement in src_enforcements:
+                    src_value = src_enforcements[enforcement]
+                    if enforcement in dst_enforcements:
+                        command = 'role_enforcement_update'
+                        dst_value = dst_enforcements[enforcement]
+                        if src_value != dst_value:
+                            command = 'role_enforcement_update'
+                        dst_enforcements.pop(enforcement)
+                    else:
+                        command = 'role_enforcement_add'
+                    if command:
+                        rq = {
+                            'command': command,
+                            'role_id': dst_role_id,
+                            'enforcement': enforcement,
+                        }
+                        try:
+                            value = MSPCopyRoleCommand.get_enforcement_value(enforcement, src_value)
+                            if value is not None:
+                                if not isinstance(value, bool):
+                                    rq['value'] = value
+                                mc_rqs.append(rq)
+                        except Exception as a:
+                            logging.warning('Role %s: Enforcement %s: %s', role_name, enforcement, e)
+                for enforcement in dst_enforcements:
+                    rq = {
+                        'command': 'role_enforcement_remove',
+                        'role_id': dst_role_id,
+                        'enforcement': enforcement,
+                    }
+                    mc_rqs.append(rq)
+            if mc_rqs:
+                api.execute_batch(mc_params, mc_rqs)
+            logging.info('MC %s: Roles are in sync', mc_id)
+
+    @staticmethod
+    def get_enforcement_value(name, value):    # type: (str, str) -> Any
+        name = name.lower()
+        if name in constants.ENFORCEMENTS:
+            enforcement_type = constants.ENFORCEMENTS[name]
+            if enforcement_type == 'long':
+                try:
+                    return int(value)
+                except Exception as e:
+                    raise Exception(f'Enforcement {name}: invalid integer value: {value}')
+            if enforcement_type == 'boolean':
+                return value == 'true'
+            if enforcement_type == 'account_share':  # not supported
+                return
+            if enforcement_type in ('record_types', 'json', 'jsonarray'):
+                return json.loads(value)
+
+            return value  # 'ip_whitelist', 'string', 'two_factor_duration', 'ternary_*'
+
+    @staticmethod
+    def find_roles(params, name):   # type: (params.KeeperParams, str) -> Iterable[Dict]
+        if isinstance(params.enterprise, dict):
+            if name.isdigit():
+                role_id = int(name)
+                for role in params.enterprise.get('roles') or []:
+                    if role_id == role.get('role_id'):
+                        yield role
+                        return
+
+            for role in params.enterprise.get('roles') or []:
+                role_name = role['data'].get('displayname') or ''
+                if role_name.casefold() == name.casefold():
+                    yield role

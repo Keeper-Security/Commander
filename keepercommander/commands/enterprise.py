@@ -197,7 +197,7 @@ enterprise_role_parser.add_argument('--enforcement', dest='enforcements', action
                                     help='sets role enforcement')
 enterprise_role_parser.add_argument('--cascade', dest='cascade', action='store', choices=['on', 'off'],
                                     help='apply to the children nodes. \'add-admin\' only')
-enterprise_role_parser.add_argument('role', type=str, nargs='+', help='Role Name ID. Can be repeated.')
+enterprise_role_parser.add_argument('role', type=str, nargs='+', help='Role Name or ID. Can be repeated.')
 enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
