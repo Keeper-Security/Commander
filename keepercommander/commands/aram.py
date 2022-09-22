@@ -14,14 +14,13 @@ import argparse
 import base64
 import copy
 import datetime
-import operator
 import time
 import json
 import gzip
 import logging
 import platform
 import re
-from typing import Optional, List, Union, Tuple
+from typing import Optional, List, Union
 
 import requests
 import socket
@@ -43,7 +42,6 @@ from ..proto import enterprise_pb2
 from .register import EMAIL_PATTERN
 from ..sox import sox_data
 from ..sox.sox_data import RebuildTask
-from ..sox.sox_types import RecordPermissions
 from ..sox.storage_types import StorageRecordAging
 from typing import Dict, Callable
 
@@ -131,30 +129,6 @@ action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', a
                                   help='admin action to apply to each user in the report')
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
-
-compliance_report_parser = argparse.ArgumentParser(prog='compliance-report', description='Run a SOX compliance report.')
-compliance_report_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
-compliance_report_parser.add_argument('--no-cache', '-nc', action='store_true',
-                                      help='remove any local non-memory storage of data after report is generated')
-compliance_report_parser.add_argument('--node', action='store', help='ID or name of node (defaults to root node)')
-username_opt_help = 'user(s) whose records are to be included in report (set option once per user)'
-compliance_report_parser.add_argument('--username', '-u', action='append', help=username_opt_help)
-job_title_opt_help = 'job title(s) of users whose records are to be included in report (set option once per job title)'
-compliance_report_parser.add_argument('--job-title', '-jt', action='append', help=job_title_opt_help)
-team_opt_help = 'name(s) of team(s) whose members\' records are to be included in report (set once per team)'
-compliance_report_parser.add_argument('--team', action='append', help=team_opt_help)
-record_search_help = 'UID or title of record(s) to include in report (set once per record). To allow non-exact ' \
-                     'matching on record titles, include "*" where appropriate (e.g., to include records with titles' \
-                     ' ending in "Login", set option value to "*Login")'
-compliance_report_parser.add_argument('--record', action='append', help=record_search_help)
-compliance_report_parser.add_argument('--url', action='append',
-                                  help='URL of record(s) to include in report (set once for each record)')
-compliance_report_parser.add_argument('--shared', action='store_true',
-                                      help='flag for excluding non-shared records from report')
-compliance_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                  default='table', help='format of output')
-compliance_report_parser.add_argument('--output', dest='output', action='store',
-                                  help='path to resulting output file (ignored for "table" format)')
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -1651,169 +1625,3 @@ class ActionReportCommand(EnterpriseCommand):
         formatted = [[name] for name in usernames]
 
         return dump_report_data(data=formatted, headers=['username'], title=title, fmt=fmt, filename=filepath)
-
-
-class ComplianceReportCommand(EnterpriseCommand):
-    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
-        return compliance_report_parser
-
-    def execute(self, params, **kwargs):
-        node_name_or_id = kwargs.get('node')
-        node_name_or_id = int(node_name_or_id) if node_name_or_id and node_name_or_id.isdecimal() else node_name_or_id
-        nodes = params.enterprise['nodes']
-        root_node_id = nodes[0].get('node_id', 0)
-        node_ids = (n.get('node_id') for n in nodes)
-        node_id_lookup = {n.get('data').get('displayname'): n.get('node_id') for n in nodes}
-        node_id = node_id_lookup.get(node_name_or_id) if node_name_or_id in node_id_lookup \
-            else node_name_or_id if node_name_or_id in node_ids \
-            else root_node_id
-        enterprise_id = node_id >> 32
-        max_data_age = datetime.timedelta(days=1)
-        min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
-
-        def show_help_text(local_data):  # type: (sox_data.SoxData) -> None
-            last_update_ts = local_data.storage.last_compliance_data_update
-            if not last_update_ts:
-                logging.info("Cache last update: NONE -- to build the cache, call the following command:"
-                             "\n\t'compliance-report --rebuild'")
-            else:
-                last_update = datetime.datetime.fromtimestamp(last_update_ts)
-                num_users = len(local_data.get_users())
-                num_shared = len([rec for rec in local_data.get_records().values() if rec.shared])
-                msg = f'cache last update: {last_update} Total records: {local_data.record_count} ' \
-                      f'Total Users: {num_users} Total shared records: {num_shared}'
-                logging.info(msg)
-            help_txt = "\nGet record and sharing information from all vaults in the enterprise\n" \
-                       "Format:\ncompliance-report [-h] [--rebuild] [--no-cache] [--node NODE] [--username USERNAME] " \
-                       "[--job-title JOB_TITLE] [--team TEAM] [--record RECORD] [--url DOMAIN] [--shared] " \
-                       "[--format {table,csv,json}] [--output OUTPUT] " \
-                       "\n\nExamples:" \
-                       "\nSee all records for a user" \
-                       "\n\t'compliance-report --username USERNAME'" \
-                       "\nFind all records for a specific URL that have been shared" \
-                       "\n\t'compliance-report --shared --url URL'" \
-                       "\nExport report of all shared records in a node" \
-                       "\n\t'compliance-report --shared --output compliance_share_report.csv --format csv " \
-                       "--node NODE_NAME_OR_ID'" \
-                       "\n\t* use 'enterprise-info --node' to see a list of available nodes" \
-                       "\nCache controls" \
-                       "\n\t'compliance-report --rebuild'  " \
-                       "\tUpdate and rebuild the cache with new compliance information." \
-                       "\n\t'compliance-report --no-cache'\tDelete the cache entirely.The cache will be rebuilt if " \
-                       "compliance-report is run again."
-            logging.info(help_txt)
-
-        from ..sox import get_compliance_data
-        opts_set = [val for opt, val in kwargs.items() if val and opt != 'command' and opt != 'format']
-        if not opts_set:
-            local_sox_data = get_compliance_data(params, node_id, enterprise_id, False, min_updated=0)
-            show_help_text(local_sox_data)
-            return
-
-        no_cache = kwargs.get('no_cache')
-        sd = get_compliance_data(
-            params, node_id, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=min_data_ts, no_cache=no_cache
-        )
-
-        report_fmt = kwargs.get('format', 'table')
-        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url'] if report_fmt == 'json' \
-            else ['Record UID', 'Title', 'Type', 'Username', 'Permissions', 'URL']
-        table = []
-
-        def filter_owners(rec_owners):
-            def filter_by_teams(users, teams):
-                enterprise_teams = params.enterprise.get('teams', [])
-                team_uids = {t.get('team_uid') for t in enterprise_teams}
-                enterprise_team_users = params.enterprise.get('team_users', [])
-
-                def get_team_users(team_ref):
-                    team_ids = {team_ref} if team_ref in team_uids \
-                        else {t.get('team_uid') for t in enterprise_teams if team_ref == t.get('name')}
-                    return {u.get('enterprise_user_id') for u in enterprise_team_users if u.get('team_uid') in team_ids}
-
-                team_users = set()
-                for t_ref in teams:
-                    team_users.update(get_team_users(t_ref))
-
-                return [u for u in users if u.user_uid in team_users]
-
-            usernames = kwargs.get('username')
-            filtered = [o for o in rec_owners if o.email in usernames] if usernames else rec_owners
-            job_titles = kwargs.get('job_title')
-            filtered = [o for o in filtered if o.job_title in job_titles] if job_titles else filtered
-            filtered = [o for o in filtered if o.node_id == node_id] if node_id != root_node_id else filtered
-            team_refs = kwargs.get('team')
-            filtered = filter_by_teams(filtered, team_refs) if team_refs else filtered
-            return filtered
-
-        def filter_records(records):
-            shared_only = kwargs.get('shared')
-            filtered = [r for r in records if not shared_only or r.shared]
-            urls = kwargs.get('url')
-            filtered = [r for r in filtered for url in urls if r.data.get('url') and url in r.data.get('url')] if urls \
-                else filtered
-            r_refs = kwargs.get('record')
-            from fnmatch import fnmatch
-
-            def title_match(title):
-                return any([ref for ref in r_refs if fnmatch(title, ref)]) if title else False
-
-            filtered = [r for r in filtered if r.record_uid in r_refs or title_match(r.data.get('title'))] if r_refs \
-                else filtered
-            return filtered
-
-        owners = filter_owners(sd.get_users().values())
-        shared_folders = sd.get_shared_folders()
-        permissions_lookup = dict()  # type: Dict[Tuple[str, str], str]
-
-        def update_permissions_lookup(plookup, r_uid, user, perm_bits):
-            lookup_key = r_uid, user.email
-            pbits = plookup.get(lookup_key, perm_bits)
-            plookup.update({lookup_key: perm_bits | pbits})
-
-        for owner in owners:
-            owner_records = filter_records(sd.get_records(owner.records).values())
-            for record in owner_records:
-                if not record:
-                    continue
-                ruid = record.record_uid
-                for user_uid, permission_bits in record.user_permissions.items():
-                    user = sd.get_user(user_uid)
-                    update_permissions_lookup(permissions_lookup, ruid, user, permission_bits)
-                for folder in shared_folders.values():
-                    for rp in folder.record_permissions:
-                        if rp.record_uid == ruid:
-                            for user in sd.get_users(folder.users).values():
-                                update_permissions_lookup(permissions_lookup, ruid, user, rp.permission_bits)
-                            for team in sd.get_teams(folder.teams).values():
-                                for team_user in sd.get_users(team.users).values():
-                                    update_permissions_lookup(permissions_lookup, ruid, team_user, rp.permission_bits)
-
-        for key, permission_bits in permissions_lookup.items():
-            r_uid, email = key
-            table.append({'record_uid': r_uid, 'email': email, 'permissions': permission_bits})
-
-        def format_table(rows):
-            rows.sort(key=operator.itemgetter('permissions'), reverse=True)
-            rows.sort(key=lambda item: item.get('permissions') & 1, reverse=True)
-            rows.sort(key=operator.itemgetter('record_uid'))
-            last_ruid = ''
-            formatted_rows = []
-            record_lookup = sd.get_records()
-            for row in rows:
-                r_uid = row.get('record_uid')
-                rec = record_lookup.get(r_uid)
-                r_data = rec.data
-                r_title = r_data.get('title', '')
-                r_type = r_data.get('record_type', '')
-                r_url = r_data.get('url', '')
-                formatted_ruid = r_uid if report_fmt != 'table' or last_ruid != r_uid else ''
-                u_email = row.get('email')
-                permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
-                fmt_row = [formatted_ruid, r_title, r_type, u_email, permissions, r_url.rstrip('/')]
-                formatted_rows.append(fmt_row)
-                last_ruid = r_uid
-            return formatted_rows
-
-        table = format_table(table)
-        return dump_report_data(table, headers, fmt=report_fmt, filename=kwargs.get('output'), column_width=20)
