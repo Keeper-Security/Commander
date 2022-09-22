@@ -52,6 +52,7 @@ from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, Sec
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from . import aram    # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
 from .scim import ScimCommand
+from . import compliance
 
 
 def register_commands(commands):
@@ -73,7 +74,8 @@ def register_commands(commands):
     commands['security-audit-report'] = SecurityAuditReportCommand()
     commands['user-report'] = UserReportCommand()
     commands['action-report'] = ActionReportCommand()
-    commands['compliance-report'] = aram.ComplianceReportCommand()
+
+    compliance.register_commands(commands)
 
 
 def register_command_info(aliases, command_info):
@@ -86,15 +88,15 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['sar'] = 'security-audit-report'
     aliases['tu'] = 'transfer-user'
-    aliases['cr'] = 'compliance-report'
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              security_audit_report_parser, user_report_parser, aram.compliance_report_parser]:
+              security_audit_report_parser, user_report_parser]:
         command_info[p.prog] = p.description
 
+    compliance.register_command_info(aliases, command_info)
 
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
