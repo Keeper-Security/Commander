@@ -66,7 +66,7 @@ class ComplianceCommand(GroupCommand):
             kwargs['command'] = 'compliance'
             args = ' '.join([self.default_verb, args])
 
-        super().execute_args(params, args, **kwargs)
+        return super().execute_args(params, args, **kwargs)
 
     def validate(self, params):  # type: (KeeperParams) -> None
         def user_has_privilege(privilege):
