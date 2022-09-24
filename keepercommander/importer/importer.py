@@ -521,7 +521,7 @@ class BaseExporter(abc.ABC):
             raise CommandError('export', 'File name parameter is required.')
 
         self.do_export(filename, items, file_password)
-        if os.path.isfile(filename):
+        if filename and os.path.isfile(filename):
             logging.info('Vault has been exported to: %s', os.path.abspath(filename))
 
     @abc.abstractmethod
