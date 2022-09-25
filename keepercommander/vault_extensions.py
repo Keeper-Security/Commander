@@ -48,34 +48,32 @@ def matches_record(record, pattern):    # type: (vault.KeeperRecord, Union[str, 
     return False
 
 
-def find_records(params, search_str=None, **kwargs):
-    # type: (KeeperParams, Optional[str], Any) -> Iterator[vault.KeeperRecord]
+def find_records(params, search_str=None, record_type=None, record_version=None):
+    # type: (KeeperParams, Optional[str], Union[str, Iterable[str], None], Union[str, Iterable[str], None]) -> Iterator[vault.KeeperRecord]
     pattern = re.compile(search_str, re.IGNORECASE).search if search_str else None
 
     type_filter = None       # type: Optional[Set[str]]
     version_filter = None    # type: Optional[Set[int]]
-    record_type = kwargs.get('record_type')   # type: Optional[Union[str, Iterator[str]]]
     if record_type:
         type_filter = set()
+        if isinstance(record_type, str):
+            type_filter.add(record_type)
         if hasattr(record_type, '__iter__'):
             type_filter.update(record_type)
-        elif isinstance(record_type, str):
-            type_filter.add(record_type)
 
-    record_version = kwargs.get('record_version')   # type: Optional[Union[int, Iterator[int]]]
     if record_version:
         version_filter = set()
+        if isinstance(record_version, int):
+            version_filter.add(record_version)
         if hasattr(record_version, '__iter__'):
             version_filter.update((x for x in record_version if isinstance(x, int)))
-        elif isinstance(record_version, int):
-            version_filter.add(record_version)
 
     for record_uid in params.record_cache:
         record = vault.KeeperRecord.load(params, record_uid)
+        if not record:
+            continue
         if search_str and record.record_uid == search_str:
             yield record
-            continue
-        if not record:
             continue
         if version_filter and record.version not in version_filter:
             continue
