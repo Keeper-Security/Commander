@@ -53,7 +53,17 @@ class KeeperPasswordGenerator(PasswordGenerator):
         if lower is None or isinstance(lower, int) and lower > 0:
             extra_chars += string.ascii_lowercase
         if extra_count > 0 and not extra_chars:
-            extra_chars = special_characters + string.digits + string.ascii_uppercase + string.ascii_lowercase
+            if isinstance(symbols, int) and symbols < 0:
+                extra_chars += special_characters
+            if isinstance(digits, int) and digits < 0:
+                extra_chars += string.digits
+            if isinstance(caps, int) and caps < 0:
+                extra_chars += string.ascii_uppercase
+            if isinstance(lower, int) and lower < 0:
+                extra_chars += string.ascii_lowercase
+
+            if extra_count > 0 and not extra_chars:
+                raise Exception('Password character set is empty')
         self.category_map = [
             (abs(symbols) if isinstance(symbols, int) else 0, special_characters),
             (abs(digits) if isinstance(digits, int) else 0, string.digits),
