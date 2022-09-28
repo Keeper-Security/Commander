@@ -201,6 +201,8 @@ KEEPER_PUBLIC_HOSTS = {
     'US': 'keepersecurity.com',
     'EU': 'keepersecurity.eu',
     'AU': 'keepersecurity.com.au',
+    'CA': 'keepersecurity.ca',
+    'JP': 'keepersecurity.jp',
     'GOV': 'govcloud.keepersecurity.us'
 }
 

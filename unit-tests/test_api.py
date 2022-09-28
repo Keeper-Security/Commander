@@ -1,11 +1,47 @@
 from unittest import TestCase, mock
+from collections import namedtuple
 
 from data_vault import VaultEnvironment, get_synced_params, get_connected_params
 from helper import KeeperApiHelper
-from keepercommander import api
-from keepercommander.proto import APIRequest_pb2
+from keepercommander import api, generator
 
 vault_env = VaultEnvironment()
+
+PasswordStrength = namedtuple('PasswordStrength', 'length caps lower digits symbols')
+
+
+class TestPasswordGenerator(TestCase):
+    @staticmethod
+    def get_password_strength(password):  # type: (str) -> PasswordStrength
+        length = len(password)
+        caps = 0
+        lower = 0
+        digits = 0
+        symbols = 0
+
+        for ch in password:
+            if ch.isalpha():
+                if ch.isupper():
+                    caps += 1
+                else:
+                    lower += 1
+            elif ch.isdigit():
+                digits += 1
+            else:
+                symbols += 1
+        return PasswordStrength(length=length, caps=caps, lower=lower, digits=digits, symbols=symbols)
+
+    def test_generator_exclude(self):
+        gen = generator.KeeperPasswordGenerator(length=20, caps=-2, lower=-2, digits=-2, symbols=0)
+        self.assertEqual(gen.category_map[4][0], 14)
+        password = gen.generate()
+        strength = TestPasswordGenerator.get_password_strength(password)
+        self.assertEqual(strength.length, 20)
+        self.assertEqual(strength.symbols, 0)
+
+    def test_generator_fail(self):
+        with self.assertRaises(Exception):
+            generator.KeeperPasswordGenerator(length=20, caps=0, lower=0, digits=0, symbols=0)
 
 
 class TestSearch(TestCase):
