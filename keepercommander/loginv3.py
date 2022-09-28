@@ -214,7 +214,7 @@ class LoginV3Flow:
         params.session_token = session_token
 
         login_type_message = LoginV3Flow.get_data_key(params, resp)
-
+        params.password = None
         params.clone_code = resp.cloneCode
         CommonHelperMethods.persist_state_data(params)
 
@@ -290,6 +290,8 @@ class LoginV3Flow:
 
         elif resp.encryptedDataKeyType == proto.NO_KEY \
                 or resp.encryptedDataKeyType == proto.BY_BIO:
+            raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
+        else:
             raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
 
         params.data_key = decrypted_data_key
@@ -984,7 +986,8 @@ class LoginV3API:
                     raise KeeperApiError(rs['error'], rs['message'])
 
     @staticmethod
-    def startLoginMessage(params, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):  # type: (KeeperParams, bytes, str, str) -> proto.LoginResponse
+    def startLoginMessage(params, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):
+        # type: (KeeperParams, bytes, Optional[bytes], str) -> proto.LoginResponse
         rq = proto.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.username = params.user.lower()
