@@ -9,50 +9,11 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
 from keepercommander import rest_api, api, params, record, shared_folder, team, crypto, utils
 
-_USER_NAME = 'unit.test@keepersecurity.com'
+_USER_NAME = 'unit.test@company.com'
 _USER_PASSWORD = base64.b64encode(os.urandom(8)).decode('utf-8').strip('=')
 _USER_ITERATIONS = 1000
 _USER_SALT = os.urandom(16)
 _USER_DATA_KEY = os.urandom(32)
-_USER_PRIVATE_KEY = '''-----BEGIN RSA PRIVATE KEY-----
-Proc-Type: 4,ENCRYPTED
-DEK-Info: AES-128-CBC,7359ABCB9854B5CB781E4910662C5EF1
-
-u1i/Mj22bT6AegV38qTsz0mK/QFbGpveS9dq4GXkYVA5JjqowcVsl1HUq2mIhDmW
-wYRhkqGWD6IJkt++mDIpv74VKYYuzxTVvt4V46LS/mXn9xqO8g8Cy1qxWznRBPZe
-a6/qziQpSI1R4PltIcD1gQHPIJiHINOi4Zi1GT6FTRzZwQ+08rOFfRchvP/rG8hX
-KgLywsk9p44exMNJBJhOVTs6UeC4zGdMxNN++Qa+3o+6G8FVgyR4KNGqcFVoYGe6
-L5K5KoJz4LwhUy3NDL9TSftxqvXsbiFtUw4BSEYjdyDYQz/ytpFkyGJIzn7vutx+
-XbEIMRi6RR2qObI9TdiA5w7sOthvCiGbpzqlH6b++pIRNYiUPe+Ec8SeEbkM8wZB
-IFx6xCpDKZQPyCnHngwYIw/iCXqO5UyJjDCnDHOVpMi/BbMJsKp7U+qcrUmN9gUr
-VMFRlUZpps5Im3wu3gebZ6Fu41JYK2LqcgEOnh0EbeeZIvH3+uv/QIHdJPYSbsMU
-Ns2KJQc+n4PsZa7kZf/CGAq926Y302o9SV2pX1GAcwoHJWkfukZhpt3ikJSrnHVD
-FAIZbA0xt4XdbDMVg5T6Er+q1IO1zrZeQ/NLsRR+/JLz3+DvtIKrVMTLtGbl/VV4
-rROt9l6YnF2F8CMaMz68v+19vzo1zEob/WD/8Ye3YQq66meJ/+NjwyTmMrZxsO/l
-FHeDgDs1r2Nc1uC2/n1UiiZyFTaBzkj/5QUnpBm33V/P63+pN6cw0qEvjNEwdIOC
-d5Ohky1d1ayhSeVHkx1ZYcSTriicgWcWTOV+zckJ+VAqvSCZV4A+NMqZGVzPhMgC
-h9GWvIXfMDhXIDzBsQz2W3zseJFSzL4av8b/AxTDapOeS9M8FzsbEDJC7YfiLVWK
-6bFOLr2dg5Lm41iyWmp7NK2+IUFN15DgMIbHcpfD24F+cs73hjE3E56rsb8dBifG
-Q1izqwFiopK+1z9C/EWBmmY3AcyqjXEQl3DWnL2IbYnhmm/SN040BGVZKJcUBUlk
-b7RPQF+uZWlM8EWLTqCZQUfl3bogxOcFryyElBPDVRq4Z/x4di2FuUbmI/Mbs1g7
-PiBWKIC8CHk3sLezXgMn1thkKsRI3xN+jZcGTZ6lhTVKUAbbW8mqRzBtyjPHbjUC
-9PRSeJRDc10ZYnyWhLXa2lSgY12obXNuxLi8eKg6VuBnVzh4CvjOmJY3NlA5xsUi
-YLl49YLLQqBU2IwrgqYm+7n2D8PmnhwPUPj2shNoIi9gtAhx8n0pyypgzd8iTtQZ
-3IxO1zaNjJOal4er299DcoBsZ5cZ7EU6ltwtUCNqGyaVWwSqjAKtiPGpjT/eEAeL
-KLzX+F5r+dUUsy5m8ds+6TUWDxLaqT8PcugnUxT8f3JokODv7JHSiogB1ETeczKS
-RJfJH63edAQLxl+rayIqsTuUntmMNgE3olQWexCChX9b8xW6OzVgw8jU6WX0OGOB
-5qkDxT9de8CpseIymuDX8AYIpPxIHJdigTBBfYp34hPAKuBpAwDPNS1FiOZYYZSB
-84VHEOeXkUpBgAGQwphDZITltMDnssSGPbCX9EHM5+mNVkmQw+SDJbcgXm0jNVtC
------END RSA PRIVATE KEY-----
-'''
-_PRIVATE_KEY_PASSWORD = 'E,{-qhsm;<cq]3D(3H5K/'
-_USER_PUBLIC_KEY = '''MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqR0AjmBXo371pYmvS1NM
-8nXlbAv5qUbPYuV6KVwKjN3T8WX5K6HDGl3+ylAbI02vIzKue+gDbjo1wUGp2qhA
-Nc1VxllLSWnkJmwbuGUTEWp4ANjusoMhPvEwna1XPdlrSMdsKokjbP9xbguPdvXx
-5oBaqArrrGEg+36Vi7miA/g/UT4DKcryglD4Xx0H9t5Hav+frz2qcEsyh9FC0fNy
-on/uveEdP2ac+kax8vO5EeVfBzOdw+WPaBtUO1h7rSZ6xKOm6x1OahNTUFy7Cgm0
-38JuMwHChTK29H9EOlqbOOuzYA1ENzL88hELpe+kl4RmpNS94BJDssikFFbjoiAV
-fwIDAQAB'''
 
 _SESSION_TOKEN = base64.urlsafe_b64encode(os.urandom(64)).decode('utf-8').strip('=')
 _DEVICE_ID = os.urandom(64)
@@ -60,12 +21,12 @@ _DEVICE_ID = os.urandom(64)
 _2FA_ONE_TIME_TOKEN = '123456'
 _2FA_DEVICE_TOKEN = base64.urlsafe_b64encode(os.urandom(32)).decode('utf-8').strip('=')
 
-_IMPORTED_PRIVATE_KEY = RSA.importKey(_USER_PRIVATE_KEY, _PRIVATE_KEY_PASSWORD)
-_DER_PRIVATE_KEY = _IMPORTED_PRIVATE_KEY.export_key(format='DER')
+_private_key, _public_key = crypto.generate_rsa_key()
+
+_DER_PRIVATE_KEY = crypto.unload_rsa_private_key(_private_key)
 _ENCRYPTED_PRIVATE_KEY = api.encrypt_aes(_DER_PRIVATE_KEY, _USER_DATA_KEY)
 
-_IMPORTED_PUBLIC_KEY = crypto.load_rsa_public_key(base64.b64decode(_USER_PUBLIC_KEY))
-_ENCODED_PUBLIC_KEY = utils.base64_url_encode(crypto.unload_rsa_public_key(_IMPORTED_PUBLIC_KEY))
+_IMPORTED_PUBLIC_KEY = crypto.unload_rsa_public_key(_public_key)
 
 _V2_DERIVED_KEY = crypto.derive_keyhash_v2('data_key', _USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
 _dk = rest_api.encrypt_aes(_USER_DATA_KEY, _V2_DERIVED_KEY)
@@ -86,8 +47,8 @@ class VaultEnvironment:
         self.iterations = _USER_ITERATIONS
         self.salt = _USER_SALT
         self.data_key = _USER_DATA_KEY
-        self.public_key = _IMPORTED_PUBLIC_KEY
-        self.encoded_public_key = _ENCODED_PUBLIC_KEY
+        self.public_key = _public_key
+        self.encoded_public_key = utils.base64_url_encode(_IMPORTED_PUBLIC_KEY)
         self.session_token = _SESSION_TOKEN
         self.device_id = _DEVICE_ID
         self.one_time_token = _2FA_ONE_TIME_TOKEN
@@ -113,7 +74,7 @@ def get_connected_params():
     p.data_key = _USER_DATA_KEY
 
     p.auth_verifier = api.auth_verifier(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
-    p.rsa_key = _IMPORTED_PRIVATE_KEY
+    p.rsa_key = RSA.importKey(_DER_PRIVATE_KEY)
     p.session_token = _SESSION_TOKEN
     return p
 
@@ -147,6 +108,7 @@ _USER_FOLDERS = []
 _USER_FOLDER_RECORDS = []
 _USER_FOLDER_SHARED_FOLDER = []
 _TEAMS = []
+
 
 def get_sync_down_response():
     return {
@@ -216,7 +178,7 @@ def register_record(record, key_type=None):
         meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, _USER_DATA_KEY))
         _RECORD_METADATA.append(meta_data)
     elif key_type == 2:
-        meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_rsa(record_key, _IMPORTED_PUBLIC_KEY))
+        meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_rsa(record_key, _public_key))
         _RECORD_METADATA.append(meta_data)
 
     return record_key
