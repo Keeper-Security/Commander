@@ -20,6 +20,8 @@ import gzip
 import logging
 import platform
 import re
+from functools import partial
+
 from typing import Optional, List, Union
 
 import requests
@@ -30,6 +32,8 @@ import hmac
 
 from urllib.parse import urlparse
 
+from .transfer_account import EnterpriseTransferUserCommand
+from ..display import bcolors
 from ..record import Record
 from .recordv2 import RecordAddCommand
 from .helpers import audit_report
@@ -125,10 +129,14 @@ action_report_parser.add_argument('--output', dest='output', action='store', hel
 action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                   default='table', help='format of output')
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
-                                  choices=['lock', 'delete', 'none'], default='none',
+                                  choices=['lock', 'delete', 'transfer', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
+target_user_help = 'email to transfer users to when --apply-action=transfer is specified'
+action_report_parser.add_argument('--target-user', action='store', help=target_user_help)
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
+force_action_help = 'skip confirmation prompt when applying irreversible admin actions (e.g., delete, transfer)'
+action_report_parser.add_argument('--force', action='store_true', help=force_action_help)
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -1554,6 +1562,9 @@ class ActionReportCommand(EnterpriseCommand):
             excluded = get_excluded(included, query_filter, name_key)
             return [user for user in candidates if user['username'] not in excluded]
 
+        def get_action_results_text(cmd, cmd_status, server_msg, affected):
+            return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
+
         def batch_apply_cmd(users, api_cmd_rq=None, dryrun=False, userid_field='enterprise_user_id'):
             cmd_status = 'aborted' if api_cmd_rq else 'n/a'
             affected = 0
@@ -1578,24 +1589,72 @@ class ActionReportCommand(EnterpriseCommand):
                             affected = len(users) - len(fails)
                             server_msg = fail.get('message')
 
-            return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
+            return get_action_results_text(cmd, cmd_status, server_msg, affected)
+
+        def transfer_accounts(from_users, to_user, dryrun=False):
+            cmd = 'transfer_and_delete_user'
+            cmd_status = 'aborted'
+            affected = 0
+            server_msg = 'n/a'
+            if not to_user:
+                return 'NONE (No transfer target specified)'
+
+            if not from_users:
+                return 'NONE (No accounts to transfer)'
+
+            target = to_user.lower().strip()
+            active_users = [u for u in params.enterprise.get('users') if u.get('status') == 'active']
+            is_target_valid = target not in from_users and any([u for u in active_users if u.get('username') == target])
+            if is_target_valid:
+                if dryrun:
+                    cmd_status = 'dry run'
+                else:
+                    pub_key = self.get_public_key(params, target)
+                    if pub_key:
+                        for email in [u.get('username') for u in from_users]:
+                            result = EnterpriseTransferUserCommand.transfer_user_account(params, email, target, pub_key)
+                            if result:
+                                affected += 1
+
+                        if affected > 0:
+                            cmd_status = 'incomplete' if affected != len(from_users) else 'success'
+                        else:
+                            cmd_status = server_msg = 'fail'
+                    else:
+                        logging.warning(f'Failed to get user {target} public key')
+            else:
+                logging.warning(f'Invalid transfer target {target}')
+
+            return get_action_results_text(cmd, cmd_status, server_msg, affected)
 
         def apply_admin_action(users, target_status='no-update', action='none', dryrun=False):
             default_allowed = {'none'}
             status_actions = {
                 'no-logon':     {*default_allowed, 'lock'},
                 'no-update':    {*default_allowed},
-                'locked':       {*default_allowed, 'delete'}
+                'locked':       {*default_allowed, 'delete', 'transfer'}
             }
-            action_cmd_rqs = {
-                'none': None,
-                'lock': cmd_rq('enterprise_user_lock', lock='locked'),
-                'delete': cmd_rq('enterprise_user_delete')
-            }
+
             invalid_action_msg = f'NONE (Action "{action}" not allowed on "{target_status}" users)'
             is_valid_action = action in status_actions[target_status]
-            api_cmd_rq = action_cmd_rqs[action]
-            return batch_apply_cmd(users, api_cmd_rq, dryrun) if is_valid_action else invalid_action_msg
+
+            action_handlers = {
+                'none': partial(batch_apply_cmd, users, None, dryrun),
+                'lock': partial(batch_apply_cmd, users, cmd_rq('enterprise_user_lock', lock='locked'), dryrun),
+                'delete': partial(batch_apply_cmd, users, cmd_rq('enterprise_user_delete'), dryrun),
+                'transfer': partial(transfer_accounts, users, kwargs.get('target_user'), dryrun)
+            }
+
+            if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and users:
+                msg_action = 'deleting' if action == 'delete' else 'transferring'
+                answer = user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
+                    'This action cannot be undone.\n\n' +
+                    f'Do you want to proceed with {msg_action} {len(users)} account(s)?', 'yn', 'n')
+                if answer.lower() != 'y':
+                    return f'NONE (Cancelled by user)'
+
+            return action_handlers.get(action)() if is_valid_action else invalid_action_msg
 
         candidates = params.enterprise['users']
         active = [user for user in candidates if user['status'] == 'active']
