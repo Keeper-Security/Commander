@@ -205,7 +205,8 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
         params.sync_data = True
 
     @staticmethod
-    def transfer_user_account(params, username, target_user, target_public_key):  # type: (KeeperParams, str, str, any) -> None
+    def transfer_user_account(params, username, target_user, target_public_key):
+        # type: (KeeperParams, str, str, any) -> bool
         rq = {
             'command': 'pre_account_transfer',
             'target_username': username,
@@ -362,6 +363,7 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         rqt['corrupted_user_folder_keys'].append(ufk)
 
             api.communicate(params, rqt)
+            result = True
             logging.info('%s: account is transferred', username)
             if 'record_keys' in rqt:
                 rec_num = len(rqt['record_keys'])
@@ -373,6 +375,8 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                     logging.info(f'{"SharedFolders":>16} : {sf_num}')
 
         except Exception as e:
+            result = False
             logging.warning('Failed to transfer %s account: %s', username, e)
 
+        return result
 
