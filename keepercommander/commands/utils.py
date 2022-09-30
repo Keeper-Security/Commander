@@ -538,7 +538,7 @@ class ThisDeviceCommand(Command):
             print("{:>32}: {}".format('Device Logout Timeout', format_timeout(device_timeout)))
 
         else:
-            device_timeout = timedelta(hour=1)
+            device_timeout = timedelta(hours=1)
             print("{:>32}: Default".format('Logout Timeout'))
 
         if 'Enforcements' in acct_summary_dict and 'longs' in acct_summary_dict['Enforcements']:
@@ -1499,6 +1499,8 @@ class KSMCommand(Command):
 
         if access_expire_in_min:
             access_expire_on_ms = curr_ms + (int(access_expire_in_min) * 60 * 1000)
+        else:
+            access_expire_on_ms = curr_ms
 
         if not app_name_or_uid:
             raise Exception("No app provided")
@@ -1793,7 +1795,7 @@ class DeleteCorruptedCommand(Command):
             record = params.record_cache[record_uid]
             if not record.get('data_unencrypted'):
                 if record_uid in params.meta_data_cache:
-                    meta_data = params.meta_data_cache[record_uid];
+                    meta_data = params.meta_data_cache[record_uid]
                     if meta_data.get('owner'):
                         bad_records.add(record_uid)
         if len(bad_records) > 0:

@@ -665,7 +665,6 @@ class ConnectCommand(BaseConnectCommand):
 
     @staticmethod
     def add_ssh_keys(params, endpoint, record, temp_files):
-        added = set()
         # type: (KeeperParams, str, KeeperRecord, List[str]) -> Iterable[Callable]
         pk = try_extract_private_key(params, record)
         if pk:
