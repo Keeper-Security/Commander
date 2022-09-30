@@ -4,7 +4,7 @@ from typing import Iterable, Dict, Set, List, Optional
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from . import sox_types, sqlite_storage, storage_types
-from .sox_types import RecordPermissions
+from .sox_types import RecordPermissions, SharedFolder
 
 
 class RebuildTask:
@@ -128,35 +128,43 @@ class SoxData:
                 team.users.append(link.user_uid)
             return team_lookup
 
-        def load_sf_records(store):
+        def load_shared_folders(store):
+            sf_lookup = dict()  # type: Dict[str, SharedFolder]
+            sf_lookup = link_sf_records(store, sf_lookup)
+            sf_lookup = link_sf_users(store, sf_lookup)
+            sf_lookup = link_sf_teams(store, sf_lookup)
+            return sf_lookup
+
+        def link_sf_records(store, folder_lookup):
             links = store.get_sf_record_links().get_all_links()
-            folder_lookup = dict()
             for link in links:
-                folder = folder_lookup.get(link.folder_uid) or sox_types.SharedFolder.load(link)
-                if folder.record_permissions[-1].record_uid != link.record_uid:
-                    folder.record_permissions.append(RecordPermissions(link.record_uid, link.permissions))
+                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup else SharedFolder()
+                folder.update_record_permissions(RecordPermissions(link.record_uid, link.permissions))
                 folder_lookup[link.folder_uid] = folder
 
-            folder_lookup = link_sf_users(store, folder_lookup)
-            return link_sf_teams(store, folder_lookup)
+            return folder_lookup
 
-        def link_sf_users(store, sf_lookup):
+        def link_sf_users(store, folder_lookup):
             links = store.get_sf_user_links().get_all_links()
             for link in links:
-                folder = sf_lookup.get(link.folder_uid)
-                folder.users.append(link.user_uid)
-            return sf_lookup
+                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup else SharedFolder()
+                folder.users.add(link.user_uid)
+                folder_lookup[link.folder_uid] = folder
 
-        def link_sf_teams(store, sf_lookup):
+            return folder_lookup
+
+        def link_sf_teams(store, folder_lookup):
             links = store.get_sf_team_links().get_all_links()
             for link in links:
-                folder = sf_lookup.get(link.folder_uid)
-                folder.teams.append(link.team_uid)
-            return sf_lookup
+                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup else SharedFolder()
+                folder.teams.add(link.team_uid)
+                folder_lookup[link.folder_uid] = folder
+
+            return folder_lookup
 
         if changes.load_compliance_data:
             self._teams.update(load_teams(self.storage))
-            self._shared_folders.update(load_sf_records(self.storage))
+            self._shared_folders.update(load_shared_folders(self.storage))
         self._records.update(load_records(self.storage, changes))
         if changes.is_full_sync or changes.load_compliance_data:
             self._users.update(load_users(self.storage))

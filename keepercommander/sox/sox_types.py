@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Set
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
@@ -110,12 +110,9 @@ class SharedFolder:
     def __init__(self):
         self.folder_uid = ''
         self.record_permissions = []    # type: List[RecordPermissions]
-        self.users = []
-        self.teams = []
+        self.users = set()              # type: Set[int]
+        self.teams = set()              # type: Set[str]
 
-    @staticmethod
-    def load(entity):
-        folder = SharedFolder()
-        folder.folder_uid = entity.folder_uid
-        folder.record_permissions.append(RecordPermissions(entity.record_uid, entity.permissions))
-        return folder
+    def update_record_permissions(self, permissions):  # type: (RecordPermissions) -> None
+        if not any([p for p in self.record_permissions if p.record_uid == permissions.record_uid]):
+            self.record_permissions.append(permissions)
