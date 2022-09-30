@@ -15,7 +15,7 @@ import datetime
 import json
 import logging
 import os
-from typing import Set, Dict, List, Iterable, Any, Tuple, Union, Optional
+from typing import Set, Dict, List, Iterable, Any, Tuple, Union
 from urllib.parse import urlparse, urlunparse
 
 from .base import dump_report_data, user_choice, field_to_title
@@ -111,7 +111,7 @@ msp_billing_report_parser.add_argument('-c', '--show-company', dest='show_compan
 
 msp_add_parser = argparse.ArgumentParser(prog='msp-add', description='Add Managed Company.')
 msp_add_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
-msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int, required=True,
+msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
                             help='Maximum licences allowed. -1: unlimited')
 msp_add_parser.add_argument('-p', '--plan', dest='plan', action='store', required=True,
                             choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
@@ -123,6 +123,8 @@ msp_add_parser.add_argument('-a', '--addon', dest='addon', action='append', meta
 msp_add_parser.add_argument('name', action='store', help='Managed Company name')
 
 msp_remove_parser = argparse.ArgumentParser(prog='msp-remove', description='Remove Managed Company.')
+msp_remove_parser.add_argument('-f', '--force', dest='force', action='store_true',
+                               help='do not prompt for confirmation')
 msp_remove_parser.add_argument('mc', action='store',
                                help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 
@@ -700,12 +702,14 @@ class MSPAddCommand(EnterpriseCommand):
         else:
             product_plan = constants.MSP_PLANS[0]
 
+        seats = kwargs.get('seats')
         name = kwargs['name']
         tree_key = utils.generate_aes_key()
         rq = {
             'command': 'enterprise_registration_by_msp',
             'node_id': node_id,
             'product_id': product_plan[1],
+            'seats': seats if isinstance(seats, int) and seats >= 0 else 2147483647,
             'enterprise_name': name,
             'encrypted_tree_key': utils.base64_url_encode(
                 crypto.encrypt_aes_v2(tree_key, params.enterprise['unencrypted_tree_key'])),
@@ -714,10 +718,6 @@ class MSPAddCommand(EnterpriseCommand):
             'root_node': utils.base64_url_encode(
                 crypto.encrypt_aes_v1(json.dumps({'displayname': 'root'}).encode(), tree_key))
         }
-
-        seats = kwargs.get('seats')
-        if isinstance(seats, int):
-            rq['seats'] = seats if seats >= 0 else 2147483647
 
         plan_name = kwargs.get('file_plan')
         if plan_name:
@@ -775,10 +775,13 @@ class MSPRemoveCommand(EnterpriseCommand):
         current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
         if not current_mc:
             raise error.CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
-        answer = user_choice(bcolors.FAIL + bcolors.BOLD + 'ALERT!\n' + bcolors.ENDC + 'Remove Managed Company.\n\n' +
-                             'Removing will expire the licences for the managed company and your admin access for the account.\n' +
-                             f'Managed Company Name: \"{current_mc["mc_enterprise_name"]}\", Licences: {current_mc["number_of_seats"]}\n\n' +
-                             'I want to remove these licences managed vault folder and my access to the admin console from my MSP account.', 'yn', 'n')
+        if kwargs.get('force') is True:
+            answer = 'y'
+        else:
+            answer = user_choice(bcolors.FAIL + bcolors.BOLD + 'ALERT!\n' + bcolors.ENDC + 'Remove Managed Company.\n\n' +
+                                 'Removing will expire the licences for the managed company and your admin access for the account.\n' +
+                                 f'Managed Company Name: \"{current_mc["mc_enterprise_name"]}\", Licences: {current_mc["number_of_seats"]}\n\n' +
+                                 'I want to remove these licences managed vault folder and my access to the admin console from my MSP account.', 'yn', 'n')
         if answer.lower() == 'y':
             rq = {
                 'command': 'enterprise_remove_by_msp',
@@ -1197,7 +1200,7 @@ class MSPCopyRoleCommand(EnterpriseCommand):
                                 if not isinstance(value, bool):
                                     rq['value'] = value
                                 mc_rqs.append(rq)
-                        except Exception as a:
+                        except Exception as e:
                             logging.warning('Role %s: Enforcement %s: %s', role_name, enforcement, e)
                 for enforcement in dst_enforcements:
                     rq = {

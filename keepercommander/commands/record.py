@@ -16,7 +16,7 @@ import fnmatch
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterator, Tuple, Set
+from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
 from .recordv3 import RecordGetUidCommand

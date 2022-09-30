@@ -17,6 +17,7 @@ import os
 import re
 import tempfile
 import threading
+from typing import Optional
 
 import requests
 from Cryptodome.Cipher import AES
@@ -1088,7 +1089,7 @@ class TotpCommand(Command):
                     code, remains, total = get_totp_code(rec.totp)
                     if code: print(code)
             else:
-                tmer = None     # type: threading.Timer or None
+                tmer = None     # type: Optional[threading.Timer]
                 done = False
                 def print_code():
                     global tmer
