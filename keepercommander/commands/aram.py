@@ -44,7 +44,7 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from .register import EMAIL_PATTERN
-from ..sox import sox_data
+from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled
 from ..sox.sox_data import RebuildTask
 from ..sox.storage_types import StorageRecordAging
 from typing import Dict, Callable
@@ -87,6 +87,8 @@ audit_report_parser.add_argument('--record-uid', dest='record_uid', action='stor
                                  help='Filter: Record UID')
 audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='store',
                                  help='Filter: Shared Folder UID')
+min_opt_help = 'limit report to event-specific and local data (skips retrieval of compliance data if not in cache)'
+audit_report_parser.add_argument('--minimal', action='store_true', help=min_opt_help)
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
@@ -840,6 +842,7 @@ between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
 class AuditReportCommand(Command):
     def __init__(self):
+        self.sox_data = None    # type: Union[None, sox_data.SoxData]
         self.lookup = {}
 
     def get_value(self, params, field, event):
@@ -889,6 +892,13 @@ class AuditReportCommand(Command):
             if r:
                 for fld, attr in lookup_type.field_attrs():
                     self.lookup[record_uid][fld] = getattr(r, attr, '')
+        else:
+            if self.sox_data:
+                r = self.sox_data.get_records().get(record_uid)
+                if r:
+                    for fld, attr in lookup_type.field_attrs():
+                        attr = re.sub(r'^login_', '', attr)
+                        self.lookup[record_uid][fld] = r.data.get(attr, '')
         return self.lookup[record_uid][field]
 
     def resolve_shared_folder_lookup(self, params, lookup_type, shared_folder_uid, field):
@@ -1276,6 +1286,8 @@ class AuditReportCommand(Command):
                 fields.append('created')
             if columns:
                 fields.extend(columns)
+            if not self.sox_data and is_compliance_reporting_enabled(params):
+                self.sox_data = get_prelim_data(params, 0, False, min_updated=0, cache_only=kwargs.get('minimal'))
             for event in rs['audit_event_overview_report_rows']:
                 row = []
                 for f in fields:
