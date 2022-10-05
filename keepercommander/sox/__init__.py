@@ -6,6 +6,7 @@ import sqlite3
 from typing import Dict
 
 from .. import api, crypto, utils
+from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from . import sqlite_storage, sox_data
@@ -14,6 +15,29 @@ from .storage_types import StorageRecord, StorageUser, StorageUserRecordLink, St
     StorageSharedFolderTeamLink
 
 API_SOX_REQUEST_USER_LIMIT = 1000
+
+
+def validate_data_access(params, cmd=''):
+    if not is_compliance_reporting_enabled(params):
+        msg = 'Compliance reports add-on required to perform this action. ' \
+              'Please contact your administrator to enable this feature.'
+        raise CommandError(cmd, msg)
+
+
+def is_compliance_reporting_enabled(params):
+    result = False
+    role_privilege = 'run_compliance_reports'
+    enterprise = params.enterprise
+    if enterprise:
+        username = params.user
+        users = enterprise.get('users')
+        e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
+        role_users = enterprise.get('role_users')
+        r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
+        r_privileges = enterprise.get('role_privileges')
+        p_key = 'privilege'
+        result = any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == role_privilege])
+    return result
 
 
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False):
@@ -79,6 +103,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         sync_all()
         print('.')
 
+    validate_data_access(params)
     enterprise_id = enterprise_id or next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
     path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
     database_name = os.path.join(path, f'sox_{enterprise_id}.db')

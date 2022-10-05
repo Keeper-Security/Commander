@@ -6,11 +6,9 @@ from typing import Optional, Dict, Tuple
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
-from keepercommander.error import CommandError
 from keepercommander.sox.sox_types import RecordPermissions
+from .. import sox
 from ..params import KeeperParams
-from ..sox import get_compliance_data
-from ..sox.sox_data import SoxData
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
 compliance_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
@@ -69,23 +67,7 @@ class ComplianceCommand(GroupCommand):
         return super().execute_args(params, args, **kwargs)
 
     def validate(self, params):  # type: (KeeperParams) -> None
-        def user_has_privilege(privilege):
-            result = False
-            enterprise = params.enterprise
-            if enterprise:
-                username = params.user
-                users = enterprise.get('users')
-                e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
-                role_users = enterprise.get('role_users')
-                r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
-                r_privileges = enterprise.get('role_privileges')
-                p_key = 'privilege'
-                result = any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == privilege])
-            return result
-
-        if not user_has_privilege('run_compliance_reports'):
-            msg = 'Compliance reporting is not active. Please visit the Web Vault at https://keepersecurity.com/vault'
-            raise CommandError('compliance', msg)
+        sox.validate_data_access(params, cmd='compliance')
 
 
 class BaseComplianceReportCommand(EnterpriseCommand):
@@ -120,12 +102,12 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         default_opts = {'command', 'action', 'format'}
         opts_set = [val for opt, val in kwargs.items() if val and opt not in default_opts]
         if not opts_set and not self.allow_no_opts:
-            local_sox_data = get_compliance_data(params, node_id, enterprise_id, False, min_updated=0)
+            local_sox_data = sox.get_compliance_data(params, node_id, enterprise_id, False, min_updated=0)
             self.show_help_text(local_sox_data)
             return
 
         no_cache = kwargs.get('no_cache')
-        sd = get_compliance_data(
+        sd = sox.get_compliance_data(
             params, node_id, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=min_data_ts, no_cache=no_cache
         )
         report_fmt = kwargs.get('format', 'table')
@@ -142,7 +124,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return default_report_parser
 
-    def show_help_text(self, local_data):  # type: (SoxData) -> None
+    def show_help_text(self, local_data):  # type: (sox.sox_data.SoxData) -> None
         last_update_ts = local_data.storage.last_compliance_data_update
         if not last_update_ts:
             logging.info("Cache last update: NONE -- to build the cache, call the following command:"
