@@ -12,16 +12,33 @@
 
 import json
 import logging
+from typing import Dict
 
 import requests
 import msal     # pip install msal
 
+from collections import namedtuple
+
 from ... import vault
 from ...commands.base import RecordMixin
 
+AzureEndpoint = namedtuple('AzureEndpoint', 'activeDirectory microsoftGraphResourceId')
+
+AZURE_GLOBAL_CLOUD = 'AzureCloud'
+AZURE_CHINA_CLOUD = 'AzureChinaCloud'
+AZURE_US_GOV_CLOUD = 'AzureUSGovernment'
+AZURE_GERMAN_CLOUD = 'AzureGermanCloud'
+
+
+AZURE_CLOUD_URLS = {
+    AZURE_GLOBAL_CLOUD: AzureEndpoint('https://login.microsoftonline.com', 'https://graph.microsoft.com'),
+    AZURE_CHINA_CLOUD: AzureEndpoint('https://login.chinacloudapi.cn', 'https://microsoftgraph.chinacloudapi.cn'),
+    AZURE_US_GOV_CLOUD: AzureEndpoint('https://login.microsoftonline.us', 'https://graph.microsoft.us'),
+    AZURE_GERMAN_CLOUD: AzureEndpoint('https://login.microsoftonline.de', 'https://graph.microsoft.de'),
+}   # type: Dict[str, AzureEndpoint]
+
 
 def rotate(record, newpassword):   # type: (vault.KeeperRecord, str) -> bool
-
     # The Azure user_id either as the object ID (GUID) or the user principal name (UPN) of the target user
     user_id = RecordMixin.get_record_field(record, 'login')
 
@@ -29,12 +46,30 @@ def rotate(record, newpassword):   # type: (vault.KeeperRecord, str) -> bool
     client_id = RecordMixin.get_custom_field(record, "cmdr:azure_client_id")
     secret = RecordMixin.get_custom_field(record, "cmdr:azure_secret")
 
-    users_endpoint = 'https://graph.microsoft.com/v1.0/users'
-    default_scope = 'https://graph.microsoft.com/.default'
-    authority = f'https://login.microsoftonline.com/{tenant_id}'
+    azure_cloud = RecordMixin.get_custom_field(record, "cmdr:azure_cloud")
+    if isinstance(azure_cloud, str) and len(azure_cloud) > 0:
+        azure_cloud = azure_cloud.lower()
+        if 'china' in azure_cloud:
+            azure_cloud = AZURE_CHINA_CLOUD
+        elif 'usgov' in azure_cloud:
+            azure_cloud = AZURE_US_GOV_CLOUD
+        elif 'german' in azure_cloud:
+            azure_cloud = AZURE_GERMAN_CLOUD
+        elif 'global' in azure_cloud:
+            azure_cloud = AZURE_GLOBAL_CLOUD
+        elif 'azurecloud' == azure_cloud:
+            azure_cloud = AZURE_GLOBAL_CLOUD
+        else:
+            logging.info('Cannot resolve Azure Cloud \"%s\". Default to Global Cloud.', azure_cloud)
+
+    if azure_cloud not in AZURE_CLOUD_URLS:
+        azure_cloud = AZURE_GLOBAL_CLOUD
+
+    users_endpoint = f'{AZURE_CLOUD_URLS[azure_cloud].microsoftGraphResourceId}/v1.0/users'
+    default_scope = f'{AZURE_CLOUD_URLS[azure_cloud].microsoftGraphResourceId}/.default'
+    authority = f'{AZURE_CLOUD_URLS[azure_cloud].activeDirectory}/{tenant_id}'
 
     try:
-
         # Create a preferably long-lived app instance which maintains a token cache.
         app = msal.ConfidentialClientApplication(
             client_id,
