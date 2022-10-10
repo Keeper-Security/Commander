@@ -40,8 +40,8 @@ def is_compliance_reporting_enabled(params):
     return result
 
 
-def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False):
-    # type: (KeeperParams, int, bool, int, bool) -> sox_data.SoxData
+def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False):
+    # type: (KeeperParams, int, bool, int, bool, bool) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
         def to_storage_types(user_data, username_lookup):
             def to_record_entity(record):
@@ -119,7 +119,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
     if refresh_data and not cache_only:
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
         sync_down(user_lookup, storage)
-    return sox_data.SoxData(ec_private_key=key, storage=storage)
+    return sox_data.SoxData(ec_private_key=key, storage=storage, no_cache=no_cache)
 
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False):
