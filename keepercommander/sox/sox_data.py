@@ -57,6 +57,15 @@ class SoxData:
     def get_shared_folders(self, sf_uids=None):
         return self._shared_folders if sf_uids is None else {uid: self._shared_folders.get(uid) for uid in sf_uids}
 
+    def get_record_owner(self, rec_uid):
+        owner = None
+        if rec_uid in self._records:
+            for user in self._users.values():
+                if rec_uid in user.records:
+                    owner = user
+                    break
+        return owner
+
     @property
     def record_count(self):   # type: () -> int
         return len(self._records)
