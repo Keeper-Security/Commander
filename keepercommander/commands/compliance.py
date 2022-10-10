@@ -2,12 +2,12 @@ import argparse
 import datetime
 import logging
 import operator
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Union
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
-from .. import sox
+from .. import sox, api
 from ..params import KeeperParams
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
@@ -41,6 +41,11 @@ team_report_desc = 'Run a report showing which shared folders enterprise teams h
 team_report_parser = argparse.ArgumentParser(prog='compliance-team-report', description=team_report_desc,
                                              parents=[compliance_parser])
 
+access_report_desc = 'Run a report showing all records a user has accessed'
+access_report_parser = argparse.ArgumentParser(prog='compliance-team-report', description=access_report_desc,
+                                               parents=[compliance_parser])
+access_report_parser.add_argument('user', metavar='USER', type=str, help='username or ID')
+
 
 def register_commands(commands):
     commands['compliance'] = ComplianceCommand()
@@ -57,6 +62,7 @@ class ComplianceCommand(GroupCommand):
         super(ComplianceCommand, self).__init__()
         self.register_command('report', ComplianceReportCommand(), 'Run default SOX compliance report')
         self.register_command('team-report', ComplianceTeamReportCommand())
+        self.register_command('record-access-report', ComplianceRecordAccessReportCommand())
         self.default_verb = 'report'
 
     def execute_args(self, params, args, **kwargs):  # type: (KeeperParams, str, dict) -> any
@@ -71,10 +77,11 @@ class ComplianceCommand(GroupCommand):
 
 
 class BaseComplianceReportCommand(EnterpriseCommand):
-    def __init__(self, report_headers, allow_no_opts=True):
+    def __init__(self, report_headers, allow_no_opts=True, prelim_only=False):
         super(BaseComplianceReportCommand, self).__init__()
         self.report_headers = report_headers
         self.allow_no_opts = allow_no_opts
+        self.prelim_only = prelim_only
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         pass
@@ -106,10 +113,12 @@ class BaseComplianceReportCommand(EnterpriseCommand):
             self.show_help_text(local_sox_data)
             return
 
+        rebuild = kwargs.get('rebuild')
         no_cache = kwargs.get('no_cache')
-        sd = sox.get_compliance_data(
-            params, node_id, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=min_data_ts, no_cache=no_cache
-        )
+        get_sox_data_fn = sox.get_prelim_data if self.prelim_only else sox.get_compliance_data
+        fn_args = [params, enterprise_id] if self.prelim_only else [params, node_id, enterprise_id]
+        fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache}
+        sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         report_fmt = kwargs.get('format', 'table')
         headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report_data = self.generate_report_data(params, kwargs, sd, report_fmt, node_id, root_node_id)
@@ -281,3 +290,80 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
                 report_data.append([team.team_name, get_sf_name(sf_uid), sf_uid, perms])
 
         return report_data
+
+
+class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
+    def __init__(self):
+        headers = ['record_uid',
+                   'record_title',
+                   'record_url',
+                   'record_owner',
+                   'ip_address',
+                   'device',
+                   'last_access']
+        super(ComplianceRecordAccessReportCommand, self).__init__(headers, True, True)
+
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return access_report_parser
+
+    def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
+        def get_accessed_records(user):
+            columns = ['record_uid', 'ip_address', 'keeper_version']
+            rq_filter = {'username': user, 'audit_event_type': 'open_record'}
+            from keepercommander.commands.aram import API_EVENT_SUMMARY_ROW_LIMIT
+            rq = {
+                'command':      'get_audit_event_reports',
+                'report_type':  'span',
+                'scope':        'enterprise',
+                'aggregate':    ['last_created'],
+                'limit':        API_EVENT_SUMMARY_ROW_LIMIT,
+                'filter':       rq_filter,
+                'columns':      columns,
+            }
+            records_accessed = dict()   # type: Dict[str, Dict[str, Union[int, str]]]
+
+            def update_records_accessed(events):
+                for event in events:
+                    r_uid = event.get('record_uid')
+                    if r_uid not in records_accessed:
+                        records_accessed.update({r_uid: event})
+
+            def get_events(max_ts):
+                rq_filter['created'] = {'max': max_ts}
+                rs = api.communicate(params, rq)
+                return rs.get('audit_event_overview_report_rows')
+
+            max_ts = int(datetime.datetime.now().timestamp())
+            while True:
+                events = get_events(max_ts)
+                update_records_accessed(events)
+                if len(events) >= API_EVENT_SUMMARY_ROW_LIMIT:
+                    earliest_event = events[-1]
+                    max_ts = int(earliest_event.get('last_created'))
+                else:
+                    break
+            return records_accessed
+
+        user_lookup = {user.get('enterprise_user_id'): user.get('username') for user in params.enterprise.get('users')}
+        username_or_id = kwargs.get('user')
+        user = username_or_id if username_or_id in user_lookup.values() else user_lookup.get(int(username_or_id))
+        accessed = get_accessed_records(user)
+        report_data = []
+        for rec in accessed.values():
+            rec_uid = rec.get('record_uid')
+            sox_rec = sox_data.get_records().get(rec_uid)
+            rec_info = sox_rec.data if sox_rec else {}
+            rec_owner = sox_data.get_record_owner(rec_uid)
+            row = [
+                rec_uid,
+                rec_info.get('title'),
+                rec_info.get('url', '').rstrip('/'),
+                rec_owner and rec_owner.email,
+                rec.get('ip_address'),
+                rec.get('keeper_version'),
+                datetime.datetime.fromtimestamp(int(rec.get('last_created')))
+            ]
+            report_data.append(row)
+
+        return report_data
+
