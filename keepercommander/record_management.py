@@ -71,7 +71,7 @@ def add_record_to_folder(params, record, folder_uid=None, **kwargs):
         add_record.record_uid = utils.base64_url_decode(record.record_uid)
         add_record.record_key = crypto.encrypt_aes_v2(record.record_key, params.data_key)
         add_record.client_modified_time = utils.current_milli_time()
-        add_record.add_record = record_pb2.user_folder
+        add_record.folder_type = record_pb2.user_folder
         if folder:
             add_record.folder_uid = utils.base64_url_decode(folder.uid)
             if folder.type == 'shared_folder':
@@ -97,15 +97,13 @@ def add_record_to_folder(params, record, folder_uid=None, **kwargs):
         if params.enterprise_ec_key:
             audit_data = vault_extensions.extract_audit_data(record)
             if audit_data:
-                adata = record_pb2.RecordAudit()
-                adata.version = 0
-                adata.data = crypto.encrypt_ec(
+                add_record.audit.version = 0
+                add_record.audit.data = crypto.encrypt_ec(
                     json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
-                add_record.audit = adata
 
         rq = record_pb2.RecordsAddRequest()
         rq.client_time = utils.current_milli_time()
-        rq.records.add(add_record)
+        rq.records.append(add_record)
         rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
         record_rs = next((x for x in rs.records if utils.base64_url_encode(x.record_uid) == record.record_uid), None)
         if record_rs:
