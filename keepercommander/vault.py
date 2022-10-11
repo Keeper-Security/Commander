@@ -233,6 +233,20 @@ class TypedField(object):
         self.label = (typed_field.get('label') or '').strip()
         self.value = typed_field.get('value', [])
 
+    @classmethod
+    def new_field(cls, field_type, field_value, field_label=None):
+        # type: (str, Any, Optional[str]) -> 'TypedField'
+        f_type = field_type or 'text'
+        if f_type not in record_types.RecordFields:
+            f_type = 'text'
+        if not isinstance(field_value, list):
+            field_value = [field_value]
+        tf = TypedField()
+        tf.type = f_type
+        tf.value = field_value
+        tf.label = field_label or ''
+        return tf
+
     def get_default_value(self, value_type=None):  # type: (Optional[Type]) -> any
         value = None
         if isinstance(self.value, list):

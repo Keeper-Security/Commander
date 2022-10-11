@@ -10,20 +10,18 @@
 #
 
 import argparse
-import collections
 import json
 import logging
 import re
+from typing import Tuple, Dict, Iterator, Union
 
-from .. import api, crypto
 from .base import RecordMixin, raise_parse_exception, suppress_exit, try_resolve_path
 from .enterprise import EnterpriseCommand
-from ..loginv3 import LoginV3API
+from .. import api, crypto, utils, generator, rest_api, vault, record_management
 from ..constants import EMAIL_PATTERN
-from .. import utils
-from ..record import Record
+from ..loginv3 import LoginV3API
 from ..params import KeeperParams
-from ..proto import enterprise_pb2 as enterprise_proto
+from ..proto import enterprise_pb2
 
 
 def register_commands(commands):
@@ -61,101 +59,100 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         emails = kwargs.get('email', [])
         email_pattern = re.compile(EMAIL_PATTERN)
 
-        added_accounts = {}
+        rq = enterprise_pb2.EnterpriseUsersProvisionRequest()
+        rq.clientVersion = rest_api.CLIENT_VERSION
+        tree_key = params.enterprise['unencrypted_tree_key']
+        added_accounts = {}    # type: Dict[int, Tuple[str, str]]
         for email in emails:
             match = email_pattern.match(email)
             if not match:
                 logging.warning('"%s" appears not a valid email address. Skipping.', email)
                 continue
 
-            verification_code = ''
-            try:
-                displayname = kwargs.get('name',email)
-                data = {'displayname': displayname}
-                rq = {
-                    'command': 'enterprise_user_add',
-                    'enterprise_user_id': EnterpriseCommand.get_enterprise_id(params),
-                    'enterprise_user_username': email,
-                    'encrypted_data': api.encrypt_aes(json.dumps(data).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
-                    'node_id': node_id,
-                    'suppress_email_invite': True
-                }
+            displayname = kwargs.get('name', email)
+            data = {'displayname': displayname}
+            user_data = json.dumps(data).encode('utf-8')
+            user_password = generator.generate(20)
+            user_data_key = utils.generate_aes_key()
+            rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
+            rsa_private = crypto.unload_rsa_private_key(rsa_private_key)
+            rsa_public = crypto.unload_rsa_public_key(rsa_public_key)
 
-                rs = api.communicate(params, rq)
-                verification_code = rs['verification_code']
-            except Exception as e:
-                logging.error(e)
-            if not verification_code:
-                logging.warning('Failed to add account "%s" to enterprise. Skipping.', email)
-                continue
+            ec_private_key, ec_public_key = crypto.generate_ec_key()
+            ec_private = crypto.unload_ec_private_key(ec_private_key)
+            ec_public = crypto.unload_ec_public_key(ec_public_key)
 
-            password = utils.generate_uid()
-            try:
-                LoginV3API.create_user(params, email, password, verification_code)
-                added_accounts[email] = password
-                logging.info(f"User \"{email}\" successfully provisioned.\n" +
-                             "The user must reset their Master Password upon first login.")
-            except Exception as e:
-                logging.error(e)
-                logging.warning('Failed to create account "%s". Skipping.', email)
+            enterprise_user_id = EnterpriseCommand.get_enterprise_id(params)
+
+            user_rq = enterprise_pb2.EnterpriseUsersProvision()
+            user_rq.enterpriseUserId = enterprise_user_id
+            user_rq.username = email
+            user_rq.nodeId = node_id
+            user_rq.encryptedData = utils.base64_url_encode(crypto.encrypt_aes_v1(user_data, tree_key))
+            user_rq.keyType = enterprise_pb2.ENCRYPTED_BY_DATA_KEY
+            user_rq.enterpriseUsersDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
+            user_rq.authVerifier = utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000)
+            user_rq.encryptionParams = utils.create_encryption_params(user_password, crypto.get_random_bytes(16), 100000, user_data_key)
+            user_rq.rsaPublicKey = rsa_public
+            user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
+            user_rq.eccPublicKey = ec_public
+            user_rq.eccEncryptedPrivateKey = crypto.encrypt_aes_v2(ec_private, user_data_key)
+            user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
+            user_rq.encryptedClientKey = crypto.encrypt_aes_v1(utils.generate_aes_key(), user_data_key)
+
+            rq.users.append(user_rq)
+
+            added_accounts[enterprise_user_id] = (email, user_password)
+
+        if len(added_accounts) > 0:
+            rs = api.communicate_rest(params, rq, 'enterprise/enterprise_user_provision',
+                                      rs_type=enterprise_pb2.EnterpriseUsersProvisionResponse)
+            for user_rs in rs.results:
+                enterprise_user_id = user_rs.enterpriseUserId
+                if user_rs.code and user_rs.code not in ['success', 'ok']:
+                    username, _ = added_accounts.pop(enterprise_user_id, ('', ''))
+                    logging.warning('Failed to add account "%s" to enterprise. %s.', username, user_rs.message)
+                else:
+                    username, _ = added_accounts.get(enterprise_user_id, ('', ''))
+                    logging.info(f"User \"{username}\" successfully provisioned.\n" +
+                                 "The user must reset their Master Password upon first login.")
 
         if len(added_accounts) == 0:
             logging.info('No users created.')
             return
 
         record_name = kwargs.get('record') or 'Enterprise User Passwords'
-        record_uid = next(self.resolve_records(params, record_name), None)
-        if record_uid:
-            record = api.get_record(params, record_uid)
-        else:
-            record = Record()
+        record = next(self.resolve_records(params, record_name), None)
+        if not record:
+            record = vault.TypedRecord()
+            record.type_name = 'encryptedNotes'
             record.title = record_name
-        for name, value in added_accounts.items():
-            record.set_field(name, value)
+            record.fields.append(vault.TypedField.new_field('note', 'This record is used to store temporary passwords of provisioned users.'))
 
+        if isinstance(record, vault.PasswordRecord):
+            record.custom.extend((vault.CustomField.new_field(username, password) for username, password in added_accounts.values()))
+        elif isinstance(record, vault.TypedRecord):
+            record.custom.extend((vault.TypedField.new_field(field_type='secret', field_value=password, field_label=username)
+                                  for username, password in added_accounts.values()))
         try:
             if record.record_uid:
-                api.update_record(params, record, silent=True)
+                record_management.update_record(params, record, skip_extra=True)
             else:
-                api.add_record(params, record, silent=True)
+                record_management.add_record_to_folder(params, record)
+            params.sync_data = True
         except Exception as e:
             logging.info('Record store error: %s', e)
 
-        param1 = KeeperParams()
-        param1.server = params.server
-        param1.device_token = params.device_token or params.config.get('device_token', '')
-        param1.device_private_key = params.device_private_key or params.config.get('private_key', '')
-        for email in added_accounts:
-            param1.user = email
-            param1.password = added_accounts[email]
-            param1.data_key = b''
-            try:
-                api.login(param1)
-                rq = enterprise_proto.EnterpriseUserDataKey()
-                rq.userEncryptedDataKey = crypto.encrypt_ec(param1.data_key, params.enterprise_ec_key)
-                api.communicate_rest(param1, rq, 'enterprise/set_enterprise_user_data_key')
-                logging.info(f'{email} is logged out')
-            except Exception as e:
-                logging.warning(e)
-
-            try:
-                rq = {
-                    'command': 'set_master_password_expire',
-                    'email': email
-                }
-                api.communicate(params, rq)
-            except Exception as e:
-                pass
-
-        api.query_enterprise(params)
-
     @staticmethod
-    def resolve_records(params, record_name):  # type: (KeeperParams, str) -> collections.Iterator[str]
+    def resolve_records(params, record_name):
+        # type: (KeeperParams, str) -> Iterator[Union[vault.PasswordRecord, vault.KeeperRecord]]
         if not record_name:
             return
 
         if record_name in params.record_cache:
-            yield record_name
+            r = vault.KeeperRecord.load(params, record_name)
+            if isinstance(r, (vault.PasswordRecord, vault.KeeperRecord)):
+                yield r
         else:
             rs = try_resolve_path(params, record_name)
             if rs is not None:
@@ -164,6 +161,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                     folder_uid = folder.uid or ''
                     if folder_uid in params.subfolder_record_cache:
                         for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.casefold() == record_name.casefold():
-                                yield uid
+                            r = vault.KeeperRecord.load(params, uid)
+                            if isinstance(r, (vault.PasswordRecord, vault.KeeperRecord)):
+                                if r and r.title.casefold() == record_name.casefold():
+                                    yield r

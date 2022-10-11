@@ -73,22 +73,20 @@ def decrypt_encryption_params(encryption_params, password):     # type: (str, st
     return decrypted_data_key[:32]
 
 
-def create_encryption_params(password, salt, iterations, data_key):  # type: (str, bytes, int, bytes) -> str
+def create_encryption_params(password, salt, iterations, data_key):  # type: (str, bytes, int, bytes) -> bytes
 
     key = crypto.derive_key_v1(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
     enc_iv = crypto.get_random_bytes(16)
     enc_data_key = crypto.encrypt_aes_v1(data_key * 2, key, iv=enc_iv, use_padding=False)
-    enc_params = b'\x01' + enc_iter + salt + enc_data_key
-    return base64_url_encode(enc_params)
+    return b'\x01' + enc_iter + salt + enc_data_key
 
 
-def create_auth_verifier(password, salt, iterations):   # type: (str, bytes, int) -> str
+def create_auth_verifier(password, salt, iterations):   # type: (str, bytes, int) -> bytes
 
     derived_key = crypto.derive_key_v1(password, salt, iterations)
     enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
-    auth_ver = b'\x01' + enc_iter + salt + derived_key
-    return base64_url_encode(auth_ver)
+    return b'\x01' + enc_iter + salt + derived_key
 
 
 def is_url(test_str):   # type: (str) -> bool

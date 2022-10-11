@@ -1230,8 +1230,8 @@ class LoginV3API:
         # type: (KeeperParams, str, str, Optional[str]) -> None
         endpoint = 'authentication/request_create_user'
         data_key = utils.generate_aes_key()
-        auth_verifier = utils.base64_url_decode(utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000))
-        encryption_params = utils.base64_url_decode(utils.create_encryption_params(user_password, crypto.get_random_bytes(16), 100000, data_key))
+        auth_verifier = utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000)
+        encryption_params = utils.create_encryption_params(user_password, crypto.get_random_bytes(16), 100000, data_key)
 
         rsa_pri, rsa_pub = crypto.generate_rsa_key()
         rsa_private = crypto.unload_rsa_private_key(rsa_pri)
