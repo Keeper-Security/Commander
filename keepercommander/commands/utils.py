@@ -2085,8 +2085,8 @@ class ResetPasswordCommand(Command):
             data_salt = crypto.get_random_bytes(16)
             mp_rq = {
                 'command': 'change_master_password',
-                'auth_verifier': utils.create_auth_verifier(new_password, auth_salt, iterations),
-                'encryption_params': utils.create_encryption_params(new_password, data_salt, iterations, params.data_key)
+                'auth_verifier': utils.base64_url_encode(utils.create_auth_verifier(new_password, auth_salt, iterations)),
+                'encryption_params': utils.base64_url_encode(utils.create_encryption_params(new_password, data_salt, iterations, params.data_key))
             }
             api.communicate(params, mp_rq)
             logging.info('Master Password has been changed')
