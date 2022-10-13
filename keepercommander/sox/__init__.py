@@ -25,19 +25,26 @@ def validate_data_access(params, cmd=''):
 
 
 def is_compliance_reporting_enabled(params):
-    result = False
-    role_privilege = 'run_compliance_reports'
     enterprise = params.enterprise
-    if enterprise:
-        username = params.user
-        users = enterprise.get('users')
-        e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
-        role_users = enterprise.get('role_users')
-        r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
-        r_privileges = enterprise.get('role_privileges')
-        p_key = 'privilege'
-        result = any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == role_privilege])
-    return result
+    if not enterprise:
+        return False
+    e_licenses = enterprise.get('licenses')
+    if not isinstance(e_licenses, list):
+        return False
+    addon = next((a for l in e_licenses for a in l.get('add_ons', [])
+                  if a.get('name') == 'compliance_report' and (a.get('enabled') or a.get('included_in_product'))), None)
+    if addon is None:
+        return False
+
+    role_privilege = 'run_compliance_reports'
+    username = params.user
+    users = enterprise.get('users')
+    e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
+    role_users = enterprise.get('role_users')
+    r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
+    r_privileges = enterprise.get('role_privileges')
+    p_key = 'privilege'
+    return any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == role_privilege])
 
 
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False):
