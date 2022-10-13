@@ -8,6 +8,7 @@ from keepercommander.commands.base import GroupCommand, dump_report_data, field_
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
+from ..error import CommunicationError
 from ..params import KeeperParams
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
@@ -344,26 +345,35 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                     break
             return records_accessed
 
+        def fill_table(access_events):
+            table = []
+            for rec in access_events.values():
+                rec_uid = rec.get('record_uid')
+                sox_rec = sox_data.get_records().get(rec_uid)
+                rec_info = sox_rec.data if sox_rec else {}
+                rec_owner = sox_data.get_record_owner(rec_uid)
+                row = [
+                    rec_uid,
+                    rec_info.get('title'),
+                    rec_info.get('url', '').rstrip('/'),
+                    rec_owner and rec_owner.email,
+                    rec.get('ip_address'),
+                    rec.get('keeper_version'),
+                    datetime.datetime.fromtimestamp(int(rec.get('last_created')))
+                ]
+                table.append(row)
+            return table
+
+        report_data = []
         user_lookup = {user.get('enterprise_user_id'): user.get('username') for user in params.enterprise.get('users')}
         username_or_id = kwargs.get('user')
-        user = username_or_id if username_or_id in user_lookup.values() else user_lookup.get(int(username_or_id))
-        accessed = get_accessed_records(user)
-        report_data = []
-        for rec in accessed.values():
-            rec_uid = rec.get('record_uid')
-            sox_rec = sox_data.get_records().get(rec_uid)
-            rec_info = sox_rec.data if sox_rec else {}
-            rec_owner = sox_data.get_record_owner(rec_uid)
-            row = [
-                rec_uid,
-                rec_info.get('title'),
-                rec_info.get('url', '').rstrip('/'),
-                rec_owner and rec_owner.email,
-                rec.get('ip_address'),
-                rec.get('keeper_version'),
-                datetime.datetime.fromtimestamp(int(rec.get('last_created')))
-            ]
-            report_data.append(row)
+        username = user_lookup.get(int(username_or_id)) if username_or_id.isdigit() else username_or_id
+
+        try:
+            accessed = get_accessed_records(username)
+            report_data = fill_table(accessed)
+        except CommunicationError as e:
+            logging.warning(f'User {username_or_id} not found, error = "{e.message}"')
 
         return report_data
 
