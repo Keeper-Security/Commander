@@ -280,10 +280,7 @@ class ShareFolderCommand(Command):
                     request['default_can_share'] = action == 'grant'
 
             if len(as_users) > 0:
-                email_set = set()
-                if 'users' in sh_fol:
-                    for user in sh_fol['users']:
-                        email_set.add(user['username'])
+                existing_users = {x['username'].lower(): x for x in sh_fol.get('users', [])}
                 mr = kwargs.get('manage_records')
                 mu = kwargs.get('manage_users')
                 for email in as_users:
@@ -291,19 +288,16 @@ class ShareFolderCommand(Command):
                         'username': email
                     }
                     share_action = ''
-                    if email in email_set:
+                    if email in existing_users:
+                        user = existing_users[email]
                         if action == 'grant':
-                            if mr:
-                                uo['manage_records'] = True
-                            if mu:
-                                uo['manage_users'] = True
+                            uo['manage_records'] = True if mr else user.get('manage_records', False)
+                            uo['manage_users'] = True if mu else user.get('manage_users', False)
                             share_action = 'update_users'
                         else:
                             if mr or mu:
-                                if mr:
-                                    uo['manage_records'] = False
-                                if mu:
-                                    uo['manage_users'] = False
+                                uo['manage_records'] = False if mr else user.get('manage_records', False)
+                                uo['manage_users'] = False if mu else user.get('manage_users', False)
                                 share_action = 'update_users'
                             else:
                                 share_action = 'remove_users'
@@ -324,12 +318,7 @@ class ShareFolderCommand(Command):
                         request[share_action].append(uo)
 
             if len(as_teams) > 0:
-                existing_teams = {}
-                if 'teams' in sh_fol:
-                    for team in sh_fol['teams']:
-                        team_uid = team['team_uid']
-                        existing_teams[team_uid] = team
-
+                existing_teams = {x['team_uid']: x for x in sh_fol.get('teams', [])}
                 mr = kwargs.get('manage_records')
                 mu = kwargs.get('manage_users')
                 for team_uid in as_teams:
@@ -338,23 +327,15 @@ class ShareFolderCommand(Command):
                     }
                     share_action = ''
                     if team_uid in existing_teams:
-                        existing_permissions = existing_teams[team_uid]
+                        team = existing_teams[team_uid]
                         if action == 'grant':
-                            if mr:
-                                to['manage_records'] = True
-                            else:
-                                to['manage_records'] = existing_permissions.get('manage_records') or False
-                            if mu:
-                                to['manage_users'] = True
-                            else:
-                                to['manage_users'] = existing_permissions.get('manage_users') or False
+                            to['manage_records'] = True if mr else team.get('manage_records', False)
+                            to['manage_users'] = True if mu else team.get('manage_users', False)
                             share_action = 'update_teams'
                         else:
                             if mr or mu:
-                                if mr:
-                                    to['manage_records'] = False
-                                if mu:
-                                    to['manage_users'] = False
+                                to['manage_records'] = False if mr else team.get('manage_records', False)
+                                to['manage_users'] = False if mu else team.get('manage_users', False)
                                 share_action = 'update_teams'
                             else:
                                 share_action = 'remove_teams'
@@ -381,10 +362,7 @@ class ShareFolderCommand(Command):
                         request[share_action].append(to)
 
             if len(record_uids) > 0:
-                ruid_set = set()
-                if 'records' in sh_fol:
-                    for r in sh_fol['records']:
-                        ruid_set.add(r['record_uid'])
+                existing_records = {x['record_uid']: x for x in sh_fol.get('records', [])}
                 team_uid = ''
                 if 'key_type' not in sh_fol:
                     if 'teams' in sh_fol:
@@ -404,19 +382,16 @@ class ShareFolderCommand(Command):
                     share_action = ''
                     ce = kwargs.get('can_edit')
                     cs = kwargs.get('can_share')
-                    if record_uid in ruid_set:
+                    if record_uid in existing_records:
+                        record = existing_records[record_uid]
                         if action == 'grant':
-                            if ce:
-                                ro['can_edit'] = True
-                            if cs:
-                                ro['can_share'] = True
+                            ro['can_edit'] = True if ce else record.get('can_edit', False)
+                            ro['can_share'] = True if cs else record.get('can_share', False)
                             share_action = 'update_records'
                         else:
                             if ce or cs:
-                                if ce:
-                                    ro['can_edit'] = False
-                                if cs:
-                                    ro['can_share'] = False
+                                ro['can_edit'] = False if ce else record.get('can_edit', False)
+                                ro['can_share'] = False if cs else record.get('can_share', False)
                                 share_action = 'update_records'
                             else:
                                 share_action = 'remove_records'
