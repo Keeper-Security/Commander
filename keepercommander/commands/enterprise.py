@@ -8,51 +8,46 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-import argparse
-import ipaddress
-from typing import Set, Dict
 
+import argparse
+import base64
+import copy
+import datetime
+import ipaddress
 import itertools
 import json
-import base64
-import string
-
 import logging
-import datetime
-import re
-import time
-import copy
 import os
-
-from Cryptodome.PublicKey import RSA
-from Cryptodome.Util.asn1 import DerSequence
-from Cryptodome.Math.Numbers import Integer
-from asciitree import LeftAligned
-from collections import OrderedDict as OD
+import re
+import string
+import time
 from argparse import RawTextHelpFormatter
+from collections import OrderedDict as OD
+from typing import Set, Dict, Any, Union, List
 
+from asciitree import LeftAligned
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from . import aram  # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
+from . import compliance
 from .aram import ActionReportCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise_common import EnterpriseCommand
-from .. import api, rest_api,  crypto, utils, constants
+from .scim import ScimCommand
+from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
+from .. import api, rest_api, crypto, utils, constants
 from ..display import bcolors
-from ..params import KeeperParams
-from ..generator import generate
 from ..error import CommandError
+from ..generator import generate
+from ..params import KeeperParams
 from ..proto import record_pb2 as record_proto
-from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
                                     SecurityReportResponse)
-from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
-from . import aram    # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
-from .scim import ScimCommand
-from . import compliance
+from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
+                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
 
 
 def register_commands(commands):
@@ -822,7 +817,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
         if kwargs.get('delete') and kwargs.get('add'):
             raise CommandError('enterprise-node', "'add' and 'delete' parameters are mutually exclusive.")
 
-        node_lookup = {}
+        node_lookup = {}    # type: Dict[str, Union[Dict, List[Dict]]]
         if 'nodes' in params.enterprise:
             for node in params.enterprise['nodes']:
                 node_lookup[str(node['node_id'])] = node
@@ -845,12 +840,11 @@ class EnterpriseNodeCommand(EnterpriseCommand):
             n = node_lookup.get(parent_name)
             if not n:
                 n = node_lookup.get(parent_name.lower())
-            if n:
-                if type(n) == list:
-                    raise CommandError('enterprise-node', 'Parent node %s in not unique'.format(parent_name))
-                parent_id = n['node_id']
-            else:
+            if not n:
                 raise CommandError('enterprise-node', 'Cannot resolve parent node %s'.format(parent_name))
+            if isinstance(n, list):
+                raise CommandError('enterprise-node', 'Parent node %s in not unique'.format(parent_name))
+            parent_id = n['node_id']
 
         matched = {}
         unmatched_nodes = set()
@@ -1216,7 +1210,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             logging.warning('%s has not accepted invitation yet: Skipping', user['username'])
 
                 if kwargs.get('expire'):
-                    answer = 'y' if  kwargs.get('force') else \
+                    answer = 'y' if kwargs.get('force') else \
                         user_choice(
                             bcolors.BOLD + '\nConfirm\n' + bcolors.ENDC +
                             'User will be required to create a new Master Password on the next login.\n' +
@@ -1639,8 +1633,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     "role_id": self.get_enterprise_id(params),
                     "node_id": node_id,
                     "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
-                    "visible_below": (kwargs['visible_below'] == 'on') or False,
-                    "new_user_inherit": (kwargs['new_user'] == 'on') or False
+                    "visible_below": (kwargs.get('visible_below') == 'on') or False,
+                    "new_user_inherit": (kwargs.get('new_user') == 'on') or False
                 }
                 request_batch.append(rq)
         else:
@@ -1908,8 +1902,9 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 all_privileges = {x[1].lower() for x in constants.ROLE_PRIVILEGES}
                 for is_add in [True, False]:
                     parameter = 'add_privilege' if is_add else 'remove_privilege'
-                    if isinstance(kwargs.get(parameter), list):
-                        for privilege in kwargs.get(parameter):
+                    privilege_list = kwargs.get(parameter)
+                    if isinstance(privilege_list, (list, tuple)):
+                        for privilege in privilege_list:
                             privilege = privilege.lower()
                             if privilege not in all_privileges:
                                 logging.warning('Add/Remove managed node privilege: invalid privilege: %s', privilege)
@@ -2354,7 +2349,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         matched = {}
         team_names = set()
 
-        for team_name in kwargs['team']:
+        for team_name in kwargs.get('team', []):
             t = team_lookup.get(team_name)
             if t is None:
                 t = team_lookup.get(team_name.lower())
@@ -2520,7 +2515,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                             if rq:
                                 request_batch.append(rq)
             elif node_id or kwargs.get('name') or kwargs.get('restrict_edit') or kwargs.get('restrict_share') or kwargs.get('restrict_view'):
-                if kwargs['name'] and len(matched_teams) > 1:
+                if kwargs.get('name') and len(matched_teams) > 1:
                     logging.warning('Cannot set same name to %s teams', len(matched_teams))
                     kwargs['name'] = None
 
@@ -2694,10 +2689,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
-        format = 'table'
-        if kwargs.get('format'):
-            format = kwargs['format']
-
         rq = SecurityReportRequest()
         security_report_data_rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data', rs_type=SecurityReportResponse)
 
@@ -2754,7 +2745,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         fields = ('username', 'email', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
             ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel', 'node_path')
         field_descriptions = fields
-        if format == 'table':
+
+        fmt = kwargs.get('format', 'table')
+        if fmt == 'table':
             field_descriptions = (self.get_title_for_field(x) for x in fields)
 
         table = []
@@ -2763,7 +2756,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             for f in fields:
                 row.append(raw[f])
             table.append(row)
-        return dump_report_data(table, field_descriptions, fmt=format, filename=kwargs.get('output'))
+        return dump_report_data(table, field_descriptions, fmt=fmt, filename=kwargs.get('output'))
 
     @staticmethod
     def get_title_for_field(field):  # type: (str) -> str
@@ -2891,7 +2884,7 @@ class EnterprisePushCommand(EnterpriseCommand):
         else:
             raise CommandError('enterprise-push', 'File {0} does not exists'.format(name))
 
-        emails = EnterprisePushCommand.collect_emails(params, kwargs)   # type: dict[str, any]
+        emails = EnterprisePushCommand.collect_emails(params, kwargs)   # type: Dict[str, Any]
 
         if len(emails) == 0:
             raise CommandError('enterprise-push', 'No users')
@@ -3179,9 +3172,9 @@ class TeamApproveCommand(EnterpriseCommand):
     def execute(self, params, **kwargs):
         approve_teams = True
         approve_users = True
-        if kwargs['team'] or kwargs['user']:
-            approve_teams = kwargs['team'] or False
-            approve_users = kwargs['user'] or False
+        if kwargs.get('team') or kwargs.get('user'):
+            approve_teams = kwargs.get('team') or False
+            approve_users = kwargs.get('user') or False
 
         request_batch = []
         if approve_teams and 'queued_teams' in params.enterprise:
@@ -3190,22 +3183,11 @@ class TeamApproveCommand(EnterpriseCommand):
                 team_node_id = team['node_id']
                 team_uid = team['team_uid']
                 team_key = api.generate_aes_key()
-                encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
-                rsa_key = RSA.generate(2048)
-                private_key = DerSequence([0,
-                                           rsa_key.n,
-                                           rsa_key.e,
-                                           rsa_key.d,
-                                           rsa_key.p,
-                                           rsa_key.q,
-                                           rsa_key.d % (rsa_key.p-1),
-                                           rsa_key.d % (rsa_key.q-1),
-                                           Integer(rsa_key.q).inverse(rsa_key.p)
-                                           ]).encode()
-                pub_key = rsa_key.publickey()
-                public_key = DerSequence([pub_key.n,
-                                          pub_key.e
-                                          ]).encode()
+                tree_key = params.enterprise['unencrypted_tree_key']
+                pri_key, pub_key = crypto.generate_rsa_key()
+                private_key = crypto.unload_rsa_private_key(pri_key)
+                private_key = crypto.encrypt_aes_v1(private_key, team_key)
+                public_key = crypto.unload_rsa_public_key(pub_key)
 
                 rq = {
                     'command': 'team_add',
@@ -3214,11 +3196,11 @@ class TeamApproveCommand(EnterpriseCommand):
                     'restrict_edit': kwargs.get('restrict_edit') == 'on',
                     'restrict_share': kwargs.get('restrict_share') == 'on',
                     'restrict_view': kwargs.get('restrict_view') == 'on',
-                    'public_key': base64.urlsafe_b64encode(public_key).decode().rstrip('='),
-                    'private_key': api.encrypt_aes(private_key, team_key),
+                    'public_key': utils.base64_url_encode(public_key),
+                    'private_key': utils.base64_url_encode(private_key),
                     'node_id': team_node_id,
-                    'team_key': api.encrypt_aes(team_key, params.data_key),
-                    'encrypted_team_key': base64.urlsafe_b64encode(encrypted_team_key).decode().rstrip('='),
+                    'team_key': utils.base64_url_encode(crypto.encrypt_aes_v1(team_key, params.data_key)),
+                    'encrypted_team_key': utils.base64_url_encode(crypto.encrypt_aes_v2(team_key, tree_key)),
                     'manage_only': True
                 }
                 request_batch.append(rq)
@@ -3307,7 +3289,7 @@ class DeviceApproveCommand(EnterpriseCommand):
         if kwargs.get('approve') and kwargs.get('deny'):
             raise CommandError('device-approve', "'approve' and 'deny' parameters are mutually exclusive.")
 
-        devices = kwargs['device']
+        devices = kwargs.get('device')
         matching_devices = {}
         for device in approval_requests:
             device_id = device.get('encrypted_device_token')
@@ -3315,7 +3297,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                 continue
             device_id = DeviceApproveCommand.token_to_string(utils.base64_url_decode(device_id))
             found = False
-            if devices:
+            if isinstance(devices, (list, tuple)):
                 for name in devices:
                     if name:
                         if device_id.startswith(name):
