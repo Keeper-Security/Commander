@@ -1014,7 +1014,7 @@ class MSPConvertNodeCommand(EnterpriseCommand):
             seats = len(users_to_move)
         if seats == 0:
             seats = 1
-        plan = kwargs.get('plan')
+        plan = kwargs.get('plan') or 'business'
 
         msp_node = node_lookup[msp_node_id]
         msp_node_name = msp_node['data'].get('displayname')
