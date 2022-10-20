@@ -26,7 +26,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 from . import __version__
 
 
-LEGACY_CLIENT_VERSION = 'c14.0.0'
 # CLIENT_VERSION = 'c' + __version__
 CLIENT_VERSION = 'c16.7.0'
 

@@ -106,7 +106,7 @@ shared_records_report_parser.add_argument('-tu', '--show-team-users', action='st
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 
 
-def find_record(params, record_name, types=None):  # type: (KeeperParams, str, Optional[Iterator[str]]) -> Optional[vault.KeeperRecord]
+def find_record(params, record_name, types=None):  # type: (KeeperParams, str, Optional[Iterator[str]]) -> vault.KeeperRecord
     if not record_name:
         raise Exception(f'Record name cannot be empty.')
 
