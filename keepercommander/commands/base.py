@@ -178,14 +178,17 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
     #           row_number: boolean     - Add row number. table only
     #           column_width: int       - Truncate long columns. table only
     #           no_header: boolean      - Do not print header
-    #           group_by: int           - Sort by columnNo
+    #           group_by: int           - Sort and Group by columnNo
+    #           sort_by: int            - Sort by columnNo
 
+    sort_by = kwargs.get('sort_by')
     group_by = kwargs.get('group_by')
     if group_by is not None:
         group_by = int(group_by)
+        sort_by = group_by
 
-    if isinstance(group_by, int):
-        data.sort(key=lambda x: x[group_by] if 0 <= group_by < len(x) else None)
+    if isinstance(sort_by, int):
+        data.sort(key=lambda x: x[sort_by] if 0 <= sort_by < len(x) else None)
 
     if fmt == 'csv':
         if filename:

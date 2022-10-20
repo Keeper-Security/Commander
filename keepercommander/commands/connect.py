@@ -17,12 +17,11 @@ import logging
 import os
 import re
 import shutil
-import tempfile
-from typing import Optional, Callable, Iterator, List, Iterable, Tuple
-
 import sys
+import tempfile
+from typing import Optional, Callable, List, Iterable, Tuple
 
-from .base import Command, RecordMixin, dump_report_data
+from .base import Command, RecordMixin, dump_report_data, field_to_title
 from .record import find_record, RecordListCommand
 from .ssh_agent import add_ssh_key, try_extract_private_key, SshAgentCommand
 from ..attachment import prepare_attachment_download
@@ -33,17 +32,33 @@ from ..vault import TypedRecord, KeeperRecord, PasswordRecord
 
 ssh_parser = argparse.ArgumentParser(prog='ssh',
                                      description='Establishes connection to external server using SSH. ')
+ssh_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
+                        help='output format.')
+ssh_parser.add_argument('--output', dest='output', action='store',
+                        help='output file name. (ignored for table format)')
+ssh_parser.add_argument('-d', '--destination', action='store', metavar='LOGIN@HOST[:PORT]',
+                        help='SSH endpoint')
 ssh_parser.add_argument('record', nargs='?', type=str, action='store',
                         help='record path or UID. Record types: "SSH Key", "Server"')
-ssh_parser.add_argument('destination', nargs='?', type=str, action='store',
-                        metavar='LOGIN@HOST[:PORT]', help='Optional. SSH endpoint')
+ssh_parser.add_argument('command', nargs='*', type=str, action='store',
+                        help='Remote command')
 
 mysql_parser = argparse.ArgumentParser(prog='mysql', description='Establishes connection to MySQL server.')
+mysql_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
+                          help='output format.')
+mysql_parser.add_argument('--output', dest='output', action='store',
+                          help='output file name. (ignored for table format)')
 mysql_parser.add_argument('record', nargs='?', type=str, action='store',
                           help='record path or UID. Record types: "Database"')
+mysql_parser.add_argument('query', nargs='*', type=str, action='store',
+                          help='SQL query')
 
 postgres_parser = argparse.ArgumentParser(prog='postgresql',
                                           description='Establishes connection to Postgres/Redshift servers.')
+postgres_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
+                             help='output format.')
+postgres_parser.add_argument('--output', dest='output', action='store',
+                             help='output file name. (ignored for table format)')
 postgres_parser.add_argument('record', nargs='?', type=str, action='store',
                              help='record path or UID. Record types: "Database"')
 postgres_parser.add_argument('database', nargs='?', type=str, action='store',
@@ -58,12 +73,18 @@ rdp_parser.add_argument('record', nargs='?', type=str, action='store',
 connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
 connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                             help='display help on command format and template parameters')
-connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')
+connect_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
+                            help='output format.')
+connect_parser.add_argument('--output', dest='output', action='store',
+                            help='output file name. (ignored for table format)')
 connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'],
                             help='sort output')
+connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')
 connect_parser.add_argument('-f', '--filter', dest='filter_by', action='store', help='filter output')
 connect_parser.add_argument('endpoint', nargs='?', action='store', type=str,
                             help='endpoint name or full record path to endpoint')
+connect_parser.add_argument('parameters', nargs='*', type=str, action='store',
+                            help='Command parameters')
 
 mysql = ''
 postgresql = ''
@@ -162,28 +183,6 @@ class BaseConnectCommand(Command, RecordMixin):
         return options
 
     @staticmethod
-    def get_record(params, record, types):  # type: (KeeperParams, str, Iterator[str]) -> Optional[TypedRecord]
-        if not record:
-            ls = RecordListCommand()
-            ls.execute(params, record_type=types, verbose=True)
-            return
-
-        try:
-            record = find_record(params, record, types)
-        except Exception as e:
-            logging.warning(e)
-            return
-
-        if not isinstance(record, TypedRecord):
-            logging.warning('Only typed records are supported')
-            return
-
-        if record.record_type not in types:
-            logging.warning('Command supports %s records only', ' and '.join(types))
-            return
-        return record
-
-    @staticmethod
     def get_parameter_value(params, record, parameter, temp_files, **kwargs):
         # type: (KeeperParams, KeeperRecord, str, list, ...) -> Optional[str]
         if parameter.startswith('file:') or parameter.startswith('body:'):
@@ -231,8 +230,7 @@ class ConnectSshCommand(BaseConnectCommand):
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             ls = RecordListCommand()
-            ls.execute(params, record_type=['serverCredentials', 'sshKeys'], verbose=True)
-            return
+            return ls.execute(params, record_type=['serverCredentials', 'sshKeys'], verbose=True, **kwargs)
 
         record = None     # type: Optional[KeeperRecord]
         if record_name in params.record_cache:
@@ -347,6 +345,10 @@ class ConnectSshCommand(BaseConnectCommand):
                         logging.debug(e)
                         logging.info('Failed to copy password to clipboard')
 
+        command = kwargs.get('command')
+        if isinstance(command, list) and len(command) > 0:
+            self.command += ' -- ' + ' '.join(command)
+
         logging.info('Connecting to "%s" ...', record.title)
         self.execute_shell()
 
@@ -356,10 +358,12 @@ class ConnectMysqlCommand(BaseConnectCommand):
         return mysql_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-        record = self.get_record(params, name, ['databaseCredentials', 'serverCredentials'])
-        if not record:
-            return
+        record_name = kwargs.pop('record', None)
+        if not record_name:
+            ls = RecordListCommand()
+            return ls.execute(params, record_type=['databaseCredentials', 'serverCredentials'], verbose=True, **kwargs)
+
+        record = find_record(params, record_name, types=['databaseCredentials', 'serverCredentials'])
 
         login = BaseConnectCommand.get_record_field(record, 'login')
         if not login:
@@ -388,6 +392,10 @@ class ConnectMysqlCommand(BaseConnectCommand):
                 os.putenv('MYSQL_PWD', '')
             self.run_at_the_end.append(clear_env)
 
+        query = kwargs.get('query')
+        if isinstance(query, list) and len(query) > 0:
+            self.command += ' --execute \"' + ' '.join(query) + '\"'
+
         logging.info('Connecting to "%s" ...', record.title)
         self.execute_shell()
 
@@ -397,10 +405,12 @@ class ConnectPostgresCommand(BaseConnectCommand):
         return postgres_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-        record = self.get_record(params, name, ['databaseCredentials', 'serverCredentials'])
-        if not record:
-            return
+        record_name = kwargs.pop('record', None)
+        if not record_name:
+            ls = RecordListCommand()
+            return ls.execute(params, record_type=['databaseCredentials', 'serverCredentials'], verbose=True, **kwargs)
+
+        record = find_record(params, record_name, types=['databaseCredentials', 'serverCredentials'])
 
         login = BaseConnectCommand.get_record_field(record, 'login')
         if not login:
@@ -442,10 +452,12 @@ class ConnectRdpCommand(BaseConnectCommand):
         return rdp_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-        record = self.get_record(params, name, ['serverCredentials'])
-        if not record:
-            return
+        record_name = kwargs.pop('record', None)
+        if not record_name:
+            ls = RecordListCommand()
+            return ls.execute(params, record_type=['serverCredentials'], verbose=True, **kwargs)
+
+        record = find_record(params, record_name, types=['serverCredentials'])
 
         login = BaseConnectCommand.get_record_field(record, 'login')
         if not login:
@@ -533,13 +545,13 @@ class ConnectCommand(BaseConnectCommand):
         return connect_parser
 
     def execute(self, params, **kwargs):
-        if kwargs.get('syntax_help'):
+        if kwargs.pop('syntax_help', None):
             logging.info(connect_command_description)
             return
 
         ConnectCommand.find_endpoints(params)
 
-        endpoint = kwargs.get('endpoint')
+        endpoint = kwargs.pop('endpoint', None)
         if endpoint:
             endpoints = [x for x in ConnectCommand.Endpoints if x.name == endpoint]
             if not endpoints:
@@ -574,7 +586,7 @@ class ConnectCommand(BaseConnectCommand):
                 if len(endpoints) == 1:
                     record = KeeperRecord.load(params, endpoints[0].record_uid)
                     if record:
-                        self.connect_endpoint(params, endpoints[0].name, record)
+                        self.connect_endpoint(params, endpoints[0].name, record, **kwargs)
                 else:
                     logging.warning("Connect endpoint '%s' is not unique", endpoint)
                     ConnectCommand.dump_endpoints(endpoints)
@@ -585,33 +597,38 @@ class ConnectCommand(BaseConnectCommand):
                 logging.info("Connect endpoint '%s' not found", endpoint)
         else:
             if ConnectCommand.Endpoints:
-                sorted_by = kwargs.get('sort_by') or 'endpoint'
-                filter_by = kwargs.get('filter_by') or ''
-                logging.info("Available connect endpoints")
-                if filter_by:
-                    logging.info('Filtered by "%s"', filter_by)
-                    filter_by = filter_by.lower()
-                ConnectCommand.dump_endpoints(ConnectCommand.Endpoints, filter_by, sorted_by)
+                return ConnectCommand.dump_endpoints(ConnectCommand.Endpoints, **kwargs)
             else:
                 logging.info("No connect endpoints found")
-            return
 
     @staticmethod
-    def dump_endpoints(endpoints, filter_by='', sorted_by=''):
-        logging.info('')
-        headers = ['Endpoint', 'Description', 'Record Title', 'Folder(s)']
+    def dump_endpoints(endpoints, **kwargs):   # type: (List[ConnectEndpoint], ...) -> Optional[str]
+        sort_by = kwargs.get('sort_by') or ''
+        filter_by = kwargs.get('filter_by') or ''
+        logging.info("Available connect endpoints")
+        if filter_by:
+            logging.info('Filtered by "%s"', filter_by)
+            filter_by = filter_by.lower()
+        fmt = kwargs.get('format', '')
+        verbose = fmt != 'table'
+
+        headers = ['endpoint', 'description', 'record_title', 'record_uid', 'folders']
+        if fmt != 'json':
+            headers = [field_to_title(x) for x in headers]
+
         table = []
         for endpoint in endpoints:
             title = endpoint.record_title
-            folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
+            folder = endpoint.paths[0] if len(endpoint.paths) > 0 else ''
             if filter_by:
-                if not any([x for x in [endpoint.name.lower(), title.lower(), folder.lower()] if x.find(filter_by) >= 0]):
+                if not any([x for x in [endpoint.name.lower(), title.lower(), endpoint.record_uid, folder.lower()] if x.find(filter_by) >= 0]):
                     continue
-            if len(title) > 23:
+            if not verbose and len(title) > 23:
                 title = title[:20] + '...'
-            table.append([endpoint.name, endpoint.description or '', title, folder])
-        table.sort(key=lambda x: x[3] if sorted_by == 'folder' else x[2] if sorted_by == 'title' else x[0])
-        dump_report_data(table, headers, row_number=True)
+            table.append([endpoint.name, endpoint.description or '', title, endpoint.record_uid, folder])
+
+        sorted_by = 4 if sort_by == 'folder' else 2 if sort_by == 'title' else 0
+        return dump_report_data(table, headers, fmt=fmt, output=kwargs.get('output'), row_number=True, sort_by=sorted_by)
 
     @staticmethod
     def find_endpoints(params):   # type: (KeeperParams) -> None
@@ -719,8 +736,8 @@ class ConnectCommand(BaseConnectCommand):
                     os.putenv(key_name, '')
                 yield clear_env
 
-    def connect_endpoint(self, params, endpoint, record):
-        # type: (KeeperParams, str, KeeperRecord) -> None
+    def connect_endpoint(self, params, endpoint, record, **kwargs):
+        # type: (KeeperParams, str, KeeperRecord, ...) -> None
         temp_files = []
         try:
             command = BaseConnectCommand.get_custom_field(record, f'connect:{endpoint}:pre')
@@ -737,6 +754,10 @@ class ConnectCommand(BaseConnectCommand):
                         ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files))
                     self.run_at_the_end.extend(
                         ConnectCommand.add_environment_variables(params, endpoint, record, temp_files))
+
+                    parameters = kwargs.get('parameters')
+                    if isinstance(parameters, list) and len(parameters) > 0:
+                        self.command += ' ' + ' '.join(parameters)
 
                     logging.info('Connecting to "%s" ...', record.title)
                     self.execute_shell()
