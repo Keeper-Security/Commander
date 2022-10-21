@@ -1573,17 +1573,9 @@ class RecordV3:
     @staticmethod
     def display(r, **kwargs):
         record_uid = r['record_uid']
-        print('')
         # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link', record_uid))
         print('{0:>20s}: {1:<20s}'.format('UID', record_uid))
         # if 'version' in r: print('{0:>20s}: {1:<20s}'.format('Version', str(r['version'])))
-        params = None
-        if 'params' in kwargs:
-            params = kwargs['params']
-            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
-            for i in range(len(folders)):
-                print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
-
         data = {}
         if 'data_unencrypted' in r:
             data = r['data_unencrypted'].decode() if isinstance(r['data_unencrypted'], bytes) else r['data_unencrypted']
@@ -1711,79 +1703,6 @@ class RecordV3:
                 code, remain, _ = result
                 if code: print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
 
-        if params is not None:
-            if record_uid in params.record_cache:
-                rec = params.record_cache[record_uid]
-                if 'shares' in rec:
-                    no = 0
-                    if 'user_permissions' in rec['shares']:
-                        perm = rec['shares']['user_permissions'].copy()
-                        perm.sort(key=lambda r: (' 1' if r.get('owner') else ' 2' if r.get(
-                            'editable') else ' 3' if r.get('sharable') else '') + r.get('username'))
-                        for uo in perm:
-                            flags = ''
-                            if uo.get('owner'):
-                                flags = 'Owner'
-                            elif uo.get('awaiting_approval'):
-                                flags = 'Awaiting Approval'
-                            else:
-                                if uo.get('editable'):
-                                    flags = 'Edit'
-                                if uo.get('sharable'):
-                                    if flags:
-                                        flags = flags + ', '
-                                    flags = flags + 'Share'
-                            if not flags:
-                                flags = 'View'
-
-                            print('{0:>21s} {1} ({2}) {3}'.format('Shared Users:' if no == 0 else '', uo['username'],
-                                                                  flags,
-                                                                  'self' if uo['username'] == params.user else ''))
-                            no = no + 1
-                    no = 0
-                    if 'shared_folder_permissions' in rec['shares']:
-                        for sfo in rec['shares']['shared_folder_permissions']:
-                            flags = ''
-                            if sfo.get('editable'):
-                                flags = 'Edit'
-                            if sfo.get('reshareable'):
-                                if flags:
-                                    flags = flags + ', '
-                                flags = flags + 'Share'
-                            if not flags:
-                                flags = 'View'
-                            sf_uid = sfo['shared_folder_uid']
-                            for f_uid in find_folders(params, record_uid):
-                                if f_uid in params.subfolder_cache:
-                                    fol = params.folder_cache[f_uid]
-                                    if fol.type in {BaseFolderNode.SharedFolderType,
-                                                    BaseFolderNode.SharedFolderFolderType}:
-                                        sfid = fol.uid if fol.type == BaseFolderNode.SharedFolderType else fol.shared_folder_uid
-                                        if sf_uid == sfid:
-                                            print('{0:>21s} {1:<20s}'.format('Shared Folders:' if no == 0 else '',
-                                                                             fol.name))
-                                            no = no + 1
-
-        if kwargs.get('format') == 'detail':
-            if 'shared' in r: print('{0:>20s}: {1:<20s}'.format('Shared', str(r['shared'])))
-            if 'client_modified_time' in r:
-                dt = datetime.datetime.fromtimestamp(r['client_modified_time'] / 1000.0)
-                print('{0:>20s}: {1:<20s}'.format('Last Modified', dt.strftime('%Y-%m-%d %H:%M:%S')))
-            if 'revision' in r: print('{0:>20s}: {1:<20s}'.format('Revision', str(r['revision'])))
-
-        if params.breach_watch:
-            bw_status = params.breach_watch.get_record_status(params, record_uid)
-            if bw_status and 'status' in bw_status:
-                status = bw_status['status']
-                if status:
-                    if status in {'WEAK', 'BREACHED'}:
-                        status = 'High-Risk Password'
-                    elif status == 'IGNORE':
-                        status = 'Ignored'
-                    print('{0:>20s}: {1:<20s}'.format('BreachWatch', status))
-
-        print('')
-
     @staticmethod
     def display_ref(ftype, fvalue, **kwargs):
         # fileRef can hold multiple references - convert single value to list for compatibility
@@ -1874,7 +1793,7 @@ class RecordV3:
 
             elif type(options_list) == list:
                 for c in options_list:
-                    if type(c) == dict:
+                    if isinstance(c, dict):
                         name = c.get('name')
                         value = c.get('value')
                         if name and value:

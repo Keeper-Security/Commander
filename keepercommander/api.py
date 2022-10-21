@@ -5,35 +5,35 @@
 #              |_|            
 #
 # Keeper Commander 
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
 import base64
 import collections
 import hashlib
+import itertools
 import json
 import logging
+import math
 import os
 import re
+import time
 from datetime import datetime
 from typing import Optional, Tuple, Iterable, List, Dict, Any
 
 import google
-import itertools
-import math
-import time
 from Cryptodome import Random
 from Cryptodome.Cipher import AES, PKCS1_v1_5
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 
-from . import constants, rest_api, loginv3, utils, crypto
+from . import constants, rest_api, loginv3, utils, crypto, vault
 from .display import bcolors
 from .enterprise import query_enterprise as qe
 from .error import CryptoError, KeeperApiError
-from .params import KeeperParams, LAST_RECORD_UID
-from .proto import client_pb2 as client_proto, APIRequest_pb2 as proto, record_pb2 as records
+from .params import KeeperParams, PublicKeys, LAST_RECORD_UID
+from .proto import client_pb2, APIRequest_pb2, record_pb2 as records, enterprise_pb2
 from .record import Record
 from .recordv3 import RecordV3
 from .shared_folder import SharedFolder
@@ -223,8 +223,8 @@ def merge_lists_on_value(list1, list2, field_name):
     return [x for x in d.values()]
 
 
-FOLDER_SCOPE = ['folders', 'shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
-RECORD_SCOPE = ['record', 'typed_record', 'app_record']
+FOLDER_SCOPE = ['shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
+RECORD_SCOPE = ['folders', 'record', 'typed_record', 'app_record', 'sharing_changes']
 NON_SHARED_DATA_SCOPE = ['non_shared_data']
 EXPLICIT = ['explicit']
 
@@ -709,9 +709,8 @@ def sync_down(params, record_types=False):
             if record_uid in params.record_cache:
                 record = params.record_cache[record_uid]
                 record['shared'] = sharing_change['shared']
-    for record in params.record_cache.values():
-        if 'shares' in record:
-            del record['shares']
+                if 'shares' in record:
+                    del record['shares']
 
     prepare_folder_tree(params)
 
@@ -760,7 +759,7 @@ def sync_down(params, record_types=False):
                 if 'data' in bwr :
                     data = utils.base64_url_decode(bwr['data'])
                     data = crypto.decrypt_aes_v2(data, record['record_key_unencrypted'])
-                    data_obj = client_proto.BreachWatchData()
+                    data_obj = client_pb2.BreachWatchData()
                     data_obj.ParseFromString(data)
                     bwr['data_unencrypted'] = google.protobuf.json_format.MessageToDict(data_obj)
                 params.breach_watch_records[record_uid] = bwr
@@ -925,10 +924,9 @@ def get_record(params, record_uid):
         rec.load(data, version=version, revision=cached_rec['revision'], extra=extra)
         if not resolve_record_view_path(params, record_uid):
             rec.mask_password()
+        return rec
     except:
         logging.error('**** Error decrypting record %s', record_uid)
-
-    return rec
 
 
 def is_shared_folder(params,shared_folder_uid):
@@ -958,10 +956,54 @@ def is_team(params,team_uid):
     if team_uid not in params.team_cache:
         return False
 
-    return True 
+    return True
 
 
-def get_shared_folder(params,shared_folder_uid):
+def get_share_admins_for_shared_folder(params, shared_folder_uid):
+    # type: (KeeperParams, str) -> Optional[List[str]]
+    if params.enterprise_ec_key:
+        if shared_folder_uid in params.shared_folder_cache:
+            if 'share_admins' in params.shared_folder_cache[shared_folder_uid]:
+                return params.shared_folder_cache[shared_folder_uid]['share_admins']
+
+        try:
+            rq = enterprise_pb2.GetSharingAdminsRequest()
+            rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+            rs = communicate_rest(params, rq, 'enterprise/get_sharing_admins',
+                                  rs_type=enterprise_pb2.GetSharingAdminsResponse)
+            admins = [x.email for x in rs.userProfileExts if x.isInSharedFolder]
+        except Exception as e:
+            logging.debug(e)
+            return
+        if shared_folder_uid in params.shared_folder_cache:
+            params.shared_folder_cache[shared_folder_uid]['share_admins'] = admins
+
+        return admins
+
+
+def get_share_admins_for_record(params, record_uid):
+    # type: (KeeperParams, str) -> Optional[List[str]]
+    if params.enterprise_ec_key:
+        if record_uid in params.record_cache:
+            if 'share_admins' in params.record_cache[record_uid]:
+                return params.record_cache[record_uid]['share_admins']
+
+        try:
+            rq = enterprise_pb2.GetSharingAdminsRequest()
+            rq.recordUid = utils.base64_url_decode(record_uid)
+            rs = communicate_rest(params, rq, 'enterprise/get_sharing_admins',
+                                  rs_type=enterprise_pb2.GetSharingAdminsResponse)
+            admins = [x.email for x in rs.userProfileExts if x.isShareAdminForRequestedObject]
+        except Exception as e:
+            logging.debug(e)
+            return
+        if record_uid in params.record_cache:
+            params.record_cache[record_uid]['share_admins'] = admins
+
+        return admins
+
+
+def get_shared_folder(params, shared_folder_uid):   # type: (KeeperParams, str) -> Optional[SharedFolder]
     """Return the referenced shared folder"""
     shared_folder_uid = shared_folder_uid.strip()
 
@@ -979,39 +1021,48 @@ def get_shared_folder(params,shared_folder_uid):
 
     cached_sf = params.shared_folder_cache[shared_folder_uid]
 
-    logging.debug('Cached Shared Folder: ' + str(cached_sf))
-
     sf = SharedFolder(shared_folder_uid)
     sf.load(cached_sf, cached_sf['revision'])
-
     return sf
 
 
-def load_user_public_keys(params, emails):  # type: (KeeperParams, list) -> None
-    emails_to_load = [x for x in emails if x.lower() not in params.key_cache]
-    if not emails_to_load:
+def load_user_public_keys(params, emails, send_invites=False):  # type: (KeeperParams, List[str], bool) -> Optional[List[str]]
+    s = set((x.casefold() for x in emails))
+    s.difference_update(params.key_cache.keys())
+    if not s:
         return
-    rq = {
-        'command': 'public_keys',
-        'key_owners': emails
-    }
-    rs = communicate(params, rq)
-    if 'public_keys' in rs:
-        for pk in rs['public_keys']:
-            if 'public_key' in pk:
-                email = pk['key_owner']
-                public_key = base64.urlsafe_b64decode(pk['public_key'] + '==')
-                try:
-                    params.key_cache[email] = RSA.importKey(public_key)
-                except Exception as e:
-                    logging.debug(e)
+
+    emails_to_load = list(s)
+    rq = APIRequest_pb2.GetPublicKeysRequest()
+    rq.usernames.extend(emails_to_load)
+    need_share_accept = []
+    rs = communicate_rest(params, rq, 'vault/get_public_keys', rs_type=APIRequest_pb2.GetPublicKeysResponse)
+    for pk in rs.keyResponses:
+        email = pk.username
+        if pk.errorCode in ['', 'success']:
+            rsa = pk.publicKey
+            ec = pk.publicEccKey
+            params.key_cache[email] = PublicKeys(rsa=rsa, ec=ec)
+        elif pk.errorCode == 'no_active_share_exist':
+            need_share_accept.append(pk.username)
+    if len(need_share_accept) > 0 and send_invites:
+        for email in need_share_accept:
+            rq = APIRequest_pb2.SendShareInviteRequest()
+            rq.email = email
+            try:
+                communicate_rest(params, rq, 'vault/send_share_invite')
+            except Exception as e:
+                logging.debug('Share invite failed: %s', e)
+        return need_share_accept
 
 
 def load_team_keys(params, team_uids):          # type: (KeeperParams, list) -> None
-    uids_to_load = {x for x in team_uids if x not in params.key_cache}
-    if not uids_to_load:
+    s = set(team_uids)
+    s.difference_update(params.key_cache.keys())
+    if not s:
         return
-    uids_to_load = list(uids_to_load)
+    uids_to_load = list(s)
+
     while len(uids_to_load) > 0:
         uids = uids_to_load[:90]
         uids_to_load = uids_to_load[90:]
@@ -1025,13 +1076,16 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, list) -> 
                 if 'key' in tk:
                     team_uid = tk['team_uid']
                     try:
+                        aes = b''
+                        rsa = b''
                         if tk['type'] == 1:
-                            params.key_cache[team_uid] = decrypt_data(tk['key'], params.data_key)
+                            encrypted_key = utils.base64_url_decode(tk['key'])
+                            aes = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                         elif tk['type'] == 2:
-                            params.key_cache[team_uid] = decrypt_rsa(tk['key'], params.rsa_key)
+                            aes = decrypt_rsa(tk['key'], params.rsa_key)
                         elif tk['type'] == 3:
-                            public_key = utils.base64_url_decode(tk['key'])
-                            params.key_cache[team_uid] = RSA.importKey(public_key)
+                            rsa = utils.base64_url_decode(tk['key'])
+                        params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes)
                     except Exception as e:
                         logging.debug(e)
 
@@ -1046,13 +1100,6 @@ def load_available_teams(params):
     try:
         rs = communicate(params, rq)
         params.available_team_cache = rs.get('teams')
-        for t in params.available_team_cache:
-            team_uid = t['team_uid']
-            if team_uid in params.team_cache:
-                team = params.team_cache[team_uid]
-                if 'team_key_unencrypted' in team:
-                    params.key_cache[team_uid] = team['team_key_unencrypted']
-
     except Exception as e:
         logging.debug(e)
 
@@ -1150,6 +1197,7 @@ def search_teams(params, searchstring):
             search_results.append(team)
      
     return search_results
+
 
 def prepare_record(params, record):
     """ Prepares the Record() object to be sent to the Keeper Cloud API
@@ -1256,8 +1304,11 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
         if path:
             record_object.update(path)
         else:
-            logging.error('You do not have edit permissions on this record')
-            return None
+            share_admins = get_share_admins_for_record(params, record.record_uid)
+            if not share_admins or params.user not in share_admins:
+                logging.error('You do not have edit permissions on this record')
+                return None
+            record_object['record_uid'] = record.record_uid
 
         rec = params.record_cache[record.record_uid]
 
@@ -1320,7 +1371,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
 
 
 def communicate_rest(params, request, endpoint, rs_type=None):
-    api_request_payload = proto.ApiRequestPayload()
+    api_request_payload = APIRequest_pb2.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
     if request:
@@ -1468,9 +1519,10 @@ def get_pb2_record_update(params, rec, **kwargs):
 
     Return a dictionary of necessary record items including the Protobuf RecordUpdate instance
     """
-    record_rq, audit = prepare_record_v3(params, rec)
-    if record_rq is None:
+    rec_data = prepare_record_v3(params, rec)
+    if rec_data is None:
         return
+    record_rq, audit = rec_data
 
     links_by_uid = kwargs.get('record_links_by_uid')
     if links_by_uid:
@@ -1558,6 +1610,8 @@ def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ..
         and pushes to the Keeper cloud API
     """
     record_rq = get_pb2_record_update(params, rec, **kwargs)
+    if not record_rq:
+        return
     ru = record_rq['pb2_record_update']
     rq = records.RecordsUpdateRequest()
     rq.records.append(ru)
@@ -1948,16 +2002,17 @@ def enumerate_record_access_paths(params, record_uid):
                                 }
 
 
-def get_record_shares(params, record_uids):
+def get_record_shares(params, record_uids, is_share_admin=False):
+    # type: (KeeperParams, Iterable[str], bool) -> List[dict]
+    def need_share_info(uid):
+        if uid in params.record_cache:
+            r = params.record_cache[uid]
+            return r.get('shared') and 'shares' not in r
+        return is_share_admin
 
-    def need_share_info(record_uid):
-        if record_uid in params.record_cache:
-            rec = params.record_cache[record_uid]
-            return rec.get('shared') and 'shares' not in rec
-        return False
-
-    uids = [x for x in record_uids if need_share_info(x)]
-    """
+    result = []
+    unique = set(record_uids)
+    uids = [x for x in unique if need_share_info(x)]
     try:
         while len(uids) > 0:
             chunk = uids[:999]
@@ -1970,10 +2025,9 @@ def get_record_shares(params, record_uids):
                                   rs_type=records.GetRecordDataWithAccessInfoResponse)
             for info in rs.recordDataWithAccessInfo:
                 record_uid = utils.base64_url_encode(info.recordUid)
-                rec = params.record_cache[record_uid]
+                rec = params.record_cache[record_uid] if record_uid in params.record_cache else {'record_uid': record_uid}  # type: dict
                 if 'shares' not in rec:
                     rec['shares'] = {}
-
                 rec['shares']['user_permissions'] = []
                 rec['shares']['shared_folder_permissions'] = []
                 for up in info.userPermission:
@@ -1981,7 +2035,7 @@ def get_record_shares(params, record_uids):
                         'username': up.username,
                         'owner': up.owner,
                         'share_admin': up.shareAdmin,
-                        'sharable': up.sharable,
+                        'shareable': up.sharable,
                         'editable': up.editable,
                         'awaiting_approval': up.awaitingApproval,
                         'expiration': up.expiration,
@@ -1992,37 +2046,16 @@ def get_record_shares(params, record_uids):
                         'reshareable': sp.resharable,
                         'editable': sp.editable,
                         'revision': sp.revision,
-                        'expiration':sp.expiration,
+                        'expiration': sp.expiration,
                     })
+
+                if record_uid not in params.record_cache:
+                    result.append(rec)
     except Exception as e:
         logging.error(e)
-    """
-    while len(uids) > 0:
-        records = []
-        rq = {
-            'command': 'get_records',
-            'include': ['shares'],
-            'records': records,
-            'client_time': current_milli_time()
-        }
-        while len(records) < 100 and len(uids) > 0:
-            uid = uids.pop()
-            params.record_cache[uid]['shares'] = {}
-            ro = resolve_record_access_path(params, uid)
-            records.append(ro)
-        try:
-            rs = communicate(params, rq)
-            if 'records' in rs:
-                for r in rs['records']:
-                    record_uid = r['record_uid']
-                    rec = params.record_cache[record_uid]
-                    if 'user_permissions' in r:
-                        rec['shares']['user_permissions'] = r['user_permissions']
-                    if 'shared_folder_permissions' in r:
-                        rec['shares']['shared_folder_permissions'] = r['shared_folder_permissions']
 
-        except Exception as e:
-            logging.error(e)
+    if len(result) > 0:
+        return result
 
 
 def query_enterprise(params):
@@ -2100,3 +2133,116 @@ def send_keepalive(params):
     communicate_rest(params, None, 'keep_alive')
 
 
+def load_records_in_shared_folder(params, shared_folder_uid, record_uids=None):
+    # type: (KeeperParams, str, Optional[Iterable[str]]) -> None
+
+    if shared_folder_uid not in params.shared_folder_cache:
+        raise Exception(f'Shared folder \"{shared_folder_uid}\" is not loaded.')
+    shared_folder = params.shared_folder_cache[shared_folder_uid]
+    shared_folder_key = shared_folder['shared_folder_key_unencrypted']
+    record_keys = {}    # type: Dict[str, bytes]
+    for rk in shared_folder.get('records', []):
+        record_uid = rk.get('record_uid')
+        try:
+            key = utils.base64_url_decode(rk['record_key'])
+            if len(key) == 60:
+                record_key = crypto.decrypt_aes_v2(key, shared_folder_key)
+            else:
+                record_key = crypto.decrypt_aes_v1(key, shared_folder_key)
+            record_keys[record_uid] = record_key
+        except Exception as e:
+            logging.debug('Cannot decrypt record \"%s\" key: %s', record_uid, e)
+
+    if record_uids:
+        record_set = set(record_uids)
+        record_set.intersection_update(record_keys.keys())
+    else:
+        record_set = set(record_keys.keys())
+    record_set.difference_update(params.record_cache.keys())
+
+    while len(record_set) > 0:
+        rq = records.GetRecordDataWithAccessInfoRequest()
+        rq.clientTime = utils.current_milli_time()
+        rq.recordDetailsInclude = records.DATA_PLUS_SHARE
+        for uid in record_set:
+            try:
+                rq.recordUid.append(utils.base64_url_decode(uid))
+            except Exception as e:
+                logging.debug('Incorrect record UID \"%s\": %s', uid, e)
+        record_set.clear()
+
+        rs = communicate_rest(params, rq, 'vault/get_records_details', rs_type=records.GetRecordDataWithAccessInfoResponse)
+        for record_info in rs.recordDataWithAccessInfo:
+            record_uid = utils.base64_url_encode(record_info.recordUid)
+            record_data = record_info.recordData
+            try:
+                if record_data.ownerRecordUid and record_data.encryptedLinkedRecordKey:
+                    owner_id = utils.base64_url_encode(record_data.ownerRecordUid)
+                    if owner_id in record_keys:
+                        record_keys[record_uid] = crypto.decrypt_aes_v2(record_data.encryptedLinkedRecordKey, record_keys[owner_id])
+
+                if record_uid not in record_keys:
+                    continue
+
+                record_key = record_keys[record_uid]
+                version = record_data.version
+                record = {
+                    'record_uid': record_uid,
+                    'revision': record_data.revision,
+                    'version': version,
+                    'shared': record_data.shared,
+                    'data': record_data.encryptedRecordData,
+                    'record_key_unencrypted': record_keys[record_uid],
+                    'client_modified_time': record_data.clientModifiedTime,
+                }
+                data_decoded = utils.base64_url_decode(record_data.encryptedRecordData)
+                if version <= 2:
+                    record['data_unencrypted'] = crypto.decrypt_aes_v1(data_decoded, record_key)
+                else:
+                    record['data_unencrypted'] = crypto.decrypt_aes_v2(data_decoded, record_key)
+
+                if record_data.encryptedExtraData and version <= 2:
+                    record['extra'] = record_data.encryptedExtraData
+                    extra_decoded = utils.base64_url_decode(record_data.encryptedExtraData)
+                    record['extra_unencrypted'] = crypto.decrypt_aes_v1(extra_decoded, record_key)
+                    record_data['udata'] = {
+                        'file_id': []
+                    }
+                if version == 3:
+                    v3_record = vault.KeeperRecord.load(params, record)
+                    if isinstance(v3_record, vault.TypedRecord):
+                        for ref in itertools.chain(v3_record.fields, v3_record.custom):
+                            if ref.type.endswith('Ref') and isinstance(ref.value, list):
+                                record_set.update(ref.value)
+                elif version == 4:
+                    if record_data.fileSize > 0:
+                        record['file_size'] = record_data.fileSize
+                    if record_data.thumbnailSize > 0:
+                        record['thumbnail_size'] = record_data.thumbnailSize
+                if record_data.ownerRecordUid and record_data.encryptedLinkedRecordKey:
+                    record['owner_uid'] = utils.base64_url_encode(record_data.ownerRecordUid)
+                    record['link_key'] = utils.base64_url_encode(record_data.encryptedLinkedRecordKey)
+
+                record['shares'] = {
+                    'user_permissions': [{
+                        'username': up.username,
+                        'owner': up.owner,
+                        'share_admin': up.shareAdmin,
+                        'sharable': up.sharable,
+                        'editable': up.editable,
+                        'awaiting_approval': up.awaitingApproval,
+                        'expiration': up.expiration,
+                    } for up in record_info.userPermission],
+                    'shared_folder_permissions': [{
+                        'shared_folder_uid': utils.base64_url_encode(sp.sharedFolderUid),
+                        'reshareable': sp.resharable,
+                        'editable': sp.editable,
+                        'revision': sp.revision,
+                        'expiration': sp.expiration,
+                    } for sp in record_info.sharedFolderPermission],
+                }
+
+                params.record_cache[record_uid] = record
+            except Exception as e:
+                logging.debug('Error decrypting record \"%s\": %s', record_uid, e)
+        record_set.difference_update(params.record_cache.keys())

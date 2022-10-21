@@ -104,6 +104,6 @@ if record_name:
     if record_uid:
         record = api.get_record(my_params, record_uid)
         print('Record identified by \"{0}\"'.format(record_name))
-        record.display(params=my_params)
+        record.display()
     else:
         print('Record identified by \"{0}\" not found.'.format(record_name))

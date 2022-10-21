@@ -124,7 +124,7 @@ def path_split(params, folder, path_string):
 
 
 def try_resolve_path(params, path):
-    # type: (KeeperParams, str) -> Tuple[BaseFolderNode, Optional[str]]
+    # type: (KeeperParams, str) -> Optional[Tuple[BaseFolderNode, Optional[str]]]
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
 
@@ -190,7 +190,7 @@ class BaseFolderNode:
             self.subfolders,
         )
 
-    def display(self, **kwargs):
+    def display(self):
         print('')
         print('{0:>20s}: {1:<20s}'.format('Folder UID', self.uid))
         print('{0:>20s}: {1:<20s}'.format('Folder Type', self.get_folder_type()))
