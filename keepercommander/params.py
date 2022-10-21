@@ -9,16 +9,22 @@
 #
 
 import warnings
-from urllib3.exceptions import InsecureRequestWarning
-
-from urllib.parse import urlparse, urlunparse
 from datetime import datetime
+from typing import Dict, NamedTuple
+from urllib.parse import urlparse, urlunparse
 
+from urllib3.exceptions import InsecureRequestWarning
 
 LAST_RECORD_UID = 'last_record_uid'
 LAST_SHARED_FOLDER_UID = 'last_shared_folder_uid'
 LAST_FOLDER_UID = 'last_folder_uid'
 LAST_TEAM_UID = 'last_team_uid'
+
+
+class PublicKeys(NamedTuple):
+    rsa: bytes = b''
+    ec: bytes = b''
+    aes: bytes = b''
 
 
 class RestApiContext:
@@ -117,7 +123,7 @@ class KeeperParams:
         self.meta_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
-        self.key_cache = {}    # team or user
+        self.key_cache = {}    # type: Dict[str, PublicKeys]
         self.available_team_cache = None
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}

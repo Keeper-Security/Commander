@@ -1853,63 +1853,60 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
             add_users = []
             add_teams = []
             for perm in fol.permissions:
-                try:
-                    if perm.uid:
-                        if perm.uid in params.key_cache:
-                            if 'teams' in shared_folder:
-                                found = next((True for x in shared_folder['teams'] if x['team_uid'] == perm.uid), False)
-                                if found:
-                                    continue
-                            team_key = params.key_cache[perm.uid]
-                            rq = {
-                                'team_uid': perm.uid,
-                                'manage_users': perm.manage_users,
-                                'manage_records': perm.manage_records,
-                            }
-                            if type(team_key) == bytes:
-                                rq['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
-                            else:
-                                rq['shared_folder_key'] = api.encrypt_rsa(shared_folder_key, team_key)
-                            add_teams.append(rq)
-                            continue
-
-                    if perm.name:
-                        name = perm.name.casefold()
-                        if name in params.key_cache:
-                            if 'users' in shared_folder:
-                                found = next((True for x in shared_folder['users'] if x['username'].lower() == name), False)
-                                if found:
-                                    continue
-
-                            rsa_key = params.key_cache[name]
-                            rq = {
-                                'username': name,
-                                'manage_users': perm.manage_users,
-                                'manage_records': perm.manage_records,
-                                'shared_folder_key': api.encrypt_rsa(shared_folder_key, rsa_key)
-                            }
-                            add_users.append(rq)
-                            continue
-
+                team_uid = None
+                username = None
+                if perm.uid and perm.uid in params.available_team_cache:
+                    team_uid = perm.uid
+                elif perm.name:
+                    name = perm.name.casefold()
+                    if name in params.key_cache:
+                        username = name
+                    else:
                         team_uid = next((x.get('team_uid') for x in params.available_team_cache if x.get('team_name').casefold() == name), None)
-                        if team_uid in params.key_cache:
-                            if 'teams' in shared_folder:
-                                found = next((True for x in shared_folder['teams'] if x['team_uid'] == team_uid), False)
+
+                try:
+                    if team_uid:
+                        if 'teams' in shared_folder:
+                            found = next((True for x in shared_folder['teams'] if x['team_uid'] == team_uid), False)
+                            if found:
+                                continue
+                        rq = {
+                            'team_uid': team_uid,
+                            'manage_users': perm.manage_users,
+                            'manage_records': perm.manage_records,
+                        }
+                        if team_uid in params.team_cache:
+                            team = params.team_cache[team_uid]
+                            if 'team_key_unencrypted' in team:
+                                team_key = team['team_key_unencrypted']
+                                rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_key))
+                                add_teams.append(rq)
+                        elif team_uid in params.key_cache:
+                            team_keys = params.key_cache[team_uid]
+                            if team_keys.rsa:
+                                rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
+                                rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
+                                add_teams.append(rq)
+                        continue
+
+                    if username:
+                        if username in params.key_cache:
+                            if 'users' in shared_folder:
+                                found = next((True for x in shared_folder['users'] if x['username'].lower() == username), False)
                                 if found:
                                     continue
-                            team_key = params.key_cache[team_uid]
-                            rq = {
-                                'team_uid': team_uid,
-                                'manage_users': perm.manage_users,
-                                'manage_records': perm.manage_records,
-                            }
-                            if type(team_key) == bytes:
-                                rq['shared_folder_key'] = api.encrypt_aes(shared_folder_key, team_key)
-                            else:
-                                rq['shared_folder_key'] = api.encrypt_rsa(shared_folder_key, team_key)
-                            add_teams.append(rq)
-                            continue
 
+                            public_keys = params.key_cache[username]
+                            if public_keys.rsa:
+                                rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+                                rq = {
+                                    'username': username,
+                                    'manage_users': perm.manage_users,
+                                    'manage_records': perm.manage_records,
+                                    'shared_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
+                                }
+                                add_users.append(rq)
+                        continue
                 except Exception as e:
                     logging.debug(e)
 

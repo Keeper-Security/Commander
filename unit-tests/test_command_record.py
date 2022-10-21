@@ -87,7 +87,7 @@ class TestRecord(TestCase):
                 }
             }
 
-        with mock.patch('keepercommander.commands.recordv2.user_choice') as choice_mock:
+        with mock.patch('keepercommander.commands.base.user_choice') as choice_mock:
             choice_mock.return_value = KeyboardInterrupt()
             KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
             cmd.execute(params, force=True, record=rec.record_uid)
@@ -173,7 +173,7 @@ class TestRecord(TestCase):
 
     def test_get_record_uid(self):
         params = get_synced_params()
-        cmd = recordv2.RecordGetUidCommand()
+        cmd = record.RecordGetUidCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
         with mock.patch('builtins.print'), mock.patch('keepercommander.api.get_record_shares'):
@@ -182,7 +182,7 @@ class TestRecord(TestCase):
 
     def test_get_shared_folder_uid(self):
         params = get_synced_params()
-        cmd = recordv2.RecordGetUidCommand()
+        cmd = record.RecordGetUidCommand()
 
         shared_folder_uid = next(iter(params.shared_folder_cache))
         with mock.patch('builtins.print'):
@@ -191,7 +191,7 @@ class TestRecord(TestCase):
 
     def test_get_team_uid(self):
         params = get_synced_params()
-        cmd = recordv2.RecordGetUidCommand()
+        cmd = record.RecordGetUidCommand()
 
         team_uid = next(iter(params.team_cache))
         with mock.patch('builtins.print'):
@@ -200,7 +200,7 @@ class TestRecord(TestCase):
 
     def test_get_invalid_uid(self):
         params = get_synced_params()
-        cmd = recordv2.RecordGetUidCommand()
+        cmd = record.RecordGetUidCommand()
 
         with self.assertRaises(CommandError):
             cmd.execute(params, uid='invalid')
