@@ -9,9 +9,8 @@
 #
 import json
 import shutil
-
 from collections import OrderedDict as OD
-from typing import Tuple, List, Union, Any
+from typing import Tuple, List, Union
 
 from asciitree import LeftAligned
 from colorama import init, Fore, Back, Style
@@ -19,7 +18,6 @@ from tabulate import tabulate
 
 from keepercommander import __version__
 from .subfolder import BaseFolderNode, SharedFolderNode
-from . import vault, vault_extensions
 
 init()
 
@@ -111,25 +109,24 @@ def formatted_records(records, **kwargs):
         table = [[i + 1, r.record_uid, abbreviate_text(r.record_type, 32), abbreviate_text(r.title, 32), r.login, abbreviate_text(r.login_url, 32)] for i, r in enumerate(records)]
         headers = ["#", 'Record UID', 'Type', 'Title', 'Login', 'URL']
         if shared_folder and 'records' in shared_folder:
-            headers.append('Flags')
+            headers.append('Permissions')
             for row in table:
-                flag = ''
+                permissions = ''
                 for sfr in shared_folder['records']:
                     if sfr['record_uid'] == row[1]:
-                        flag = flag + ('W' if sfr['can_edit'] else '_') + ' '
-                        flag = flag + ('S' if sfr['can_share'] else '_')
+                        if sfr['can_edit']:
+                            permissions = 'Can Edit'
+                        if sfr['can_share']:
+                            if permissions:
+                                permissions += ' & Share'
+                            else:
+                                permissions = 'Can Share'
+                        if not permissions:
+                            permissions = 'Read Only'
                         break
-                row.append(flag)
+                row.append(permissions)
 
         print(tabulate(table, headers=headers))
-
-        print('')
-
-    skip_details = kwargs.get('skip_details') or False
-    # Under 5 recs, just display on the screen
-    if len(records) < 5 and not skip_details:
-        for r in records:
-            r.display(**kwargs)
 
 
 def formatted_shared_folders(shared_folders, **kwargs):
