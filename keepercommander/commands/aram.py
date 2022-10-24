@@ -1658,11 +1658,12 @@ class ActionReportCommand(EnterpriseCommand):
             }
 
             if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and users:
-                msg_action = 'deleting' if action == 'delete' else 'transferring'
                 answer = user_choice(
                     bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-                    'This action cannot be undone.\n\n' +
-                    f'Do you want to proceed with {msg_action} {len(users)} account(s)?', 'yn', 'n')
+                    f'\nYou are about to {action} the following accounts:\n' +
+                    '\n'.join(str(idx + 1) + ') ' + val for idx, val in enumerate(u.get('username') for u in users)) +
+                    '\n\nThis action cannot be undone.' +
+                    '\n\nDo you wish to proceed?', 'yn', 'n')
                 if answer.lower() != 'y':
                     return f'NONE (Cancelled by user)'
 
@@ -1690,7 +1691,7 @@ class ActionReportCommand(EnterpriseCommand):
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
 
         title = f'Admin Action Taken:\n{action_msg}\n'
-        title += f'\n{len(usernames)} Users With "{target_status}" Status Older Than {days} Day(s): '
+        title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '
         filepath = kwargs.get('output')
         fmt = kwargs.get('format')
         formatted = [[name] for name in usernames]
