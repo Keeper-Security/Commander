@@ -198,7 +198,7 @@ class ShareFolderCommand(Command):
                 if rs is not None:
                     folder, name = rs
                     if len(name or '') == 0 and isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
-                        shared_folder_uid = folder.shared_folder_uid
+                        shared_folder_uid = folder.shared_folder_uid if isinstance(folder, SharedFolderFolderNode) else folder.uid
 
         if not shared_folder_uid and params.enterprise:
             try:
