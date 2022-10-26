@@ -1813,6 +1813,27 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             if not all_resolved:
                                 continue
                             enforcement_value = record_types
+                        elif enforcement_type == 'account_share':
+                            roles = [x for x in params.enterprise.get('roles', [])
+                                     if str(x['role_id']) == enforcement_value or x['data'].get('displayname', '').lower() == enforcement_value.lower()]
+                            if len(roles) == 0:
+                                logging.warning('Enforcement \"%s\". Role \"%s\" not found', key, enforcement_value)
+                                continue
+                            admin_roles = {x['role_id'] for x in params.enterprise.get('managed_nodes', [])}
+                            roles = [x for x in roles if x['role_id'] in admin_roles]
+                            if len(roles) == 0:
+                                logging.warning('Enforcement \"%s\". Role \"%s\" is not an Admin role', key, enforcement_value)
+                                continue
+                            if len(roles) > 1:
+                                logging.warning('Enforcement \"%s\". There are more than one roles matching \"%s\". Use Role ID', key, enforcement_value)
+                                continue
+                            role = roles[0]
+                            role_id = role['role_id']
+                            if any((x for x in params.enterprise.get('role_privileges', []) if x['role_id'] == role_id and x['privilege'].upper() == 'TRANSFER_ACCOUNT')):
+                                enforcement_value = str(role_id)
+                            else:
+                                logging.warning('Enforcement \"%s\". Role \"%s\" does not have \"TRANSFER_ACCOUNT\" privilege', key, role['data'].get('displayname', ''))
+                                continue
                         else:
                             logging.warning('Enforcement \"%s\". Value type \"%s\" is not supported', key, enforcement_type)
                             continue
@@ -2332,6 +2353,15 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                      '30_days' if x == '30' else
                                      'forever' if x == '9999' else x for x in value]
                             value = ', '.join(value)
+                        elif value_type == 'account_share':
+                            try:
+                                role_id = int(value)
+                                role = next((x for x in params.enterprise.get('roles', []) if x.get('role_id') == role_id), None)
+                                if isinstance(role, dict):
+                                    role_name = role['data'].get('displayname') or ''
+                                    value = f'{role_name} ({role_id})'
+                            except:
+                                pass
                         else:
                             value = str(value)
                     else:
