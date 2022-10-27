@@ -22,9 +22,8 @@ from .base import dump_report_data, user_choice, field_to_title, Command, GroupC
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3
 from ..error import CommandError
 from ..params import KeeperParams
-from ..record_management import update_record
+from ..proto import enterprise_pb2, record_pb2
 from ..subfolder import try_resolve_path, get_folder_path, find_folders
-from ..proto.enterprise_pb2 import SharedRecordResponse
 from ..team import Team
 
 
@@ -988,26 +987,28 @@ class RecordHistoryCommand(Command):
                 dump_report_data(rows, headers)
 
             elif action == 'restore':
-                ro = api.resolve_record_write_path(params, record_uid)    # type: dict
-                if not ro:
-                    raise CommandError('history', 'You do not have permission to modify this record')
                 if revision == 0:
                     raise CommandError('history', f'Invalid revision to restore: Revisions: 1-{length - 1}')
-
                 rev = history[index]
-                if current_rec['version'] != rev['version']:
-                    raise CommandError('history', 'Cannot restore converted record.')
-
                 record = vault.KeeperRecord.load(params, rev)
-                if isinstance(record, vault.TypedRecord):
-                    fileRef = record.get_typed_field('fileRef')
-                    if fileRef and isinstance(fileRef.value, list):
-                        files = [x for x in fileRef.value if x in params.record_cache]
-                        if len(files) < len(fileRef.value):
-                            fileRef.value.clear()
-                            fileRef.value.extend(files)
-                update_record(params, record)
-                params.queue_audit_event('revision_restored', record_uid=record.record_uid)
+
+                r_uid = utils.base64_url_decode(record.record_uid)
+                roq = record_pb2.RecordRevert()
+                roq.record_uid = r_uid
+                roq.revert_to_revision = record.revision
+
+                rq = record_pb2.RecordsRevertRequest()
+                rq.records.append(roq)
+
+                rs = api.communicate_rest(params, rq, 'vault/records_revert', rs_type=record_pb2.RecordsModifyResponse)
+
+                ros = next((x for x in rs.records if x.record_uid == r_uid), None)
+                if ros:
+                    if ros.status != record_pb2.RS_SUCCESS:
+                        raise CommandError('history', f'Failed to restore record \"{record.record_uid}\": {ros.message}')
+
+                del params.record_history[record.record_uid]
+                params.queue_audit_event('revision_restored', record_uid=record_uid)
                 params.sync_data = True
                 logging.info('Record \"%s\" revision V.%d has been restored', record.title, revision)
 
@@ -1021,7 +1022,8 @@ class SharedRecordsReport(Command):
         export_format = kwargs['format'] if 'format' in kwargs else None
         export_name = kwargs['name'] if 'name' in kwargs else None
 
-        shared_records_data_rs = api.communicate_rest(params, None, 'report/get_shared_record_report', rs_type=SharedRecordResponse)
+        shared_records_data_rs = api.communicate_rest(
+            params, None, 'report/get_shared_record_report', rs_type=enterprise_pb2.SharedRecordResponse)
 
         shared_from_mapping = {
             1: "Direct Share",
