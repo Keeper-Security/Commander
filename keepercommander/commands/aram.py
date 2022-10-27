@@ -123,7 +123,7 @@ aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.')
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
-                                  choices=['no-logon', 'no-update', 'locked'], default='no-logon',
+                                  choices=['no-logon', 'no-update', 'locked', 'invited'], default='no-logon',
                                   help='user status to report on')
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
@@ -1530,33 +1530,46 @@ class ActionReportCommand(EnterpriseCommand):
             }
             return rq
 
-        def report_rq(query_filter, cols=None):
+        def report_rq(query_filter, limit, cols=None, report_type='span'):
             rq = {
                 **cmd_rq('get_audit_event_reports'),
-                'report_type': 'span',
-                'columns': ['username'] if cols is None else cols,
+                'report_type': report_type,
                 'filter': query_filter,
-                'aggregate': ['last_created'],
-                'limit': API_EVENT_SUMMARY_ROW_LIMIT,
+                'limit': limit
             }
+
+            if report_type == 'span':
+                rq['columns'] = ['username'] if cols is None else cols
+                rq['aggregate'] = ['last_created']
+
             return rq
 
         def get_excluded(candidates, query_filter, username_field='username'):
-            excluded = []
+            excluded = set()
+            report_type = 'raw' if 'send_invitation' in query_filter.get('audit_event_type') else 'span'
+            req_limit = API_EVENT_RAW_ROW_LIMIT if report_type == 'raw' else API_EVENT_SUMMARY_ROW_LIMIT
             columns = [username_field]
+
+            def adjust_filter(q_filter, max_ts=0):
+                if max_ts:
+                    q_filter['created']['max'] = max_ts
+                if report_type != 'raw':
+                    q_filter[username_field] = candidates
+                return q_filter
+
             get_events = len(candidates) > len(excluded)
+            query_filter = adjust_filter(query_filter)
             while get_events:
-                rq = report_rq(query_filter, columns)
+                rq = report_rq(query_filter, req_limit, columns, report_type=report_type)
                 rs = api.communicate(params, rq)
                 events = rs['audit_event_overview_report_rows']
-                to_exclude = [event[username_field] for event in events]
-                excluded = excluded + to_exclude
-                get_events = len(events) >= API_EVENT_SUMMARY_ROW_LIMIT
+                to_exclude = {event.get(username_field) for event in events}
+                excluded.update(to_exclude)
+                get_events = len(events) >= req_limit
                 if get_events:
                     candidates = [user for user in candidates if user not in excluded]
                     end = int(events[-1]['last_created'])
-                    query_filter['created']['max'] = end
-                    query_filter[username_field] = candidates
+                    query_filter = adjust_filter(query_filter, end)
             return excluded
 
         def get_no_action_users(candidates, days_since, event_types, name_key='username'):
@@ -1581,7 +1594,7 @@ class ActionReportCommand(EnterpriseCommand):
             cmd_status = 'aborted' if api_cmd_rq else 'n/a'
             affected = 0
             server_msg = 'n/a'
-            cmd = None if api_cmd_rq is None else api_cmd_rq.get('command')
+            cmd = 'NONE (No action specified)' if api_cmd_rq is None else api_cmd_rq.get('command')
             if api_cmd_rq is not None and len(users):
                 cmd_rqs = [{**api_cmd_rq, userid_field: user[userid_field]} for user in users]
                 rq = cmd_rq('execute', requests=cmd_rqs)
@@ -1644,11 +1657,14 @@ class ActionReportCommand(EnterpriseCommand):
             status_actions = {
                 'no-logon':     {*default_allowed, 'lock'},
                 'no-update':    {*default_allowed},
-                'locked':       {*default_allowed, 'delete', 'transfer'}
+                'locked':       {*default_allowed, 'delete', 'transfer'},
+                'invited':      default_allowed
             }
 
-            invalid_action_msg = f'NONE (Action "{action}" not allowed on "{target_status}" users)'
-            is_valid_action = action in status_actions[target_status]
+            actions_allowed = status_actions.get(target_status)
+            invalid_action_msg = f'NONE (Action \'{action}\' not allowed on \'{target_status}\' users: ' \
+                                 f'value must be one of {actions_allowed})'
+            is_valid_action = action in actions_allowed
 
             action_handlers = {
                 'none': partial(batch_apply_cmd, users, None, dryrun),
@@ -1658,41 +1674,50 @@ class ActionReportCommand(EnterpriseCommand):
             }
 
             if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and users:
-                msg_action = 'deleting' if action == 'delete' else 'transferring'
                 answer = user_choice(
                     bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-                    'This action cannot be undone.\n\n' +
-                    f'Do you want to proceed with {msg_action} {len(users)} account(s)?', 'yn', 'n')
+                    f'\nYou are about to {action} the following accounts:\n' +
+                    '\n'.join(str(idx + 1) + ') ' + val for idx, val in enumerate(u.get('username') for u in users)) +
+                    '\n\nThis action cannot be undone.' +
+                    '\n\nDo you wish to proceed?', 'yn', 'n')
                 if answer.lower() != 'y':
                     return f'NONE (Cancelled by user)'
 
-            return action_handlers.get(action)() if is_valid_action else invalid_action_msg
+            return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
         candidates = params.enterprise['users']
         active = [user for user in candidates if user['status'] == 'active']
         locked = [user for user in active if user['lock']]
-        target_status = kwargs['target_user_status']
-        days = kwargs['days_since']
+        invited = [user for user in candidates if user.get('status') == 'invited']
+        target_status = kwargs.get('target_user_status', 'no-logon')
+        days = kwargs.get('days_since')
         if days is None:
             days = 90 if target_status == 'locked' else 30
 
         args_by_status = {
             'no-logon': [active, days, ['login']],
             'no-update': [active, days, ['record_add', 'record_update']],
-            'locked': [locked, days, ['lock_user'], 'to_username']
+            'locked': [locked, days, ['lock_user'], 'to_username'],
+            'invited': [invited, days, ['send_invitation'], 'email']
         }
-        args = args_by_status[target_status]
+        args = args_by_status.get(target_status)
+
+        if not args:
+            valid_targets = set(args_by_status.keys())
+            logging.warning(f'Invalid target_user_status \'{target_status}\': value must be one of {valid_targets}')
+            return
+
         target_users = get_no_action_users(*args)
         usernames = [user['username'] for user in target_users]
 
-        admin_action = kwargs['apply_action']
-        dry_run = kwargs['dry_run']
+        admin_action = kwargs.get('apply_action', 'none')
+        dry_run = kwargs.get('dry_run')
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
 
         title = f'Admin Action Taken:\n{action_msg}\n'
-        title += f'\n{len(usernames)} Users With "{target_status}" Status Older Than {days} Day(s): '
+        title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '
         filepath = kwargs.get('output')
-        fmt = kwargs.get('format')
+        fmt = kwargs.get('format', 'table')
         formatted = [[name] for name in usernames]
 
         return dump_report_data(data=formatted, headers=['username'], title=title, fmt=fmt, filename=filepath)
