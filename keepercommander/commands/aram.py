@@ -122,8 +122,9 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.')
+action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
-                                  choices=['no-logon', 'no-update', 'locked', 'invited'], default='no-logon',
+                                  choices=action_report_target_statuses, default='no-logon',
                                   help='user status to report on')
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
@@ -1658,7 +1659,8 @@ class ActionReportCommand(EnterpriseCommand):
                 'no-logon':     {*default_allowed, 'lock'},
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
-                'invited':      default_allowed
+                'invited':      default_allowed,
+                'no-security-question-update': default_allowed
             }
 
             actions_allowed = status_actions.get(target_status)
@@ -1688,6 +1690,7 @@ class ActionReportCommand(EnterpriseCommand):
         candidates = params.enterprise['users']
         active = [user for user in candidates if user['status'] == 'active']
         locked = [user for user in active if user['lock']]
+        enabled = [user for user in active if user not in locked]
         invited = [user for user in candidates if user.get('status') == 'invited']
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
@@ -1695,10 +1698,11 @@ class ActionReportCommand(EnterpriseCommand):
             days = 90 if target_status == 'locked' else 30
 
         args_by_status = {
-            'no-logon': [active, days, ['login']],
-            'no-update': [active, days, ['record_add', 'record_update']],
+            'no-logon': [enabled, days, ['login']],
+            'no-update': [enabled, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
-            'invited': [invited, days, ['send_invitation'], 'email']
+            'invited': [invited, days, ['send_invitation'], 'email'],
+            'no-security-question-update': [enabled, days, ['change_security_question']]
         }
         args = args_by_status.get(target_status)
 
