@@ -14,7 +14,7 @@ install_requires = [
     'asciitree',
     'bcrypt',
     'colorama',
-    'cryptography>=3.4.8',
+    'cryptography>=38.0.3',
     'paramiko',
     'paramiko_expect',
     'prompt_toolkit',
