@@ -342,7 +342,7 @@ class RecordGetUidCommand(Command):
                     if version < 3:
                         r.display(unmask=kwargs.get('unmask', False))
                     else:
-                        recordv3.RecordV3.display(rec, **{'params': params, 'format': fmt})
+                        recordv3.RecordV3.display(rec, **{'params': params, 'format': fmt, 'unmask': kwargs.get('unmask')})
 
                     folders = [get_folder_path(params, x) for x in find_folders(params, uid)]
                     for i in range(len(folders)):
