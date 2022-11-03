@@ -36,7 +36,7 @@ from .helpers.timeout import (
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .recordv3 import RecordRemoveCommand
 from .. import __version__
-from .. import api, rest_api, loginv3, crypto, utils
+from .. import api, rest_api, loginv3, crypto, utils, vault
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
@@ -47,7 +47,8 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..proto import ssocloud_pb2 as ssocloud
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
-    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest
+    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, \
+    GetApplicationsSummaryResponse
 from ..proto.record_pb2 import ApplicationAddRequest
 from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
@@ -1013,20 +1014,29 @@ class KSMCommand(Command):
     def print_all_apps_records(params):
 
         print(f"\n{bcolors.BOLD}List all Secrets Manager Applications{bcolors.ENDC}\n")
-        recs = params.record_cache
+        rs = api.communicate_rest(params, None, 'vault/get_applications_summary', rs_type=GetApplicationsSummaryResponse)
+        app_summary = {utils.base64_url_encode(x.appRecordUid): {
+            'last_access': x.lastAccess,
+            'record_shares': x.recordShares,
+            'folder_shares': x.folderShares,
+            'folder_records': x.folderRecords,
+            'client_count': x.clientCount,
+        } for x in rs.applicationSummary}
 
-        apps_table_fields = [f'{bcolors.OKGREEN}App Name{bcolors.ENDC}', f'{bcolors.OKBLUE}App UID{bcolors.ENDC}']
+        apps_table_fields = [f'{bcolors.OKGREEN}App Name{bcolors.ENDC}', f'{bcolors.OKBLUE}App UID{bcolors.ENDC}', 'Records', 'Folders', 'Devices', 'Last Access']
         apps_table = []
-        for uid in recs:
-
-            r = recs[uid]
-
-            if r.get('version') == 5:
-                data_json_str = r.get('data_unencrypted').decode("utf-8")
-                data_dict = json.loads(data_json_str)
-
-                # if data_dict.get('type') == 'app':
-                apps_table.append([f'{bcolors.OKGREEN}{data_dict.get("title")}{bcolors.ENDC}', f'{bcolors.OKBLUE}{uid}{bcolors.ENDC}'])
+        for app_uid in app_summary:
+            app = app_summary[app_uid]
+            app_record = vault.KeeperRecord.load(params, app_uid)
+            if isinstance(app_record, vault.ApplicationRecord):
+                la = app['last_access']
+                if la > 0:
+                    last_access = datetime.fromtimestamp(la // 1000)
+                else:
+                    last_access = None
+                row = [f'{bcolors.OKGREEN}{app_record.title}{bcolors.ENDC}', f'{bcolors.OKBLUE}{app_uid}{bcolors.ENDC}',
+                       app['folder_records'], app['folder_shares'], app['client_count'], last_access]
+                apps_table.append(row)
 
         apps_table.sort(key=lambda x: x[0].lower())
 
