@@ -339,10 +339,11 @@ class RecordGetUidCommand(Command):
                 elif fmt == 'password':
                     print(r.password)
                 else:
+                    unmask = params.unmask_all or kwargs.get('unmask')
                     if version < 3:
-                        r.display(unmask=kwargs.get('unmask', False))
+                        r.display(unmask=unmask)
                     else:
-                        recordv3.RecordV3.display(rec, **{'params': params, 'format': fmt, 'unmask': kwargs.get('unmask')})
+                        recordv3.RecordV3.display(rec, **{'params': params, 'format': fmt, 'unmask': unmask})
 
                     folders = [get_folder_path(params, x) for x in find_folders(params, uid)]
                     for i in range(len(folders)):
