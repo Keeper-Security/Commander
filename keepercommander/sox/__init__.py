@@ -36,15 +36,18 @@ def is_compliance_reporting_enabled(params):
     if addon is None:
         return False
 
-    role_privilege = 'run_compliance_reports'
-    username = params.user
-    users = enterprise.get('users')
-    e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
-    role_users = enterprise.get('role_users')
-    r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
-    r_privileges = enterprise.get('role_privileges')
-    p_key = 'privilege'
-    return any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == role_privilege])
+    if not params.msp_tree_key:
+        role_privilege = 'run_compliance_reports'
+        username = params.user
+        users = enterprise.get('users')
+        e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
+        role_users = enterprise.get('role_users')
+        r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
+        r_privileges = enterprise.get('role_privileges')
+        p_key = 'privilege'
+        return any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == role_privilege])
+    else:
+        return True
 
 
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False):
