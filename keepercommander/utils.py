@@ -10,6 +10,7 @@
 #
 
 import base64
+import json
 import math
 import re
 import time
@@ -43,10 +44,18 @@ def base64_url_encode(b):       # type: (bytes) -> str
     return bs.rstrip(b'=').decode('ascii')
 
 
+def string_to_bytes(string):
+    return string.encode('utf-8')
+
+
 def json_to_base64(json_str):
-    json_bytes = json_str.encode('utf-8')
+    json_bytes = string_to_bytes(json_str)
     json_b64 = base64.b64encode(json_bytes).decode()
     return json_b64
+
+
+def string_to_urlsafe_string(s):
+    return s.replace('+', '-').replace('=', '').strip()
 
 
 def decrypt_encryption_params(encryption_params, password):     # type: (str, str) -> bytes
@@ -107,6 +116,13 @@ email_pattern = re.compile(EMAIL_PATTERN)
 def is_email(test_str):
     return email_pattern.match(test_str) is not None
 
+
+def is_json(txt):
+    try:
+        json.loads(txt)
+    except ValueError as e:
+        return False
+    return True
 
 def url_strip(url):   # type: (str) -> str
     if not url:

@@ -33,6 +33,7 @@ from .commands import (
 from .commands.base import expand_cmd_args
 from .commands.msp import get_mc_by_name_or_id
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
+from .display import bcolors
 from .error import AuthenticationError, CommunicationError, CommandError
 from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
@@ -60,16 +61,21 @@ def display_command_help(show_enterprise = False, show_shell = False):
     if show_enterprise:
         max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, enterprise_command_info.keys(), max_length)
 
+    def print_command(cmd0, command_info0):
+        if 'experimental' in cmd0 or 'pam' in cmd0:
+            print('  ' + bcolors.FAIL + cmd0.ljust(max_length + 2) + '... ' + command_info0[cmd0] + bcolors.ENDC)
+        else:
+            print('  ' + cmd0.ljust(max_length + 2) + '... ' + command_info0[cmd0])
+
     print('\nCommands:')
     for cmd in command_info:
-        print('  ' + cmd.ljust(max_length + 2) + '... ' + command_info[cmd])
+        print_command(cmd, command_info)
 
     if show_enterprise:
         for cmd in enterprise_command_info:
-            print('  ' + cmd.ljust(max_length + 2) + '... ' + enterprise_command_info[cmd])
-
+            print_command(cmd, enterprise_command_info)
         for cmd in msp_command_info:
-            print('  ' + cmd.ljust(max_length + 2) + '... ' + msp_command_info[cmd])
+            print_command(cmd, msp_command_info)
 
         print('  ' + "switch-to-mc".ljust(max_length + 2) + '... ' + 'Switch user\'s company to Managed Company')
         print('  ' + "switch-to-msp".ljust(max_length + 2) + '... ' + 'Switch user\'s context back to MSP Company')

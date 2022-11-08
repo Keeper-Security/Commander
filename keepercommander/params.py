@@ -161,6 +161,7 @@ class KeeperParams:
         self.__proxy = None
         self.ssh_agent = None
         self.unmask_all = False
+        self.ws = None
 
     def clear_session(self):
         self.auth_verifier = None
@@ -217,6 +218,7 @@ class KeeperParams:
         self.breach_watch_records = None
         self.sso_login_info = None
         self.unmask_all = False
+        self.ws = None
         if self.ssh_agent:
             self.ssh_agent.close()
             self.ssh_agent = None

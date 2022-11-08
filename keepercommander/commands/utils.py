@@ -27,7 +27,9 @@ from typing import Optional
 
 from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64
 
+import keepercommander
 from . import aliases, commands, enterprise_commands, msp_commands
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data, as_boolean
 from .helpers.timeout import (
@@ -47,7 +49,7 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..proto import ssocloud_pb2 as ssocloud
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
-    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, \
+    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, Device,\
     GetApplicationsSummaryResponse
 from ..proto.record_pb2 import ApplicationAddRequest
 from ..recordv3 import init_recordv3_commands
@@ -255,6 +257,7 @@ ksm_parser.exit = suppress_exit
 
 
 version_parser = argparse.ArgumentParser(prog='version|v', description='Displays version of the installed Commander.')
+version_parser.error = raise_parse_exception
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.add_argument('-p', '--packages', action='store_true', help='Show installed Python packages')
 version_parser.error = raise_parse_exception
@@ -959,14 +962,20 @@ class KSMCommand(Command):
 
             is_return_tokens = kwargs.get('returnTokens')
 
-            tokens = KSMCommand.add_client(params,
+            tokens_and_device = KSMCommand.add_client(params,
                                            app_name_or_uid,
                                            count, unlock_ip,
                                            first_access_expire_on,
                                            access_expire_in_min,
                                            client_name,
                                            config_init)
-            return ', '.join(tokens) if is_return_tokens else None
+
+            if config_init:
+                tokens_only = [d['config'] for d in tokens_and_device]
+            else:
+                tokens_only = [d['oneTimeToken'] for d in tokens_and_device]
+
+            return ', '.join(tokens_only) if is_return_tokens else None
 
         if ksm_obj in ['client', 'c'] and ksm_action in ['remove', 'rem', 'rm']:
 
@@ -1499,7 +1508,7 @@ class KSMCommand(Command):
 
     @staticmethod
     def add_client(params, app_name_or_uid, count, unlock_ip, first_access_expire_on, access_expire_in_min,
-                   client_name=None, config_init=None):
+                   client_name=None, config_init=None, silent=False):
 
         is_ip_unlocked = as_boolean(unlock_ip, False)
         curr_ms = int(time() * 1000)
@@ -1558,13 +1567,18 @@ class KSMCommand(Command):
                 else:
                     rq.id = client_name + " " + str((i+1))
 
-            api_request_payload = ApiRequestPayload()
-            api_request_payload.payload = rq.SerializeToString()
-            api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
+            # api_request_payload = ApiRequestPayload()
+            # api_request_payload.payload = rq.SerializeToString()
+            # api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
 
-            rs = execute_rest(params.rest_context, 'vault/app_client_add', api_request_payload)
+            # rs = execute_rest(params.rest_context, 'vault/app_client_add', api_request_payload)
 
-            if type(rs) is bytes:
+            device = api.communicate_rest(params, rq, 'vault/app_client_add', rs_type=Device)
+
+            encrypted_device_token = bytes_to_base64(device.encryptedDeviceToken)
+
+            if encrypted_device_token:
+
                 if keys_str:
                     keys_str += '\n'
 
@@ -1597,14 +1611,21 @@ class KSMCommand(Command):
                         token_w_prefix = f'{urllib.parse.urlparse(tmp_server).netloc.lower()}:{token}'
 
                     otat_str += f'\nOne-Time Access Token: {bcolors.OKGREEN}{token_w_prefix}{bcolors.ENDC}\n'
-                    tokens.append(token_w_prefix)
+
+                    tokens.append({
+                        'oneTimeToken': token_w_prefix,
+                        'deviceToken': encrypted_device_token
+                    })
 
                 else:
                     config_str = KSMCommand.init_ksm_config(params,
                                                             one_time_token=token,
                                                             config_init=config_init)
                     otat_str += f'\nInitialized Config: {bcolors.OKGREEN}{config_str}{bcolors.ENDC}\n'
-                    tokens.append(config_str)
+                    tokens.append({
+                        'config': config_str,
+                        'deviceToken': encrypted_device_token
+                    })
 
                 if client_name:
                     otat_str += f'Name: {client_name}\n'
@@ -1613,13 +1634,12 @@ class KSMCommand(Command):
                             f'Token Expires On: {exp_date_str}\n' \
                             f'App Access Expires on: {app_expire_on_str}\n'
 
-            if type(rs) is dict:
-                raise KeeperApiError(rs['error'], rs['message'])
-        print(f'\nSuccessfully generated Client Device\n'
-              f'====================================\n'
-              f'{otat_str}')
+        if not silent:
+            print(f'\nSuccessfully generated Client Device\n'
+                  f'====================================\n'
+                  f'{otat_str}')
 
-        if config_init and not unlock_ip:
+        if config_init and not unlock_ip and not silent:
             print(bcolors.WARNING + "\tWarning: Configuration is now locked to your current IP. To keep in unlock you "
                                     "can add flag `--unlock-ip` or use the One-time token to generate configuration on "
                                     "the host that has the IP that needs to be locked." + bcolors.ENDC)
@@ -1629,7 +1649,7 @@ class KSMCommand(Command):
         return tokens
 
     @staticmethod
-    def init_ksm_config(params, one_time_token, config_init):
+    def init_ksm_config(params, one_time_token, config_init, include_config_dict=False):
 
         try:
             from keeper_secrets_manager_core import SecretsManager
@@ -1662,22 +1682,57 @@ class KSMCommand(Command):
         if 'KEY_OWNER_PUBLIC_KEY' in ConfigKeys.__members__ and ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY):
             config_dict[ConfigKeys.KEY_OWNER_PUBLIC_KEY.value] = ksm_conf_storage.config.get(ConfigKeys.KEY_OWNER_PUBLIC_KEY)
 
-        config_str = json.dumps(config_dict)
+        converted_config = KSMCommand.convert_config_dict(config_dict, config_init)
 
-        if config_init in ['b64', 'k8s']:
-            config_str = json_to_base64(config_str)
-        if config_init == 'k8s':
-            config_str = "\n" \
-                         + "apiVersion: v1\n" \
-                         + "data:\n" \
-                         + "  config: " + config_str + "\n" \
-                         + "kind: Secret\n" \
-                         + "metadata:\n" \
-                         + "  name: ksm-config\n" \
-                         + "  namespace: default\n" \
-                         + "type: Opaque"
+        if include_config_dict:
+            return {
+                'config_str': converted_config,
+                'config_dict': config_dict
+            }
+        else:
+            return converted_config
 
-        return config_str
+    @staticmethod
+    def convert_config_dict(config_dict, conversion_type='json'):
+
+        config = json.dumps(config_dict)
+
+        if conversion_type in ['b64', 'k8s']:
+            config = json_to_base64(config)
+
+        if conversion_type == 'k8s':
+            config = "\n" \
+                     + "apiVersion: v1\n" \
+                     + "data:\n" \
+                     + "  config: " + config + "\n" \
+                     + "kind: Secret\n" \
+                     + "metadata:\n" \
+                     + "  name: ksm-config\n" \
+                     + "  namespace: default\n" \
+                     + "type: Opaque"
+
+        if conversion_type == 'dict':
+            config = config_dict
+
+        return config
+
+    @staticmethod
+    def get_hash_of_one_time_token(one_time_token):
+        """ KSM: Get client ID from one time token, which is equal to a Hash of one time token"""
+
+        ott_parts = one_time_token.split(":")
+
+        if len(ott_parts) == 2:
+            ott = ott_parts[1]
+        else:
+            ott = ott_parts[0]
+
+        existing_secret_key_bytes = url_safe_str_to_bytes(ott)
+        digest = 'sha512'
+        one_time_token_hash = bytes_to_base64(hmac.new(existing_secret_key_bytes,
+                                                            b'KEEPER_SECRETS_MANAGER_CLIENT_ID',
+                                                            digest).digest())
+        return one_time_token_hash
 
 
 class LogoutCommand(Command):
