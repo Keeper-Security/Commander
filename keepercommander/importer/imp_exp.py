@@ -1775,6 +1775,7 @@ def prepare_record_link(params, records):
 def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) -> list
     """Prepare a list of API interactions for changes to folder permissions."""
     shared_folder_lookup = {}
+    api.load_available_teams(params)
     for shared_folder_uid in params.shared_folder_cache:
         path = get_folder_path(params, shared_folder_uid)
         if path:
@@ -1826,7 +1827,6 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
         api.load_user_public_keys(params, list(emails))
 
     if len(teams) > 0:
-        api.load_available_teams(params)
         team_uids = set()
         for t in teams:
             team_uid = next((
@@ -1855,16 +1855,15 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
             for perm in fol.permissions:
                 team_uid = None
                 username = None
-                if perm.uid and perm.uid in params.available_team_cache:
-                    team_uid = perm.uid
-                elif perm.name:
-                    name = perm.name.casefold()
-                    if name in params.key_cache:
-                        username = name
-                    else:
-                        team_uid = next((x.get('team_uid') for x in params.available_team_cache if x.get('team_name').casefold() == name), None)
-
                 try:
+                    if perm.uid and any(True for x in params.available_team_cache if x.get('team_uid') == perm.uid):
+                        team_uid = perm.uid
+                    elif perm.name:
+                        name = perm.name.casefold()
+                        team_uid = next((x.get('team_uid') for x in params.available_team_cache if x.get('team_name').casefold() == name), None)
+                        if team_uid is None:
+                            username = name
+
                     if team_uid:
                         if 'teams' in shared_folder:
                             found = next((True for x in shared_folder['teams'] if x['team_uid'] == team_uid), False)
