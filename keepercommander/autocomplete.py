@@ -181,12 +181,17 @@ class CommandCompleter(Completer):
                                         yield Completion(subcommand, display=subcommand, start_position=-len(c))
                                 return
 
-                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'edit', 'append-notes',
+                    if cmd in {'download-attachment', 'upload-attachment', 'share-record', 'append-notes',
                                'rm', 'ls', 'clipboard-copy', 'find-password', 'one-time-share-list', 'one-time-share-create'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             opts, _ = (cmd_parser or record_parser).parse_known_args(shlex.split(args))
-                            extra['prefix'] = opts.record or ''
+                            if hasattr(opts, 'record'):
+                                extra['prefix'] = opts.record or ''
+                            elif hasattr(opts, 'pattern'):
+                                extra['prefix'] = opts.pattern or ''
+                            else:
+                                extra['prefix'] = ''
                             context = 'path'
                     elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
