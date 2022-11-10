@@ -206,6 +206,8 @@ class BreachWatch(object):
             return
         for record_uid in params.record_cache:
             record = api.get_record(params, record_uid)
+            if not record:
+                continue
             if not record.password:
                 continue
             if owned:
