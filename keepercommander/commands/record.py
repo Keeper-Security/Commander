@@ -317,6 +317,7 @@ class RecordGetUidCommand(Command):
                     else:
                         data = rec['data_unencrypted'] if 'data_unencrypted' in rec else b'{}'
                         data = json.loads(data.decode())
+                        ro['type'] = data.get('type') or []
                         ro['fields'] = data.get('fields') or []
                         ro['custom'] = data.get('custom') or []
 
