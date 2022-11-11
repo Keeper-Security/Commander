@@ -23,15 +23,15 @@ from keepercommander.display import bcolors
 from .base import GroupCommand, dump_report_data
 from .pam import gateway_helper
 from .pam.config_helper import config_get_all, config_create, config_get_one, config_remove
-from .pam.gateway_helper import create_gateway
 from .pam.pam_dto import GatewayActionInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, GatewayActionRotate, \
     GatewayActionRotateInputs, GatewayAction, GatewayActionListAccessRecords, GatewayActionJobInfoInputs, \
     GatewayActionJobInfo, GatewayActionJobCancel
+from .pam.gateway_helper import create_gateway
 from .pam.router_helper import KROUTER_URL, router_send_action_to_gateway, print_router_response, \
     router_get_record_rotation_info, \
     router_get_connected_gateways, router_set_record_rotation_information
 from ..loginv3 import CommonHelperMethods
-from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest
+from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidRequest
 from ..utils import is_json, base64_url_encode
 
 WS_INIT = {'kind': 'init'}
@@ -44,91 +44,91 @@ WS_HEADERS = {
 WS_SERVER_PING_INTERVAL_SEC = 5
 
 
-dr_list_controllers_parser = argparse.ArgumentParser(prog='dr-list-gateways')
-dr_list_controllers_parser.add_argument('--connected', '-c', dest='connected_only', action='store_true',
-                                        help='Return only active Gateways that are connected')
-dr_list_controllers_parser.error = raise_parse_exception
-dr_list_controllers_parser.exit = suppress_exit
+pam_list_controllers_parser = argparse.ArgumentParser(prog='dr-list-gateways')
+pam_list_controllers_parser.add_argument('--connected', '-c', dest='connected_only', action='store_true',
+                                         help='Return only active Gateways that are connected')
+pam_list_controllers_parser.error = raise_parse_exception
+pam_list_controllers_parser.exit = suppress_exit
 
-dr_connect_parser = argparse.ArgumentParser(prog='dr-connect')
-dr_connect_parser.error = raise_parse_exception
-dr_connect_parser.exit = suppress_exit
+pam_connect_parser = argparse.ArgumentParser(prog='dr-connect')
+pam_connect_parser.error = raise_parse_exception
+pam_connect_parser.exit = suppress_exit
 
-dr_disconnect_parser = argparse.ArgumentParser(prog='dr-disconnect')
-dr_disconnect_parser.error = raise_parse_exception
-dr_disconnect_parser.exit = suppress_exit
+pam_disconnect_parser = argparse.ArgumentParser(prog='dr-disconnect')
+pam_disconnect_parser.error = raise_parse_exception
+pam_disconnect_parser.exit = suppress_exit
 
-dr_cmd_parser = argparse.ArgumentParser(prog='dr-cmd')
-dr_cmd_parser.add_argument('--dest', '-d', nargs='*', type=str, action='store', dest='destinations',
-                           help='Destination, usually Controller Client ID')
-dr_cmd_parser.add_argument('command', nargs='*', type=str, action='store', help='Controller command')
-dr_cmd_parser.error = raise_parse_exception
-dr_cmd_parser.exit = suppress_exit
+pam_cmd_parser = argparse.ArgumentParser(prog='dr-cmd')
+pam_cmd_parser.add_argument('--dest', '-d', nargs='*', type=str, action='store', dest='destinations',
+                            help='Destination, usually Controller Client ID')
+pam_cmd_parser.add_argument('command', nargs='*', type=str, action='store', help='Controller command')
+pam_cmd_parser.error = raise_parse_exception
+pam_cmd_parser.exit = suppress_exit
 
 
 def register_commands(commands):
-    commands['pam'] = DRControllerCommand()
+    commands['pam'] = PAMControllerCommand()
 
 
 def register_command_info(_, command_info):
     command_info['pam'] = 'Manage PAM Components'
 
 
-class DRControllerCommand(GroupCommand):
+class PAMControllerCommand(GroupCommand):
 
     def __init__(self):
-        super(DRControllerCommand, self).__init__()
-        self.register_command('gateway', DRGatewayCommand(), 'Manage PAM Gateways')
+        super(PAMControllerCommand, self).__init__()
+        self.register_command('gateway', PAMGatewayCommand(), 'Manage PAM Gateways')
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway')
-        self.register_command('config', DRConfigsCommand(), 'Manage PAM Configurations')
-        self.register_command('rotation', DRRotationCommand(), 'Manage Rotations')
+        self.register_command('config', PAMConfigsCommand(), 'Manage PAM Configurations')
+        self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations')
 
 
-class DRRotationCommand(GroupCommand):
+class PAMRotationCommand(GroupCommand):
 
     def __init__(self):
-        super(DRRotationCommand, self).__init__()
+        super(PAMRotationCommand, self).__init__()
         self.register_command('new',  PAMCreateRecordRotationCommand(), 'Create New Record Rotation Schedule')
         self.register_command('list', PAMListRecordRotationCommand(), 'List Record Rotation Schedulers')
-        self.register_command('info', DRRouterGetRotationInfo(), 'Get Rotation Info')
+        self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info')
 
 
-class DRGatewayCommand(GroupCommand):
+class PAMGatewayCommand(GroupCommand):
 
     def __init__(self):
-        super(DRGatewayCommand, self).__init__()
+        super(PAMGatewayCommand, self).__init__()
         self.register_command('list', PAMGatewayListCommand(), 'View Gateways')
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway')
-        self.register_command('connect', PAMConnect(), 'Connect')
-        self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
+        # self.register_command('connect', PAMConnect(), 'Connect')
+        # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
 
 
 class GatewayActionCommand(GroupCommand):
 
     def __init__(self):
         super(GatewayActionCommand, self).__init__()
-        self.register_command('server-info', GatewayActionServerInfoCommand(), 'Info command')
+        self.register_command('server-info', PAMGatewayActionServerInfoCommand(), 'Info command')
         # self.register_command('discover', GatewayActionDiscoverCommand(), 'Discover command')
-        self.register_command('rotate', GatewayActionRotateCommand(), 'Rotate command')
-        self.register_command('job-info', GatewayActionJobCommand(), 'View Job details')
-        self.register_command('job-cancel', GatewayActionJobCommand(), 'View Job details')
+        self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command')
+        self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details')
+        self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details')
 
         # self.register_command('list-jobs', DRCmdListJobs(), 'List Running jobs')
         # self.register_command('tunnel', DRTunnelCommand(), 'Tunnel to the server')
 
 
-class DRConfigsCommand(GroupCommand):
+class PAMConfigsCommand(GroupCommand):
 
     def __init__(self):
-        super(DRConfigsCommand, self).__init__()
-        self.register_command('new', DRConfigNewCommand(), "Create new configuration")
+        super(PAMConfigsCommand, self).__init__()
+        self.register_command('new', PAMConfigNewCommand(), "Create new configuration")
         self.register_command('list', DRExecListConfigsCommand(), 'List available configurations on the Gateway')
         self.register_command('list-access-records', DRExecListAccessRecordsCommand(), 'List available Access Records')
-        self.register_command('remove', DRConfigRemoveCommand(), "Remove a configuration")
+        self.register_command('remove', PAMConfigRemoveCommand(), "Remove a configuration")
 
 
-class DRCmdListJobs(Command):
+class PAMCmdListJobs(Command):
     dr_cmd_list_jobs_command_parser = argparse.ArgumentParser(prog='dr-list-jobs-command')
     dr_cmd_list_jobs_command_parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store',
                                                  help='ID of the Job running')
@@ -159,32 +159,40 @@ class DRCmdListJobs(Command):
 
 
 class PAMCreateRecordRotationCommand(Command):
-    dr2_scheduler_new_parser = argparse.ArgumentParser(prog='pam-create-record-rotation-scheduler')
-    dr2_scheduler_new_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
+    pam_scheduler_new_parser = argparse.ArgumentParser(prog='pam-create-record-rotation-scheduler')
+    pam_scheduler_new_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
                                           help='Record UID that will be rotated manually or via schedule')
-    dr2_scheduler_new_parser.add_argument('--config', '-c', required=True, dest='config_uid', action='store',
+    pam_scheduler_new_parser.add_argument('--config', '-c', required=True, dest='config_uid', action='store',
                                           help='UID of the resource configuration '
                                                'record. Note that this is not the '
                                                'Access Record, but the second, child, '
                                                'record in the configuration')
-    dr2_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
+    pam_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
                                           action='append',
                                           help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": '
                                                '"15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
-    dr2_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
+    pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
                                           action='append', help='Cron tab string of the scheduler. Example: to run job '
                                                                 'daily at 5:56PM UTC enter following cron -sc "0 56 17 '
                                                                 '* * ?"')
-    dr2_scheduler_new_parser.error = raise_parse_exception
-    dr2_scheduler_new_parser.exit = suppress_exit
+    pam_scheduler_new_parser.add_argument('--complexity', '-p', required=False, dest='pwd_complexity', action='store',
+                                          help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,'
+                                               '5,5')
+    pam_scheduler_new_parser.add_argument('--script', '-s', required=False, dest='script_file_name', action='store',
+                                          help='Post execution script file name')
+
+    pam_scheduler_new_parser.error = raise_parse_exception
+    pam_scheduler_new_parser.exit = suppress_exit
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
-        return self.dr2_scheduler_new_parser
+        return self.pam_scheduler_new_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
 
         record_uid = kwargs.get('record_uid')
         config_uid = kwargs.get('config_uid')
+        rule_string = kwargs.get("pwd_complexity")
+        script_name = kwargs.get('script_file_name')
 
         schedule_json_data = kwargs.get('schedule_json_data')
         schedule_cron_data = kwargs.get('schedule_cron_data') # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
@@ -195,17 +203,41 @@ class PAMCreateRecordRotationCommand(Command):
 
         schedule_data = json.dumps(schedule_json_data) if schedule_json_data else json.dumps(schedule_cron_data)
 
+        # 2. Load password complexity rules
+        if not rule_string:
+            rule_list_json_str = ''
+        else:
+            rule_list = [s.strip() for s in rule_string.split(',')]
+            if len(rule_list) != 5 or not all(n.isnumeric() for n in rule_list):
+                logging.warning(
+                    'Invalid rules to generate password. Format is "length, upper, lower, digits, symbols". Ex: 32,5,5,5,5'
+                )
+                return
+
+            rule_list_dict = {
+                'length': int(rule_list[0]),
+                'caps': int(rule_list[1]),
+                'lowercase': int(rule_list[2]),
+                'digits': int(rule_list[3]),
+                'special': int(rule_list[4])
+            }
+
+            rule_list_json_str = json.dumps(rule_list_dict)
+
+        # 3. Construct Request object
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
-        rq.schedule = f'{schedule_data}'
+        rq.schedule = schedule_data
+        rq.pwdComplexity = rule_list_json_str
+        rq.scriptName = script_name if script_name else ''
 
         rs = router_set_record_rotation_information(params, rq)
 
-        print(f"Successfully saved new Record Rotation Settings.")
+        print(f"Successfully saved new Record Rotation Setting.")
 
         if schedule_json_data and schedule_cron_data:
-            print(f"Rotation of the record [{record_uid}] was scheduled to rotate using following schedule configuration: {bcolors.OKBLUE}{schedule_data}{bcolors.ENDC}")
+            print(f"Rotation of the record [{record_uid}] was scheduled to rotate using following schedule setting: {bcolors.OKBLUE}{schedule_data}{bcolors.ENDC}")
         else:
             print(f"Rotation of this record can only be performed manually")
         print(f"To rotate manually use the following command: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
@@ -224,16 +256,16 @@ class PAMListRecordRotationCommand(Command):
 
 
 class PAMGatewayListCommand(Command):
-    dr2_cmd_controllers_parser = argparse.ArgumentParser(prog='dr-gateway')
-    dr2_cmd_controllers_parser.add_argument('--force', '-f', required=False, default=False, dest='is_force',
+    pam_cmd_controllers_parser = argparse.ArgumentParser(prog='dr-gateway')
+    pam_cmd_controllers_parser.add_argument('--force', '-f', required=False, default=False, dest='is_force',
                                             action='store_true', help='Force retrieval of gateways')
-    dr2_cmd_controllers_parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose',
+    pam_cmd_controllers_parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose',
                                             action='store_true', help='Verbose output')
-    dr2_cmd_controllers_parser.error = raise_parse_exception
-    dr2_cmd_controllers_parser.exit = suppress_exit
+    pam_cmd_controllers_parser.error = raise_parse_exception
+    pam_cmd_controllers_parser.exit = suppress_exit
 
     def get_parser(self):
-        return self.dr2_cmd_controllers_parser
+        return self.pam_cmd_controllers_parser
 
     def execute(self, params, **kwargs):
 
@@ -469,15 +501,15 @@ class DRExecListConfigsCommand(Command):
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
-class DRConfigRemoveCommand(Command):
-    dr_config_rem_command_parser = argparse.ArgumentParser(prog='dr-remove_config-command')
-    dr_config_rem_command_parser.add_argument('--config', '-c', required=True, dest='config',
-                                              action='store', help='Configuration or Configuration Element UID. '
+class PAMConfigRemoveCommand(Command):
+    pam_config_rem_command_parser = argparse.ArgumentParser(prog='dr-remove_config-command')
+    pam_config_rem_command_parser.add_argument('--config', '-c', required=True, dest='config',
+                                               action='store', help='Configuration or Configuration Element UID. '
                                                                    'To view all configurations with their UIDs, '
                                                                    'use command `pam config list`')
 
     def get_parser(self):
-        return self.dr_config_rem_command_parser
+        return self.pam_config_rem_command_parser
 
     def execute(self, params, **kwargs):
         config_uid = kwargs.get('config')
@@ -491,7 +523,7 @@ class DRConfigRemoveCommand(Command):
             print("Couldn't delete configuration")
 
 
-class DRConfigNewCommand(Command):
+class PAMConfigNewCommand(Command):
 
     dr_config_new_command_parser = argparse.ArgumentParser(prog='dr-create_config-command')
 
@@ -612,7 +644,7 @@ class DRConfigNewCommand(Command):
                 print(f'\tDependent config uid: {CommonHelperMethods.bytes_to_url_safe_str(ccu)}')
 
 
-class DRRouterGetRotationInfo(Command):
+class PAMRouterGetRotationInfo(Command):
     dr_router_get_rotation_info_parser = argparse.ArgumentParser(prog='dr-router-get-rotation-info-parser')
     dr_router_get_rotation_info_parser.add_argument('--record-uid', '-r', required=True, dest='record_uid',
                                                     action='store', help='Record UID to rotate')
@@ -642,7 +674,7 @@ class DRRouterGetRotationInfo(Command):
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
 
 
-class GatewayActionJobCancelCommand(Command):
+class PAMGatewayActionJobCancelCommand(Command):
     command_parser = argparse.ArgumentParser(prog='pam-action-job-cancel-command')
     command_parser.add_argument('job_id')
 
@@ -663,7 +695,7 @@ class GatewayActionJobCancelCommand(Command):
         print_router_response(router_response, message_id)
 
 
-class GatewayActionJobCommand(Command):
+class PAMGatewayActionJobCommand(Command):
     pam_action_job_command_parser = argparse.ArgumentParser(prog='pam-action-job-command')
     pam_action_job_command_parser.add_argument('job_id')
 
@@ -684,15 +716,17 @@ class GatewayActionJobCommand(Command):
         print_router_response(router_response, message_id)
 
 
-class GatewayActionRotateCommand(Command):
-    dr_cmd_rotate_command_parser = argparse.ArgumentParser(prog='dr-rotate-command')
-    dr_cmd_rotate_command_parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
-                                              help='Record UID to rotate')
-    dr_cmd_rotate_command_parser.error = raise_parse_exception
-    dr_cmd_rotate_command_parser.exit = suppress_exit
+class PAMGatewayActionRotateCommand(Command):
+    pam_cmd_rotate_command_parser = argparse.ArgumentParser(prog='dr-rotate-command')
+    pam_cmd_rotate_command_parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
+                                               help='Record UID to rotate')
+    # dr_cmd_rotate_command_parser.add_argument('--config', '-c', required=True, dest='configuration_uid', action='store',
+    #                                           help='Rotation configuration UID')
+    pam_cmd_rotate_command_parser.error = raise_parse_exception
+    pam_cmd_rotate_command_parser.exit = suppress_exit
 
     def get_parser(self):
-        return self.dr_cmd_rotate_command_parser
+        return self.pam_cmd_rotate_command_parser
 
     def execute(self, params, **kwargs):
 
@@ -747,13 +781,13 @@ class GatewayActionRotateCommand(Command):
         print_router_response(router_response, message_id)
 
 
-class GatewayActionServerInfoCommand(Command):
-    dr_cmd_discover_command_parser = argparse.ArgumentParser(prog='dr-info-command')
-    dr_cmd_discover_command_parser.error = raise_parse_exception
-    dr_cmd_discover_command_parser.exit = suppress_exit
+class PAMGatewayActionServerInfoCommand(Command):
+    pam_cmd_discover_command_parser = argparse.ArgumentParser(prog='dr-info-command')
+    pam_cmd_discover_command_parser.error = raise_parse_exception
+    pam_cmd_discover_command_parser.exit = suppress_exit
 
     def get_parser(self):
-        return self.dr_cmd_discover_command_parser
+        return self.pam_cmd_discover_command_parser
 
     def execute(self, params, **kwargs):
 
@@ -762,21 +796,21 @@ class GatewayActionServerInfoCommand(Command):
         print_router_response(router_response)
 
 
-class GatewayActionDiscoverCommand(Command):
-    dr_cmd_discover_command_parser = argparse.ArgumentParser(prog='dr-discover-command')
-    dr_cmd_discover_command_parser.add_argument('--shared-folder', '-f', required=True, dest='shared_folder_uid',
-                                                action='store',
-                                                help='UID of the Shared Folder where results will be stored')
-    dr_cmd_discover_command_parser.add_argument('--provider-record', '-p', required=True, dest='provider_record_uid',
-                                                action='store', help='Provider Record UID that defines network')
+class PAMGatewayActionDiscoverCommand(Command):
+    pam_cmd_discover_command_parser = argparse.ArgumentParser(prog='dr-discover-command')
+    pam_cmd_discover_command_parser.add_argument('--shared-folder', '-f', required=True, dest='shared_folder_uid',
+                                                 action='store',
+                                                 help='UID of the Shared Folder where results will be stored')
+    pam_cmd_discover_command_parser.add_argument('--provider-record', '-p', required=True, dest='provider_record_uid',
+                                                 action='store', help='Provider Record UID that defines network')
     # dr_cmd_discover_command_parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
     #                                           help='Controller id')
 
-    dr_cmd_discover_command_parser.error = raise_parse_exception
-    dr_cmd_discover_command_parser.exit = suppress_exit
+    pam_cmd_discover_command_parser.error = raise_parse_exception
+    pam_cmd_discover_command_parser.exit = suppress_exit
 
     def get_parser(self):
-        return self.dr_cmd_discover_command_parser
+        return self.pam_cmd_discover_command_parser
 
     def execute(self, params, **kwargs):
 
@@ -794,18 +828,18 @@ class GatewayActionDiscoverCommand(Command):
         print_router_response(router_response, message_id)
 
 
-class DRTunnelCommand(Command):
-    dr_tunnel_command_parser = argparse.ArgumentParser(prog='dr-tunnel-command')
-    dr_tunnel_command_parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
-                                          help='UID of the record that has server credentials')
-    dr_tunnel_command_parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
-                                          help='Controller id')
+class PAMTunnelCommand(Command):
+    pam_tunnel_command_parser = argparse.ArgumentParser(prog='dr-tunnel-command')
+    pam_tunnel_command_parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
+                                           help='UID of the record that has server credentials')
+    pam_tunnel_command_parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
+                                           help='Controller id')
 
-    dr_tunnel_command_parser.error = raise_parse_exception
-    dr_tunnel_command_parser.exit = suppress_exit
+    pam_tunnel_command_parser.error = raise_parse_exception
+    pam_tunnel_command_parser.exit = suppress_exit
 
     def get_parser(self):
-        return self.dr_tunnel_command_parser
+        return self.pam_tunnel_command_parser
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('record_uid')
@@ -830,7 +864,7 @@ class DRTunnelCommand(Command):
         params.ws.send(command_payload, destinations)
 
 
-class DRConnection:
+class PAMConnection:
     def __init__(self):
         if not os.path.isdir(WS_LOG_FOLDER):
             os.makedirs(WS_LOG_FOLDER)
@@ -953,11 +987,11 @@ class DRConnection:
 
 class PAMConnect(Command):
     def get_parser(self):
-        return dr_connect_parser
+        return pam_connect_parser
 
     def execute(self, params, **kwargs):
         if getattr(params, 'ws', None) is None:
-            params.ws = DRConnection()
+            params.ws = PAMConnection()
             params.ws.connect(params.session_token)
             logging.info(f'Connected {params.config["device_token"]}')
         else:
@@ -966,7 +1000,7 @@ class PAMConnect(Command):
 
 class PAMDisconnect(Command):
     def get_parser(self):
-        return dr_disconnect_parser
+        return pam_disconnect_parser
 
     def execute(self, params, **kwargs):
         if getattr(params, 'ws', None) is None:
