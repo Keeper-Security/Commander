@@ -20,7 +20,8 @@ from urllib.parse import urlparse, urlunparse
 
 from .base import dump_report_data, user_choice, field_to_title
 from .enterprise import EnterpriseCommand
-from .. import api, crypto, utils, loginv3, error, constants, params
+from .. import api, crypto, utils, loginv3, error, constants
+from ..params import KeeperParams
 from ..display import bcolors
 from ..error import CommandError
 from ..proto import enterprise_pb2, BI_pb2
@@ -1233,7 +1234,7 @@ class MSPCopyRoleCommand(EnterpriseCommand):
             return value  # 'ip_whitelist', 'string', 'two_factor_duration', 'ternary_*'
 
     @staticmethod
-    def find_roles(params, name):   # type: (params.KeeperParams, str) -> Iterable[Dict]
+    def find_roles(params, name):   # type: (KeeperParams, str) -> Iterable[Dict]
         if isinstance(params.enterprise, dict):
             if name.isdigit():
                 role_id = int(name)
