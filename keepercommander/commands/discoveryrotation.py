@@ -30,6 +30,7 @@ from .pam.gateway_helper import create_gateway
 from .pam.router_helper import KROUTER_URL, router_send_action_to_gateway, print_router_response, \
     router_get_record_rotation_info, \
     router_get_connected_gateways, router_set_record_rotation_information
+from .utils import KSMCommand
 from ..loginv3 import CommonHelperMethods
 from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidRequest
 from ..utils import is_json, base64_url_encode
@@ -316,7 +317,6 @@ class PAMGatewayListCommand(Command):
             headers.append('Node ID')
             headers.append('Router Cookie')
 
-
         for c in enterprise_controllers_all:
 
             # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
@@ -335,7 +335,20 @@ class PAMGatewayListCommand(Command):
             row = []
             row.append(f'{row_color}{CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid)}')
             row.append(c.controllerName)
-            row.append(CommonHelperMethods.bytes_to_url_safe_str(c.applicationUid))
+
+            ksm_app_uid_str = CommonHelperMethods.bytes_to_url_safe_str(c.applicationUid)
+            ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
+
+            if ksm_app:
+                ksm_app_data_unencrypted_json = ksm_app.get('data_unencrypted')
+                ksm_app_data_unencrypted_dict = json.loads(ksm_app_data_unencrypted_json)
+                ksm_app_title = ksm_app_data_unencrypted_dict.get('title')
+                ksm_app_info = f'{ksm_app_title} (uid: {ksm_app_uid_str})'
+            else:
+                ksm_app_info = f'[APP DELETED] (uid: {ksm_app_uid_str})'
+
+            row.append(ksm_app_info)
+
             if is_router_down:
                 row.append('UNKNOWN' + bcolors.ENDC)
             elif connected_controller:
