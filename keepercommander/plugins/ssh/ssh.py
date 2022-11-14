@@ -101,31 +101,52 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                 logging.warning('"passwd" command not found on device')
                 return False
             else:
+                responses = []
                 with SSHClientInteraction(ssh, timeout=timeout, display=False) as ia:
+                    ia.expect('.*')
+                    info = ia.current_output
+                    lines = info.splitlines()
+                    prompt = lines[-1] if lines else ''
                     ia.send('passwd')
                     ia.expect(['.*password.*', '.*password.*'])
+                    responses.append(ia.current_output)
                     ia.send(old_password)
                     ia.expect('.*password.*')
+                    responses.append(ia.current_output)
                     ia.send(new_password)
                     ia.expect('.*password.*')
+                    responses.append(ia.current_output)
                     try:
                         ia.send(new_password)
                         ia.expect('.*')
-                        result1 = ia.current_output
-                        ia.send('')
-                        ia.expect('.*')
-                        result2 = ia.current_output
-                        result_lines = (result1 + result2).splitlines()
-                        result = next(
-                            (r for r in result_lines if 'password' in r), ''
-                        )
-                        if 'password' in result:
+                        results = []
+                        result = ia.current_output
+                        lines = [x for x in result.splitlines() if x]
+                        has_prompt = False
+                        if prompt and lines:
+                            if lines[-1] == prompt:
+                                has_prompt = True
+                                lines.pop(-1)
+                        results.extend(lines)
+                        responses.extend(lines)
+                        if not has_prompt:
+                            ia.send('')
+                            ia.expect('.*')
+                            result = ia.current_output
+                            lines = [x for x in result.splitlines() if x]
+                            if prompt and lines:
+                                if lines[-1] == prompt:
+                                    lines.pop(-1)
+                            results.extend(lines)
+                            responses.extend(lines)
+                        success_line = next((x for x in results if 'success' in x), None)
+                        if success_line:
                             rotate_success = True
-                            logging.info(result.split(': ')[-1])
+                            logging.info(success_line.split(': ')[-1])
                     except Exception as e:
                         # Catch exception because password
                         # could have still been rotated and we need to verify
-                        logging.error(str(e))
+                        logging.error(e)
 
     # Verify which password connects to host
     with paramiko.SSHClient() as verify_ssh:
@@ -135,7 +156,7 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
             verify_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             try:
                 verify_ssh.connect(
-                    hostname=host, username=user, password=passwords[pass_name],
+                    hostname=host, port=port, username=user, password=passwords[pass_name],
                     timeout=timeout, allow_agent=False, look_for_keys=False
                 )
             except Exception as e:
@@ -150,6 +171,7 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                         logging.warning('Reverting the password rotation failed. The rotated password is still valid.')
                     else:
                         logging.warning('SSH password rotation failed. Verified that the old password is still valid.')
+                    logging.debug('\n'.join(responses))
                     rotate_success = False
                 else:
                     if revert:
