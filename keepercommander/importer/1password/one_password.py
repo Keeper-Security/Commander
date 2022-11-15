@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-import collections
 import datetime
 import io
 import json
@@ -17,7 +16,7 @@ import logging
 import os.path
 import zipfile
 from contextlib import contextmanager
-from typing import Union, Optional, Tuple, Any, Dict, List, Set
+from typing import Union, Optional, Tuple, Any, Dict, Set, Iterable
 
 from ..importer import (
     BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Attachment
@@ -44,7 +43,7 @@ class OnePasswordImporter(BaseImporter):
                         return key, value[key]
 
     def do_import(self, filename, **kwargs):
-        # type: (BaseImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder]]
+        # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder]]
         record_types = {}
         params = kwargs.get('params')
         if isinstance(params, KeeperParams):
@@ -542,24 +541,6 @@ class OnePasswordImporter(BaseImporter):
                         for record in vault_records.values():
                             yield record
                         vault_records.clear()
-
-    @staticmethod
-    def adjust_field_label(record, field_type, field_label, fields):
-        # type: (Record, str, str, List[Dict]) -> str
-        if not isinstance(fields, list):
-            return field_label
-        if field_type == 'text':
-            return field_label
-        field = next((x for x in fields if x['$ref'] == field_type), None)
-        if not field:
-            return field_label
-        fl = field.get('label', '')
-        if fl == field_label:
-            return field_label
-        for f in record.fields:
-            if f.type == field_type and f.label == fl:
-                return field_label
-        return fl
 
 
 class OnePasswordAttachment(Attachment):

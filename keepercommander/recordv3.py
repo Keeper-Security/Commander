@@ -629,7 +629,7 @@ class RecordV3:
             'type': 'bankAccount',
             'value_description': 'bank account information',
             'value': {  # object
-                'accountType': ('Checking', 'Savings', 'Other'),
+                'accountType': ('', 'Checking', 'Savings', 'Other'),
                 'otherType': '',  # string
                 'routingNumber': '',  # string
                 'accountNumber': ''  # string (required for RT bankAccount)

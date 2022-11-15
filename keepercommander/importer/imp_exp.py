@@ -966,6 +966,7 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
                     )
                     continue
 
+                atta.prepare()
                 if isinstance(atta.size, int):
                     if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
                         logging.warning(
