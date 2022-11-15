@@ -279,6 +279,8 @@ def confirm(msg):
 
 
 def size_to_str(size):  # type: (int) -> str
+    if not isinstance(size, int):
+        return ''
     if size < 2000:
         return f'{size} b'
     size = size / 1024

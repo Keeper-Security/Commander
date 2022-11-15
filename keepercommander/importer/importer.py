@@ -16,7 +16,7 @@ import json
 import logging
 import os.path
 from contextlib import contextmanager
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Iterable
 
 from ..error import CommandError
 from ..recordv3 import RecordV3
@@ -64,8 +64,7 @@ def strip_path_delimiter(name, delimiter=PathDelimiter):
     return folder
 
 
-def path_components(path, delimiter=PathDelimiter):
-    # type: (str, str) -> collections.Iterable[str]
+def path_components(path, delimiter=PathDelimiter):    # type: (str, str) -> Iterable[str]
     p = path.strip()
     pos = 0
     while pos < len(p):
@@ -107,7 +106,7 @@ class SharedFolder:
         self.manage_records = None
         self.can_edit = None
         self.can_share = None
-        self.permissions = None  # type: [Permission]
+        self.permissions = None  # type: Optional[List[Permission]]
 
     def validate(self):
         if not self.path:
@@ -134,7 +133,10 @@ class Attachment(abc.ABC):
 
     @abc.abstractmethod
     def open(self):  # type: () -> io.BufferedIOBase
-        raise NotImplementedError()
+        pass
+
+    def prepare(self):   # type: () -> None
+        pass
 
 
 class Folder:
@@ -257,12 +259,12 @@ class File:
 
 class BaseImporter(abc.ABC):
     def execute(self, name, **kwargs):
-        # type: (BaseImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
+        # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder, File]]
         yield from self.do_import(name, **kwargs)
 
     @abc.abstractmethod
     def do_import(self, filename, **kwargs):
-        # type: (BaseImporter, str, dict) -> collections.Iterable[Union[Record, SharedFolder, File]]
+        # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder, File]]
         pass
 
     def extension(self):
@@ -485,6 +487,25 @@ class BaseImporter(abc.ABC):
                 return values[0]
             return values
 
+    @staticmethod
+    def adjust_field_label(record, field_type, field_label, fields):
+        # type: (Record, str, str, List[Dict]) -> str
+        if not isinstance(fields, list):
+            return field_label
+        if field_type == 'text':
+            return field_label
+        field = next((x for x in fields if x['$ref'] == field_type), None)
+        if not field:
+            return field_label
+        fl = field.get('label', '')
+        if fl == field_label:
+            return field_label
+        for f in record.fields:
+            if f.type == field_type and f.label == fl:
+                return field_label
+        return fl
+
+
 
 class BaseFileImporter(BaseImporter, abc.ABC):
     def __init__(self):
@@ -701,7 +722,4 @@ class BytesAttachment(Attachment):
 
     @contextmanager
     def open(self):
-        out = io.BytesIO()
-        out.write(self.data)
-        out.seek(0)
-        yield out
+        yield io.BytesIO(self.data)
