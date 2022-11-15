@@ -107,10 +107,14 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_create_user.register_command_info(aliases, command_info)
 
 
+
 def register_msp_commands(commands, aliases, command_info):
     from .msp import register_commands as msp_commands, register_command_info as msp_command_info
     msp_commands(commands)
     msp_command_info(aliases, command_info)
+    from . import distributor
+    commands['distributor'] = distributor.DistributorCommand()
+    aliases['ds'] = 'distributor'
 
 
 def user_choice(question, choice, default='', show_choice=True, multi_choice=False):
@@ -175,11 +179,12 @@ def field_to_title(field):   # type: (str) -> str
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
     # type: (List[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
-    #           row_number: boolean     - Add row number. table only
-    #           column_width: int       - Truncate long columns. table only
-    #           no_header: boolean      - Do not print header
+    #           row_number: boolean        - Add row number. table only
+    #           column_width: int          - Truncate long columns. table only
+    #           no_header: boolean         - Do not print header
     #           group_by: int           - Sort and Group by columnNo
     #           sort_by: int            - Sort by columnNo
+    #           align_right: Sequence[int] - Force right align
 
     sort_by = kwargs.get('sort_by')
     group_by = kwargs.get('group_by')
@@ -295,12 +300,27 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                     rowi.append(value)
                 expanded_data.append(rowi)
         tablefmt = 'simple'
-        colalign = None
+        right_align = kwargs.get('right_align')
+        if isinstance(right_align, int):
+            right_align = [right_align]
+        if isinstance(right_align, (list, tuple)) and isinstance(headers, (list, tuple)):
+            colalign = ['left'] * len(headers)  # type: Optional[List]
+            if row_number:
+                colalign[0] = 'decimal'
+            for i in range(len(right_align)):
+                pos = right_align[i]
+                if row_number:
+                    pos += 1
+                if isinstance(pos, int) and pos < len(colalign):
+                    colalign[pos] = 'decimal'
+        else:
+            colalign = None
+
         if kwargs.get('no_header'):
             headers = ()
             tablefmt = 'plain'
-            colalign = ('right', )
-        print(tabulate(expanded_data, headers=headers, tablefmt=tablefmt, colalign=colalign))
+
+        print(tabulate(expanded_data, headers=headers, tablefmt=tablefmt, colalign=colalign if expanded_data else None))
 
 
 parameter_pattern = re.compile(r'\${(\w+)}')
@@ -423,9 +443,10 @@ class GroupCommand(CliCommand):
     def __init__(self):
         self._commands = collections.OrderedDict()     # type: dict[str, Command]
         self._command_info = {}    # type: dict[str, str]
+        self._aliases = {}         # type: dict[str, str]
         self.default_verb = ''
 
-    def register_command(self, verb, command, description=None):   # type: (any, Command, str) -> None
+    def register_command(self, verb, command, description=None, alias=None):   # type: (any, Command, str) -> None
         verb = verb.lower()
         self._commands[verb] = command
         if not description:
@@ -434,6 +455,8 @@ class GroupCommand(CliCommand):
                 description = parser.description
         if description:
             self._command_info[verb] = description
+        if alias:
+            self._aliases[alias] = verb
 
     def execute_args(self, params, args, **kwargs):  # type: (KeeperParams, str, dict) -> any
         if args.startswith('-- '):
@@ -453,6 +476,9 @@ class GroupCommand(CliCommand):
             print_help = True
         if verb:
             verb = verb.lower()
+
+        if verb in self._aliases:
+            verb = self._aliases[verb]
 
         command = self._commands.get(verb)
         if not command:
