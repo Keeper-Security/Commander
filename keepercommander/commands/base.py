@@ -114,6 +114,7 @@ def register_msp_commands(commands, aliases, command_info):
     msp_command_info(aliases, command_info)
     from . import distributor
     commands['distributor'] = distributor.DistributorCommand()
+    command_info['distributor'] = 'Manage distributors'
     aliases['ds'] = 'distributor'
 
 
