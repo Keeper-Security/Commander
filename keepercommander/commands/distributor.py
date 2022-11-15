@@ -263,15 +263,18 @@ class DistributorLicenseCommand(EnterpriseCommand, DistributorMixin):
             all_products = {x[1].lower() for x in constants.MSP_PLANS}
             if isinstance(add_products, (list, tuple)):
                 for product in add_products:
-                    if product.lower() not in all_products:
+                    product = product.lower()
+                    if product not in all_products:
                         raise CommandError('', f'Unknown Product: {product}')
-                    products.add(product.lower())
+                    products.add(product)
 
             if isinstance(remove_products, (list, tuple)):
                 for product in remove_products:
-                    if product.lower() not in all_products:
+                    product = product.lower()
+                    if product not in all_products:
                         raise CommandError('', f'Unknown Product: {product}')
-                    products.remove(product.lower())
+                    if product in products:
+                        products.remove(product)
 
         addons = set((x.lower() for x in msp['allowed_add_ons']))
         add_addons = kwargs.get('add_addon')
@@ -292,9 +295,11 @@ class DistributorLicenseCommand(EnterpriseCommand, DistributorMixin):
 
             if isinstance(remove_addons, (list, tuple)):
                 for addon in remove_addons:
-                    if addon.lower() not in all_addons:
+                    addon = addon.lower()
+                    if addon not in all_addons:
                         raise CommandError('', f'Unknown product: {addon}')
-                    addons.remove(addon.lower())
+                    if addon in addons:
+                        addons.remove(addon)
 
         max_file_plan = msp['max_file_plan_type']
         file_plan = kwargs.get('max_file_plan')
@@ -320,9 +325,9 @@ class DistributorLicenseCommand(EnterpriseCommand, DistributorMixin):
             rq.mspEnterpriseId = msp['enterprise_id']
             rq.allowUnlimitedLicenses = allow_unlimited
             all_products = {x[1].lower(): x[1] for x in constants.MSP_PLANS}
-            rq.allowedMcProducts.extend(all_products[x] for x in products)
+            rq.allowedMcProducts.extend(all_products.get(x, x) for x in products)
             all_addons = {x[0].lower(): x[0] for x in constants.MSP_ADDONS}
-            rq.allowedAddOns.extend(all_addons[x] for x in addons)
+            rq.allowedAddOns.extend(all_addons.get(x, x) for x in addons)
             rq.maxFilePlanType = max_file_plan
 
             api.communicate_rest(params, rq, 'distributor/update_msp_permits')
