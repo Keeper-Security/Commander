@@ -2036,16 +2036,16 @@ class OneTimeShareCreateCommand(Command):
 
         api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
 
-        comps = urlparse(params.rest_context.server_base)
-        comps = comps._replace(path='/vault/share', fragment=utils.base64_url_encode(client_key), query='')
-        url = urlunparse(comps)
-
+        url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
         if params.batch_mode:
             return url
         else:
-            if kwargs.get('output', '') == 'clipboard':
+            output = kwargs.get('output') or ''
+            if output == 'clipboard':
                 import pyperclip
                 pyperclip.copy(url)
                 logging.info('One-Time record share URL is copied to clipboard')
-            else:
+            elif output == 'stdout':
                 print('{0:>10s} : {1}'.format('URL', url))
+            else:
+                return url
