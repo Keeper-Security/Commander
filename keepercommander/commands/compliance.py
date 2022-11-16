@@ -285,6 +285,8 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
         team_lookup = sox_data.get_teams()
         report_data = []
         for sf_uid, folder in shared_folders:
+            if not folder.record_permissions:
+                continue
             for team_uid in folder.teams:
                 team = team_lookup.get(team_uid)
                 perms = next(iter(folder.record_permissions)).permissions

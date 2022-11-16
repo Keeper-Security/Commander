@@ -127,7 +127,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
     last_updated = storage.last_prelim_data_update
     refresh_data = rebuild or not last_updated or min_updated > last_updated
     if refresh_data and not cache_only:
-        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
+        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
         sync_down(user_lookup, storage)
     return sox_data.SoxData(ec_private_key=key, storage=storage, no_cache=no_cache)
 
@@ -321,7 +321,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
     last_compliance_data_update = sd.storage.last_compliance_data_update
     refresh_data = rebuild or min_updated > last_compliance_data_update
     if refresh_data:
-        enterprise_users = params.enterprise.get('users')
+        enterprise_users = params.enterprise.get('users', [])
         user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id') for e_user in enterprise_users}
         sync_down(sd, node_id, user_node_id_lookup=user_node_ids)
     rebuild_task = sox_data.RebuildTask(is_full_sync=False, load_compliance_data=True)
