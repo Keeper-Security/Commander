@@ -516,6 +516,7 @@ def loop(params):  # type: (KeeperParams) -> int
                 break
 
             suppress_errno = False
+            command = command.strip()
             if command.startswith("@"):
                 suppress_errno = True
                 command = command[1:]
