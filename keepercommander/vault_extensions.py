@@ -335,12 +335,53 @@ class TypedRecordFacade(abc.ABC):
         pass
 
     def assign_record(self, record):  # type: (vault.TypedRecord) -> None
-        if self._get_facade_type() != record.record_type:
-            raise Exception(f'Incorrect record type: expected {self._get_facade_type()}, got {record.record_type}')
+        if not record.record_type:
+            record.type_name = self._get_facade_type()
         self.record = record
 
     def get_custom_field(self, name):
         return next((x.get_default_value(str) for x in self.record.custom if x.label.lower() == name.lower()), '')
+
+    @property
+    def title(self):  # type: () -> Optional[str]
+        if self.record:
+            return self.record.title
+
+    @title.setter
+    def title(self, value):   # type: (str) -> None
+        if self.record:
+            self.record.title = value
+
+    @property
+    def notes(self):  # type: () -> Optional[str]
+        if self.record:
+            return self.record.notes
+
+    @notes.setter
+    def notes(self, value):   # type: (str) -> None
+        if self.record:
+            self.record.notes = value
+
+
+class FileRefFacade(TypedRecordFacade, abc.ABC):
+    def __init__(self):
+        TypedRecordFacade.__init__(self)
+        self._file_ref_field = None   # type: Optional[vault.TypedField]
+
+    def assign_record(self, record):
+        super(FileRefFacade, self).assign_record(record)
+        if isinstance(record, vault.TypedRecord):
+            self._file_ref_field = self.record.get_typed_field('fileRef')
+            if self._file_ref_field is None:
+                self._file_ref_field = vault.TypedField.new_field('fileRef', [])
+                record.fields.append(self._file_ref_field)
+        else:
+            self._file_ref_field = None
+
+    @property
+    def file_ref(self):
+        if self._file_ref_field:
+            return self._file_ref_field.value
 
 
 class ServerFacade(TypedRecordFacade, abc.ABC):
@@ -450,3 +491,76 @@ class DatabaseCredentialsFacade(ServerCredentialsFacade):
     def database_type(self):
         if self.database_type_field:
             return self.database_type_field.get_default_value(value_type=str)
+
+
+class LoginFacade(FileRefFacade, abc.ABC):
+    def __init__(self):
+        FileRefFacade.__init__(self)
+        self._login_field = None      # type: Optional[vault.TypedField]
+        self._password_field = None   # type: Optional[vault.TypedField]
+        self._url = None              # type: Optional[vault.TypedField]
+
+    def assign_record(self, record):
+        super(FileRefFacade, self).assign_record(record)
+        if record:
+            self._login_field = self.record.get_typed_field('login')
+            if self._login_field is None:
+                self._login_field = vault.TypedField.new_field('login', '')
+                record.fields.append(self._login_field)
+            self._password_field = self.record.get_typed_field('password')
+            if self._password_field is None:
+                self._password_field = vault.TypedField.new_field('password', '')
+                record.fields.append(self._password_field)
+            self._url = self.record.get_typed_field('url')
+            if self._url is None:
+                self._url = vault.TypedField.new_field('url', '')
+                record.fields.append(self._url)
+        else:
+            self._login_field = None
+            self._password_field = None
+            self._url = None
+
+    def _get_facade_type(self):
+        return 'login'
+
+    @property
+    def login(self):
+        return self._login_field.get_default_value(str) if self._login_field else ''
+
+    @login.setter
+    def login(self, value):
+        if self._login_field:
+            holder = self._login_field.value
+            if isinstance(holder, list):
+                if len(holder) > 0:
+                    holder[0] = value
+                else:
+                    holder.append(value)
+
+    @property
+    def password(self):
+        return self._password_field.get_default_value(str) if self._password_field else ''
+
+    @password.setter
+    def password(self, value):
+        if self._password_field:
+            holder = self._password_field.value
+            if isinstance(holder, list):
+                if len(holder) > 0:
+                    holder[0] = value
+                else:
+                    holder.append(value)
+
+    @property
+    def url(self):
+        return self._url.get_default_value(str) if self._url else ''
+
+    @url.setter
+    def url(self, value):
+        if self._url:
+            holder = self._url.value
+            if isinstance(holder, list):
+                if len(holder) > 0:
+                    holder[0] = value
+                else:
+                    holder.append(value)
