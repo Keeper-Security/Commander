@@ -207,12 +207,13 @@ class DistributorMspInfoCommand(EnterpriseCommand, DistributorMixin):
         if output_format == 'json':
             return json.dumps(msp, indent=4)
         else:
-            header = ['ID', 'MC Name', 'Plan', 'Storage', 'Addons', 'Allocated', 'Active']
+            header = ['ID', 'MC Name', 'Node ID', 'Plan', 'Storage', 'Addons', 'Allocated', 'Active']
             table = []
             for mc in msp.get('managed_companies', []):
                 mc_name = mc.get('mc_enterprise_name')
                 if len(mc_name) > 40 and not verbose:
                     mc_name = mc_name[:37] + '...'
+                msp_node_id = mc.get('msp_node_id')
                 allowed = mc.get('number_of_seats')
                 if allowed > 2000000000:
                     allowed = 'Unlimited'
@@ -228,11 +229,11 @@ class DistributorMspInfoCommand(EnterpriseCommand, DistributorMixin):
                 product = product_lookup.get(product, product)
                 file_plan = mc.get('file_plan_type')
                 file_plan = file_plan_lookup.get(file_plan, file_plan)
-                row = [mc.get('mc_enterprise_id'), mc_name, product, file_plan, addons, allowed, used]
+                row = [mc.get('mc_enterprise_id'), mc_name, msp_node_id, product, file_plan, addons, allowed, used]
 
                 table.append(row)
 
-            right_align = (5, 6) if verbose else (4, 5, 6)
+            right_align = (6, 7) if verbose else (5, 6, 7)
             return dump_report_data(table, header, fmt=output_format, filename=kwargs.get('output'), row_number=True, right_align=right_align)
 
 
