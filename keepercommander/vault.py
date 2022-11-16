@@ -242,7 +242,10 @@ class TypedField(object):
         if f_type not in record_types.RecordFields:
             f_type = 'text'
         if not isinstance(field_value, list):
-            field_value = [field_value]
+            if field_value:
+                field_value = [field_value]
+            else:
+                field_value = []
         tf = TypedField()
         tf.type = f_type
         tf.value = field_value
