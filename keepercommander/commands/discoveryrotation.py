@@ -23,16 +23,17 @@ from keepercommander.display import bcolors
 from .base import GroupCommand, dump_report_data
 from .pam import gateway_helper
 from .pam.config_helper import config_get_all, config_create, config_get_one, config_remove
-from .pam.pam_dto import GatewayActionInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, GatewayActionRotate, \
+from .pam.gateway_helper import create_gateway
+from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
+    GatewayActionRotate, \
     GatewayActionRotateInputs, GatewayAction, GatewayActionListAccessRecords, GatewayActionJobInfoInputs, \
     GatewayActionJobInfo, GatewayActionJobCancel
-from .pam.gateway_helper import create_gateway
 from .pam.router_helper import KROUTER_URL, router_send_action_to_gateway, print_router_response, \
     router_get_record_rotation_info, \
-    router_get_connected_gateways, router_set_record_rotation_information
+    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules
 from .utils import KSMCommand
 from ..loginv3 import CommonHelperMethods
-from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidRequest
+from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidsRequest
 from ..utils import is_json, base64_url_encode
 
 WS_INIT = {'kind': 'init'}
@@ -109,7 +110,7 @@ class GatewayActionCommand(GroupCommand):
 
     def __init__(self):
         super(GatewayActionCommand, self).__init__()
-        self.register_command('server-info', PAMGatewayActionServerInfoCommand(), 'Info command')
+        self.register_command('gateway-info', PAMGatewayActionServerInfoCommand(), 'Info command')
         # self.register_command('discover', GatewayActionDiscoverCommand(), 'Discover command')
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details')
@@ -253,7 +254,64 @@ class PAMListRecordRotationCommand(Command):
         return self.pam_list_record_rotation
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
-        print("NOT IMPLEMENTED: \n\nLISTING RECORD ROTATION SCHEDULER.......")
+
+        rq = PAMGenericUidsRequest()
+
+        schedules_proto = router_get_rotation_schedules(params, rq)
+        schedules = list(schedules_proto.schedules)
+
+        table = []
+
+        headers = []
+        headers.append('Record UID')
+        headers.append('Record Title')
+        headers.append('Record Type')
+        headers.append('Schedule')
+
+        for s in schedules:
+            row = []
+
+            record_uid = CommonHelperMethods.bytes_to_url_safe_str(s.recordUid)
+
+            row_color = ''
+            if record_uid in params.record_cache:
+                row_color = bcolors.HIGHINTENSITYWHITE
+                rec = params.record_cache[record_uid]
+
+                data_json = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else rec['data_unencrypted']
+                data = json.loads(data_json)
+
+                record_title = data.get('title')
+                record_type = data.get('type') or ''
+            else:
+                row_color = bcolors.WHITE
+
+                record_title = '[no access to record]'
+                record_type = ''
+
+
+            row.append(f'{row_color}{record_uid}')
+            row.append(record_title)
+            row.append(record_type)
+
+            if s.noSchedule is True:
+                # Per Sergey A:
+                # > noSchedult=true means manual
+                # > false is by default in proto and matches the default state for most records (would have a schedule)
+                schedule_str = '[Manual Rotation]'
+            else:
+                schedule_str = s.scheduleData if s.scheduleData else '[empty]'
+
+            row.append(f'{schedule_str}{bcolors.ENDC}')
+
+            table.append(row)
+
+        table.sort(key=lambda x: (x[1]))
+
+        dump_report_data(table, headers, fmt='table', filename="",
+                         row_number=False, column_width=None)
+
+
 
 
 class PAMGatewayListCommand(Command):
@@ -319,9 +377,12 @@ class PAMGatewayListCommand(Command):
 
         for c in enterprise_controllers_all:
 
-            # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
-            connected_controller = next((ent_con_cntr for ent_con_cntr in enterprise_controllers_connected if
-                                         ent_con_cntr['deviceToken'] == c.deviceToken), None)
+            connected_controller = None
+            if enterprise_controllers_connected:
+                # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
+                router_controllers = list(enterprise_controllers_connected.controllers)
+                connected_controller = next((ent_con_cntr for ent_con_cntr in router_controllers if
+                                             ent_con_cntr.controllerUid == c.controllerUid), None)
 
             row_color = ''
             if not is_router_down:
@@ -345,7 +406,7 @@ class PAMGatewayListCommand(Command):
                 ksm_app_title = ksm_app_data_unencrypted_dict.get('title')
                 ksm_app_info = f'{ksm_app_title} (uid: {ksm_app_uid_str})'
             else:
-                ksm_app_info = f'[APP DELETED] (uid: {ksm_app_uid_str})'
+                ksm_app_info = f'[APP NOT ACCESSIBLE OR DELETED] (uid: {ksm_app_uid_str})'
 
             row.append(ksm_app_info)
 
@@ -760,7 +821,7 @@ class PAMGatewayActionRotateCommand(Command):
 
         # Find record by record uid
         ri = router_get_record_rotation_info(params, record_uid_bytes)
-
+        ri_pwd_complexity = ri.pwdComplexity
         ri_configuration_uid = base64_url_encode(ri.configurationUid)
         ri_controller_uid = base64_url_encode(ri.controllerUid)
         ri_router_worker_lb_cookie_str = ri.cookie
@@ -781,7 +842,8 @@ class PAMGatewayActionRotateCommand(Command):
             print(f'{bcolors.FAIL}Unknown router rotation status [{rrs}]{bcolors.ENDC}')
             return
 
-        action_inputs = GatewayActionRotateInputs(record_uid=record_uid, configuration_uid=ri_configuration_uid)
+        action_inputs = GatewayActionRotateInputs(record_uid=record_uid, configuration_uid=ri_configuration_uid,
+                                                  pwd_complexity=ri_pwd_complexity)
 
         message_id = GatewayAction.generate_message_id()
 
@@ -804,7 +866,7 @@ class PAMGatewayActionServerInfoCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionInfo())
+        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionGatewayInfo())
 
         print_router_response(router_response)
 

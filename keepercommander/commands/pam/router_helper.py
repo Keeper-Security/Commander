@@ -7,31 +7,27 @@ from keepercommander.commands.base import dump_report_data
 from keepercommander.commands.pam import gateway_helper
 from keepercommander.commands.pam.pam_dto import GatewayAction
 from keepercommander.display import bcolors
-from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest
+from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
+    PAMOnlineControllers, PAMRotationSchedulesResponse
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
-# KROUTER_URL = 'https://krouter-svc4-2049537335.us-east-1.elb.amazonaws.com/client'
 KROUTER_URL = 'https://connect.dev.keepersecurity.com'
 # KROUTER_URL = 'http://localhost:5001'
-# KROUTER_URL = 'http://localhost:6080/worker/client'
 
 VERIFY_SSL = True
 
 
 def router_get_connected_gateways(params):
-    response = requests.get(
-        KROUTER_URL+"/client",
-        verify=VERIFY_SSL,
-        headers={
-            'Authorization': f'KeeperUser ${params.session_token}'
-        })
 
-    if response.status_code != 200:
-        raise Exception("Router is down [status code=" + str(response.status_code) + "]")
+    rs = _post_request_to_router(params, 'get_controllers')
 
-    resp = json.loads(response.text)
+    if type(rs) == bytes:
+        pam_online_controllers = PAMOnlineControllers()
+        pam_online_controllers.ParseFromString(rs)
 
-    return resp.get('controllers')
+        return pam_online_controllers
+
+    return None
 
 
 def router_get_record_rotation_info(params, record_uid_bytes):
@@ -56,14 +52,27 @@ def router_set_record_rotation_information(params, proto_request):
     return rs
 
 
-def _post_request_to_router(params, path, rq_proto=None):
-    rs = requests.post(
-        KROUTER_URL + "/" + path,
-        verify=VERIFY_SSL,
-        headers={
-            'Authorization': f'KeeperUser ${params.session_token}'
-        },
-        data=rq_proto.SerializeToString()
+def router_get_rotation_schedules(params, proto_request):
+
+    rs = _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request)
+
+    if type(rs) == bytes:
+        rsr = PAMRotationSchedulesResponse()
+        rsr.ParseFromString(rs)
+
+        return rsr
+
+    return None
+
+
+def _post_request_to_router(params, path, rq_proto=None, method='post'):
+    rs = requests.request(method,
+                          KROUTER_URL + "/" + path,
+                          verify=VERIFY_SSL,
+                          headers={
+                            'Authorization': f'KeeperUser ${params.session_token}'
+                          },
+                          data=rq_proto.SerializeToString() if rq_proto else None
     )
 
     content_type = rs.headers.get('Content-Type') or ''
@@ -88,11 +97,12 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
         logging.warning(f"Unhandled error during retrieval of the connected gateways. {str(e)}")
         return
 
-    if len(enterprise_controllers_connected) == 1:
-        found_gateway = enterprise_controllers_connected[0]
-    elif len(enterprise_controllers_connected) == 0:
-        print(f"{bcolors.WARNING}\tNo running gateways for your enterprise. Start the gateway before sending any actions{bcolors.ENDC}")
+    if not enterprise_controllers_connected or len(enterprise_controllers_connected) == 0:
+        print(f"{bcolors.WARNING}\tNo running or connected Gateways in your enterprise. "
+              f"Start the Gateway before sending any action to it.{bcolors.ENDC}")
         return
+    elif len(enterprise_controllers_connected) == 1:
+        found_gateway = enterprise_controllers_connected[0]
     else:  # There are more than two Gateways connected. Selecting the right one
 
         if not gateway_action.gateway_destination:

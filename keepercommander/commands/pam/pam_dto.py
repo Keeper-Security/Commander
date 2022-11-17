@@ -52,11 +52,11 @@ class GatewayAction(metaclass=abc.ABCMeta):
             return message_id
 
 
-class GatewayActionInfo(GatewayAction):
+class GatewayActionGatewayInfo(GatewayAction):
 
     def __init__(self, message_id=None, is_scheduled=True):
         super().__init__(
-            'info',
+            'gateway-info',
             message_id=message_id,
             is_scheduled=is_scheduled
         )
@@ -82,6 +82,7 @@ class GatewayActionJobInfoInputs:
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
 
+
 class GatewayActionJobCancel(GatewayAction):
 
     def __init__(self, inputs: GatewayActionJobInfoInputs, message_id=None):
@@ -102,9 +103,10 @@ class GatewayActionJobInfo(GatewayAction):
 
 class GatewayActionRotateInputs:
 
-    def __init__(self, record_uid, configuration_uid):
+    def __init__(self, record_uid, configuration_uid, pwd_complexity):
         self.recordUid = record_uid
-        self.configurationUid = configuration_uid
+        self.configurationUid = configuration_uid,
+        self.pwdComplexity = pwd_complexity
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
