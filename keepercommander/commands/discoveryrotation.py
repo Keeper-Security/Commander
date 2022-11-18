@@ -203,7 +203,10 @@ class PAMCreateRecordRotationCommand(Command):
             print(f'{bcolors.WARNING}Only one type of the schedule is allowed, JSON or Cron.{bcolors.ENDC}')
             return
 
-        schedule_data = json.dumps(schedule_json_data) if schedule_json_data else json.dumps(schedule_cron_data)
+        if schedule_json_data:
+            schedule_data = [json.loads(x) for x in schedule_json_data]
+        else:
+            schedule_data = schedule_cron_data
 
         # 2. Load password complexity rules
         if not rule_string:
@@ -230,7 +233,7 @@ class PAMCreateRecordRotationCommand(Command):
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
-        rq.schedule = schedule_data
+        rq.schedule = json.dumps(schedule_data)
         rq.pwdComplexity = rule_list_json_str
         rq.scriptName = script_name if script_name else ''
 
