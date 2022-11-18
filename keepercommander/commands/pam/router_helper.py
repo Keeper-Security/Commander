@@ -7,6 +7,7 @@ from keepercommander.commands.base import dump_report_data
 from keepercommander.commands.pam import gateway_helper
 from keepercommander.commands.pam.pam_dto import GatewayAction
 from keepercommander.display import bcolors
+from keepercommander.error import KeeperApiError
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
     PAMOnlineControllers, PAMRotationSchedulesResponse
 from keepercommander.utils import base64_url_decode, string_to_bytes
@@ -83,6 +84,8 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
 
         rs_body = rs.content
         return rs_body
+    else:
+        raise KeeperApiError(rs.status_code, rs.text)
 
 
 def router_send_action_to_gateway(params, gateway_action: GatewayAction):
