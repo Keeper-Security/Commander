@@ -250,6 +250,8 @@ class PAMCreateRecordRotationCommand(Command):
 
 class PAMListRecordRotationCommand(Command):
     pam_list_record_rotation = argparse.ArgumentParser(prog='pam-list-record-rotation-schedulers')
+    pam_list_record_rotation.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose',
+                                          action='store_true', help='Verbose output')
     pam_list_record_rotation.error = raise_parse_exception
     pam_list_record_rotation.exit = suppress_exit
 
@@ -258,11 +260,18 @@ class PAMListRecordRotationCommand(Command):
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
 
+        is_verbose = kwargs.get('is_verbose')
+
         rq = PAMGenericUidsRequest()
 
         schedules_proto = router_get_rotation_schedules(params, rq)
         schedules = list(schedules_proto.schedules)
 
+        enterprise_all_controllers = list(gateway_helper.get_all_gateways(params))
+        enterprise_controllers_connected_resp = router_get_connected_gateways(params)
+        enterprise_controllers_connected = list(enterprise_controllers_connected_resp.controllers)
+
+        all_configs = list(config_get_all(params).configurations)
         table = []
 
         headers = []
@@ -271,10 +280,25 @@ class PAMListRecordRotationCommand(Command):
         headers.append('Record Type')
         headers.append('Schedule')
 
+        headers.append('Gateway')
+        if is_verbose:
+            headers.append('Gateway UID')
+
+        headers.append('Configuration (Type)')
+        if is_verbose:
+            headers.append('Configuration UID')
+
         for s in schedules:
             row = []
 
             record_uid = CommonHelperMethods.bytes_to_url_safe_str(s.recordUid)
+            controller_uid = s.controllerUid
+            controller_details = next((ctr for ctr in enterprise_all_controllers if ctr.controllerUid == controller_uid), None)
+            configuration_uid = s.configurationUid
+            configuration = next((conf for conf in all_configs if conf.configurationUid == configuration_uid), None)
+            configuration_data = json.loads(configuration.data)
+
+            is_controller_online = next((poc for poc in enterprise_controllers_connected if poc.controllerUid == controller_uid), False)
 
             row_color = ''
             if record_uid in params.record_cache:
@@ -292,20 +316,44 @@ class PAMListRecordRotationCommand(Command):
                 record_title = '[no access to record]'
                 record_type = ''
 
-
             row.append(f'{row_color}{record_uid}')
             row.append(record_title)
             row.append(record_type)
 
             if s.noSchedule is True:
                 # Per Sergey A:
-                # > noSchedult=true means manual
+                # > noSchedule=true means manual
                 # > false is by default in proto and matches the default state for most records (would have a schedule)
                 schedule_str = '[Manual Rotation]'
             else:
-                schedule_str = s.scheduleData if s.scheduleData else '[empty]'
+                if s.scheduleData:
+                    schedule_arr = s.scheduleData.replace('RotateActionJob|', '').split('.')
+                    if len(schedule_arr) == 4:
+                        schedule_str = f'{schedule_arr[0]} on {schedule_arr[1]} at {schedule_arr[2]} UTC with interval count of {schedule_arr[3]}'
+                    elif len(schedule_arr) == 3:
+                        schedule_str = f'{schedule_arr[0]} at {schedule_arr[1]} UTC with interval count of {schedule_arr[2]}'
+                    else:
+                        schedule_str = s.scheduleData
+                else:
+                    schedule_str = f'{bcolors.FAIL}[empty]'
 
-            row.append(f'{schedule_str}{bcolors.ENDC}')
+            row.append(f'{schedule_str}')
+
+            controller_color = bcolors.WHITE
+            if is_controller_online:
+                controller_color = bcolors.OKGREEN
+
+            if controller_details:
+                row.append(f'{controller_color}{controller_details.controllerName}{bcolors.ENDC}')
+            else:
+                row.append(f'{controller_color}[Does not exist]{bcolors.ENDC}')
+
+            if is_verbose:
+                row.append(f'{controller_color}{base64_url_encode(controller_uid)}{bcolors.ENDC}')
+
+            row.append(f"{json.loads(configuration.data).get('name')} ({json.loads(configuration.data).get('configType')})")
+            if is_verbose:
+                row.append(f'{base64_url_encode(configuration_uid)}{bcolors.ENDC}')
 
             table.append(row)
 
