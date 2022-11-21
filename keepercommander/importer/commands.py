@@ -15,10 +15,11 @@ import json
 import getpass
 import logging
 import os
-from typing import Optional, List
+from typing import Optional, List, Union, Iterable
 
 from . import imp_exp
 from .importer import BaseFileImporter, SharedFolder, Permission, PathDelimiter, replace_email_domain
+from .thycotic import thycotic
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from .lastpass import fetcher
 from .lastpass.vault import Vault
@@ -88,7 +89,7 @@ export_parser.exit = suppress_exit
 
 
 download_membership_parser = argparse.ArgumentParser(prog='download-membership', description='Unload shared folder membership to JSON file.')
-download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass'], required=True, help='Shared folder membership source')
+download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass', 'thycotic'], required=True, help='Shared folder membership source')
 download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 download_membership_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='force shared folder permissions: manage (U)sers, manage (R)ecords')
 download_membership_parser.add_argument('-r', '--restrictions', dest='restrictions', action='store', help='force shared folder restrictions: manage (U)sers, manage (R)ecords')
@@ -404,6 +405,9 @@ class DownloadMembershipCommand(Command):
                 if session:
                     fetcher.logout(session)
 
+        elif source == 'thycotic':
+            added_members.extend(DownloadMembershipCommand.get_thycotic_membership())
+
         if added_members:
             shared_folders.extend(added_members)
             json_exporter = KeeperJsonExporter()
@@ -425,6 +429,136 @@ class DownloadMembershipCommand(Command):
         manage_users = lp_permission['can_administer'] == '1'
         permission.manage_users = (manage_users or permit['manage_users']) and not restrict['manage_users']
         return permission
+
+    @staticmethod
+    def request_totp():
+        return input('...' + 'Enter TOTP Code'.rjust(30) + ': ')
+
+    @staticmethod
+    def get_thycotic_membership():    # type: () -> Iterable[Union[SharedFolder]]
+        url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
+        if not url:
+            logging.warning('Thycotic Host or URL is required')
+            return
+        if not url.startswith('https://'):
+            url = f'https://{url}/SecretServer'
+        username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
+        if not username:
+            logging.warning('Thycotic username is required')
+            return
+        password = getpass.getpass(prompt='...' + 'Thycotic Password'.rjust(30) + ': ', stream=None)
+        if not password:
+            logging.warning('Thycotic password is required')
+            return
+
+        auth = thycotic.ThycoticAuth(url)
+        auth.authenticate(username, password, on_totp=DownloadMembershipCommand.request_totp)
+
+        user_rs = auth.thycotic_search('/v1/users')
+        users = {x['id']: {
+            'emailAddress': x.get('emailAddress', ''),
+            'userName': x.get('userName', ''),
+        } for x in user_rs}
+
+        group_rs = auth.thycotic_search('/v1/groups/lookup')
+        for group in group_rs:
+            group_id = group['id']
+            group_name = group.pop('value', None)
+            if group_name:
+                group['name'] = group_name
+            members = auth.thycotic_search(f'/v1/groups/{group_id}/users')
+            group['members'] = [x['userId'] for x in members]
+        groups = {x['id']: x for x in group_rs}
+
+        folder_rs = auth.thycotic_search('/v1/folders?filter.onlyIncludeRootFolders=true')
+        pos = 0
+        while pos < len(folder_rs):
+            folder = folder_rs[pos]
+            pos += 1
+            folder_id = folder['id']
+            fs = auth.thycotic_search(f'/v1/folders?filter.parentFolderId={folder_id}')
+            folder_rs.extend(fs)
+        folders = {x['id']: {
+            'folderName': x['folderName'],
+            'folderPath': x['folderPath'],
+            'parentFolderId': x['parentFolderId'],
+        } for x in folder_rs}
+
+        personal_name = folders[1]['folderName'] if 1 in folders else ''
+        for folder in folders.values():
+            path = folder['folderPath']   # type: str
+            path = path.strip('\\')
+            if personal_name and path.startswith(personal_name):
+                path = path[len(personal_name):]
+                path = path.strip('\\')
+            folder['folderPath'] = path
+
+        for folder_id in folders:
+            folder = folders[folder_id]
+            if folder_id > 1:
+                permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+                folder['permissions'] = [x for x in permissions if x['secretAccessRoleName'] != 'Owner' or x['folderAccessRoleName'] != 'Owner']
+            else:
+                folder['permissions'] = []
+
+        # remove permissions from Shared Folder Folders
+        user_folders = []
+        shared_folders = set()
+        for folder_id, folder in folders.items():
+            parent_folder_id = folder.get('parentFolderId', -1)
+            if parent_folder_id > 0:
+                continue
+            permissions = folder.get('permissions', [])
+            if len(permissions) == 0:
+                user_folders.append(folder_id)
+            else:
+                shared_folders.add(folder_id)
+
+        pos = 0
+        while pos < len(user_folders):
+            parent_folder_id = user_folders[pos]
+            pos += 1
+            for folder_id, folder in folders.items():
+                if folder['parentFolderId'] != parent_folder_id:
+                    continue
+                permissions = folder.get('permissions', [])
+                if len(permissions) == 0:
+                    user_folders.append(folder_id)
+                else:
+                    shared_folders.add(folder_id)
+        for folder_id in shared_folders:
+            folder = folders[folder_id]
+            shared_folder = SharedFolder()
+            shared_folder.path = folder['folderPath']
+            shared_folder.permissions = []
+            for p in folder.get('permissions', []):
+                folder_permission = p.get('folderAccessRoleName')
+                manage_users = folder_permission in ('Owner', 'Edit')
+                secret_permission = p.get('secretAccessRoleName')
+                manage_records = secret_permission in ('Owner', 'Edit') or folder_permission == 'Add Secret'
+
+                user_id = p.get('userId', -1)
+                if user_id in users:
+                    user = users[user_id]
+                    email = user.get('emailAddress')
+                    if email:
+                        perm = Permission()
+                        perm.name = email
+                        perm.manage_users = manage_users
+                        perm.manage_records = manage_records
+                        shared_folder.permissions.append(perm)
+                else:
+                    group_id = p.get('groupId', -1)
+                    if group_id in groups:
+                        group = groups[group_id]
+                        team_name = group.get('name')
+                        if team_name:
+                            perm = Permission()
+                            perm.name = team_name
+                            perm.manage_users = manage_users
+                            perm.manage_records = manage_records
+                            shared_folder.permissions.append(perm)
+            yield shared_folder
 
 
 class ApplyMembershipCommand(Command):

@@ -128,16 +128,17 @@ class ThycoticImporter(BaseImporter):
             users = []
 
         try:
-            groups = auth.thycotic_search('/v1/groups/lookup')
-            for group in groups:
+            group_rs = auth.thycotic_search('/v1/groups/lookup')
+            for group in group_rs:
                 group_id = group['id']
                 group_name = group.pop('value', None)
                 if group_name:
                     group['name'] = group_name
                 members = auth.thycotic_search(f'/v1/groups/{group_id}/users')
                 group['members'] = [x['userId'] for x in members]
+            groups = {x['id']: x for x in group_rs}
         except:
-            groups = []
+            groups = {}
 
         folder_rs = auth.thycotic_search('/v1/folders?filter.onlyIncludeRootFolders=true')
         pos = 0
