@@ -266,8 +266,11 @@ class ThycoticImporter(BaseImporter):
                     if attachment_id:
                         with auth.thycotic_raw(endpoint) as rs:
                             if rs.status_code == 200:
-                                key_text = rs.text
-                                is_key = 0 < len(key_text) < 5000
+                                try:
+                                    key_text = rs.content.decode()
+                                except:
+                                    key_text = ''
+                                is_key = 30 < len(key_text) < 5000
                                 if is_key:
                                     item['itemValue'] = key_text
                                 else:
