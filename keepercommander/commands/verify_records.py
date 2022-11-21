@@ -256,10 +256,11 @@ class VerifyRecordsCommand(Command):
                             if 'cardExpirationDate' in card:
                                 exp = card['cardExpirationDate']
                                 if isinstance(exp, str):
-                                    month, sep, year = exp.partition('/')
-                                    if not month.isnumeric() or not year.isnumeric():
-                                        is_broken = True
-                                        card['cardExpirationDate'] = ""
+                                    if exp:
+                                        month, sep, year = exp.partition('/')
+                                        if not month.isnumeric() or not year.isnumeric():
+                                            is_broken = True
+                                            card['cardExpirationDate'] = ""
                                 else:
                                     is_broken = True
                                     card['cardExpirationDate'] = ""

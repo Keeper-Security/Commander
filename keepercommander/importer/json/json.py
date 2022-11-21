@@ -190,9 +190,10 @@ class KeeperJsonExporter(BaseExporter):
         sfs = []
         for sf in shared_folders:
             sfo = {
-                'uid': sf.uid,
                 'path': sf.path,
             }
+            if sf.uid:
+                sfo['uid'] = sf.uid
             if sf.manage_users is not None:
                 sfo['manage_users'] = sf.manage_users
             if sf.manage_records is not None:
