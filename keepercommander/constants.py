@@ -18,13 +18,14 @@ MSP_PLANS = [
 ]
 
 MSP_ADDONS = [
-    ('enterprise_breach_watch', 'BreachWatch', False),
-    ('compliance_report', 'Compliance Reporting', False),
-    ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False),
-    ('msp_service_and_support', 'MSP Dedicated Service & Support', False),
-    ('secrets_manager', 'Keeper Secrets Manager (KSM)', False),
-    ('connection_manager', 'Keeper Connection Manager (KCM)', True),
-    ('chat', 'KeeperChat', False),
+    ('enterprise_breach_watch', 'BreachWatch', False, 'BreachWatch'),
+    ('compliance_report', 'Compliance Reporting', False, 'Compliance'),
+    ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False, 'ARAM'),
+    ('onboarding_and_certificate', 'Dedicated Service & Support', False, 'Support'),
+    ('msp_service_and_support', 'MSP Dedicated Service & Support', False, 'MSP Support'),
+    ('secrets_manager', 'Keeper Secrets Manager (KSM)', False, 'Secrets Manager'),
+    ('connection_manager', 'Keeper Connection Manager (KCM)', True, 'Connection Manager'),
+    ('chat', 'KeeperChat', False, 'Chat'),
 ]
 
 
@@ -33,8 +34,8 @@ class PrivilegeScope(enum.IntEnum):
     MSP = 2,
     Hidden = 3,
 
-# Managed Role privileges
 
+# Managed Role privileges
 ROLE_PRIVILEGES = [
     ('Manage Nodes', 'MANAGE_NODES', PrivilegeScope.All),
     ('Manage Users', 'MANAGE_USER', PrivilegeScope.All),

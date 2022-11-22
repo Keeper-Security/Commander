@@ -95,16 +95,14 @@ def is_executing_as_msp_admin():
 
 
 def check_if_running_as_mc(params, args):
-    has_mc_id_regex = "--mc?\\s\\d+"
+    has_mc_id_regex = r"--mc[\s=](\d+)"
 
     global msp_params
 
-    if "--mc" in args:                                   # Impersonating as Managed Company (MC)
-
-        mc_id = -9
+    m = re.search(has_mc_id_regex, args)
+    if m is not None:                                   # Impersonating as Managed Company (MC)
         try:
-            mc_id = re.search(has_mc_id_regex, args).group(0)  # get id of the MC from args
-            mc_id = int(mc_id.split()[1])                      # get just the ID
+            mc_id = int(m.group(1))  # get id of the MC from args
         except AttributeError:
             logging.error("No Managed company provided")  # apply your error handling
             raise

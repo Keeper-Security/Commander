@@ -159,6 +159,8 @@ class _EnterpriseLoader(object):
             if not self._enterprise.enterprise_name and rs.generalData:
                 self._enterprise._enterprise_name = rs.generalData.enterpriseName
                 params.enterprise['enterprise_name'] = self._enterprise.enterprise_name
+                if rs.generalData.distributor:
+                    params.enterprise['distributor'] = True
 
             for ed in rs.data:
                 entities.add(ed.entity)
@@ -558,6 +560,18 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
                 'created': x.created,
                 'expiration': x.expiration,
             } for x in proto_entity.addOns])
+        _set_or_remove(keeper_entity, 'msp_permits', {
+            'restricted': proto_entity.mspPermits.restricted,
+            'allow_unlimited_licenses': proto_entity.mspPermits.allowUnlimitedLicenses,
+            'allowed_mc_products': [x for x in proto_entity.mspPermits.allowedMcProducts],
+            'allowed_add_ons': [x for x in proto_entity.mspPermits.allowedAddOns],
+            'max_file_plan_type': proto_entity.mspPermits.maxFilePlanType,
+            'mc_defaults': [{
+                'mc_product': x.mcProduct,
+                'add_ons': [a for a in x.addOns],
+                'file_plan_type': x.filePlanType,
+            } for x in proto_entity.mspPermits.mcDefaults]
+        })
         _set_or_remove(keeper_entity, 'next_billing_date',
                        proto_entity.nextBillingDate if proto_entity.nextBillingDate > 0 else None)
 
