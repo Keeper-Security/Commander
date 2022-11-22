@@ -525,7 +525,7 @@ class RecordEditMixin:
     @staticmethod
     def resolve_folder(params, folder_name):    # type: (KeeperParams, str) -> Optional[str]
         if not folder_name:
-            return
+            return params.current_folder
 
         if folder_name in params.folder_cache:
             return folder_name
@@ -549,6 +549,10 @@ class RecordAddCommand(Command, RecordEditMixin):
         if kwargs.get('syntax_help') is True:
             print(record_fields_description)
             return
+
+        folder_uid = self.resolve_folder(params, kwargs.get('folder'))
+
+
         self.warnings.clear()
         title = kwargs.get('title')
         if not title:
@@ -617,11 +621,6 @@ class RecordAddCommand(Command, RecordEditMixin):
                     logging.warning(warning)
                 if not ignore_warnings:
                     return
-
-        folder_uid = None
-        folder_name = kwargs.get('folder')
-        if folder_name:
-            folder_uid = self.resolve_folder(params, folder_name)
 
         record_management.add_record_to_folder(params, record, folder_uid)
 

@@ -8,7 +8,7 @@ import pytest
 
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
-from keepercommander import cli, api
+from keepercommander import cli, api, vault
 from keepercommander.subfolder import BaseFolderNode
 from keepercommander.commands import recordv3
 
@@ -83,17 +83,19 @@ class TestConnectedCommands(TestCase):
 
     def test_commands(self):
         params = TestConnectedCommands.params # type: KeeperParams
-        with mock.patch('builtins.input', side_effect = KeyboardInterrupt()), mock.patch('builtins.print'):
-            record_uid = cli.do_command(params, 'add  --legacy --login="user@keepersecurity.com" --pass=password --url="https://keepersecurity.com/" --custom="{\\"cmdr:plugin\\":\\"noop\\"}" --title="Record 1"')
+        with mock.patch('builtins.input', side_effect=KeyboardInterrupt()), mock.patch('builtins.print'):
+            record_uid = cli.do_command(params,
+                'record-add --title="Record 1" --record-type=legacy login=user@keepersecurity.com password=$GEN url=https://keepersecurity.com/ cmdr:plugin=noop')
             cli.do_command(params, 'sync-down')
 
-            rec = api.get_record(params, record_uid)
-
-            self.assertEqual(rec.get('cmdr:plugin'), 'noop')
+            rec = vault.KeeperRecord.load(params, record_uid)
+            self.assertIsInstance(rec, vault.PasswordRecord)
+            self.assertEqual(rec.get_custom_value('cmdr:plugin'), 'noop')
             old_password = rec.password
             cli.do_command(params, 'rotate -- {0}'.format(rec.record_uid))
             cli.do_command(params, 'sync-down')
-            rec = api.get_record(params, record_uid)
+            rec = vault.KeeperRecord.load(params, record_uid)
+            self.assertIsInstance(rec, vault.PasswordRecord)
             self.assertNotEqual(old_password, rec.password)
 
             cli.do_command(params, 'ls -l')
@@ -132,9 +134,11 @@ class TestConnectedCommands(TestCase):
                     os.remove(f.name)
             cli.do_command(params, 'sync-down')
 
-            rec = api.get_record(params, record_uid)
+            rec = vault.KeeperRecord.load(params, record_uid)
+            self.assertIsInstance(rec, vault.PasswordRecord)
+            self.assertIsNotNone(rec.attachments)
             self.assertEqual(len(rec.attachments), 1)
-            cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(rec.attachments[0]['id'], record_uid))
+            cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(rec.attachments[0].id, record_uid))
             cli.do_command(params, 'sync-down')
             rec = api.get_record(params, record_uid)
             self.assertEqual(len(rec.attachments), 0)
@@ -209,4 +213,3 @@ class TestConnectedCommands(TestCase):
             report_json = record_types.execute(params, record_name=type_name, format='json')
             report = json.loads(report_json)
             self.assertTrue(isinstance(report, list))
-
