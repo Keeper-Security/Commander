@@ -152,12 +152,12 @@ class AttachmentFileThumb:
 
 class AttachmentFile(object):
     def __init__(self, file_field=None):  # type: (Optional[dict]) -> None
-        self.id = file_field.get('id', '')
-        self.key = file_field.get('key', '')
-        self.name = file_field.get('name', '')
-        self.title = file_field.get('title', '')
-        self.mime_type = file_field.get('type', '')
-        self.size = file_field.get('size', 0)
+        self.id = file_field.get('id', '') if file_field else ''
+        self.key = file_field.get('key', '') if file_field else ''
+        self.name = file_field.get('name', '') if file_field else ''
+        self.title = file_field.get('title', '') if file_field else ''
+        self.mime_type = file_field.get('type', '') if file_field else ''
+        self.size = file_field.get('size', 0) if file_field else 0
         self.last_modified = file_field.get('lastModified', 0) if file_field else 0  # type: int
         self.thumbnails = []                                                         # type: List[AttachmentFileThumb]
         if file_field and 'thumbnails' in file_field:
@@ -184,9 +184,9 @@ class PasswordRecord(KeeperRecord):
         self.password = ''
         self.link = ''
         self.notes = ''
-        self.custom = []  # type: List[CustomField]
+        self.custom = []         # type: List[CustomField]
         self.attachments = None  # type: Optional[List[AttachmentFile]]
-        self.totp = ''           # type: str
+        self.totp = ''
 
     def get_version(self):  # type: () -> int
         return 2
@@ -234,6 +234,7 @@ class TypedField(object):
         self.type = (typed_field.get('type') or '').strip()
         self.label = (typed_field.get('label') or '').strip()
         self.value = typed_field.get('value', [])
+        self.required = typed_field.get('required', False)
 
     @classmethod
     def new_field(cls, field_type, field_value, field_label=None):
@@ -373,8 +374,9 @@ class TypedRecord(KeeperRecord):
         super(TypedRecord, self).__init__()
         self.type_name = ''
         self.notes = ''
-        self.fields = []     # type: List[TypedField]
-        self.custom = []     # type: List[TypedField]
+        self.fields = []         # type: List[TypedField]
+        self.custom = []         # type: List[TypedField]
+        self.linked_keys = None  # type: Optional[Dict[str, bytes]]
 
     def get_version(self):  # type: () -> int
         return 3

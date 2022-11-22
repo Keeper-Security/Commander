@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import enum
 import json
 import logging
 from typing import Optional, Union
@@ -19,8 +20,8 @@ from .params import KeeperParams
 from .proto import record_pb2
 
 
-def add_record_to_folder(params, record, folder_uid=None, **kwargs):
-    # type: (KeeperParams, vault.KeeperRecord, Optional[str], ...) -> None
+def add_record_to_folder(params, record, folder_uid=None):
+    # type: (KeeperParams, vault.KeeperRecord, Optional[str]) -> None
     if not record.record_uid:
         record.record_uid = utils.generate_uid()
     if not record.record_key:
@@ -36,6 +37,7 @@ def add_record_to_folder(params, record, folder_uid=None, **kwargs):
     if isinstance(record, vault.PasswordRecord):
         rq = {
             'command': 'record_add',
+            'record_uid': record.record_uid,
             'record_key': utils.base64_url_encode(
                 crypto.encrypt_aes_v1(record.record_key, params.data_key)),
             'record_type': 'password',
@@ -57,14 +59,15 @@ def add_record_to_folder(params, record, folder_uid=None, **kwargs):
                 if atta.thumbnails:
                     for thumb in atta.thumbnails:
                         file_ids.append(thumb.id)
-        rq['udata'] = {
-            'file_ids': file_ids
-        }
+        rq['file_ids'] = file_ids
 
         rs = api.communicate(params, rq)
-
         record.revision = rs.get('revision', 0)
         add_record_audit_data(params, record)
+        if record.attachments:
+            for atta in record.attachments:
+                params.queue_audit_event(
+                    'file_attachment_uploaded', record_uid=record.record_uid, attachment_id=atta.id)
 
     elif isinstance(record, vault.TypedRecord):
         add_record = record_pb2.RecordAdd()
@@ -87,11 +90,18 @@ def add_record_to_folder(params, record, folder_uid=None, **kwargs):
 
         refs = vault_extensions.extract_typed_record_refs(record)
         for ref in refs:
-            ref_record = vault.KeeperRecord.load(params, ref)
-            if ref_record:
+            ref_record_key = None    # type: Optional[bytes]
+            if record.linked_keys:
+                ref_record_key = record.linked_keys.get(ref)
+            if not ref_record_key:
+                ref_record = vault.KeeperRecord.load(params, ref)
+                if ref_record:
+                    ref_record_key = ref_record.record_key
+
+            if ref_record_key:
                 link = record_pb2.RecordLink()
-                link.record_uid = utils.base64_url_decode(ref_record.record_uid)
-                link.record_key = crypto.encrypt_aes_v2(ref_record.record_key, record.record_key)
+                link.record_uid = utils.base64_url_decode(ref)
+                link.record_key = crypto.encrypt_aes_v2(ref_record_key, record.record_key)
                 add_record.record_links.append(link)
 
         if params.enterprise_ec_key:
@@ -110,20 +120,82 @@ def add_record_to_folder(params, record, folder_uid=None, **kwargs):
             if record_rs.status != record_pb2.RS_SUCCESS:
                 raise KeeperApiError(record_rs.status, rs.message)
         record.revision = rs.revision
+        if record.linked_keys:
+            for file_uid in record.linked_keys:
+                params.queue_audit_event(
+                    'file_attachment_uploaded', record_uid=record.record_uid, attachment_id=file_uid)
     else:
         raise ValueError('Unsupported Keeper record')
 
 
-def update_record(params, record, skip_extra=False, **kwargs):
-    # type: (KeeperParams, vault.KeeperRecord, bool, ...) -> None
+class RecordChangeStatus(enum.Flag):
+    Title = enum.auto()
+    RecordType = enum.auto()
+    Username = enum.auto()
+    Password = enum.auto()
+    URL = enum.auto()
+
+
+def compare_records(record1, record2):
+    # type: (vault.KeeperRecord, vault.KeeperRecord) -> RecordChangeStatus
+    status = RecordChangeStatus(0)
+
+    if record1.title != record2.title:
+        status = status | RecordChangeStatus.Title
+    if isinstance(record1, vault.PasswordRecord) and isinstance(record2, vault.PasswordRecord):
+        if record1.login != record2.login:
+            status = status | RecordChangeStatus.Username
+        if record1.password != record2.password:
+            status = status | RecordChangeStatus.Password
+        if record1.link != record2.link:
+            status = status | RecordChangeStatus.URL
+    elif isinstance(record1, vault.TypedRecord) and isinstance(record2, vault.TypedRecord):
+        if record1.record_type != record2.record_type:
+            status = status | RecordChangeStatus.RecordType
+
+        r_login = record1.get_typed_field('login') or record1.get_typed_field('email')
+        e_login = record2.get_typed_field('login') or record2.get_typed_field('email')
+        if r_login or e_login:
+            if r_login and e_login:
+                if r_login.get_external_value() or '' != e_login.get_external_value() or '':
+                    status = status | RecordChangeStatus.Password
+            else:
+                status = status | RecordChangeStatus.Username
+
+        r_password = record1.get_typed_field('password')
+        e_password = record2.get_typed_field('password')
+        if r_password or e_password:
+            if r_password and e_password:
+                if r_password.get_external_value() or '' != e_password.get_external_value() or '':
+                    status = status | RecordChangeStatus.Password
+            else:
+                status = status | RecordChangeStatus.Password
+
+        r_url = record1.get_typed_field('url')
+        e_url = record2.get_typed_field('url')
+        if r_url or e_url:
+            if r_url and e_url:
+                if r_url.get_external_value() or '' != e_url.get_external_value() or '':
+                    status = status | RecordChangeStatus.URL
+            else:
+                status = status | RecordChangeStatus.URL
+
+    return status
+
+
+def update_record(params, record, skip_extra=False):
+    # type: (KeeperParams, vault.KeeperRecord, bool) -> None
     storage_record = params.record_cache.get(record.record_uid)
     if not storage_record:
         raise Exception(f'Record Update: {record.record_uid} not found.')
 
     existing_record = vault.KeeperRecord.load(params, storage_record)
-    assert(isinstance(record, type(existing_record)))
+    if type(existing_record) != type(record):
+        raise Exception(f'Record {record.record_uid}: Invalid record type.')
 
-    if isinstance(record, vault.PasswordRecord):
+    record_change_status = compare_records(record, existing_record)
+
+    if isinstance(record, vault.PasswordRecord) and isinstance(existing_record, vault.PasswordRecord):
         record_object = {
             'record_uid': record.record_uid,
             'version': 2,
@@ -147,8 +219,9 @@ def update_record(params, record, skip_extra=False, **kwargs):
                 logging.warning('Decrypt record %s extra error: %s', record.record_uid, e)
 
             extra = vault_extensions.extract_password_record_extras(record, existing_extra)
+            extra_str = json.dumps(extra)
             record_object['extra'] = utils.base64_url_encode(
-                crypto.encrypt_aes_v1(json.dumps(extra).encode(), record.record_key))
+                crypto.encrypt_aes_v1(extra_str.encode('utf-8'), record.record_key))
 
             if 'udata' in storage_record:
                 u = storage_record['udata']
@@ -185,8 +258,16 @@ def update_record(params, record, skip_extra=False, **kwargs):
 
         record.revision = rs.get('revision', record.revision)
         add_record_audit_data(params, record)
+        prev_file_refs = set((x.id for x in existing_record.attachments or []))
+        new_file_refs = set((x.id for x in record.attachments or []))
+        for file_id in new_file_refs.difference(prev_file_refs):
+            params.queue_audit_event(
+                'file_attachment_uploaded', record_uid=record.record_uid, attachment_id=file_id)
+        for file_id in prev_file_refs.difference(new_file_refs):
+            params.queue_audit_event(
+                'file_attachment_deleted', record_uid=record.record_uid, attachment_id=file_id)
 
-    elif isinstance(record, vault.TypedRecord):
+    elif isinstance(record, vault.TypedRecord) and isinstance(existing_record, vault.TypedRecord):
         record_uid_bytes = utils.base64_url_decode(record.record_uid)
         ru = record_pb2.RecordUpdate()
         ru.record_uid = record_uid_bytes
@@ -197,16 +278,21 @@ def update_record(params, record, skip_extra=False, **kwargs):
         json_data = api.get_record_data_json_bytes(data)
         ru.data = crypto.encrypt_aes_v2(json_data, record.record_key)
 
-        existing_refs = vault_extensions.extract_typed_record_refs(existing_record) if isinstance(existing_record, vault.TypedRecord) else None
-
+        existing_refs = vault_extensions.extract_typed_record_refs(existing_record)
         refs = vault_extensions.extract_typed_record_refs(record)
         for ref in refs.difference(existing_refs):
-            ref_record = vault.KeeperRecord.load(params, ref)
-            if ref_record:
+            ref_record_key = None
+            if record.linked_keys and ref in record.linked_keys:
+                ref_record_key = record.linked_keys[ref]
+            if not ref_record_key:
+                ref_record = vault.KeeperRecord.load(params, ref)
+                if ref_record:
+                    ref_record_key = ref_record.record_key
+            if ref_record_key:
                 link = record_pb2.RecordLink()
                 link.record_uid = utils.base64_url_decode(ref)
-                link.record_key = crypto.encrypt_aes_v2(ref_record.record_key, record.record_key)
-                ru.record_links.append(link)
+                link.record_key = crypto.encrypt_aes_v2(ref_record_key, record.record_key)
+                ru.record_links_add.append(link)
         for ref in existing_refs.difference(refs):
             ru.record_links_remove(utils.base64_url_decode(ref))
 
@@ -226,30 +312,17 @@ def update_record(params, record, skip_extra=False, **kwargs):
         if rs_status and rs_status.status != record_pb2.RS_SUCCESS:
             raise KeeperApiError(record_pb2.RecordModifyResult.keys()[rs_status.status], rs_status.message)
         record.revision = rs.revision
+        for file_id in refs.difference(existing_refs):
+            params.queue_audit_event(
+                'file_attachment_uploaded', record_uid=record.record_uid, attachment_id=file_id)
+        for file_id in existing_refs.difference(refs):
+            params.queue_audit_event(
+                'file_attachment_deleted', record_uid=record.record_uid, attachment_id=file_id)
     else:
         raise ValueError('Unsupported Keeper record')
 
-    if params.enterprise_ec_key:
-        rq = {
-            'command': 'audit_event_client_logging',
-            'item_logs': []
-        }
-        is_password_changed = False
-        if isinstance(record, vault.PasswordRecord) and isinstance(existing_record, vault.PasswordRecord):
-            is_password_changed = record.password != existing_record.password
-        elif isinstance(record, vault.TypedRecord) and isinstance(existing_record, vault.TypedRecord):
-            password_field = record.get_typed_field('password')
-            existing_password_field = existing_record.get_typed_field('password')
-            if password_field and existing_password_field:
-                is_password_changed = password_field.get_default_value(str) != existing_password_field.get_default_value(str)
-        if is_password_changed:
-            rq['item_logs'].append({
-                'audit_event_type': 'record_password_change',
-                'inputs': {'record_uid': record.record_uid}
-            })
-
-        if len(rq['item_logs']) > 0:
-            api.communicate(params, rq)
+    if bool(record_change_status & RecordChangeStatus.Password):
+        params.queue_audit_event('record_password_change', record_uid=record.record_uid)
 
 
 def add_record_audit_data(params, record):   # type: (KeeperParams, vault.KeeperRecord) -> None
