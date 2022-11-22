@@ -118,12 +118,12 @@ bankAccount       Bank Account           object         {"accountType": "", "rou
                                                         Checking: 123456789 987654321
 privateKey        Key Pair               object         {"publicKey": "", "privateKey": ""}
 oneTimeCode       TOTP URL               string         otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&issuer=Keeper
-note              Multiline text         string         Masked multiline text
+note              Masked multiline text  string         
 multiline         Multiline text         string         
-secret            Contains secret        string         Masked in UI
+secret            Masked text            string         
 login             Login                  string                                         
 email             Email                  string         'name@company.com'                                
-password          Password               string         Masked in UI
+password          Password               string         
 url               URL                    string         https://google.com/
 text              Free form text         string         This field type generally has a label
 
@@ -177,7 +177,7 @@ class RecordEditMixin:
                 pass
             elif field_type not in record_types.RecordFields:
                 field_label = field_type
-                field_type = 'text'
+                field_type = ''
         return ParsedFieldValue(field_section, field_type, field_label, value)
 
     def assign_legacy_fields(self, record, fields):
@@ -332,7 +332,7 @@ class RecordEditMixin:
             parsed_field = parsed_fields.popleft()
             field_type = parsed_field.type or ''
             field_label = parsed_field.label or ''
-            if parsed_field.type not in record_types.RecordFields:
+            if parsed_field.type and parsed_field.type not in record_types.RecordFields:
                 if not field_label:
                     field_label = field_type
                     field_type = 'text'
@@ -343,7 +343,7 @@ class RecordEditMixin:
             record_field = None    # type: Optional[vault.TypedField]
             is_field = False
             if parsed_field.section == 'f':   # ignore label
-                fs = [x for x in record.fields if x.type == record_types and isinstance(x, vault.TypedField)]
+                fs = [x for x in record.fields if x.type == field_type and isinstance(x, vault.TypedField)]
                 if len(fs) == 0:
                     self.on_warning(f'Field type \"{field_type}\" is not found for record type {record.record_type}')
                 elif len(fs) == 1:
@@ -360,17 +360,17 @@ class RecordEditMixin:
                 f_label = field_label.lower()
                 record_field = next(
                     (x for x in record.fields
-                     if (x.type or 'text') == parsed_field.type and (x.label or '').lower() == f_label), None)
+                     if (not parsed_field.type or x.type == parsed_field.type) and (x.label or '').lower() == f_label), None)
                 if record_field:
                     is_field = True
                 else:
                     record_field = next(
                         (x for x in record.custom
-                         if (x.type or 'text') == parsed_field.type and (x.label or '').lower() == f_label), None)
+                         if (not parsed_field.type or x.type == parsed_field.type) and (x.label or '').lower() == f_label), None)
                     if record_field is None:
                         if not parsed_field.value:
                             continue
-                        record_field = vault.TypedField.new_field(field_type, None, field_label)
+                        record_field = vault.TypedField.new_field(field_type or 'text', None, field_label)
                         record.custom.append(record_field)
             if not record_field:
                 continue
@@ -379,11 +379,11 @@ class RecordEditMixin:
                 value = None
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
-                    if field_type == 'password':
+                    if record_field.type == 'password':
                         value = self.generate_password()
-                    elif field_type == 'oneTimeCode':
+                    elif record_field.type == 'oneTimeCode':
                         value = self.generate_totp_url()
-                    elif field_type == 'keyPair':
+                    elif record_field.type == 'keyPair':
                         should_encrypt = 'enc' in action_params
                         passphrase = self.generate_password() if should_encrypt else None
                         key_type = next((x for x in action_params if x in ('rsa', 'ec', 'ed25519')), 'rsa')
@@ -391,12 +391,12 @@ class RecordEditMixin:
                         if passphrase:
                             parsed_fields.append(ParsedFieldValue('', 'password', 'passphrase', passphrase))
                     else:
-                        self.on_warning(f'Cannot generate a value for a \"{field_type}\" field.')
+                        self.on_warning(f'Cannot generate a value for a \"{record_field.type}\" field.')
                 elif self.is_json_value(parsed_field.value, action_params):
                     if len(action_params) > 0:
-                        value = self.validate_json_value(field_type, action_params[0])
+                        value = self.validate_json_value(record_field.type, action_params[0])
                 else:
-                    rf = record_types.RecordFields[field_type]
+                    rf = record_types.RecordFields[record_field.type]
                     ft = record_types.FieldTypes.get(rf.type)
                     if isinstance(ft.value, str):
                         value = parsed_field.value
@@ -444,7 +444,7 @@ class RecordEditMixin:
                         elif ft.name == 'privateKey':
                             value = BaseImporter.import_ssh_key_field(parsed_field.value)
                         else:
-                            self.on_warning(f'Unsupported field type: {field_type}')
+                            self.on_warning(f'Unsupported field type: {record_field.type}')
                 if value:
                     if isinstance(value, list):
                         record_field.value.clear()
