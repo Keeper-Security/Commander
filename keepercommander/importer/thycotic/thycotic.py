@@ -16,7 +16,9 @@ import getpass
 import json
 import logging
 import os
+import warnings
 from contextlib import contextmanager
+from urllib3.exceptions import InsecureRequestWarning
 
 import requests
 
@@ -548,6 +550,7 @@ class ThycoticAuth:
         self.expires_in = 0
         self.refresh_token = ''
         self.last_login = 0
+        warnings.simplefilter('ignore', InsecureRequestWarning)
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
         request_data = {
