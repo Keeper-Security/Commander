@@ -229,7 +229,7 @@ def extract_password_record_extras(record, existing_extra=None):
                     'field_title': ''
                 }
                 extra['fields'].append(totp_field)
-            totp_field['data'] = totp_field
+            totp_field['data'] = record.totp
         else:
             if totp_field:
                 extra['fields'].remove(totp_field)
@@ -293,11 +293,14 @@ def extract_typed_field(field):     # type: (vault.TypedField) -> dict
                         if key not in value:
                             value[key] = ''
                 field_values.append(value)
-    return {
+    result = {
         'type': field_type,
         'label': field.label or '',
         'value': field_values
     }
+    if field.required is True:
+        result['required'] = True
+    return result
 
 
 def extract_typed_record_data(record):      # type: (vault.TypedRecord) -> dict
@@ -320,7 +323,7 @@ def extract_typed_record_refs(record):  # type: (vault.TypedRecord) -> Set[str]
     for field in itertools.chain(record.fields, record.custom):
         if field.type in {'fileRef', 'addressRef', 'cardRef'}:
             if isinstance(field.value, list):
-                for ref in refs:
+                for ref in field.value:
                     if isinstance(ref, str):
                         refs.add(ref)
     return refs

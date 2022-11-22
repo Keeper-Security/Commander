@@ -25,6 +25,7 @@ from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
 from ..subfolder import try_resolve_path, get_folder_path, find_folders
 from ..team import Team
+from . import record_edit
 
 
 def register_commands(commands):
@@ -36,6 +37,8 @@ def register_commands(commands):
     commands['list-team'] = RecordListTeamCommand()
     commands['record-history'] = RecordHistoryCommand()
     commands['shared-records-report'] = SharedRecordsReport()
+    commands['record-add'] = record_edit.RecordAddCommand()
+    commands['record-update'] = record_edit.RecordUpdateCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -46,9 +49,12 @@ def register_command_info(aliases, command_info):
     aliases['lt'] = 'list-team'
     aliases['rh'] = 'record-history'
     aliases['srr'] = 'shared-records-report'
+    aliases['ra'] = 'record-add'
+    aliases['ru'] = 'record-update'
 
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
-              record_history_parser, shared_records_report_parser]:
+              record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
+              record_edit.record_update_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
 

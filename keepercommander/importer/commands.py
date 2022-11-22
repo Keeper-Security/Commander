@@ -11,18 +11,18 @@
 
 
 import argparse
-import json
 import getpass
+import json
 import logging
 import os
 from typing import Optional, List, Union, Iterable
 
 from . import imp_exp
-from .importer import BaseFileImporter, SharedFolder, Permission, PathDelimiter, replace_email_domain
-from .thycotic import thycotic
+from .importer import SharedFolder, Permission, PathDelimiter, replace_email_domain
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from .lastpass import fetcher
 from .lastpass.vault import Vault
+from .thycotic import thycotic
 from .. import api
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..params import KeeperParams

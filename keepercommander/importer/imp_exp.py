@@ -52,6 +52,12 @@ LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record l
 FILE_ATTACHMENT_CHUNK = 100
 
 
+STANDARD_RECORD_TYPES = {
+    'login', 'bankAccount', 'address', 'bankCard', 'birthCertificate', 'contact', 'driverLicense', 'encryptedNotes', 'file',
+    'healthInsurance', 'membership', 'passport', 'photo', 'serverCredentials', 'softwareLicense', 'ssnCard', 'general', 'sshKeys',
+    'databaseCredentials', 'wifiCredentials'}
+
+
 def get_record_data_json_bytes(data):
     """Get serialized and utf-8 encoded record data with padding"""
     data_str = json.dumps(data)
@@ -163,7 +169,7 @@ def convert_keeper_record(record, has_attachments=False):
 
     elif version == 3 and 'type' in data:
         rec.type = data['type']
-        rec.schema = []
+        schema_fields = []
         if 'fields' in data:
             for field in data['fields']:
                 field_type = field.get('type') or ''
@@ -171,7 +177,10 @@ def convert_keeper_record(record, has_attachments=False):
                     schema_field = RecordSchemaField()
                     schema_field.ref = field_type
                     schema_field.label = field.get('label') or ''
-                    rec.schema.append(schema_field)
+                    schema_fields.append(schema_field)
+
+        if rec.type not in STANDARD_RECORD_TYPES:
+            rec.schema = schema_fields
 
         fields = data.get('fields') if 'fields' in data else []
         custom = data.get('custom') if 'custom' in data else []
@@ -192,19 +201,21 @@ def convert_keeper_record(record, has_attachments=False):
                 if ref_type == 'file' and not has_attachments:
                     continue
                 uids = field_value if isinstance(field_value, list) else [str(field_value)]
-                references = RecordReferences()
-                references.type = ref_type
-                references.uids = [x for x in uids]
-                if not rec.references:
-                    rec.references = []
-                rec.references.append(references)
+                uids = [x for x in uids if x]
+                if uids:
+                    references = RecordReferences()
+                    references.type = ref_type
+                    references.uids = uids
+                    if not rec.references:
+                        rec.references = []
+                    rec.references.append(references)
             else:
                 rf = ImportRecordField()
                 rf.type = field_type
                 rf.label = field['label'] if 'label' in field else ''
                 rf.value = field_value
                 if not rf.value:
-                    base_field = next((x for x in rec.schema if x.ref == rf.type and x.label == rf.label), None)
+                    base_field = next((x for x in schema_fields if x.ref == rf.type and x.label == rf.label), None)
                     if base_field:
                         continue
                 rec.fields.append(rf)
