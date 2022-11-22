@@ -935,7 +935,7 @@ class RecordHistoryCommand(Command):
                         rows.append([name, value])
                 modified = datetime.datetime.fromtimestamp(int(rev['client_modified_time'] / 1000.0))
                 rows.append(['Modified', modified])
-                dump_report_data(rows, headers=['Name', 'Value'], title=f'Record Revision V.{revision}', no_header=True)
+                dump_report_data(rows, headers=['Name', 'Value'], title=f'Record Revision V.{revision}', no_header=True, right_align=(0,))
 
             elif action == 'diff':
                 count = 5
