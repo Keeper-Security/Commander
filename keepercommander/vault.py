@@ -226,6 +226,11 @@ class PasswordRecord(KeeperRecord):
             for atta in self.attachments:
                 yield atta.title or atta.name, f'File ID: {atta.id}; Size: {KeeperRecord.size_to_str(atta.size)}'
 
+    def get_custom_value(self, name):   # type: (str) -> Optional[str]
+        field = next((x for x in self.custom if x.name == name), None)
+        if field:
+            return field.value
+
 
 class TypedField(object):
     def __init__(self, typed_field=None):

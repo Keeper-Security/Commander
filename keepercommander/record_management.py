@@ -29,10 +29,15 @@ def add_record_to_folder(params, record, folder_uid=None):
 
     folder = params.folder_cache.get(folder_uid)    # type: Union[None, subfolder.BaseFolderNode]
     folder_key = None      # type: Optional[bytes]
-    if isinstance(folder, (subfolder.SharedFolderNode, subfolder.SharedFolderFolderNode)):
-        shared_folder = params.shared_folder_cache.get(folder.shared_folder_uid)
-        if shared_folder:
-            folder_key = shared_folder.shared_folder_key
+    if isinstance(folder, subfolder.SharedFolderFolderNode):
+        shared_folder_uid = folder.shared_folder_uid
+    elif isinstance(folder, subfolder.SharedFolderNode):
+        shared_folder_uid = folder.uid
+    else:
+        shared_folder_uid = None
+    if shared_folder_uid and shared_folder_uid in params.shared_folder_cache:
+        shared_folder = params.shared_folder_cache.get(shared_folder_uid)
+        folder_key = shared_folder.get('shared_folder_key_unencrypted')
 
     if isinstance(record, vault.PasswordRecord):
         rq = {
