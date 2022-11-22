@@ -67,6 +67,7 @@ RecordFields = {x[0]: x for x in (
     RecordField('bankAccount', 'bankAccount', Multiple.Never),
     RecordField('cardRef', 'cardRef', Multiple.Always),
     RecordField('note', 'multiline', Multiple.Never),
+    RecordField('multiline', 'multiline', Multiple.Never),
     RecordField('url', 'url', Multiple.Optional),
     RecordField('fileRef', 'fileRef', Multiple.Always),
     RecordField('host', 'host', Multiple.Optional),
