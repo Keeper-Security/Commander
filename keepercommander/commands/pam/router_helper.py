@@ -8,6 +8,7 @@ from keepercommander.commands.pam import gateway_helper
 from keepercommander.commands.pam.pam_dto import GatewayAction
 from keepercommander.display import bcolors
 from keepercommander.error import KeeperApiError
+from keepercommander.loginv3 import CommonHelperMethods
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
     PAMOnlineControllers, PAMRotationSchedulesResponse
 from keepercommander.utils import base64_url_decode, string_to_bytes
@@ -91,7 +92,7 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
 def router_send_action_to_gateway(params, gateway_action: GatewayAction):
     # 1. Find connected gateway to send action to
     try:
-        enterprise_controllers_connected = router_get_connected_gateways(params)
+        enterprise_controllers_connected = router_get_connected_gateways(params).controllers
 
     except requests.exceptions.ConnectionError as errc:
         logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{KROUTER_URL}]{bcolors.ENDC}")
@@ -117,14 +118,14 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
 
         found_gateway = gateway_helper.find_connected_gateways(params, gateway_action.gateway_destination)
 
-    router_server_cookie = found_gateway.get('cookie')
+    router_server_cookie = found_gateway.cookie
 
     msg_id = gateway_action.messageId if gateway_action.messageId else GatewayAction.generate_message_id()
     msg_id_bytes = string_to_bytes(msg_id)
 
     rq = RouterControllerMessage()
     rq.messageUid = msg_id_bytes
-    rq.controllerUid = base64_url_decode(found_gateway.get('controllerUid'))
+    rq.controllerUid = found_gateway.controllerUid
     rq.stream = False
     rq.payload = string_to_bytes(gateway_action.toJSON())
 

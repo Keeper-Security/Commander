@@ -175,8 +175,7 @@ class PAMCreateRecordRotationCommand(Command):
                                                '"15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
                                           action='append', help='Cron tab string of the scheduler. Example: to run job '
-                                                                'daily at 5:56PM UTC enter following cron -sc "0 56 17 '
-                                                                '* * ?"')
+                                                                'daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
     pam_scheduler_new_parser.add_argument('--complexity', '-p', required=False, dest='pwd_complexity', action='store',
                                           help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,'
                                                '5,5')
