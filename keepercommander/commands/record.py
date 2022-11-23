@@ -18,7 +18,7 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 
-from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand
+from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand, RecordMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3
 from ..error import CommandError
 from ..params import KeeperParams
@@ -39,6 +39,7 @@ def register_commands(commands):
     commands['shared-records-report'] = SharedRecordsReport()
     commands['record-add'] = record_edit.RecordAddCommand()
     commands['record-update'] = record_edit.RecordUpdateCommand()
+    commands['clipboard-copy'] = ClipboardCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -51,10 +52,12 @@ def register_command_info(aliases, command_info):
     aliases['srr'] = 'shared-records-report'
     aliases['ra'] = 'record-add'
     aliases['ru'] = 'record-update'
+    aliases['cc'] = 'clipboard-copy'
+    aliases['find-password'] = ('clipboard-copy', '--output=stdout')
 
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
-              record_edit.record_update_parser]:
+              record_edit.record_update_parser, clipboard_copy_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
 
@@ -122,7 +125,24 @@ shared_records_report_parser.add_argument(
 shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
 
 
-def find_record(params, record_name, types=None):  # type: (KeeperParams, str, Optional[Iterator[str]]) -> vault.KeeperRecord
+clipboard_copy_parser = argparse.ArgumentParser(
+    prog='clipboard-copy', description='Retrieve the password for a specific record.')
+clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
+clipboard_copy_parser.add_argument(
+    '--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store',
+    help='password output destination')
+clipboard_copy_parser.add_argument(
+    '-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
+clipboard_copy_parser.add_argument(
+    '-l', '--login', dest='login', action='store_true', help='output login name instead of password')
+clipboard_copy_parser.add_argument(
+    '-r', '--revision', dest='revision', type=int, action='store',
+    help='use a specific record revision')
+clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+
+
+def find_record(params, record_name, types=None):
+    # type: (KeeperParams, str, Optional[Iterator[str]]) -> vault.KeeperRecord
     if not record_name:
         raise Exception(f'Record name cannot be empty.')
 
@@ -826,7 +846,7 @@ class TrashPurgeCommand(Command, TrashMixin):
         TrashMixin.last_revision = 0
 
 
-class RecordHistoryCommand(Command):
+class RecordHistoryCommand(Command, RecordMixin):
     def get_parser(self):
         return record_history_parser
 
@@ -857,48 +877,9 @@ class RecordHistoryCommand(Command):
         if record_uid is None:
             raise CommandError('history', 'Enter name of existing record')
 
-        current_rec = params.record_cache[record_uid]
-        if record_uid in params.record_history:
-            history = params.record_history[record_uid]
-            if history[0].get('revision') < current_rec['revision']:
-                del params.record_history[record_uid]
-
-        record_key = current_rec['record_key_unencrypted']
-
-        if record_uid not in params.record_history:
-            rq = {
-                'command': 'get_record_history',
-                'record_uid': record_uid,
-                'client_time': utils.current_milli_time()
-            }
-            rs = api.communicate(params, rq)
-            history = rs['history']   # type: list
-            history.sort(key=lambda x: x.get('revision', 0), reverse=True)
-            for rec in history:
-                rec['record_key_unencrypted'] = record_key
-                if 'data' in rec:
-                    data = utils.base64_url_decode(rec['data'])
-                    version = rec.get('version') or 0
-                    try:
-                        if version <= 2:
-                            rec['data_unencrypted'] = crypto.decrypt_aes_v1(data, record_key)
-                        else:
-                            rec['data_unencrypted'] = crypto.decrypt_aes_v2(data, record_key)
-                        if 'extra' in rec:
-                            extra = utils.base64_url_decode(rec['extra'])
-                            if version <= 2:
-                                rec['extra_unencrypted'] = crypto.decrypt_aes_v1(extra, record_key)
-                            else:
-                                rec['extra_unencrypted'] = crypto.decrypt_aes_v2(extra, record_key)
-                    except Exception as e:
-                        logging.warning('Cannot decrypt record history revision: %s', e)
-
-            params.record_history[record_uid] = history
-
-        if record_uid in params.record_history:
+        history = self.load_record_history(params, record_uid)
+        if isinstance(history, list):
             action = kwargs.get('action') or 'list'
-
-            history = params.record_history[record_uid]    # type: List[Dict]
             length = len(history)
             if length == 0:
                 logging.info('Record does not have history of edit')
@@ -917,7 +898,7 @@ class RecordHistoryCommand(Command):
 
             revision = kwargs.get('revision') or 0
             if revision < 0 or revision >= length:
-                raise ValueError(f'Invalid revision {revision}: valid revisions 1..{length}')
+                raise ValueError(f'Invalid revision {revision}: valid revisions 1..{length - 1}')
 
             index = 0 if revision == 0 else length - revision
 
@@ -1114,3 +1095,136 @@ class SharedRecordsReport(Command):
         if export_format == 'table':
             fields = [field_to_title(x) for x in fields]
         return dump_report_data(table, fields, fmt=export_format, filename=export_name, row_number=True)
+
+
+class ClipboardCommand(Command, RecordMixin):
+    def get_parser(self):
+        return clipboard_copy_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else ''
+
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        user_pattern = None
+        if kwargs['username']:
+            user_pattern = re.compile(kwargs['username'], re.IGNORECASE)
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = vault.KeeperRecord.load(params, uid)
+                            if not isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
+                                continue
+                            if r.title.lower() == record_name.lower():
+                                if user_pattern:
+                                    login = ''
+                                    if isinstance(r, vault.PasswordRecord):
+                                        login = r.login
+                                    elif isinstance(r, vault.TypedRecord):
+                                        login_field = r.get_typed_field('login')
+                                        if login_field is None:
+                                            login_field = r.get_typed_field('email')
+                                        if login_field:
+                                            login = login_field.get_default_value(str)
+                                    if not login:
+                                        continue
+                                    if not user_pattern.match(login):
+                                        continue
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            records = []    # type: List[vault.KeeperRecord]
+            for r in vault_extensions.find_records(params, record_name):
+                if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
+                    if user_pattern:
+                        login = ''
+                        if isinstance(r, vault.PasswordRecord):
+                            login = r.login
+                        elif isinstance(r, vault.TypedRecord):
+                            login_field = r.get_typed_field('login')
+                            if login_field is None:
+                                login_field = r.get_typed_field('email')
+                            if login_field:
+                                login = login_field.get_default_value(str)
+                        if not login:
+                            continue
+                        if not user_pattern.match(login):
+                            continue
+                    records.append(r)
+
+            if len(records) == 1:
+                if kwargs['output'] == 'clipboard':
+                    logging.info('Record Title: %s', records[0].title)
+                record_uid = records[0].record_uid
+            else:
+                if len(records) == 0:
+                    raise CommandError('', 'Enter name or uid of existing record')
+                else:
+                    raise CommandError('', f'More than one record are found for search criteria: {record_name}')
+
+        revision = kwargs.get('revision')
+        if revision:
+            history = self.load_record_history(params, record_uid)
+            length = len(history) if isinstance(history, list) else 0
+            if length == 0:
+                logging.info('Record does not have history of edit')
+                return
+            if revision < 0:
+                revision = length + revision
+            if revision <= 0 or revision >= length:
+                logging.info(f'Invalid revision {revision}: valid revisions 1..{length - 1}')
+                return
+            revision = 0 if revision == 0 else length - revision
+            rec = vault.KeeperRecord.load(params, history[revision])
+        else:
+            rec = vault.KeeperRecord.load(params, record_uid)
+        if not rec:
+            logging.info(f'Record UID {record_uid} cannot be loaded.')
+            return
+
+        copy_item = 'Login'
+        txt = ''
+        if kwargs.get('copy_uid') is True:
+            copy_item = 'Record UID'
+            txt = rec.record_uid
+        else:
+            if kwargs.get('login') is True:
+                copy_item = 'Login'
+                if isinstance(rec, vault.PasswordRecord):
+                    txt = rec.login
+                elif isinstance(rec, vault.TypedRecord):
+                    login_field = rec.get_typed_field('login')
+                    if login_field is None:
+                        login_field = rec.get_typed_field('email')
+                    if login_field:
+                        txt = login_field.get_default_value(str)
+            else:
+                copy_item = 'Password'
+                if isinstance(rec, vault.PasswordRecord):
+                    txt = rec.password
+                elif isinstance(rec, vault.TypedRecord):
+                    password_field = rec.get_typed_field('password')
+                    if password_field:
+                        txt = password_field.get_default_value(str)
+                if txt:
+                    params.queue_audit_event('copy_password', record_uid=record_uid)
+
+        if txt:
+            if kwargs['output'] == 'clipboard':
+                import pyperclip
+                pyperclip.copy(txt)
+                logging.info(f'{copy_item} copied to clipboard')
+            else:
+                print(txt)
