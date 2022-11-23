@@ -49,7 +49,6 @@ def register_commands(commands):
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
     commands['delete-attachment'] = RecordDeleteAttachmentCommand()
-    commands['clipboard-copy'] = ClipboardCommand()
     commands['totp'] = TotpCommand()
     commands['record-type-info'] = RecordTypeInfo()
     commands['record-type'] = RecordRecordType()
@@ -61,13 +60,11 @@ def register_command_info(aliases, command_info):
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
-    aliases['cc'] = 'clipboard-copy'
-    aliases['find-password'] = ('clipboard-copy', '--output=stdout')
     aliases['rti'] = 'record-type-info'
     aliases['rt'] = 'record-type'
 
     for p in [add_parser, edit_parser, rm_parser,  list_parser, append_parser,
-              download_parser, upload_parser, delete_attachment_parser, clipboard_copy_parser,
+              download_parser, upload_parser, delete_attachment_parser,
               totp_parser, record_type_info_parser, record_type_parser,
               file_report_parser]:
         command_info[p.prog] = p.description
@@ -186,17 +183,6 @@ delete_attachment_parser.add_argument('record', nargs='?', action='store', help=
 #delete_attachment_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 delete_attachment_parser.error = raise_parse_exception
 delete_attachment_parser.exit = suppress_exit
-
-
-clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-copy|cc', description='Retrieve the password for a specific record')
-clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
-clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='password output destination')
-clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='output login name instead of password')
-clipboard_copy_parser.add_argument('-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
-clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-clipboard_copy_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
-clipboard_copy_parser.error = raise_parse_exception
-clipboard_copy_parser.exit = suppress_exit
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history|rh', description='Show the history of a record modifications')
@@ -1325,76 +1311,6 @@ class RecordDeleteAttachmentCommand(Command):
         api.update_record_v3(params, record, **{'record_links': record_links})
 
 
-class ClipboardCommand(Command):
-    def get_parser(self):
-        return clipboard_copy_parser
-
-    def execute(self, params, **kwargs):
-        record_name = kwargs['record'] if 'record' in kwargs else None
-
-        if not record_name:
-            self.get_parser().print_help()
-            return
-
-        user_pattern = None
-        if kwargs['username']:
-            user_pattern = re.compile(kwargs['username'], re.IGNORECASE)
-
-        record_uid = None
-        if record_name in params.record_cache:
-            record_uid = record_name
-        else:
-            rs = try_resolve_path(params, record_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder is not None and record_name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == record_name.lower():
-                                if user_pattern:
-                                    if not user_pattern.match(r.login):
-                                        continue
-                                record_uid = uid
-                                break
-
-        if record_uid is None:
-            records = api.search_records(params, kwargs['record'])
-            if user_pattern:
-                records = [x for x in records if user_pattern.match(x.login)]
-            if len(records) == 1:
-                if kwargs['output'] == 'clipboard':
-                    logging.info('Record Title: {0}'.format(records[0].title))
-                record_uid = records[0].record_uid
-            else:
-                if len(records) == 0:
-                    raise CommandError('clipboard-copy', 'Enter name or uid of existing record')
-                else:
-                    raise CommandError('clipboard-copy', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
-
-        recordv3.RecordV3.validate_access(params, record_uid)
-        rec = api.get_record(params, record_uid)
-        if kwargs.get('login'):
-            copy_item = 'Login'
-            txt = rec.login
-        elif kwargs.get('copy_uid'):
-            copy_item = 'Record UID'
-            txt = record_uid
-        else:
-            copy_item = 'Password'
-            txt = rec.password
-        if txt:
-            if kwargs['output'] == 'clipboard':
-                import pyperclip
-                pyperclip.copy(txt)
-                logging.info(f'{copy_item} copied to clipboard')
-            else:
-                print(txt)
-            if copy_item == 'Password':
-                params.queue_audit_event('copy_password', record_uid=record_uid)
-
-
 class TotpEndpoint:
     def __init__(self, record_uid, record_title, paths):
         self.record_uid = record_uid
@@ -1403,8 +1319,8 @@ class TotpEndpoint:
 
 
 class TotpCommand(Command):
-    LastRevision = 0 # int
-    Endpoints = []   # type: List[TotpEndpoint]
+    LastRevision = 0  # int
+    Endpoints = []    # type: List[TotpEndpoint]
 
     def get_parser(self):
         return totp_parser

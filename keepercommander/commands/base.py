@@ -26,7 +26,7 @@ from typing import Optional, Sequence, Callable, List, Any
 import sys
 from tabulate import tabulate
 
-from .. import vault
+from .. import api, crypto, utils, vault
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -584,6 +584,48 @@ class RecordMixin:
                     return ''
 
         return RecordMixin.get_custom_field(record, field_name)
+
+    @staticmethod
+    def load_record_history(params, record_uid):  # type: (KeeperParams, str) -> Optional[list]
+        current_rec = params.record_cache[record_uid]
+        if record_uid in params.record_history:
+            history = params.record_history[record_uid]
+            if history[0].get('revision') < current_rec['revision']:
+                del params.record_history[record_uid]
+
+        record_key = current_rec['record_key_unencrypted']
+
+        if record_uid not in params.record_history:
+            rq = {
+                'command': 'get_record_history',
+                'record_uid': record_uid,
+                'client_time': utils.current_milli_time()
+            }
+            rs = api.communicate(params, rq)
+            history = rs['history']   # type: list
+            history.sort(key=lambda x: x.get('revision', 0), reverse=True)
+            for rec in history:
+                rec['record_key_unencrypted'] = record_key
+                if 'data' in rec:
+                    data = utils.base64_url_decode(rec['data'])
+                    version = rec.get('version') or 0
+                    try:
+                        if version <= 2:
+                            rec['data_unencrypted'] = crypto.decrypt_aes_v1(data, record_key)
+                        else:
+                            rec['data_unencrypted'] = crypto.decrypt_aes_v2(data, record_key)
+                        if 'extra' in rec:
+                            extra = utils.base64_url_decode(rec['extra'])
+                            if version <= 2:
+                                rec['extra_unencrypted'] = crypto.decrypt_aes_v1(extra, record_key)
+                            else:
+                                rec['extra_unencrypted'] = crypto.decrypt_aes_v2(extra, record_key)
+                    except Exception as e:
+                        logging.warning('Cannot decrypt record history revision: %s', e)
+
+            params.record_history[record_uid] = history
+
+        return params.record_history.get(record_uid)
 
 
 class FolderMixin:

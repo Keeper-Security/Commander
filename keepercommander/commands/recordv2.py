@@ -53,11 +53,8 @@ def register_command_info(aliases, command_info):
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
-    aliases['cc'] = 'clipboard-copy'
-    aliases['find-password'] = ('clipboard-copy', '--output=stdout')
-    aliases['rh'] = 'record-history'
 
-    for p in [clipboard_copy_parser, totp_parser,  add_parser, edit_parser, rm_parser,
+    for p in [totp_parser,  add_parser, edit_parser, rm_parser,
               append_parser, download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
 
@@ -67,15 +64,6 @@ totp_parser.add_argument('-p', '--print', dest='print', action='store_true', hel
 totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
-
-
-clipboard_copy_parser = argparse.ArgumentParser(prog='find-password|clipboard-copy', description='Retrieve the password for a specific record.')
-clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
-clipboard_copy_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store', help='password output destination')
-clipboard_copy_parser.add_argument('-l', '--login', dest='login', action='store_true', help='output login name instead of password')
-clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
-clipboard_copy_parser.error = raise_parse_exception
-clipboard_copy_parser.exit = suppress_exit
 
 
 add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
@@ -819,67 +807,6 @@ class RecordDeleteAttachmentCommand(Command):
         }
         api.communicate(params, rq)
         params.sync_data = True
-
-
-class ClipboardCommand(Command):
-    def get_parser(self):
-        return clipboard_copy_parser
-
-    def execute(self, params, **kwargs):
-        record_name = kwargs['record'] if 'record' in kwargs else None
-
-        if not record_name:
-            self.get_parser().print_help()
-            return
-
-        user_pattern = None
-        if kwargs['username']:
-            user_pattern = re.compile(kwargs['username'], re.IGNORECASE)
-
-        record_uid = None
-        if record_name in params.record_cache:
-            record_uid = record_name
-        else:
-            rs = try_resolve_path(params, record_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder is not None and record_name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == record_name.lower():
-                                if user_pattern:
-                                    if not user_pattern.match(r.login):
-                                        continue
-                                record_uid = uid
-                                break
-
-        if record_uid is None:
-            records = api.search_records(params, kwargs['record'])
-            if user_pattern:
-                records = [x for x in records if user_pattern.match(x.login)]
-            if len(records) == 1:
-                if kwargs['output'] == 'clipboard':
-                    logging.info('Record Title: {0}'.format(records[0].title))
-                record_uid = records[0].record_uid
-            else:
-                if len(records) == 0:
-                    raise CommandError('clipboard-copy', 'Enter name or uid of existing record')
-                else:
-                    raise CommandError('clipboard-copy', 'More than one record are found for search criteria: {0}'.format(kwargs['record']))
-
-        rec = api.get_record(params, record_uid)
-        txt = rec.login if kwargs.get('login') else rec.password
-        if txt:
-            if kwargs['output'] == 'clipboard':
-                import pyperclip
-                pyperclip.copy(txt)
-                logging.info('Copied to clipboard')
-            else:
-                print(txt)
-            if not kwargs.get('login'):
-                params.queue_audit_event('copy_password', record_uid=record_uid)
 
 
 class TotpEndpoint:
