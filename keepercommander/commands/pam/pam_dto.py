@@ -105,7 +105,7 @@ class GatewayActionRotateInputs:
 
     def __init__(self, record_uid, configuration_uid, pwd_complexity):
         self.recordUid = record_uid
-        self.configurationUid = configuration_uid,
+        self.configurationUid = configuration_uid
         self.pwdComplexity = pwd_complexity
 
     def toJSON(self):

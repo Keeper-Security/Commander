@@ -2,7 +2,9 @@ import json
 import logging
 
 import requests
+from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
 
+from keepercommander import crypto, utils, rest_api
 from keepercommander.commands.base import dump_report_data
 from keepercommander.commands.pam import gateway_helper
 from keepercommander.commands.pam.pam_dto import GatewayAction
@@ -10,7 +12,7 @@ from keepercommander.display import bcolors
 from keepercommander.error import KeeperApiError
 from keepercommander.loginv3 import CommonHelperMethods
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
-    PAMOnlineControllers, PAMRotationSchedulesResponse
+    PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
 KROUTER_URL = 'https://connect.dev.keepersecurity.com'
@@ -68,13 +70,24 @@ def router_get_rotation_schedules(params, proto_request):
 
 
 def _post_request_to_router(params, path, rq_proto=None, method='post'):
+    transmission_key = utils.generate_aes_key()
+    server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+    encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+
+    encrypted_payload = b''
+
+    if rq_proto:
+        encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
+    encrypted_session_token = crypto.encrypt_aes_v2(base64_to_bytes(params.session_token), transmission_key)
+
     rs = requests.request(method,
                           KROUTER_URL + "/" + path,
                           verify=VERIFY_SSL,
                           headers={
-                            'Authorization': f'KeeperUser ${params.session_token}'
+                            'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
+                            'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}'
                           },
-                          data=rq_proto.SerializeToString() if rq_proto else None
+                          data=encrypted_payload if rq_proto else None
     )
 
     content_type = rs.headers.get('Content-Type') or ''
@@ -84,6 +97,17 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
             return rs.json()
 
         rs_body = rs.content
+
+        if type(rs_body) == bytes:
+
+            router_response = RouterResponse()
+            router_response.ParseFromString(rs_body)
+
+            payload_encrypted = router_response.encryptedPayload
+            payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
+
+            return payload_decrypted
+
         return rs_body
     else:
         raise KeeperApiError(rs.status_code, rs.text)
@@ -98,8 +122,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
         logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{KROUTER_URL}]{bcolors.ENDC}")
         return
     except Exception as e:
-        logging.warning(f"Unhandled error during retrieval of the connected gateways. {str(e)}")
-        return
+        raise e
 
     if not enterprise_controllers_connected or len(enterprise_controllers_connected) == 0:
         print(f"{bcolors.WARNING}\tNo running or connected Gateways in your enterprise. "
