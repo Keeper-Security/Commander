@@ -301,7 +301,7 @@ class TypedField(object):
         elif isinstance(field_value, dict):
             if ft:
                 if ft.name == 'host':
-                    hostname = field_value.get('hostname') or ''
+                    hostname = field_value.get('hostName') or ''
                     port = field_value.get('port') or ''
                     if hostname or port:
                         if port:

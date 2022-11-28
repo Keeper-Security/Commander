@@ -172,8 +172,14 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
 
     plugin_kwargs = {k: v for k, v in cmdr_kwargs.items() if ':' not in v}
     plugin_kwargs.update({
-        k[1:-1]: v for k, v in record.enumerate_fields() if k in ('(login)', '(password)', '(url)') and v
+        k[1:-1]: v for k, v in record.enumerate_fields() if k in ('(login)', '(password)', '(url)', '(host)') and v
     })
+    if 'host' in plugin_kwargs:
+        server = plugin_kwargs['host']
+        h, sep, p = server.partition(':')
+        if sep == ':':
+            plugin_kwargs['host'] = h
+            plugin_kwargs['port'] = p
 
     if host:
         plugin_kwargs['host'] = host
