@@ -46,6 +46,7 @@ record_update_parser.add_argument('--syntax-help', dest='syntax_help', action='s
                                   help='Display help on field parameters.')
 record_update_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
 record_update_parser.add_argument('-t', '--title', dest='title', action='store', help='modify record title')
+record_update_parser.add_argument('-rt', '--record-type', dest='record_type', action='store', help='record type')
 record_update_parser.add_argument('-n', '--notes', dest='notes', action='store', help='append/modify record notes')
 record_update_parser.add_argument('-r', '--record', dest='record', action='store',
                                   help='record path or UID')
@@ -332,13 +333,15 @@ class RecordEditMixin:
             parsed_field = parsed_fields.popleft()
             field_type = parsed_field.type or ''
             field_label = parsed_field.label or ''
-            if parsed_field.type and parsed_field.type not in record_types.RecordFields:
+            if field_type and field_type not in record_types.RecordFields:
                 if not field_label:
                     field_label = field_type
                     field_type = 'text'
                 else:
                     self.on_warning(f'Field type \"{field_type}\" is not supported. Field: {field_type}.{field_label}')
                     continue
+            rf = record_types.RecordFields.get(field_type)
+            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
 
             record_field = None    # type: Optional[vault.TypedField]
             is_field = False
@@ -360,13 +363,15 @@ class RecordEditMixin:
                 f_label = field_label.lower()
                 record_field = next(
                     (x for x in record.fields
-                     if (not parsed_field.type or x.type == parsed_field.type) and (x.label or '').lower() == f_label), None)
+                     if (not parsed_field.type or x.type == parsed_field.type) and
+                     (ignore_label or (x.label or '').lower() == f_label)), None)
                 if record_field:
                     is_field = True
                 else:
                     record_field = next(
                         (x for x in record.custom
-                         if (not parsed_field.type or x.type == parsed_field.type) and (x.label or '').lower() == f_label), None)
+                         if (not parsed_field.type or x.type == parsed_field.type) and
+                         (ignore_label or (x.label or '').lower() == f_label)), None)
                     if record_field is None:
                         if not parsed_field.value:
                             continue
@@ -537,6 +542,18 @@ class RecordEditMixin:
                     if folder.uid:
                         return folder.uid
 
+    @staticmethod
+    def get_record_type_fields(params, record_type):      # type: (KeeperParams, str) -> Optional[List[Dict]]
+        rti = recordv3.RecordTypeInfo()
+        js_rt = rti.execute(params, format='json', record_name=record_type)
+        j_rt = json.loads(js_rt)
+        if isinstance(j_rt, list):
+            if len(j_rt) > 0:
+                jrt_fields = j_rt[0].get('content')
+                j_rt = json.loads(jrt_fields)
+                if isinstance(j_rt, dict):
+                    return j_rt.get('fields')
+
 
 class RecordAddCommand(Command, RecordEditMixin):
     def __init__(self):
@@ -551,7 +568,6 @@ class RecordAddCommand(Command, RecordEditMixin):
             return
 
         folder_uid = self.resolve_folder(params, kwargs.get('folder'))
-
 
         self.warnings.clear()
         title = kwargs.get('title')
@@ -577,16 +593,7 @@ class RecordAddCommand(Command, RecordEditMixin):
             record = vault.PasswordRecord()
             self.assign_legacy_fields(record, record_fields)
         else:
-            rti = recordv3.RecordTypeInfo()
-            js_rt = rti.execute(params, format='json', record_name=record_type)
-            j_rt = json.loads(js_rt)
-            rt_fields = None    # type: Optional[List[Dict]]
-            if isinstance(j_rt, list):
-                if len(j_rt) > 0:
-                    jrt_fields = j_rt[0].get('content')
-                    j_rt = json.loads(jrt_fields)
-                    if isinstance(j_rt, dict):
-                        rt_fields = j_rt.get('fields')
+            rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
                 raise CommandError('record-add', f'Record type \"{record_type}\" cannot be found.')
             record = vault.TypedRecord()
@@ -689,6 +696,12 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
         if isinstance(record, vault.PasswordRecord):
             self.assign_legacy_fields(record, record_fields)
         elif isinstance(record, vault.TypedRecord):
+            record_type = kwargs.get('record_type')
+            if record_type:
+                rt_fields = self.get_record_type_fields(params, record_type)
+                if not rt_fields:
+                    raise CommandError('record-update', f'Record type \"{record_type}\" cannot be found.')
+                self.adjust_typed_record_fields(record, rt_fields)
             self.assign_typed_fields(record, record_fields)
         else:
             raise CommandError('record-update', f'Record \"{record_name}\" can not be edited.')
@@ -721,3 +734,59 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
 
         record_management.update_record(params, record)
         params.sync_data = True
+
+    @staticmethod
+    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
+        new_fields = []
+        old_fields = list(record.fields)
+        custom = list(record.custom)
+        should_rebuild = False
+        for typed_field in typed_fields:
+            if not isinstance(typed_field, dict):
+                return
+            field_type = typed_field.get('$ref')
+            if not field_type:
+                return
+            field_label = typed_field.get('label') or ''
+            required = typed_field.get('required')
+            rf = record_types.RecordFields.get(field_type)
+            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
+
+            field = next((x for x in old_fields if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                new_fields.append(field)
+                old_fields.remove(field)
+                if field.label != field_label:
+                    field.label = field_label
+                    should_rebuild = True
+                continue
+
+            field = next((x for x in custom if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                field.required = required
+                new_fields.append(field)
+                custom.remove(field)
+                should_rebuild = True
+                continue
+
+            field = vault.TypedField.new_field(field_type, None, field_label)
+            field.required = required
+            new_fields.append(field)
+            should_rebuild = True
+
+        if len(old_fields) > 0:
+            custom.extend(old_fields)
+            should_rebuild = True
+
+        if not should_rebuild:
+            should_rebuild = any(x for x in custom if not x.value)
+
+        if should_rebuild:
+            record.fields.clear()
+            record.fields.extend(new_fields)
+            record.custom.clear()
+            record.custom.extend((x for x in custom if x.value))
+
+        return should_rebuild
