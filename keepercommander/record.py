@@ -12,6 +12,7 @@ import datetime
 import hashlib
 import hmac
 import itertools
+from typing import Tuple, Optional
 
 from urllib import parse
 
@@ -20,8 +21,7 @@ from .error import Error
 from .subfolder import get_folder_path, find_folders, BaseFolderNode
 
 
-def get_totp_code(url):
-    # type: (str) -> (str, int) or None
+def get_totp_code(url):   # type: (str) -> Optional[Tuple[str, int, int]]
     comp = parse.urlparse(url)
     if comp.scheme == 'otpauth':
         secret = None
