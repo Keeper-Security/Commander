@@ -12,7 +12,7 @@
 import abc
 import json
 import logging
-from typing import Optional, List, Set, Tuple
+from typing import Optional, List, Set, Tuple, Dict, Any
 
 from google.protobuf import message
 
@@ -129,8 +129,8 @@ class _EnterpriseLoader(object):
                         self._enterprise._tree_key = api.decrypt_rsa(rs.treeKey.treeKey, params.rsa_key)
                 params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
 
+            keys = {}    # type: Dict[str, str]
             if rs.enterpriseKeys:
-                keys = {}
                 if rs.enterpriseKeys.rsaEncryptedPrivateKey:
                     self._enterprise._rsa_key = \
                         api.decrypt_aes_plain(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
@@ -138,12 +138,37 @@ class _EnterpriseLoader(object):
                     keys['rsa_encrypted_private_key'] = \
                         utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
                 if rs.enterpriseKeys.eccEncryptedPrivateKey:
-                    self._enterprise._ec_key = \
-                        api.decrypt_aes_plain(rs.enterpriseKeys.eccEncryptedPrivateKey, self._enterprise.tree_key)
                     keys['ecc_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.eccPublicKey)
                     keys['ecc_encrypted_private_key'] = \
                         utils.base64_url_encode(rs.enterpriseKeys.eccEncryptedPrivateKey)
-                params.enterprise['keys'] = keys
+            if 'rsa_encrypted_private_key' not in keys:
+                rsa_private, rsa_public = crypto.generate_rsa_key()
+                rsa_private_key = crypto.unload_rsa_private_key(rsa_private)
+                rsa_encrypted_private_key = crypto.encrypt_aes_v2(rsa_private_key, self._enterprise.tree_key)
+                rsa_public_key = crypto.unload_rsa_public_key(rsa_public)
+                rq = proto.EnterpriseKeyPairRequest()
+                rq.enterprisePublicKey = rsa_public_key
+                rq.encryptedEnterprisePrivateKey = rsa_encrypted_private_key
+                rq.keyType = proto.RSA
+                api.communicate_rest(params, rq, 'enterprise/set_enterprise_key_pair')
+                self._enterprise._rsa_key = rsa_private_key
+                keys['rsa_public_key'] = utils.base64_url_encode(rsa_public_key)
+                keys['rsa_encrypted_private_key'] = utils.base64_url_encode(rsa_encrypted_private_key)
+
+            if 'ecc_encrypted_private_key' not in keys:
+                ec_private, ec_public = crypto.generate_ec_key()
+                ec_private_key = crypto.unload_ec_private_key(ec_private)
+                ec_encrypted_private_key = crypto.encrypt_aes_v2(ec_private_key, self._enterprise.tree_key)
+                ec_public_key = crypto.unload_ec_public_key(ec_public)
+                rq = proto.EnterpriseKeyPairRequest()
+                rq.enterprisePublicKey = ec_public_key
+                rq.encryptedEnterprisePrivateKey = ec_encrypted_private_key
+                rq.keyType = proto.ECC
+                api.communicate_rest(params, rq, 'enterprise/set_enterprise_key_pair')
+                keys['ecc_public_key'] = utils.base64_url_encode(ec_public_key)
+                keys['ecc_encrypted_private_key'] = utils.base64_url_encode(ec_encrypted_private_key)
+
+            params.enterprise['keys'] = keys
         entities = set()
         while True:
             rq = proto.EnterpriseDataRequest()
