@@ -21,6 +21,7 @@ from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand, RecordMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3
 from ..error import CommandError
+from ..record import get_totp_code
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
 from ..subfolder import try_resolve_path, get_folder_path, find_folders
@@ -134,7 +135,9 @@ clipboard_copy_parser.add_argument(
 clipboard_copy_parser.add_argument(
     '-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
 clipboard_copy_parser.add_argument(
-    '-l', '--login', dest='login', action='store_true', help='output login name instead of password')
+    '-l', '--login', dest='login', action='store_true', help='output login name')
+clipboard_copy_parser.add_argument(
+    '-t', '--totp', dest='totp', action='store_true', help='output totp code')
 clipboard_copy_parser.add_argument(
     '-r', '--revision', dest='revision', type=int, action='store',
     help='use a specific record revision')
@@ -1210,6 +1213,21 @@ class ClipboardCommand(Command, RecordMixin):
                         login_field = rec.get_typed_field('email')
                     if login_field:
                         txt = login_field.get_default_value(str)
+            elif kwargs.get('totp') is True:
+                copy_item = 'TOTP Code'
+                totp_url = None
+                if isinstance(rec, vault.PasswordRecord):
+                    totp_url = rec.totp
+                elif isinstance(rec, vault.TypedRecord):
+                    totp_field = rec.get_typed_field('oneTimeCode')
+                    if totp_field is None:
+                        totp_field = rec.get_typed_field('otp')
+                    if totp_field:
+                        totp_url = totp_field.get_default_value(str)
+                if totp_url:
+                    res = get_totp_code(totp_url)
+                    if res:
+                        txt, _, _ = res
             else:
                 copy_item = 'Password'
                 if isinstance(rec, vault.PasswordRecord):
@@ -1220,7 +1238,6 @@ class ClipboardCommand(Command, RecordMixin):
                         txt = password_field.get_default_value(str)
                 if txt:
                     params.queue_audit_event('copy_password', record_uid=record_uid)
-
         if txt:
             if kwargs['output'] == 'clipboard':
                 import pyperclip
