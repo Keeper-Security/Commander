@@ -1077,6 +1077,12 @@ class AuditReportCommand(Command):
                     logging.info('{0:>10d}:  {1}'.format(event_id, event_name))
             return
 
+        has_aram = True
+        licenses = params.enterprise.get('licenses')
+        if isinstance(licenses, list) and licenses:
+            has_aram = any((True for x in licenses[0].get('add_ons', [])
+                            if x.get('name') == 'enterprise_audit_and_reporting'))
+
         report_type = kwargs.get('report_type', 'raw')
         if report_type == 'dim':
             columns = kwargs['columns']
@@ -1145,6 +1151,8 @@ class AuditReportCommand(Command):
                 rq['aggregate'] = aggregates
 
         user_limit = kwargs.get('limit')
+        if not user_limit and not has_aram:
+            user_limit = API_EVENT_RAW_ROW_LIMIT
         rq_limit = 50 if user_limit is None else user_limit if user_limit > 0 else API_EVENT_RAW_ROW_LIMIT
         rq['limit'] = min(rq_limit, API_EVENT_RAW_ROW_LIMIT)
 
@@ -1157,6 +1165,9 @@ class AuditReportCommand(Command):
                 audit_filter['created'] = kwargs['created']
             else:
                 audit_filter['created'] = self.get_filter(kwargs['created'], AuditReportCommand.convert_date)
+        elif not has_aram:
+            audit_filter['created'] = 'last_30_days'
+
         if 'event_type' in kwargs and kwargs['event_type']:
             audit_filter['audit_event_type'] = self.get_filter(kwargs['event_type'], AuditReportCommand.convert_str_or_int)
         if 'username' in kwargs and kwargs['username']:
