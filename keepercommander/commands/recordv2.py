@@ -44,7 +44,6 @@ def register_commands(commands):
     commands['download-attachment'] = RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = RecordUploadAttachmentCommand()
     commands['delete-attachment'] = RecordDeleteAttachmentCommand()
-    commands['clipboard-copy'] = ClipboardCommand()
     commands['totp'] = TotpCommand()
 
 
