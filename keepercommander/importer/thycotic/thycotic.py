@@ -78,7 +78,7 @@ class ThycoticImporter(BaseImporter):
         print('Secret Server URL: '.rjust(25) + host)
         username_prompt = 'Thycotic Username: '.rjust(25)
         if not username:
-            username = input(username_prompt + ': ')
+            username = input(username_prompt)
             if not username:
                 raise Exception('Import canceled')
         else:
@@ -90,6 +90,7 @@ class ThycoticImporter(BaseImporter):
             raise Exception('Import canceled')
 
         auth = ThycoticAuth(host)
+        auth.proxy = params.rest_context.proxies
         auth.authenticate(username, password, ThycoticImporter.request_totp)
 
         totp_codes = {}
@@ -550,6 +551,7 @@ class ThycoticAuth:
         self.expires_in = 0
         self.refresh_token = ''
         self.last_login = 0
+        self.proxy = None
         warnings.simplefilter('ignore', InsecureRequestWarning)
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
@@ -562,7 +564,8 @@ class ThycoticAuth:
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers, verify=False)
+        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+                           verify=False, proxies=self.proxy)
         if rs.status_code != 200:
             if rs.status_code == 400:
                 error_rs = rs.json()
@@ -571,7 +574,8 @@ class ThycoticAuth:
                     code = on_totp()
                     if code:
                         request_data['OTP'] = code
-                        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers, verify=False)
+                        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+                                           verify=False, proxies=self.proxy)
         if rs.status_code == 200:
             auth_rs = rs.json()
             self.access_token = auth_rs['access_token']
@@ -593,7 +597,8 @@ class ThycoticAuth:
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers, verify=False)
+        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+                           verify=False, proxies=self.proxy)
         if rs.status_code == 200:
             auth_rs = rs.json()
             self.access_token = auth_rs['access_token']
@@ -628,7 +633,7 @@ class ThycoticAuth:
             if skip > 0:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
-            rs = requests.get(url, headers=headers, verify=False)
+            rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
             if rs.status_code != 200:
                 error_rs = rs.json()
                 raise Exception(error_rs['message'])
@@ -650,7 +655,7 @@ class ThycoticAuth:
             'Accept': 'application/json',
             'Authorization': f'Bearer {self.access_token}'
         }
-        rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False)
+        rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
         if rs.status_code != 200:
             error_rs = rs.json()
             raise Exception(error_rs['message'])
@@ -661,7 +666,8 @@ class ThycoticAuth:
         headers = {
             'Authorization': f'Bearer {self.access_token}'
         }
-        return requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, stream=True)
+        return requests.get(self.base_url + 'api' + endpoint, headers=headers,
+                            verify=False, proxies=self.proxy, stream=True)
 
 
 class ThycoticAttachment(Attachment):
