@@ -13,6 +13,7 @@
 
 import logging
 import socket
+import time
 
 import paramiko
 from paramiko_expect import SSHClientInteraction
@@ -103,24 +104,39 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
             else:
                 responses = []
                 with SSHClientInteraction(ssh, timeout=timeout, display=False) as ia:
+                    time.sleep(0.1)
                     ia.expect('.*')
-                    info = ia.current_output
-                    lines = info.splitlines()
+                    result = ia.current_output
+                    lines = result.splitlines()
                     prompt = lines[-1] if lines else ''
                     ia.send('passwd')
-                    ia.expect(['.*password.*', '.*password.*'])
-                    responses.append(ia.current_output)
+                    time.sleep(0.2)
+                    ia.expect(['.*password.*'])
+                    result = ia.current_output
+                    logging.debug('Output from passwd command: \"%s\"', result)
+                    responses.append(result)
                     ia.send(old_password)
+                    logging.debug('Old Password sent')
+                    time.sleep(0.2)
                     ia.expect('.*password.*')
-                    responses.append(ia.current_output)
+                    result = ia.current_output
+                    logging.debug('Output from Old Password: \"%s\"', result)
+                    responses.append(result)
                     ia.send(new_password)
+                    logging.debug('New Password sent')
+                    time.sleep(0.2)
                     ia.expect('.*password.*')
-                    responses.append(ia.current_output)
+                    result = ia.current_output
+                    logging.debug('Output from New Password: \"%s\"', result)
+                    responses.append(result)
                     try:
                         ia.send(new_password)
+                        logging.debug('New Password Again sent')
+                        time.sleep(0.2)
                         ia.expect('.*')
-                        results = []
                         result = ia.current_output
+                        logging.debug('Output from New Password Again: \"%s\"', result)
+                        results = []
                         lines = [x for x in result.splitlines() if x]
                         has_prompt = False
                         if prompt and lines:
