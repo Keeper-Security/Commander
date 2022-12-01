@@ -68,10 +68,10 @@ class ThycoticImporter(BaseImporter):
         else:
             username, sep, host = filename.partition('@')
             if sep:
-                host = f'https://{host}/SecretServer/'
+                host = f'https://{host}/'
             else:
                 logging.warning('Thycotic connection parameters:')
-                logging.warning('  <Username>@<Secret server host>. /SecretServer endpoint is assumed')
+                logging.warning('  <Username>@<Secret server host>.')
                 logging.warning('  https://<Secret server host>/<Endpoint>. Full URL')
                 raise Exception('Import canceled')
 
