@@ -59,6 +59,7 @@ msp_data_parser = argparse.ArgumentParser(prog='msp-down|md', usage='msp-down',
 msp_info_parser = argparse.ArgumentParser(prog='msp-info|mi', usage='msp-info',
                                           description='Displays MSP details, such as managed companies and pricing.')
 msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_true', help='Display pricing information')
+msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true', help='Display MSP restriction information')
 msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Print details')
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 
@@ -254,6 +255,24 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
         return msp_info_parser
 
     def execute(self, params, **kwargs):
+        if kwargs.get('restriction'):
+            permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
+            if permits:
+                all_products = {x[1].lower(): x[2] for x in constants.MSP_PLANS}
+                all_addons = {x[0].lower(): x[3] for x in constants.MSP_ADDONS}
+                all_file_plans = {x[1].lower(): x[2] for x in constants.MSP_FILE_PLANS}
+                max_file_plan = permits['max_file_plan_type']
+                table = [
+                    ['Allow Unlimited Licenses', permits['allow_unlimited_licenses']],
+                    ['Allowed Products', [x + f' ({all_products.get(x.lower(), "")})' for x in permits['allowed_mc_products']]],
+                    ['Allowed Add-Ons', [x + f' ({all_addons.get(x.lower(), "")})' for x in permits['allowed_add_ons']]],
+                    ['Max File Storage plan', all_file_plans.get(max_file_plan.lower(), max_file_plan)]
+                ]
+                dump_report_data(table, ['Permit Name', 'Value'])
+            else:
+                logging.info('MSP has no restrictions')
+            return
+
         if kwargs.get('pricing'):
             pricing = MSPMixin.get_msp_pricing(params)
 
@@ -340,21 +359,33 @@ class MSPUpdateCommand(EnterpriseCommand):
             'command': 'enterprise_update_by_msp',
             'enterprise_id': current_mc['mc_enterprise_id'],
             'enterprise_name': current_mc['mc_enterprise_name'],
+            'product_id': current_mc['product_id'],
+            'seats': current_mc['number_of_seats'],
         }
 
-        plan_name = kwargs.get('plan') or current_mc['product_id']
-        plan_name = plan_name.lower()
-        product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
-        if not product_plan:
-            logging.warning('Managed Company plan \"%s\" is not found', plan_name)
-            return
-        rq['product_id'] = product_plan[1]
+        permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
+
+        plan_name = kwargs.get('plan')
+        if plan_name:
+            plan_name = plan_name.lower()
+            product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
+            if not product_plan:
+                logging.warning('Managed Company plan \"%s\" is not found', plan_name)
+                return
+            if permits:
+                has_plan = any((True for x in permits['allowed_mc_products'] if x.lower() == plan_name))
+                if not has_plan:
+                    logging.warning('Managed Company plan \"%s\" is not allowed', plan_name)
+                    return
+            rq['product_id'] = product_plan[1]
 
         seats = kwargs.get('seats')
         if isinstance(seats, int):
+            if seats < 0 and permits:
+                if permits['allow_unlimited_licenses'] is False:
+                    logging.warning('Managed Company unlimited licences are not allowed')
+                    return
             rq['seats'] = seats if seats >= 0 else 2147483647
-        else:
-            rq['seats'] = current_mc['number_of_seats']
 
         plan_name = kwargs.get('file_plan')
         if plan_name:
@@ -363,12 +394,23 @@ class MSPUpdateCommand(EnterpriseCommand):
             if not file_plan:
                 logging.warning('File plan \"%s\" is not found', plan_name)
                 return
-            if product_plan[3] < file_plan[0]:
+            if permits:
+                allowed_file_plan_name = permits['max_file_plan_type'].lower()
+                if allowed_file_plan_name:
+                    allowed_plan = next((x for x in constants.MSP_FILE_PLANS if allowed_file_plan_name == x[1].lower()), None)
+                    if allowed_plan and allowed_plan[0] < file_plan[0]:
+                        logging.warning('Managed Company file storage \"%s\" is not allowed', file_plan[2])
+                        return
+            product_id = rq['product_id'].lower()
+            product_plan = next((x for x in constants.MSP_PLANS if product_id == x[1].lower()), None)
+            if product_plan and product_plan[3] < file_plan[0]:
                 rq['file_plan_type'] = file_plan[1]
 
         addons = {}
         for ao in current_mc.get('add_ons', []):
             if not ao['enabled']:
+                continue
+            if ao.get('included_in_product') is True:
                 continue
             addon_name = ao['name']
             keep_addon = {
@@ -397,6 +439,10 @@ class MSPUpdateCommand(EnterpriseCommand):
                             logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
                             return
                     if action == 'add_addon':
+                        if permits:
+                            if addon_name not in (x.lower() for x in permits['allowed_add_ons']):
+                                logging.warning('Managed Company add-on \"%s\" is not allowed', addon_name)
+                                return
                         add_addon = {
                             'add_on': addon_name
                         }
@@ -693,24 +739,42 @@ class MSPAddCommand(EnterpriseCommand):
                 raise CommandError('msp-create', 'No root nodes were detected. Specify --node parameter')
             node_id = root_nodes[0]
 
+        permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
+
         plan_name = kwargs.get('plan')
-        if plan_name:
-            plan_name = plan_name.lower()
-            product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
-            if not product_plan:
-                logging.warning('Managed Company plan \"%s\" is not found', plan_name)
+        if not plan_name and permits:
+            allowed_products = permits['allowed_mc_products']
+            if allowed_products:
+                plan_name = allowed_products[0]
+        if not plan_name:
+            plan_name = constants.MSP_PLANS[0][1]
+        if permits:
+            has_plan = any((True for x in permits['allowed_mc_products'] if x.lower() == plan_name.lower()))
+            if not has_plan:
+                logging.warning('Managed Company plan \"%s\" is not allowed', plan_name)
                 return
-        else:
-            product_plan = constants.MSP_PLANS[0]
+
+        plan_name = plan_name.lower()
+        product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
+        if not product_plan:
+            logging.warning('Managed Company plan \"%s\" is not found', plan_name)
+            return
 
         seats = kwargs.get('seats')
+        if isinstance(seats, int) and seats < 0:
+            if permits:
+                if permits['allow_unlimited_licenses'] is False:
+                    logging.warning('Managed Company unlimited licences are not allowed')
+                    return
+            seats = 2147483647
+
         name = kwargs['name']
         tree_key = utils.generate_aes_key()
         rq = {
             'command': 'enterprise_registration_by_msp',
             'node_id': node_id,
             'product_id': product_plan[1],
-            'seats': seats if isinstance(seats, int) and seats >= 0 else 2147483647,
+            'seats': seats if isinstance(seats, int) else 0,
             'enterprise_name': name,
             'encrypted_tree_key': utils.base64_url_encode(
                 crypto.encrypt_aes_v2(tree_key, params.enterprise['unencrypted_tree_key'])),
@@ -729,6 +793,13 @@ class MSPAddCommand(EnterpriseCommand):
                 return
             if product_plan[3] < file_plan[0]:
                 rq['file_plan_type'] = file_plan[1]
+            if permits:
+                allowed_file_plan_name = permits['max_file_plan_type'].lower()
+                if allowed_file_plan_name:
+                    allowed_plan = next((x for x in constants.MSP_FILE_PLANS if allowed_file_plan_name == x[1].lower()), None)
+                    if allowed_plan and allowed_plan[0] < file_plan[0]:
+                        logging.warning('Managed Company file storage \"%s\" is not allowed', file_plan[2])
+                        return
 
         addons = kwargs.get('addon')
         if isinstance(addons, list):
@@ -740,6 +811,10 @@ class MSPAddCommand(EnterpriseCommand):
                 if addon is None:
                     logging.warning('Addon \"%s\" is not found', addon_name)
                     return
+                if permits:
+                    if addon_name not in (x.lower() for x in permits['allowed_add_ons']):
+                        logging.warning('Managed Company add-on \"%s\" is not allowed', addon_name)
+                        return
                 addon_seats = 0
                 if sep == ':' and addon[2]:
                     try:

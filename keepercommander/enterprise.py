@@ -12,7 +12,7 @@
 import abc
 import json
 import logging
-from typing import Optional, List, Set, Tuple, Dict, Any
+from typing import Optional, List, Set, Tuple, Dict
 
 from google.protobuf import message
 
@@ -563,7 +563,8 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'storage_expiration',
                        proto_entity.storageExpiration if proto_entity.storageExpiration > 0 else None)
         _set_or_remove(keeper_entity, 'lic_status', proto_entity.licenseStatus)
-        msp_pool = None
+        _set_or_remove(keeper_entity, 'distributor', proto_entity.distributor)
+
         if proto_entity.mspPool:
             msp_pool = [{
                 'product_id': x.productId,
@@ -571,12 +572,14 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
                 'availableSeats': x.availableSeats,
                 'stash': x.stash
             } for x in proto_entity.mspPool]
-        _set_or_remove(keeper_entity, 'msp_pool', msp_pool)
+            _set_or_remove(keeper_entity, 'msp_pool', msp_pool)
+
         if proto_entity.managedBy and proto_entity.managedBy.enterpriseId > 0:
             _set_or_remove(keeper_entity, 'managed_by', {
                 'enterprise_id': proto_entity.managedBy.enterpriseId,
                 'enterprise_name': proto_entity.managedBy.enterpriseName,
             })
+
         if proto_entity.addOns:
             _set_or_remove(keeper_entity, 'add_ons', [{
                 'name': x.name,
@@ -585,18 +588,20 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
                 'created': x.created,
                 'expiration': x.expiration,
             } for x in proto_entity.addOns])
-        _set_or_remove(keeper_entity, 'msp_permits', {
-            'restricted': proto_entity.mspPermits.restricted,
-            'allow_unlimited_licenses': proto_entity.mspPermits.allowUnlimitedLicenses,
-            'allowed_mc_products': [x for x in proto_entity.mspPermits.allowedMcProducts],
-            'allowed_add_ons': [x for x in proto_entity.mspPermits.allowedAddOns],
-            'max_file_plan_type': proto_entity.mspPermits.maxFilePlanType,
-            'mc_defaults': [{
-                'mc_product': x.mcProduct,
-                'add_ons': [a for a in x.addOns],
-                'file_plan_type': x.filePlanType,
-            } for x in proto_entity.mspPermits.mcDefaults]
-        })
+
+        if proto_entity.mspPermits.restricted:
+            _set_or_remove(keeper_entity, 'msp_permits', {
+                'allow_unlimited_licenses': proto_entity.mspPermits.allowUnlimitedLicenses,
+                'allowed_mc_products': [x for x in proto_entity.mspPermits.allowedMcProducts],
+                'allowed_add_ons': [x for x in proto_entity.mspPermits.allowedAddOns],
+                'max_file_plan_type': proto_entity.mspPermits.maxFilePlanType,
+                'mc_defaults': [{
+                    'mc_product': x.mcProduct,
+                    'add_ons': [a for a in x.addOns],
+                    'file_plan_type': x.filePlanType,
+                } for x in proto_entity.mspPermits.mcDefaults]
+            })
+
         _set_or_remove(keeper_entity, 'next_billing_date',
                        proto_entity.nextBillingDate if proto_entity.nextBillingDate > 0 else None)
 
@@ -832,6 +837,7 @@ class _EnterpriseManagedCompanyEntity(_EnterpriseEntity):
             'created': x.created,
             'expiration': x.expiration,
             'activation_time': x.activationTime,
+            'included_in_product': x.includedInProduct,
         } for x in proto_entity.addOns])
 
     def get_keeper_entity_id(self, entity):  # type: (dict) -> any
