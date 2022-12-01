@@ -220,7 +220,13 @@ class DistributorMspInfoCommand(EnterpriseCommand, DistributorMixin):
                 used = mc.get('number_of_users')
                 add_ons = list(mc.get('add_ons'))
                 if verbose:
-                    ao = [addon_lookup.get(x['name'], x['name']) for x in add_ons]
+                    ao = []
+                    for x in add_ons:
+                        addon_name = addon_lookup.get(x['name'], x['name'])
+                        seats = x.get('seats', 0)
+                        if seats > 0:
+                            addon_name += f' ({seats})'
+                        ao.append(addon_name)
                     ao.sort()
                     addons = '\n'.join(ao)
                 else:
