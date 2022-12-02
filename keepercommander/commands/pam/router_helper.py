@@ -1,8 +1,9 @@
 import json
 import logging
+import os
 
 import requests
-from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
+from keeper_secrets_manager_core.utils import bytes_to_base64
 
 from keepercommander import crypto, utils, rest_api
 from keepercommander.commands.base import dump_report_data
@@ -10,15 +11,28 @@ from keepercommander.commands.pam import gateway_helper
 from keepercommander.commands.pam.pam_dto import GatewayAction
 from keepercommander.display import bcolors
 from keepercommander.error import KeeperApiError
-from keepercommander.loginv3 import CommonHelperMethods
+from keepercommander.params import KeeperParams
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
-    PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse
+    PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse, RouterResponseCode, RRC_BAD_STATE, \
+    ControllerResponse
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
-KROUTER_URL = 'https://connect.dev.keepersecurity.com'
-# KROUTER_URL = 'http://localhost:5001'
-
 VERIFY_SSL = True
+
+
+def get_router_url(params: KeeperParams):
+
+    krouter_env_var_name = "KROUTER_URL"
+
+    if os.getenv(krouter_env_var_name):
+        krouter_env_var_val = os.getenv(krouter_env_var_name)
+        logging.debug(f"Getting Krouter url from ENV Variable '${krouter_env_var_name}'='${krouter_env_var_val}'")
+        return krouter_env_var_val    # 'KROUTER_URL = http://localhost:6001' OR 'http://localhost:5001'
+
+    krouter_server_url = 'https://connect.' + params.server  # https://connect.dev.keepersecurity.com
+    logging.debug(f"KRouter url '${krouter_server_url}")
+
+    return krouter_server_url
 
 
 def router_get_connected_gateways(params):
@@ -70,6 +84,8 @@ def router_get_rotation_schedules(params, proto_request):
 
 
 def _post_request_to_router(params, path, rq_proto=None, method='post'):
+    krouter_host = get_router_url(params)
+
     transmission_key = utils.generate_aes_key()
     server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
     encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
@@ -78,10 +94,10 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
 
     if rq_proto:
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
-    encrypted_session_token = crypto.encrypt_aes_v2(base64_to_bytes(params.session_token), transmission_key)
+    encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
     rs = requests.request(method,
-                          KROUTER_URL + "/" + path,
+                          krouter_host + "/" + path,
                           verify=VERIFY_SSL,
                           headers={
                             'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
@@ -114,12 +130,15 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
 
 
 def router_send_action_to_gateway(params, gateway_action: GatewayAction):
+
+    krouter_host = get_router_url(params)
+
     # 1. Find connected gateway to send action to
     try:
         enterprise_controllers_connected = router_get_connected_gateways(params).controllers
 
     except requests.exceptions.ConnectionError as errc:
-        logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{KROUTER_URL}]{bcolors.ENDC}")
+        logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_host}]{bcolors.ENDC}")
         return
     except Exception as e:
         raise e
@@ -152,35 +171,70 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
     rq.stream = False
     rq.payload = string_to_bytes(gateway_action.toJSON())
 
+    transmission_key = utils.generate_aes_key()
+
     response = router_send_message_to_gateway(
-        session_token=params.session_token,
+        params=params,
+        transmission_key=transmission_key,
         router_server_cookie=router_server_cookie,
         rq_proto=rq)
 
-    router_response = json.loads(response.text)
-    gateway_response = json.loads(router_response.get('gatewayResponse'))
-    gateway_response_payload = json.loads(gateway_response.get('payload'))
+    rs_body = response.content
 
-    # controller_response_str = router_response.get('data')
-    # controller_response = json.loads(controller_response_str)
+    if type(rs_body) == bytes:
+        router_response = RouterResponse()
+        router_response.ParseFromString(rs_body)
 
-    return {
-        'response': gateway_response_payload
-    }
+        rrc = RouterResponseCode.Name(router_response.responseCode )
+        if router_response.responseCode == RRC_BAD_STATE:
+            raise Exception(router_response.errorMessage + ' response code: ' + rrc)
+
+        payload_encrypted = router_response.encryptedPayload
+        if payload_encrypted:
+
+            payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
+
+            controller_response = ControllerResponse()
+            controller_response.ParseFromString(payload_decrypted)
+
+            gateway_response_payload = json.loads(controller_response.payload)
+        else:
+            gateway_response_payload = {}
+
+        # controller_response_str = router_response.get('data')
+        # controller_response = json.loads(controller_response_str)
+
+        return {
+            'response': gateway_response_payload
+        }
 
 
-def router_send_message_to_gateway(session_token, router_server_cookie, rq_proto):
+def router_send_message_to_gateway(params, transmission_key, router_server_cookie, rq_proto):
+
+    krouter_host = get_router_url(params)
+
+    server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+    encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+
+    encrypted_payload = b''
+
+    if rq_proto:
+        encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
+    encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
     rs = requests.post(
-        KROUTER_URL+"/send_controller_message",
+        krouter_host+"/send_controller_message",
         verify=VERIFY_SSL,
+
         headers={
-            'Authorization': f'KeeperUser ${session_token}'
+            'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
+            'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
         },
         cookies={
             'AWSALB': router_server_cookie
         },
-        data=rq_proto.SerializeToString())
+        data=encrypted_payload if rq_proto else None
+    )
 
     if rs.status_code >= 300:
         raise Exception(str(rs.status_code) + ': error: ' + rs.reason + ', message: ' + rs.text)
@@ -192,26 +246,28 @@ def print_router_response(router_response, original_message_id=None):
     if not router_response:
         return
 
-    gateway_response_data = router_response.get('response')
+    router_response_response = router_response.get('response')
+    router_response_response_payload_str = router_response_response.get('payload')
+    router_response_response_payload_dict = json.loads(router_response_response_payload_str)
 
-    gateway_response_message_id = base64_url_decode(gateway_response_data.get('messageId')).decode("utf-8")
+    gateway_response_message_id = base64_url_decode(router_response_response_payload_dict.get('messageId')).decode("utf-8")
 
     if original_message_id and original_message_id != gateway_response_message_id:
         logging.error(f"Message ID that was sent to the server [{original_message_id}] and the message id received "
                       f"back [{gateway_response_message_id}] were different. That probably means that the "
                       f"gateway sent a wrong response that was not associated with the reqeust.")
 
-    if not gateway_response_data.get('ok'):
-        print(f"{bcolors.FAIL}{json.dumps(gateway_response_data, indent=4)}{bcolors.ENDC}")
+    if not router_response_response_payload_dict.get('ok'):
+        print(f"{bcolors.FAIL}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
     else:
-        message_id = gateway_response_data.get('messageId')
+        message_id = router_response_response_payload_dict.get('messageId')
 
-        if gateway_response_data.get('isScheduled'):
+        if router_response_response_payload_dict.get('isScheduled'):
 
             print(f"Scheduled action id: {bcolors.OKBLUE}{message_id}{bcolors.ENDC}")
             print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {message_id}{bcolors.ENDC}' to get status of the scheduled action")
         else:
-            print(f"{bcolors.OKBLUE}{json.dumps(gateway_response_data, indent=4)}{bcolors.ENDC}")
+            print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
 
 
 def print_configs_from_router(params, router_response):

@@ -21,14 +21,14 @@ from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_st
 from keepercommander.commands.base import raise_parse_exception, suppress_exit, Command
 from keepercommander.display import bcolors
 from .base import GroupCommand, dump_report_data
-from .pam import gateway_helper
+from .pam import gateway_helper, router_helper
 from .pam.config_helper import config_get_all, config_create, config_get_one, config_remove
 from .pam.gateway_helper import create_gateway
 from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
     GatewayActionRotate, \
     GatewayActionRotateInputs, GatewayAction, GatewayActionListAccessRecords, GatewayActionJobInfoInputs, \
     GatewayActionJobInfo, GatewayActionJobCancel
-from .pam.router_helper import KROUTER_URL, router_send_action_to_gateway, print_router_response, \
+from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_record_rotation_info, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules
 from .utils import KSMCommand
@@ -362,8 +362,6 @@ class PAMListRecordRotationCommand(Command):
                          row_number=False, column_width=None)
 
 
-
-
 class PAMGatewayListCommand(Command):
     pam_cmd_controllers_parser = argparse.ArgumentParser(prog='dr-gateway')
     pam_cmd_controllers_parser.add_argument('--force', '-f', required=False, default=False, dest='is_force',
@@ -382,6 +380,7 @@ class PAMGatewayListCommand(Command):
         is_verbose = kwargs.get('is_verbose')
 
         is_router_down = False
+        krouter_url = router_helper.get_router_url(params)
         enterprise_controllers_connected = []
         try:
             enterprise_controllers_connected = router_get_connected_gateways(params)
@@ -391,14 +390,14 @@ class PAMGatewayListCommand(Command):
             if not is_force:
                 logging.warning(f"Looks like router is down. Use '{bcolors.OKGREEN}-f{bcolors.ENDC}' flag to "
                                 f"retrieve list of all available routers associated with your enterprise.\n\nRouter"
-                                f" URL [{KROUTER_URL}]")
+                                f" URL [{krouter_url}]")
                 return
             else:
-                logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{KROUTER_URL}]{bcolors.ENDC}")
+                logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_url}]{bcolors.ENDC}")
 
         except Exception as e:
-            logging.warning(f"Unhandled error during retrieval of the connected gateways. {str(e)}")
-            return
+            logging.warning(f"Unhandled error during retrieval of the connected gateways.")
+            raise e
 
         enterprise_controllers_all = gateway_helper.get_all_gateways(params)
 
