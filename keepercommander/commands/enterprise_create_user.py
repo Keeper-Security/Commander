@@ -113,7 +113,12 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                                   rs_type=enterprise_pb2.EnterpriseUsersProvisionResponse)
         for user_rs in rs.results:
             if user_rs.code and user_rs.code not in ['success', 'ok']:
-                logging.warning('Failed to add account "%s" to enterprise. %s.', email, user_rs.message)
+                email_provisioning_doc = 'https://docs.keeper.io/enterprise-guide/user-and-team-provisioning/email-auto-provisioning'
+                logging.warning('Failed to auto-create account "%s".\n'
+                                'Creating user accounts without email verification is only permitted on reserved domains.\n' +
+                                'To reserve a domain please contact Keeper support. Learn more about domain reservation here:\n%s',
+                                email, email_provisioning_doc)
+                return
 
         login_facade = vault_extensions.LoginFacade()
         ots_command = OneTimeShareCreateCommand()
