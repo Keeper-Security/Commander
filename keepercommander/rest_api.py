@@ -13,6 +13,7 @@ import requests
 import os
 import json
 import logging
+import ssl
 import time
 
 from typing import Union, Dict
@@ -152,8 +153,22 @@ def execute_rest(context, endpoint, payload):
         else:
             url = context.server_base + endpoint
 
-        rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'},
-                           proxies=context.proxies, verify=context.certificate_check)
+        try:
+            rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'},
+                               proxies=context.proxies, verify=context.certificate_check)
+        except requests.exceptions.SSLError as e:
+            doc_url = 'https://docs.keeper.io/secrets-manager/commander-cli/using-commander/troubleshooting-commander-cli#ssl-certificate-errors'
+            if len(e.args) > 0:
+                inner_e = e.args[0]
+                if hasattr(inner_e, 'reason'):
+                    reason = getattr(inner_e, 'reason')
+                    if isinstance(reason, Exception) and hasattr(reason, 'args'):
+                        args = getattr(reason, 'args')
+                        if isinstance(args, tuple) and len(args) > 0:
+                            inner_e = args[0]
+                            if isinstance(inner_e, ssl.SSLCertVerificationError):
+                                raise CommunicationError(f'Certificate validation error. More info:\n{doc_url}')
+            raise e
 
         content_type = rs.headers.get('Content-Type') or ''
         if rs.status_code == 200:
