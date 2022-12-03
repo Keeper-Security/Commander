@@ -875,12 +875,16 @@ class PAMGatewayActionRotateCommand(Command):
         ri_controller_uid = base64_url_encode(ri.controllerUid)
         ri_router_worker_lb_cookie_str = ri.cookie
 
+        all_enterprise_controllers_all = list(gateway_helper.get_all_gateways(params))
+
         rrs = RouterRotationStatus.Name(ri.status)
         if rrs == 'RRS_NO_ROTATION':
             print(f'{bcolors.FAIL}Record [{record_uid}] does not have rotation associated with it.{bcolors.ENDC}')
             return
         elif rrs == 'RRS_CONTROLLER_DOWN':
-            print(f'{bcolors.WARNING}The Gateway [uid={ri_controller_uid}] that can perform this rotation is currently offline.{bcolors.ENDC}')
+            controller_details = next((ctr for ctr in all_enterprise_controllers_all if ctr.controllerUid == ri.controllerUid), None)
+
+            print(f'{bcolors.WARNING}The Gateway "{controller_details.controllerName}" [uid={ri_controller_uid}] that can perform this rotation is currently offline.{bcolors.ENDC}')
             return
         elif rrs == 'RRS_NO_CONTROLLER':
             print(f'{bcolors.FAIL}There are no gateways associated with this Record Rotation Setting.{bcolors.ENDC}')

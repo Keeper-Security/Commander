@@ -4,6 +4,7 @@ import os
 
 import requests
 from keeper_secrets_manager_core.utils import bytes_to_base64
+from requests import ConnectionError
 
 from keepercommander import crypto, utils, rest_api
 from keepercommander.commands.base import dump_report_data
@@ -96,15 +97,20 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
     encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
-    rs = requests.request(method,
-                          krouter_host + "/" + path,
-                          verify=VERIFY_SSL,
-                          headers={
-                            'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
-                            'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}'
-                          },
-                          data=encrypted_payload if rq_proto else None
-    )
+    try:
+        rs = requests.request(method,
+                              krouter_host + "/" + path,
+                              verify=VERIFY_SSL,
+                              headers={
+                                'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
+                                'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}'
+                              },
+                              data=encrypted_payload if rq_proto else None
+        )
+    except ConnectionError as e:
+        raise KeeperApiError(-1, f"KRouter is not reachable on '{krouter_host}'. Error: ${e}")
+    except Exception as ex:
+        raise ex
 
     content_type = rs.headers.get('Content-Type') or ''
 
