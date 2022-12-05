@@ -102,38 +102,34 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                 logging.warning('"passwd" command not found on device')
                 return False
             else:
-                responses = []
                 with SSHClientInteraction(ssh, timeout=timeout, display=False) as ia:
-                    time.sleep(0.1)
+                    time.sleep(0.5)
                     ia.expect('.*')
                     result = ia.current_output
                     lines = result.splitlines()
                     prompt = lines[-1] if lines else ''
                     ia.send('passwd')
-                    time.sleep(0.2)
-                    ia.expect(['.*password.*'])
+                    answer = ia.expect([r'(?i).*current.*password.*', r'(?i).*old.*password.*', r'(?i).*new.*password.*'])
                     result = ia.current_output
                     logging.debug('Output from passwd command: \"%s\"', result)
-                    responses.append(result)
-                    ia.send(old_password)
-                    logging.debug('Old Password sent')
-                    time.sleep(0.2)
-                    ia.expect('.*password.*')
-                    result = ia.current_output
-                    logging.debug('Output from Old Password: \"%s\"', result)
-                    responses.append(result)
+                    if answer < 0:
+                        logging.debug('Unexpected response from the passwd command. Old password is assumed.')
+                    if answer < 2:
+                        ia.send(old_password)
+                        logging.debug('Old Password sent')
+                        ia.expect(r'(?i).*new.*password.*')
+                        result = ia.current_output
+                        logging.debug('Output from Old Password: \"%s\"', result)
                     ia.send(new_password)
                     logging.debug('New Password sent')
-                    time.sleep(0.2)
-                    ia.expect('.*password.*')
+                    ia.expect(r'(?i).*new.*password.*')
                     result = ia.current_output
                     logging.debug('Output from New Password: \"%s\"', result)
-                    responses.append(result)
                     try:
                         ia.send(new_password)
                         logging.debug('New Password Again sent')
                         time.sleep(0.2)
-                        ia.expect('.*')
+                        ia.expect('.+')
                         result = ia.current_output
                         logging.debug('Output from New Password Again: \"%s\"', result)
                         results = []
@@ -144,24 +140,21 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                                 has_prompt = True
                                 lines.pop(-1)
                         results.extend(lines)
-                        responses.extend(lines)
                         if not has_prompt:
                             ia.send('')
-                            ia.expect('.*')
+                            ia.expect('.*', timeout=2)
                             result = ia.current_output
                             lines = [x for x in result.splitlines() if x]
                             if prompt and lines:
                                 if lines[-1] == prompt:
                                     lines.pop(-1)
                             results.extend(lines)
-                            responses.extend(lines)
                         success_line = next((x for x in results if 'success' in x), None)
                         if success_line:
                             rotate_success = True
                             logging.info(success_line.split(': ')[-1])
                     except Exception as e:
-                        # Catch exception because password
-                        # could have still been rotated and we need to verify
+                        # Catch exception because password could have still been rotated, and we need to verify
                         logging.error(e)
 
     # Verify which password connects to host
@@ -187,7 +180,6 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                         logging.warning('Reverting the password rotation failed. The rotated password is still valid.')
                     else:
                         logging.warning('SSH password rotation failed. Verified that the old password is still valid.')
-                    logging.debug('\n'.join(responses))
                     rotate_success = False
                 else:
                     if revert:
