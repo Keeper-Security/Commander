@@ -27,7 +27,7 @@ def get_router_url(params: KeeperParams):
 
     if os.getenv(krouter_env_var_name):
         krouter_env_var_val = os.getenv(krouter_env_var_name)
-        logging.debug(f"Getting Krouter url from ENV Variable '${krouter_env_var_name}'='${krouter_env_var_val}'")
+        logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_env_var_val}'")
         return krouter_env_var_val    # 'KROUTER_URL = http://localhost:6001' OR 'http://localhost:5001'
 
     krouter_server_url = 'https://connect.' + params.server  # https://connect.dev.keepersecurity.com
@@ -248,7 +248,7 @@ def router_send_message_to_gateway(params, transmission_key, router_server_cooki
     return rs
 
 
-def print_router_response(router_response, original_message_id=None):
+def print_router_response(router_response, original_conversation_id=None):
     if not router_response:
         return
 
@@ -256,22 +256,22 @@ def print_router_response(router_response, original_message_id=None):
     router_response_response_payload_str = router_response_response.get('payload')
     router_response_response_payload_dict = json.loads(router_response_response_payload_str)
 
-    gateway_response_message_id = base64_url_decode(router_response_response_payload_dict.get('messageId')).decode("utf-8")
+    gateway_response_conversation_id = base64_url_decode(router_response_response_payload_dict.get('conversation_id')).decode("utf-8")
 
-    if original_message_id and original_message_id != gateway_response_message_id:
-        logging.error(f"Message ID that was sent to the server [{original_message_id}] and the message id received "
-                      f"back [{gateway_response_message_id}] were different. That probably means that the "
-                      f"gateway sent a wrong response that was not associated with the reqeust.")
+    if original_conversation_id and original_conversation_id != gateway_response_conversation_id:
+        logging.error(f"Message ID that was sent to the server [{original_conversation_id}] and the conversation id "
+                      f"received back is [{gateway_response_conversation_id}] were different. That probably means that "
+                      f"the gateway sent a wrong response that was not associated with the reqeust.")
 
     if not router_response_response_payload_dict.get('ok'):
         print(f"{bcolors.FAIL}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
     else:
-        message_id = router_response_response_payload_dict.get('messageId')
+        conversation_id = router_response_response_payload_dict.get('conversation_id')
 
         if router_response_response_payload_dict.get('isScheduled'):
 
-            print(f"Scheduled action id: {bcolors.OKBLUE}{message_id}{bcolors.ENDC}")
-            print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {message_id}{bcolors.ENDC}' to get status of the scheduled action")
+            print(f"Scheduled action id: {bcolors.OKBLUE}{conversation_id}{bcolors.ENDC}")
+            print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {conversation_id}{bcolors.ENDC}' to get status of the scheduled action")
         else:
             print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
 
