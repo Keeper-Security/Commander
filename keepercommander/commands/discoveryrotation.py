@@ -884,7 +884,8 @@ class PAMGatewayActionRotateCommand(Command):
         elif rrs == 'RRS_CONTROLLER_DOWN':
             controller_details = next((ctr for ctr in all_enterprise_controllers_all if ctr.controllerUid == ri.controllerUid), None)
 
-            print(f'{bcolors.WARNING}The Gateway "{controller_details.controllerName}" [uid={ri_controller_uid}] that can perform this rotation is currently offline.{bcolors.ENDC}')
+            print(f'{bcolors.WARNING}The Gateway "{controller_details.controllerName}" [uid={ri_controller_uid}] '
+                  f'that is setup to perform this rotation is currently offline.{bcolors.ENDC}')
             return
         elif rrs == 'RRS_NO_CONTROLLER':
             print(f'{bcolors.FAIL}There are no gateways associated with this Record Rotation Setting.{bcolors.ENDC}')
