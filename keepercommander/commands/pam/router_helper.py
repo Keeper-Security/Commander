@@ -15,7 +15,7 @@ from keepercommander.error import KeeperApiError
 from keepercommander.params import KeeperParams
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
     PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse, RouterResponseCode, RRC_BAD_STATE, \
-    ControllerResponse
+    ControllerResponse, RRC_OK
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
 VERIFY_SSL = True
@@ -125,9 +125,15 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
             router_response = RouterResponse()
             router_response.ParseFromString(rs_body)
 
-            payload_encrypted = router_response.encryptedPayload
-            payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
+            rrc = RouterResponseCode.Name(router_response.responseCode)
+            if router_response.responseCode != RRC_OK:
+                raise Exception(router_response.errorMessage + ' Response code: ' + rrc)
 
+            if router_response.encryptedPayload:
+                payload_encrypted = router_response.encryptedPayload
+                payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
+            else:
+                payload_decrypted = None
             return payload_decrypted
 
         return rs_body

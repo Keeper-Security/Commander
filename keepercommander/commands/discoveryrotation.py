@@ -232,7 +232,7 @@ class PAMCreateRecordRotationCommand(Command):
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
-        rq.schedule = json.dumps(schedule_data)
+        rq.schedule = json.dumps(schedule_data) if schedule_data else ''
         rq.pwdComplexity = rule_list_json_str
         rq.scriptName = script_name if script_name else ''
 
