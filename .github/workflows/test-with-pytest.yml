@@ -9,22 +9,21 @@ jobs:
   test-with-pytest:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: [3.6, 3.9]
+        python-version: ['3.6', '3.10']
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-20.04
 
     steps:
       - name: Checkout branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package with test dependencies
-        run: pip install .[all]
+        run: pip install .[test]
 
-      - name: Run non-integration tests
-        run: pytest -m "not integration"
+      - name: Run unit tests
+        run: pytest unit-tests/
