@@ -413,7 +413,7 @@ class PAMGatewayListCommand(Command):
         headers = []
         headers.append('UID')
         headers.append('Gateway Name')
-        headers.append('KSM App UID')
+        headers.append('KSM App  name (UID)')
         headers.append('Status')
 
         if is_verbose:
@@ -453,7 +453,7 @@ class PAMGatewayListCommand(Command):
                 ksm_app_data_unencrypted_json = ksm_app.get('data_unencrypted')
                 ksm_app_data_unencrypted_dict = json.loads(ksm_app_data_unencrypted_json)
                 ksm_app_title = ksm_app_data_unencrypted_dict.get('title')
-                ksm_app_info = f'{ksm_app_title} (uid: {ksm_app_uid_str})'
+                ksm_app_info = f'{ksm_app_title} ({ksm_app_uid_str})'
             else:
                 ksm_app_info = f'[APP NOT ACCESSIBLE OR DELETED] (uid: {ksm_app_uid_str})'
 
@@ -473,7 +473,7 @@ class PAMGatewayListCommand(Command):
                 row.append(datetime.fromtimestamp(c.created/1000))
                 row.append(datetime.fromtimestamp(c.lastModified/1000))
                 row.append(c.nodeId)
-                row.append(f"{connected_controller.get('cookie')}{bcolors.ENDC}" if add_cookie else "")
+                row.append(f"{connected_controller.cookie}{bcolors.ENDC}" if add_cookie else "")
 
             table.append(row)
         table.sort(key=lambda x: (x[3] or '', x[1].lower()))
@@ -595,27 +595,32 @@ class DRExecListConfigsCommand(Command):
 
         table = []
         headers = ['UID',
+                   'Config Name',
+                   'Type',
                    'Node Id',
                    'Gateway UID',
                    'Created',
-                   'Last Modified',
-                   '# of Child Elements'
+                   'Last Modified'
                    ]
 
         if is_verbose:
             headers.append('Data')
 
         for c in all_root_configs:
+
+            config_json = bytes_to_string(c.data)
+            config_dict = json.loads(config_json)
             row = [
                 CommonHelperMethods.bytes_to_url_safe_str(c.configurationUid),
+                config_dict.get('name'),
+                config_dict.get('type'),
                 c.nodeId,
                 CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid),
                 datetime.fromtimestamp(c.created / 1000),
-                datetime.fromtimestamp(c.lastModified / 1000),
-                len(c.children)
+                datetime.fromtimestamp(c.lastModified / 1000)
             ]
             if is_verbose:
-                row.append(f"{bcolors.OKBLUE}{bytes_to_string(c.data)}{bcolors.ENDC}")
+                row.append(f"{bcolors.OKBLUE}{config_json}{bcolors.ENDC}")
 
             table.append(row)
 
@@ -789,10 +794,14 @@ class PAMRouterGetRotationInfo(Command):
 
             print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
             print(f"Configuration Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.configurationUid) if rri.configurationUid else '-') }{bcolors.ENDC}")
+            print(f'Node ID: {bcolors.OKBLUE}{rri}{bcolors.ENDC}')
             print(f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
             print(f"Gateway Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.controllerUid) if rri.controllerUid else '-') }{bcolors.ENDC}")
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
+            # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
+            # print(f"pwdComplexity: {bcolors.OKGREEN}{rri.pwdComplexity}{bcolors.ENDC}")
+            # print(f"disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
         else:
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
 
@@ -920,7 +929,7 @@ class PAMGatewayActionServerInfoCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionGatewayInfo())
+        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionGatewayInfo(is_scheduled=False))
 
         print_router_response(router_response)
 

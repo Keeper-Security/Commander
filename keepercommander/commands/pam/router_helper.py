@@ -180,7 +180,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
     rq = RouterControllerMessage()
     rq.messageUid = msg_id_bytes
     rq.controllerUid = found_gateway.controllerUid
-    rq.stream = False
+    rq.streamResponse = False
     rq.payload = string_to_bytes(gateway_action.toJSON())
 
     transmission_key = utils.generate_aes_key()
