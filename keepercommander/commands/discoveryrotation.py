@@ -843,8 +843,11 @@ class PAMGatewayActionJobCommand(Command):
         action_inputs = GatewayActionJobInfoInputs(job_id)
 
         message_id = GatewayAction.generate_message_id()
-        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionJobInfo(inputs=action_inputs,
-                                                                                                           message_id=message_id))
+        router_response = router_send_action_to_gateway(
+            params=params,
+            gateway_action=GatewayActionJobInfo(
+                inputs=action_inputs,
+                message_id=message_id))
         print_router_response(router_response, message_id)
 
 

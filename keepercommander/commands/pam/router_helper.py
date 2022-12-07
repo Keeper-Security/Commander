@@ -15,7 +15,7 @@ from keepercommander.error import KeeperApiError
 from keepercommander.params import KeeperParams
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
     PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse, RouterResponseCode, RRC_BAD_STATE, \
-    ControllerResponse, RRC_OK
+    ControllerResponse, RRC_OK, RRC_TIMEOUT
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
 VERIFY_SSL = True
@@ -197,8 +197,15 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
         router_response = RouterResponse()
         router_response.ParseFromString(rs_body)
 
-        rrc = RouterResponseCode.Name(router_response.responseCode )
+        rrc = RouterResponseCode.Name(router_response.responseCode)
         if router_response.responseCode == RRC_BAD_STATE:
+            raise Exception(router_response.errorMessage + ' response code: ' + rrc)
+
+        if router_response.responseCode == RRC_TIMEOUT:
+            # Router tried to send message to the Controller but the response didn't arrive on time (3 sec).
+            raise Exception(router_response.errorMessage + ' response code: ' + rrc)
+
+        if router_response.responseCode != RRC_OK:
             raise Exception(router_response.errorMessage + ' response code: ' + rrc)
 
         payload_encrypted = router_response.encryptedPayload

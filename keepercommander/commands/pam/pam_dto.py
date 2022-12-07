@@ -32,7 +32,7 @@ class GatewayActionDiscoverInputs:
 
 class GatewayAction(metaclass=abc.ABCMeta):
 
-    def __init__(self, action, gateway_destination=None, inputs=None, message_id=None, is_scheduled=True):
+    def __init__(self, action, is_scheduled, gateway_destination=None, inputs=None, message_id=None):
         self.action = action
         self.is_scheduled = is_scheduled
         self.gateway_destination = gateway_destination
@@ -54,7 +54,7 @@ class GatewayAction(metaclass=abc.ABCMeta):
 
 class GatewayActionGatewayInfo(GatewayAction):
 
-    def __init__(self, message_id=None, is_scheduled=True):
+    def __init__(self, message_id=None, is_scheduled=False):
         super().__init__(
             'gateway-info',
             message_id=message_id,
@@ -68,7 +68,7 @@ class GatewayActionGatewayInfo(GatewayAction):
 class GatewayActionDiscover(GatewayAction):
 
     def __init__(self, inputs: GatewayActionDiscoverInputs, message_id=None):
-        super().__init__('discover', inputs=inputs, message_id=message_id)
+        super().__init__('discover', inputs=inputs, message_id=message_id, is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -86,7 +86,7 @@ class GatewayActionJobInfoInputs:
 class GatewayActionJobCancel(GatewayAction):
 
     def __init__(self, inputs: GatewayActionJobInfoInputs, message_id=None):
-        super().__init__('job-cancel', inputs=inputs, message_id=message_id)
+        super().__init__('job-cancel', inputs=inputs, message_id=message_id, is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -95,7 +95,7 @@ class GatewayActionJobCancel(GatewayAction):
 class GatewayActionJobInfo(GatewayAction):
 
     def __init__(self, inputs: GatewayActionJobInfoInputs, message_id=None):
-        super().__init__('job-info', inputs=inputs, message_id=message_id)
+        super().__init__('job-info', inputs=inputs, message_id=message_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -115,7 +115,8 @@ class GatewayActionRotateInputs:
 class GatewayActionRotate(GatewayAction):
 
     def __init__(self, inputs: GatewayActionRotateInputs, message_id=None, gateway_destination=None):
-        super().__init__('rotate', inputs=inputs, message_id=message_id, gateway_destination=gateway_destination)
+        super().__init__('rotate', inputs=inputs, message_id=message_id, gateway_destination=gateway_destination,
+                         is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -130,7 +131,7 @@ class GatewayActionGetConfigsInputs:
 class GatewayActionGetConfigs(GatewayAction):
 
     def __init__(self, message_id=None):
-        super().__init__('get-configs', message_id=message_id)
+        super().__init__('get-configs', message_id=message_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -139,7 +140,7 @@ class GatewayActionGetConfigs(GatewayAction):
 class GatewayActionListAccessRecords(GatewayAction):
 
     def __init__(self, message_id=None):
-        super().__init__('list-access-records', message_id=message_id)
+        super().__init__('list-access-records', message_id=message_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
