@@ -193,7 +193,7 @@ class CommandCompleter(Completer):
                             else:
                                 extra['prefix'] = ''
                             context = 'path'
-                    elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'cd', 'record-permission'}:
+                    elif cmd in {'share-folder', 'mkdir', 'tree', 'rmdir', 'rndir', 'cd', 'record-permission'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
                             opts, _ = (cmd_parser or folder_parser).parse_known_args(shlex.split(args))

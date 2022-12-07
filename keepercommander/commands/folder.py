@@ -36,6 +36,7 @@ def register_commands(commands):
     commands['tree'] = FolderTreeCommand()
     commands['mkdir'] = FolderMakeCommand()
     commands['rmdir'] = FolderRemoveCommand()
+    commands['rndir'] = FolderRenameCommand()
     commands['mv'] = FolderMoveCommand()
     commands['ln'] = FolderLinkCommand()
     commands['shortcut'] = ShortcutCommand()
@@ -43,7 +44,7 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, mv_parser, ln_parser]:
+    for p in [cd_parser, ls_parser, tree_parser, mkdir_parser, rmdir_parser, rndir_parser, mv_parser, ln_parser]:
         command_info[p.prog] = p.description
 
     command_info['shortcut'] = 'Manage record shortcuts'
@@ -80,6 +81,10 @@ rmdir_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', he
 rmdir_parser.add_argument('pattern', nargs='*', type=str, action='store', help='folder path or UID')
 rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
+
+rndir_parser = argparse.ArgumentParser(prog='rndir', description='Rename a folder.')
+rndir_parser.add_argument('-n', '--name', dest='name', action='store', required=True, help='folder new name')
+rndir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 
 
 mkdir_parser = argparse.ArgumentParser(prog='mkdir', description='Create a folder.')
@@ -284,6 +289,74 @@ class FolderTreeCommand(Command):
                     raise CommandError('tree', f'Folder {folder_name} not found')
 
 
+class FolderRenameCommand(Command):
+    def get_parser(self):
+        return rndir_parser
+
+    def execute(self, params, **kwargs):
+        new_name = kwargs.get('name')
+        if not new_name:
+            raise CommandError('rendir', 'New folder name parameter is required.')
+
+        folder_name = kwargs.get('folder')
+        if not folder_name:
+            raise CommandError('rendir', 'Enter the path or UID of existing folder.')
+
+        folder_uid = None
+        if folder_name in params.folder_cache:
+            folder_uid = folder_name
+        else:
+            rs = try_resolve_path(params, folder_name)
+            if rs is not None:
+                folder, pattern = rs
+                if len(pattern) == 0:
+                    folder_uid = folder.uid
+                else:
+                    raise CommandError('rendir', f'Folder {folder_name} not found')
+
+        sub_folder = params.subfolder_cache[folder_uid]    # type: Dict
+        rq = {
+            'command': 'folder_update',
+            'folder_uid': folder_uid,
+            'folder_type': sub_folder['type'],
+        }
+
+        if sub_folder['type'] == 'user_folder':
+            encryption_key = sub_folder['folder_key_unencrypted']
+            encrypted_data = sub_folder.get('data')
+        elif sub_folder['type'] == 'shared_folder':
+            if folder_uid not in params.shared_folder_cache:
+                raise CommandError('rendir', f'Shared Folder UID \"{folder_uid}\" not found.')
+            rq['shared_folder_uid'] = folder_uid
+            shared_folder = params.shared_folder_cache[folder_uid]
+            encryption_key = shared_folder['shared_folder_key_unencrypted']
+            encrypted_data = shared_folder.get('data')
+            rq['name'] = utils.base64_url_encode(crypto.encrypt_aes_v1(new_name.encode('utf-8'), encryption_key))
+        elif sub_folder['type'] == 'shared_folder_folder':
+            rq['shared_folder_uid'] = sub_folder['shared_folder_uid']
+            encryption_key = sub_folder['folder_key_unencrypted']
+            encrypted_data = sub_folder.get('data')
+        else:
+            return
+
+        if encrypted_data:
+            try:
+                decrypted_data = crypto.decrypt_aes_v1(utils.base64_url_decode(encrypted_data), encryption_key)
+                data = json.loads(decrypted_data.decode())
+            except:
+                data = {}
+        else:
+            data = {}
+
+        data['name'] = new_name
+        rq['data'] = utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), encryption_key))
+
+        api.communicate(params, rq)
+        params.sync_data = True
+        folder = params.folder_cache[folder_uid]
+        logging.info('Folder \"%s\" has been renamed to \"%s\"', folder.name, new_name)
+
+
 class FolderMakeCommand(Command):
     def get_parser(self):
         return mkdir_parser
@@ -424,17 +497,14 @@ def get_shared_folder_delete_rq(params, sf_requests, uid):
         sf_requests[uid] = rq
 
 
-def get_shared_subfolder_delete_rq(params, sf_requests, user_folder, user_folder_ids):
+def get_shared_subfolder_delete_rq(params, user_folder, user_folder_ids):
     """Recursively searches a user folder for shared folders to delete"""
     delete_rq_added = False
     user_folder_ids.add(user_folder.uid)
     for uid in user_folder.subfolders:
         subfolder = params.folder_cache[uid]
-        if subfolder.type == BaseFolderNode.SharedFolderType:
-            delete_rq_added = True
-            get_shared_folder_delete_rq(params, sf_requests, uid)
-        elif uid not in user_folder_ids:
-            delete_rq_added = get_shared_subfolder_delete_rq(params, sf_requests, subfolder, user_folder_ids)
+        if uid not in user_folder_ids:
+            delete_rq_added = get_shared_subfolder_delete_rq(params, subfolder, user_folder_ids)
     return delete_rq_added
 
 
@@ -472,16 +542,13 @@ class FolderRemoveCommand(Command):
 
         force = kwargs['force'] if 'force' in kwargs else None
         quiet = kwargs['quiet'] if 'quiet' in kwargs else None
-        shared_folder_requests = OrderedDict()
         user_folder_objects = OrderedDict()
         search_user_folder_ids = set()
         shared_subfolder_delete_rq_added = False
         for folder in folders:
-            if folder.type == BaseFolderNode.SharedFolderType:
-                get_shared_folder_delete_rq(params, shared_folder_requests, folder.uid)
-            elif folder.uid not in user_folder_objects:
+            if folder.uid not in user_folder_objects:
                 shared_subfolder_delete_rq_added = get_shared_subfolder_delete_rq(
-                    params, shared_folder_requests, folder, search_user_folder_ids
+                    params, folder, search_user_folder_ids
                 )
                 del_obj = {
                     'delete_resolution': 'unlink',
@@ -499,22 +566,8 @@ class FolderRemoveCommand(Command):
 
                 user_folder_objects[folder.uid] = del_obj
 
-        shared_folder_count = len(shared_folder_requests)
         user_folder_count = len(user_folder_objects)
         np = 'n'
-        if shared_folder_count > 0:
-            if not quiet or not force:
-                user_folder_msg = f' and {user_folder_count} user folder(s)' if user_folder_count > 0 else ''
-                print(f'Removing {shared_folder_count} shared folder(s){user_folder_msg}.')
-                shared_folder_names = [get_folder_path(params, uid) for uid in shared_folder_requests]
-                print(f'\nThe following shared folder(s) will be removed:\n{", ".join(shared_folder_names)}')
-
-            prompt_msg = 'Do you want to proceed with the shared folder deletion?'
-            np = 'y' if force else user_choice(f'\n{prompt_msg}', 'yn', default='n')
-            if np.lower() == 'y':
-                api.execute_batch(params, list(shared_folder_requests.values()))
-                params.sync_data = True
-
         if user_folder_count > 0:
             if shared_subfolder_delete_rq_added and np.lower() == 'n':
                 print(f'Cannot remove {user_folder_count} user folder(s) without the removal of shared subfolders.')
