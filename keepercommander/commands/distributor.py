@@ -169,18 +169,19 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                 row = [msp.get('enterprise_id'), msp_name, len(msp.get('managed_companies', []))]
                 if show_mc_details:
                     row.append(None)
-                row.extend((unlimited_allowed, used))
+                row.extend(('Allowed' if unlimited_allowed else 'Not Allowed', used))
                 table.append(row)
 
                 if show_mc_details:
                     for mc in msp.get('managed_companies', []):
                         mc_name = mc.get('mc_enterprise_name')
+                        is_expired = mc.get('is_expired', False)
                         if len(mc_name) > 40 and not verbose:
                             mc_name = mc_name[:37] + '...'
                         allowed = mc.get('number_of_seats')
                         if allowed > 2000000000:
                             allowed = 'Unlimited'
-                        used = mc.get('number_of_users')
+                        used = '-' if is_expired else mc.get('number_of_users')
                         row = [mc.get('mc_enterprise_id'), msp_name, None, mc_name, allowed, used]
                         table.append(row)
 
@@ -215,9 +216,10 @@ class DistributorMspInfoCommand(EnterpriseCommand, DistributorMixin):
                     mc_name = mc_name[:37] + '...'
                 msp_node_id = mc.get('msp_node_id')
                 allowed = mc.get('number_of_seats')
+                is_expired = mc.get('is_expired', False)
                 if allowed > 2000000000:
                     allowed = 'Unlimited'
-                used = mc.get('number_of_users')
+                used = '-' if is_expired else mc.get('number_of_users')
                 add_ons = list(mc.get('add_ons'))
                 if verbose:
                     ao = []
