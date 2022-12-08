@@ -33,7 +33,8 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules
 from .utils import KSMCommand
 from ..loginv3 import CommonHelperMethods
-from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidsRequest
+from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidsRequest, \
+    ControllerMessageType
 from ..utils import is_json, base64_url_encode
 
 WS_INIT = {'kind': 'init'}
@@ -411,9 +412,9 @@ class PAMGatewayListCommand(Command):
         table = []
 
         headers = []
-        headers.append('UID')
+        headers.append('KSM App name (UID)')
+        headers.append('Gateway UID')
         headers.append('Gateway Name')
-        headers.append('KSM App  name (UID)')
         headers.append('Status')
 
         if is_verbose:
@@ -443,8 +444,6 @@ class PAMGatewayListCommand(Command):
             add_cookie = False
 
             row = []
-            row.append(f'{row_color}{CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid)}')
-            row.append(c.controllerName)
 
             ksm_app_uid_str = CommonHelperMethods.bytes_to_url_safe_str(c.applicationUid)
             ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
@@ -457,7 +456,9 @@ class PAMGatewayListCommand(Command):
             else:
                 ksm_app_info = f'[APP NOT ACCESSIBLE OR DELETED] (uid: {ksm_app_uid_str})'
 
-            row.append(ksm_app_info)
+            row.append(f'{row_color}{ksm_app_info}')
+            row.append(c.controllerName)
+            row.append(CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid))
 
             if is_router_down:
                 row.append('UNKNOWN' + bcolors.ENDC)
@@ -476,7 +477,7 @@ class PAMGatewayListCommand(Command):
                 row.append(f"{connected_controller.cookie}{bcolors.ENDC}" if add_cookie else "")
 
             table.append(row)
-        table.sort(key=lambda x: (x[3] or '', x[1].lower()))
+        table.sort(key=lambda x: (x[3] or '', x[0].lower()))
 
         dump_report_data(table, headers, fmt='table', filename="",
                          row_number=False, column_width=None)
@@ -493,13 +494,15 @@ class DRExecListAccessRecordsCommand(Command):
     def execute(self, params, **kwargs):
 
         if not hasattr(params, 'pam_controllers'):
-            gateway_helper.get_connected_gateways(params)
+            gateway_helper.get_all_gateways(params)
 
         message_id = GatewayAction.generate_message_id(is_bytes=True)
 
         router_response = router_send_action_to_gateway(
             params=params,
-            gateway_action=GatewayActionListAccessRecords()
+            gateway_action=GatewayActionListAccessRecords(),
+            message_type=ControllerMessageType.Value('CMT_GENERAL'),
+            is_streaming=False
         )
 
         if not router_response:
@@ -822,8 +825,12 @@ class PAMGatewayActionJobCancelCommand(Command):
         generic_job_id_inputs = GatewayActionJobInfoInputs(job_id)
 
         message_id = GatewayAction.generate_message_id()
-        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionJobCancel(inputs=generic_job_id_inputs,
-                                                                                                             message_id=message_id))
+        router_response = router_send_action_to_gateway(
+            params=params,
+            gateway_action=GatewayActionJobCancel(inputs=generic_job_id_inputs, message_id=message_id),
+            message_type=ControllerMessageType.Value('CMT_GENERAL'),
+            is_streaming=False
+        )
         print_router_response(router_response, message_id)
 
 
@@ -847,7 +854,10 @@ class PAMGatewayActionJobCommand(Command):
             params=params,
             gateway_action=GatewayActionJobInfo(
                 inputs=action_inputs,
-                message_id=message_id))
+                message_id=message_id),
+            message_type=ControllerMessageType.Value('CMT_GENERAL'),
+            is_streaming=False
+        )
         print_router_response(router_response, message_id)
 
 
@@ -916,7 +926,9 @@ class PAMGatewayActionRotateCommand(Command):
         router_response = router_send_action_to_gateway(params=params,
                                                         gateway_action=GatewayActionRotate(inputs=action_inputs,
                                                                                            message_id=message_id,
-                                                                                           gateway_destination=ri_controller_uid)
+                                                                                           gateway_destination=ri_controller_uid),
+                                                        message_type=ControllerMessageType.Value('CMT_ROTATE'),
+                                                        is_streaming=False
                                                         )
 
         print_router_response(router_response, message_id)
@@ -932,7 +944,12 @@ class PAMGatewayActionServerInfoCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        router_response = router_send_action_to_gateway(params=params, gateway_action=GatewayActionGatewayInfo(is_scheduled=False))
+        router_response = router_send_action_to_gateway(
+            params=params,
+            gateway_action=GatewayActionGatewayInfo(is_scheduled=False),
+            message_type=ControllerMessageType.Value('CMT_GENERAL'),
+            is_streaming=False
+        )
 
         print_router_response(router_response)
 
@@ -962,8 +979,10 @@ class PAMGatewayActionDiscoverCommand(Command):
         message_id = GatewayAction.generate_message_id()
 
         router_response = router_send_action_to_gateway(
-                                        params,
-                                        GatewayActionDiscover(inputs=action_inputs, message_id=message_id)
+            params,
+            GatewayActionDiscover(inputs=action_inputs, message_id=message_id),
+            message_type=ControllerMessageType.Value('CMT_GENERAL'),
+            is_streaming=False
                                        )
 
         print_router_response(router_response, message_id)

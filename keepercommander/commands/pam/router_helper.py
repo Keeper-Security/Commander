@@ -15,7 +15,7 @@ from keepercommander.error import KeeperApiError
 from keepercommander.params import KeeperParams
 from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
     PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse, RouterResponseCode, RRC_BAD_STATE, \
-    ControllerResponse, RRC_OK, RRC_TIMEOUT
+    ControllerResponse, RRC_OK, RRC_TIMEOUT, ControllerMessageType
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
 VERIFY_SSL = True
@@ -141,7 +141,7 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
         raise KeeperApiError(rs.status_code, rs.text)
 
 
-def router_send_action_to_gateway(params, gateway_action: GatewayAction):
+def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming):
 
     krouter_host = get_router_url(params)
 
@@ -180,7 +180,8 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction):
     rq = RouterControllerMessage()
     rq.messageUid = msg_id_bytes
     rq.controllerUid = found_gateway.controllerUid
-    rq.streamResponse = False
+    rq.messageType = message_type
+    rq.streamResponse = is_streaming
     rq.payload = string_to_bytes(gateway_action.toJSON())
 
     transmission_key = utils.generate_aes_key()
