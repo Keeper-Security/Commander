@@ -19,7 +19,7 @@ import time
 from typing import Union, Dict
 
 from .params import RestApiContext
-from .error import KeeperApiError, CommunicationError
+from .error import KeeperApiError, Error
 from .proto import APIRequest_pb2 as proto
 from . import crypto, utils
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
@@ -167,7 +167,7 @@ def execute_rest(context, endpoint, payload):
                         if isinstance(args, tuple) and len(args) > 0:
                             inner_e = args[0]
                             if isinstance(inner_e, ssl.SSLCertVerificationError):
-                                raise CommunicationError(f'Certificate validation error. More info:\n{doc_url}')
+                                raise Error(f'Certificate validation error. More info:\n{doc_url}')
             raise e
 
         content_type = rs.headers.get('Content-Type') or ''
@@ -203,7 +203,7 @@ def execute_rest(context, endpoint, payload):
                         logging.debug('<<< Response Content: [%s]', rs.text)
                     else:
                         logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
-                raise CommunicationError('Code {0}: {1}'.format(rs.status_code, rs.reason))
+                raise KeeperApiError(rs.status_code, rs.reason)
 
 
 def get_device_token(context):
@@ -263,7 +263,7 @@ def pre_login(context, username, two_factor_token=None):
                     continue
 
                 raise KeeperApiError(rs['error'], rs['message'])
-    raise CommunicationError('Cannot get user information')
+    raise Exception('Cannot get user information')
 
 
 def get_new_user_params(context, username):

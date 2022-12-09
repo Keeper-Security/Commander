@@ -49,16 +49,15 @@ def json_to_base64(json_str):
     return json_b64
 
 
-def decrypt_encryption_params(encryption_params, password):     # type: (str, str) -> bytes
+def decrypt_encryption_params(encryption_params, password):     # type: (bytes, str) -> bytes
 
-    decoded_encryption_params = base64_url_decode(encryption_params)
-    if len(decoded_encryption_params) != 100:
+    if len(encryption_params) != 100:
         raise Exception('Invalid encryption params: bad params length')
 
-    _ = int.from_bytes(decoded_encryption_params[0:1], byteorder='big', signed=False)
-    iterations = int.from_bytes(decoded_encryption_params[1:4], byteorder='big', signed=False)
-    salt = decoded_encryption_params[4:20]
-    encrypted_data_key = decoded_encryption_params[20:]
+    _ = int.from_bytes(encryption_params[0:1], byteorder='big', signed=False)
+    iterations = int.from_bytes(encryption_params[1:4], byteorder='big', signed=False)
+    salt = encryption_params[4:20]
+    encrypted_data_key = encryption_params[20:]
 
     key = crypto.derive_key_v1(password, salt, iterations)
     decrypted_data_key = crypto.decrypt_aes_v1(encrypted_data_key, key, use_padding=False)

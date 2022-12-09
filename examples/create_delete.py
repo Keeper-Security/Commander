@@ -45,5 +45,3 @@ if api.add_record(my_params, r):
 # Delete the record 
 if r.record_uid:
     api.delete_record(my_params, r.record_uid)
-
-

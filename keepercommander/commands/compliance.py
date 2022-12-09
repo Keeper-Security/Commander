@@ -8,7 +8,7 @@ from keepercommander.commands.base import GroupCommand, dump_report_data, field_
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
-from ..error import CommunicationError
+from ..error import Error
 from ..params import KeeperParams
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
@@ -374,7 +374,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         try:
             accessed = get_accessed_records(username)
             report_data = fill_table(accessed)
-        except CommunicationError as e:
+        except Error as e:
             logging.warning(f'User {username_or_id} not found, error = "{e.message}"')
 
         return report_data

@@ -17,8 +17,6 @@ from typing import Tuple, Optional
 from urllib import parse
 
 from .base32hex import b32decode
-from .error import Error
-from .subfolder import get_folder_path, find_folders, BaseFolderNode
 
 
 def get_totp_code(url):   # type: (str) -> Optional[Tuple[str, int, int]]
@@ -60,7 +58,7 @@ def get_totp_code(url):   # type: (str) -> Optional[Tuple[str, int, int]]
                     code = code.rjust(digits, '0')
                 return code, period - (tm_base % period), period
             else:
-                raise Error('Unsupported hash algorithm: {0}'.format(algorithm))
+                raise Exception(f'Unsupported hash algorithm: {algorithm}')
 
 
 class Record:

@@ -279,9 +279,8 @@ class LoginV3Flow:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
         elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
-            decrypted_data_key = api.decrypt_encryption_params(
-                CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedDataKey),
-                params.password)
+            decrypted_data_key = \
+                utils.decrypt_encryption_params(resp.encryptedDataKey, params.password)
             login_type_message = bcolors.UNDERLINE + "Password"
 
         elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
@@ -353,14 +352,6 @@ class LoginV3Flow:
 
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
-
-            # if 'encrypted_data_key' in keys:
-            #     encrypted_data_key = base64.urlsafe_b64decode(keys['encrypted_data_key'])
-            #     key = rest_api.derive_key_v2('data_key', params.password, params.salt, params.iterations)
-            #     params.data_key = rest_api.decrypt_aes(encrypted_data_key, key)
-            # elif 'encryption_params' in keys:
-            #     params.data_key = api.decrypt_encryption_params(keys['encryption_params'], params.password)
-
             params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
             if 'encrypted_ecc_private_key' in keys:
                 encrypted_ecc_key = utils.base64_url_decode(keys['encrypted_ecc_private_key'])
