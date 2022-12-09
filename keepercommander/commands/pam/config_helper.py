@@ -3,10 +3,8 @@ import os
 from keeper_secrets_manager_core.utils import string_to_bytes
 
 from keepercommander import api
-from keepercommander.loginv3 import CommonHelperMethods
 from keepercommander.proto import enterprise_pb2
-from keepercommander.proto.enterprise_pb2 import PAMModifyRequest, PAMDataOperation, PAMOperationType, \
-    PAMGenericUidRequest
+from keepercommander.proto.pam_pb2 import PAMDataOperation, PAMOperationType, PAMModifyRequest, PAMGenericUidRequest
 
 
 def config_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):

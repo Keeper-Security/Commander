@@ -13,9 +13,10 @@ from keepercommander.commands.pam.pam_dto import GatewayAction
 from keepercommander.display import bcolors
 from keepercommander.error import KeeperApiError
 from keepercommander.params import KeeperParams
-from keepercommander.proto.enterprise_pb2 import RouterControllerMessage, RouterRotationInfo, PAMGenericUidRequest, \
-    PAMOnlineControllers, PAMRotationSchedulesResponse, RouterResponse, RouterResponseCode, RRC_BAD_STATE, \
-    ControllerResponse, RRC_OK, RRC_TIMEOUT, ControllerMessageType
+from keepercommander.proto.pam_pb2 import PAMOnlineControllers, PAMGenericUidRequest, PAMRotationSchedulesResponse, \
+    ControllerResponse
+from keepercommander.proto.router_pb2 import RouterRotationInfo, RouterResponse, RouterResponseCode, RRC_OK, \
+    RouterControllerMessage, RRC_BAD_STATE, RRC_TIMEOUT
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
 VERIFY_SSL = True

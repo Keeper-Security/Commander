@@ -33,13 +33,13 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules
 from .utils import KSMCommand
 from ..loginv3 import CommonHelperMethods
-from ..proto.enterprise_pb2 import RouterRotationStatus, RouterRecordRotationRequest, PAMGenericUidsRequest, \
+from ..proto.pam_pb2 import PAMGenericUidsRequest, \
     ControllerMessageType
+from ..proto.router_pb2 import RouterRecordRotationRequest, RouterRotationStatus
 from ..utils import is_json, base64_url_encode
 
 WS_INIT = {'kind': 'init'}
 WS_LOG_FOLDER = 'dr-logs'
-WS_URL = 'localho'
 WS_HEADERS = {
     'ClientVersion': 'ms16.2.4'
 }

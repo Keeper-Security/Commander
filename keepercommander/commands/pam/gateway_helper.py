@@ -2,11 +2,11 @@ import logging
 
 from keepercommander import api, utils
 from keepercommander.commands.utils import KSMCommand
-from keepercommander.proto import enterprise_pb2
+from keepercommander.proto import pam_pb2
 
 
 def get_all_gateways(params):
-    rs = api.communicate_rest(params, None, 'pam/get_controllers', rs_type=enterprise_pb2.PAMControllersResponse)
+    rs = api.communicate_rest(params, None, 'pam/get_controllers', rs_type=pam_pb2.PAMControllersResponse)
     return rs.controllers
 
 
@@ -54,10 +54,10 @@ def create_gateway(params, gateway_name, ksm_app, config_init, ott_expire_in_min
 
 
 def remove_gateway(params, gateway_uid):
-    rq = enterprise_pb2.PAMGenericUidRequest()
+    rq = pam_pb2.PAMGenericUidRequest()
     rq.uid = utils.base64_url_decode(gateway_uid)
 
-    rs = api.communicate_rest(params, rq, 'pam/remove_controller', rs_type=enterprise_pb2.PAMControllersResponse)
+    rs = api.communicate_rest(params, rq, 'pam/remove_controller', rs_type=pam_pb2.PAMControllersResponse)
 
     # TODO: Add error checking
 
