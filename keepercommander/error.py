@@ -10,68 +10,33 @@
 
 class Error(Exception):
     """Base class for exceptions in this module."""
-    pass
-
-
-class InputError(Error):
-    """Exception raised for errors in the input.
-
-    Attributes:
-        expression -- input expression in which the error occurred
-        message -- explanation of the error
-    """
-
-    def __init__(self, expression, message):
-        self.expression = expression
-        self.message = message
-
-
-class AuthenticationError(Error):
-    """Exception raised with user fails authentication
-
-    Attributes:
-        message -- explanation of authentication error
-    """
-
     def __init__(self, message):
         self.message = message
 
-
-class CommunicationError(Error):
-    """Exception raised with network issues
-
-    Attributes:
-        message -- explanation of communication error
-    """
-
-    def __init__(self, message):
-        self.message = message
+    def __str__(self):
+        return self.message
 
 
-class KeeperApiError(CommunicationError):
+class KeeperApiError(Error):
     """Exception raised with failed Keeper API request
     """
 
     def __init__(self, result_code, message):
-        CommunicationError.__init__(self, message)
+        super().__init__(message)
         self.result_code = result_code
 
     def __str__(self):
-        return self.message or self.result_code
-
-
-class CryptoError(Error):
-    """Exception raised with cryptography issues
-
-    Attributes:
-        message -- explanation of crypto error
-    """
-
-    def __init__(self, message):
-        self.message = message
+        return f'{self.result_code or ""}: {self.message or ""}'
 
 
 class CommandError(Error):
     def __init__(self, command, message):
+        super().__init__(message)
         self.command = command
-        self.message = message
+
+    def __str__(self):
+        if self.command:
+            return f'{self.command}: {self.message}'
+        else:
+            return super().__str__()
+        

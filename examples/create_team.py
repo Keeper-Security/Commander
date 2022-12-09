@@ -101,4 +101,3 @@ if slh.has_error():
     exit(1)
 else:
     print("Users are added to the team")
-

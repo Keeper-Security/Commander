@@ -31,7 +31,7 @@ from Cryptodome.PublicKey import RSA
 from . import constants, rest_api, loginv3, utils, crypto, vault
 from .display import bcolors
 from .enterprise import query_enterprise as qe
-from .error import CryptoError, KeeperApiError
+from .error import KeeperApiError
 from .params import KeeperParams, PublicKeys, LAST_RECORD_UID
 from .proto import client_pb2, APIRequest_pb2, record_pb2 as records, enterprise_pb2
 from .record import Record
@@ -834,54 +834,6 @@ def create_encryption_params(password, salt, iterations, data_key):
     return loginv3.CommonHelperMethods.bytes_to_url_safe_str(enc_params)
 
 
-def decrypt_encryption_params(encryption_params, password):
-    """ Decrypt the data key returned by the server 
-    Format:
-    1 byte: Version number (currently only 1)
-    3 bytes: Iterations, unsigned integer, big endian
-    16 bytes: salt
-    80 bytes: encrypted data key (broken down further below)
-        16 bytes: IV
-        64 bytes: ciphertextIn
-    Key for encrypting the data key: 
-        PBKDF2_with_HMAC_SHA256(iterations, salt, master password, 256-bit)
-    Encryption method: 256-bit AES, CBC mode, no padding
-    Verification: the decrypted ciphertext should contain two 32 byte values, 
-        identical to each other.
-    """
-    if not encryption_params:
-        raise CryptoError('Invalid encryption params: empty')
-
-    decoded_encryption_params = base64.urlsafe_b64decode(encryption_params+'==')
-
-    if len(decoded_encryption_params) != 100:
-        raise CryptoError('Invalid encryption params: bad params length')
-
-    version = int.from_bytes(decoded_encryption_params[0:1], byteorder='big', signed=False)
-    iterations = int.from_bytes(decoded_encryption_params[1:4], byteorder='big', signed=False)
-    if iterations < 1000:
-        raise CryptoError('Invalid encryption parameters: iterations too low')
-
-    salt = decoded_encryption_params[4:20]
-    encrypted_data_key = decoded_encryption_params[20:100]
-
-    key = derive_key(password, salt, iterations)
-    cipher = AES.new(key, AES.MODE_CBC, encrypted_data_key[:16])
-    decrypted_data_key = cipher.decrypt(encrypted_data_key[16:])
-
-    # validate the key is formatted correctly
-    if len(decrypted_data_key) != 64:
-        raise CryptoError('Invalid data key length')
-
-    if decrypted_data_key[:32] != decrypted_data_key[32:]:
-        raise CryptoError('Invalid data key: failed mirror verification')
-
-    logging.debug('Decrypted data key with success.')
-
-    # save the encryption params 
-    return decrypted_data_key[:32]
-
-
 def decrypt_data_key(params: KeeperParams, encrypted_data_key):
 
     encrypted_data_key_len = len(encrypted_data_key)
@@ -891,7 +843,7 @@ def decrypt_data_key(params: KeeperParams, encrypted_data_key):
     # [16 bytes: auth - tag]
 
     if encrypted_data_key_len != 60:
-        raise CryptoError('Invalid encryption params: Encrypted data key was unexpected length ' + str(encrypted_data_key_len))
+        raise Exception('Invalid encryption params: Encrypted data key was unexpected length ' + str(encrypted_data_key_len))
 
     decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
 

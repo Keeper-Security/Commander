@@ -45,5 +45,3 @@ for sf in results:
 results = api.search_teams(my_params, searchstring) 
 for t in results:
     print('Team UID ' + t.team_uid + ' matches')
-
-

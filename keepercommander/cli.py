@@ -33,7 +33,7 @@ from .commands import (
 from .commands.base import expand_cmd_args
 from .commands.msp import get_mc_by_name_or_id
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
-from .error import AuthenticationError, CommunicationError, CommandError
+from .error import CommandError, Error
 from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
@@ -399,13 +399,11 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
                 logging.info('Executing [%s]...', command)
             try:
                 do_command(params, command)
-            except CommunicationError as e:
-                logging.error("Communication Error: %s", e.message)
-            except AuthenticationError as e:
-                logging.error("AuthenticationError Error: %s", e.message)
             except CommandError as e:
                 msg = f'{e.command}: {e.message}' if e.command else f'{e.message}'
                 logging.error(msg)
+            except Error as e:
+                logging.error("Communication Error: %s", e.message)
             except Exception as e:
                 logging.debug(e, exc_info=True)
                 logging.error('An unexpected error occurred: %s', sys.exc_info()[0])
@@ -534,10 +532,8 @@ def loop(params):  # type: (KeeperParams) -> int
                 logging.warning('%s: %s', e.command, e.message)
             else:
                 logging.warning('%s', e.message)
-        except CommunicationError as e:
+        except Error as e:
             logging.error("Communication Error: %s", e.message)
-        except AuthenticationError as e:
-            logging.error("AuthenticationError Error: %s", e.message)
         except Exception as e:
             logging.debug(e, exc_info=True)
             logging.error('An unexpected error occurred: %s. Toggle debug to print traceback', e)
