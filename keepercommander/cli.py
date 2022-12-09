@@ -536,7 +536,7 @@ def loop(params):  # type: (KeeperParams) -> int
             logging.error("Communication Error: %s", e.message)
         except Exception as e:
             logging.debug(e, exc_info=True)
-            logging.error('An unexpected error occurred: %s. Toggle debug to print traceback', e)
+            logging.error('An unexpected error occurred: %s. Type "debug" to toggle verbose error output', e)
 
         if params.batch_mode and error_no != 0 and not suppress_errno:
             break
