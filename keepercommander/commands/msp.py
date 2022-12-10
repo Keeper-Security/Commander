@@ -478,7 +478,8 @@ class DailySnapshot(object):
         return b.__hash__()
 
     @staticmethod
-    def merge_units(unit_iter):    # type: (Iterable[Dict[int, Union[int, Tuple[int, int]]]]) -> Dict[int, Tuple[int, int]]
+    def merge_units(unit_iter):
+        # type: (Iterable[Dict[int, Union[int, Tuple[int, int]]]]) -> Dict[int, Tuple[int, int]]
         ret = {}   # type: Dict[int, Tuple[int, int]]
         for units in unit_iter:
             if not isinstance(units, dict):
@@ -635,21 +636,21 @@ class MSPBillingReportCommand(EnterpriseCommand):
                 if MSPBillingReportCommand.is_plan_id(product):
                     plan = plan_lookup.get(count_id)
                     product_name = plan[2] if plan else str(count_id)
-                    if 'mc_base_plans' in pricing:
+                    if plan and 'mc_base_plans' in pricing:
                         if plan[1] in pricing['mc_base_plans']:
                             rate = pricing['mc_base_plans'][plan[1]]
                             rate_text = MSPMixin.price_text_short(rate)
                 elif MSPBillingReportCommand.is_storage_plan_id(product):
                     plan = storage_lookup.get(count_id)
                     product_name = plan[2] if plan else str(count_id)
-                    if 'mc_file_plans' in pricing:
+                    if plan and 'mc_file_plans' in pricing:
                         if plan[1] in pricing['mc_file_plans']:
                             rate = pricing['mc_file_plans'][plan[1]]
                             rate_text = MSPMixin.price_text_short(rate)
                 elif MSPBillingReportCommand.is_addon_id(product):
-                    addon = storage_lookup.get(count_id)
+                    addon = addon_lookup.get(count_id)
                     product_name = addon[1] if addon else str(count_id)
-                    if 'mc_addons' in pricing:
+                    if addon and 'mc_addons' in pricing:
                         if addon[0] in pricing['mc_addons']:
                             rate = pricing['mc_addons'][addon[0]]
                             rate_text = MSPMixin.price_text_short(rate)
@@ -658,7 +659,7 @@ class MSPBillingReportCommand(EnterpriseCommand):
 
                 row.extend((product_name, count, rate_text))
                 if not show_date:
-                    row.append(count // days)
+                    row.append(round(count / days, 2))
 
                 table.append(row)
 
