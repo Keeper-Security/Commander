@@ -221,12 +221,12 @@ def main(from_package=False):
             flags.clear()
             opts.command = '?'
 
-    if not opts.command and from_package:
-        opts.command = 'shell'
-
-    if (opts.command or '') in {'?', ''}:
+    if (opts.command or '') in {'?', 'help'}:
         if opts.command == '?' or not params.commands:
             usage('')
+
+    if not opts.command and from_package:
+        opts.command = 'shell'
 
     if params.timedelay >= 1 and params.commands:
         cli.runcommands(params)

@@ -53,10 +53,10 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-msp_data_parser = argparse.ArgumentParser(prog='msp-down|md', usage='msp-down',
+msp_data_parser = argparse.ArgumentParser(prog='msp-down', usage='msp-down',
                                           description='Download current MSP data from the Keeper Cloud.')
 
-msp_info_parser = argparse.ArgumentParser(prog='msp-info|mi', usage='msp-info',
+msp_info_parser = argparse.ArgumentParser(prog='msp-info', usage='msp-info',
                                           description='Displays MSP details, such as managed companies and pricing.')
 msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_true', help='Display pricing information')
 msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true', help='Display MSP restriction information')

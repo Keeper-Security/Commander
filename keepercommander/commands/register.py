@@ -58,7 +58,7 @@ def register_command_info(aliases, command_info):
     command_info['share'] = 'Manage One-Time Shares'
 
 
-share_record_parser = argparse.ArgumentParser(prog='share-record|sr', description='Change the sharing permissions of an individual record')
+share_record_parser = argparse.ArgumentParser(prog='share-record', description='Change the sharing permissions of an individual record')
 share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
 share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'],
                                  default='grant', action='store', help='user share action. \'grant\' if omitted')
@@ -70,7 +70,7 @@ share_record_parser.add_argument('record', nargs='?', type=str, action='store', 
 share_record_parser.error = raise_parse_exception
 share_record_parser.exit = suppress_exit
 
-share_folder_parser = argparse.ArgumentParser(prog='share-folder|sf', description='Change a shared folders permissions.')
+share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change a shared folders permissions.')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'remove'], default='grant',
                                  action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',

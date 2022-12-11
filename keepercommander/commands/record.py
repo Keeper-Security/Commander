@@ -63,7 +63,7 @@ def register_command_info(aliases, command_info):
     command_info['trash'] = 'Manage deleted items'
 
 
-get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID')
+get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
 get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
@@ -104,7 +104,7 @@ list_team_parser.add_argument('--output', dest='output', action='store',
 
 
 record_history_parser = argparse.ArgumentParser(
-    prog='history|rh', description='Show the history of a record modifications.')
+    prog='history', description='Show the history of a record modifications.')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
     help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
@@ -117,7 +117,7 @@ record_history_parser.add_argument('record', nargs='?', type=str, action='store'
 
 
 shared_records_report_parser = argparse.ArgumentParser(
-    prog='shared-records-report|srr', description='Report shared records for a logged-in user.')
+    prog='shared-records-report', description='Report shared records for a logged-in user.')
 shared_records_report_parser.add_argument(
     '--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
 shared_records_report_parser.add_argument(
