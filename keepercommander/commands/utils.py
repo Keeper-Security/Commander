@@ -150,7 +150,7 @@ Commands to configure and manage the Keeper Secrets Manager platform.
 
 """
 
-sync_down_parser = argparse.ArgumentParser(prog='sync-down|d', description='Download & decrypt data.')
+sync_down_parser = argparse.ArgumentParser(prog='sync-down', description='Download & decrypt data.')
 sync_down_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
 whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
@@ -254,7 +254,7 @@ ksm_parser.error = raise_parse_exception
 ksm_parser.exit = suppress_exit
 
 
-version_parser = argparse.ArgumentParser(prog='version|v', description='Displays version of the installed Commander.')
+version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.add_argument('-p', '--packages', action='store_true', help='Show installed Python packages')
 version_parser.error = raise_parse_exception

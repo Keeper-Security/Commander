@@ -53,9 +53,8 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    aliases['cr'] = 'compliance'
-    aliases['compliance-report'] = 'compliance'
-    command_info['compliance'] = 'SOX Compliance Reporting'
+    aliases['cr'] = 'compliance-report'
+    command_info['compliance-report'] = 'SOX Compliance Reporting'
 
 
 class ComplianceCommand(GroupCommand):

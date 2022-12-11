@@ -103,10 +103,10 @@ SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_cou
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
 
-enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down|ed',
+enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
 
-enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info|ei',
+enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info',
                                                  description='Display a tree structure of your enterprise.',
                                                  formatter_class=RawTextHelpFormatter)
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
@@ -133,7 +133,7 @@ enterprise_info_parser.error = raise_parse_exception
 enterprise_info_parser.exit = suppress_exit
 
 
-enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node|en', description='Manage an enterprise node(s).')
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node(s).')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -145,7 +145,7 @@ enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
 
-enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user|eu', description='Manage an enterprise user(s).')
+enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user', description='Manage an enterprise user(s).')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
@@ -170,7 +170,7 @@ enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
 
-enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role|er', description='Manage an enterprise role(s).')
+enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role', description='Manage an enterprise role(s).')
 #enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_role_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
@@ -204,7 +204,7 @@ enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
 
-enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team|et', description='Manage an enterprise team(s).')
+enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team', description='Manage an enterprise team(s).')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')

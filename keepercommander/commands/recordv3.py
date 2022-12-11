@@ -70,7 +70,7 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
+add_parser = argparse.ArgumentParser(prog='add', description='Add a record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
 command_group = add_parser.add_mutually_exclusive_group()
 command_group.add_argument('--pass', dest='password', action='store', help='password')
@@ -137,7 +137,7 @@ rm_parser.error = raise_parse_exception
 rm_parser.exit = suppress_exit
 
 
-list_parser = argparse.ArgumentParser(prog='list|l', description='List all records, ordered by title')
+list_parser = argparse.ArgumentParser(prog='list', description='List all records, ordered by title')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 #list_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
@@ -145,7 +145,7 @@ list_parser.error = raise_parse_exception
 list_parser.exit = suppress_exit
 
 
-append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to an existing record')
+append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 append_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
@@ -208,7 +208,7 @@ totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
 
 
-record_type_info_parser = argparse.ArgumentParser(prog='record-type-info|rti', description='Get record type info')
+record_type_info_parser = argparse.ArgumentParser(prog='record-type-info', description='Get record type info')
 record_type_info_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display extended help on record types parameters')
 record_type_info_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format')
 record_type_info_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
@@ -223,7 +223,7 @@ record_type_info_parser.error = raise_parse_exception
 record_type_info_parser.exit = suppress_exit
 
 
-record_type_parser = argparse.ArgumentParser(prog='record-type|rt', description='Add, modify or delete record type definition')
+record_type_parser = argparse.ArgumentParser(prog='record-type', description='Add, modify or delete record type definition')
 record_type_parser.add_argument('record_type_id', default=None, nargs='?', type=int, action='store', help='record Type ID to update/delete')
 record_type_parser.add_argument('--data', dest='data', action='store', help='record type definition in JSON format - use rti command to see existing definitions: ex. rti -lr login')
 record_type_parser.add_argument('-a', '--action', dest='action', action='store', choices=['add', 'update', 'remove'], required=True, help='record type definition - add, update or remove')

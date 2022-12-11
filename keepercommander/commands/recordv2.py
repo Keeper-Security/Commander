@@ -65,7 +65,7 @@ totp_parser.error = raise_parse_exception
 totp_parser.exit = suppress_exit
 
 
-add_parser = argparse.ArgumentParser(prog='add|a', description='Add a record')
+add_parser = argparse.ArgumentParser(prog='add', description='Add a record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
 add_parser.add_argument('--pass', dest='password', action='store', help='password')
 add_parser.add_argument('--url', dest='url', action='store', help='url')
@@ -99,7 +99,7 @@ rm_parser.error = raise_parse_exception
 rm_parser.exit = suppress_exit
 
 
-get_info_parser = argparse.ArgumentParser(prog='get|g', description='Get the details of a record/folder/team by UID.')
+get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID.')
 get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format.')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
@@ -107,7 +107,7 @@ get_info_parser.error = raise_parse_exception
 get_info_parser.exit = suppress_exit
 
 
-append_parser = argparse.ArgumentParser(prog='append-notes|an', description='Append notes to an existing record.')
+append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record.')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 append_parser.error = raise_parse_exception

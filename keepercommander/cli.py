@@ -10,7 +10,6 @@
 #
 
 import datetime
-import functools
 import logging
 import os
 import re
@@ -26,20 +25,19 @@ from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
 from . import api, display, loginv3, ttk
+from . import versioning
+from .autocomplete import CommandCompleter
 from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import expand_cmd_args
+from .commands.base import expand_cmd_args, dump_report_data
 from .commands.msp import get_mc_by_name_or_id
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
 from .params import KeeperParams
 from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
-from .autocomplete import CommandCompleter
-from . import versioning
-
 
 stack = []
 command_info = OrderedDict()
@@ -54,33 +52,34 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'command before executing this command.'
 
 
-def display_command_help(show_enterprise = False, show_shell = False):
-    max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, command_info.keys(), 0)
+def display_command_help(show_enterprise=False, show_shell=False):
+    headers = ['', 'Command', 'Alias', '', 'Description']
+    alias_lookup = {x[1]: x[0] for x in aliases.items()}
+    table = []
+    cmds = list(command_info.keys())
+    cmds.sort()
+    for cmd in cmds:
+        table.append(['  ', cmd, alias_lookup.get(cmd) or '', '...', command_info.get(cmd, '')])
 
     if show_enterprise:
-        max_length = functools.reduce(lambda x, y: len(y) if len(y) > x else x, enterprise_command_info.keys(), max_length)
+        cmds = list(enterprise_command_info.keys())
+        cmds.sort()
+        for cmd in cmds:
+            table.append(['  ', cmd, alias_lookup.get(cmd) or '', '...', enterprise_command_info.get(cmd, '')])
 
-    print('\nCommands:')
-    for cmd in command_info:
-        print('  ' + cmd.ljust(max_length + 2) + '... ' + command_info[cmd])
-
-    if show_enterprise:
-        for cmd in enterprise_command_info:
-            print('  ' + cmd.ljust(max_length + 2) + '... ' + enterprise_command_info[cmd])
-
-        for cmd in msp_command_info:
-            print('  ' + cmd.ljust(max_length + 2) + '... ' + msp_command_info[cmd])
-
-        print('  ' + "switch-to-mc".ljust(max_length + 2) + '... ' + 'Switch user\'s company to Managed Company')
-        print('  ' + "switch-to-msp".ljust(max_length + 2) + '... ' + 'Switch user\'s context back to MSP Company')
+        cmds = list(msp_command_info.keys())
+        cmds.sort()
+        for cmd in cmds:
+            table.append(['  ', cmd, alias_lookup.get(cmd) or '', '...', msp_command_info.get(cmd, '')])
 
     if show_shell:
-        print('  ' + 'shell'.ljust(max_length + 2) + '... ' + 'Use Keeper interactive shell')
+        table.append(['  ', 'shell', '', '...', 'Use Keeper interactive shell'])
+        table.append(['  ', 'clear', 'c', '...', 'Clear the screen'])
+        table.append(['  ', 'history', 'h', '...', 'Show command history'])
+        table.append(['  ', 'quit', 'q', '...', 'Quit'])
 
-    print('  ' + 'clear|c'.ljust(max_length + 2) + '... ' + 'Clear the screen')
-    print('  ' + 'history|h'.ljust(max_length + 2) + '... ' + 'Show command history')
-    print('  ' + 'quit|q'.ljust(max_length + 2) + '... ' + 'Quit')
-
+    print('\nCommands:')
+    dump_report_data(table, headers, no_header=True)
     print('')
     print('Type \'command -h\' to display help on command')
 
