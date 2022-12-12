@@ -29,7 +29,11 @@ class Rotator:
 
     def rotate(self, record, new_password):
         """Rotate Windows account password"""
-        error_code = subprocess.call(["net", "user", self.login, new_password])
+        domain, sep, username = self.login.rpartition('\\')
+        cmd_line = ["net", "user", username, new_password]
+        if domain:
+            cmd_line.append('/domain')
+        error_code = subprocess.call(cmd_line)
         if error_code == 0:
             logging.info(f'Password changed successfully for user "{self.login}"')
             return True
