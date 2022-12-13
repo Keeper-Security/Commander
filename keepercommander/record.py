@@ -236,7 +236,7 @@ class Record:
                     'Attachments:' if i == 0 else '', atta.get('title') or atta.get('name'), sz, scale, 'ID', atta.get('id')))
 
         if self.totp:
-            print('{0:>20s}: {1}'.format('TOTP URL', self.totp))
+            print('{0:>20s}: {1}'.format('TOTP URL', self.totp if unmask else '********'))
             code, remain, _ = get_totp_code(self.totp)
             if code:
                 print('{0:>20s}: {1:<20s} valid for {2} sec'.format('Two Factor Code', code, remain))
