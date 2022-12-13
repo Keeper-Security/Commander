@@ -11,6 +11,7 @@
 import abc
 import datetime
 import json
+import logging
 from typing import Optional, List, Tuple, Iterable, Type, Union, Dict, Any
 
 import itertools
@@ -101,8 +102,20 @@ class KeeperRecord(abc.ABC):
         keeper_record.client_time_modified = record.get('client_modified_time', 0)
         keeper_record.shared = record.get('shared', False)
 
-        data = json.loads(record['data_unencrypted'])
-        extra = json.loads(record['extra_unencrypted']) if 'extra_unencrypted' in record else None
+        try:
+            data = json.loads(record['data_unencrypted'])
+        except:
+            logging.warning('Record \"%s\": Corrupted record data', keeper_record.record_uid)
+            return
+
+        extra_str = record['extra_unencrypted'] if 'extra_unencrypted' in record else None
+        extra = None     # type: Optional[Dict]
+        if extra_str:
+            try:
+                extra = json.loads(extra_str)
+            except:
+                logging.debug('Record \"%s\": Corrupted record extra', keeper_record.record_uid)
+
         keeper_record.load_record_data(data, extra)
 
         return keeper_record
