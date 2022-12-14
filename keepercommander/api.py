@@ -109,7 +109,7 @@ def accept_account_transfer_consent(params):
         return False
 
 
-def get_record_data_json_bytes(data): # type: (dict) -> bytes
+def get_record_data_json_bytes(data):    # type: (dict) -> bytes
     """Get serialized and utf-8 encoded record data with padding"""
     data_str = json.dumps(data)
     padding = int(math.ceil(max(384, len(data_str)) / 16) * 16)
@@ -1008,9 +1008,26 @@ def load_user_public_keys(params, emails, send_invites=False):  # type: (KeeperP
         return need_share_accept
 
 
-def load_team_keys(params, team_uids):          # type: (KeeperParams, list) -> None
+def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]) -> None
     s = set(team_uids)
     s.difference_update(params.key_cache.keys())
+    if not s:
+        return
+
+    if params.enterprise:
+        tree_key = params.enterprise['unencrypted_tree_key']
+        for t in params.enterprise.get('teams', []):
+            team_uid = t.get('team_uid')
+            if team_uid in s:
+                try:
+                    encrypted_team_key = t.get('encrypted_team_key')
+                    if encrypted_team_key:
+                        team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(encrypted_team_key), tree_key)
+                        params.key_cache[team_uid] = PublicKeys(aes=team_key)
+                        s.remove(team_uid)
+                except:
+                    pass
+
     if not s:
         return
     uids_to_load = list(s)

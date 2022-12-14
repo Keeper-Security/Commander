@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .lastpass import LastPassImporter as Importer
+from .lastpass import LastPassImporter as Importer, LastpassMembershipDownload as MembershipDownload
 
-__all__ = ['Importer']
+__all__ = ['Importer', 'MembershipDownload']

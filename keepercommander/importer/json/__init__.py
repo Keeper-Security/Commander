@@ -9,6 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .json import KeeperJsonImporter as Importer, KeeperJsonExporter as Exporter
+from .json import KeeperJsonImporter as Importer, KeeperJsonExporter as Exporter, KeeperMembershipDownload as MembershipDownload
 
-__all__ = ['Importer', 'Exporter']
+__all__ = ['Importer', 'Exporter', 'MembershipDownload']

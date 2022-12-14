@@ -11,19 +11,15 @@
 
 
 import argparse
-import getpass
+import importlib
 import json
 import logging
 import os
-from typing import Optional, List, Union, Iterable
+from typing import Optional, List, Dict
 
 from . import imp_exp
-from .importer import SharedFolder, Permission, PathDelimiter, replace_email_domain
+from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_email_domain, BaseDownloadMembership
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
-from .lastpass import fetcher
-from .lastpass.vault import Vault
-from .thycotic import thycotic
-from .. import api
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
 from ..params import KeeperParams
 
@@ -292,280 +288,101 @@ class DownloadMembershipCommand(Command):
         if import_into:
             import_into = import_into.replace(PathDelimiter, 2 * PathDelimiter)
 
+        override_users = None    # Optional[bool]
+        override_records = None  # Optional[bool]
         permissions = kwargs.get('permissions')
-        permit = {'manage_users': False, 'manage_records': False}
         if permissions:
-            if 'u' in permissions.lower():
-                permit['manage_users'] = True
-            if 'r' in permissions.lower():
-                permit['manage_records'] = True
+            permissions = permissions.lower()
+            if 'u' in permissions:
+                override_users = True
+            if 'r' in permissions:
+                override_records = True
 
         restrictions = kwargs.get('restrictions')
-        restrict = {'manage_users': False, 'manage_records': False}
         if restrictions:
-            if 'u' in restrictions.lower():
-                restrict['manage_users'] = True
-            if 'r' in restrictions.lower():
-                restrict['manage_records'] = True
+            restrictions = restrictions.lower()
+            if 'u' in restrictions:
+                override_users = False
+            if 'r' in restrictions:
+                override_records = False
 
-        shared_folders = []  # type: List[SharedFolder]
+        added_folders = []  # type: List[SharedFolder]
+        added_teams = []  # type: List[Team]
+
+        try:
+            full_name = f'keepercommander.importer.{"json" if source == "keeper" else source}'
+            module = importlib.import_module(full_name)
+            if hasattr(module, 'MembershipDownload'):
+                plugin = module.MembershipDownload()   # type:   Optional[BaseDownloadMembership]
+            else:
+                logging.warning('Membership plugin is missing: %s', source)
+                return
+        except:
+            logging.warning('Error loading membership plugin: %s', source)
+            return
+
+        for obj in plugin.download_membership(params):
+            if isinstance(obj, SharedFolder):
+                if import_into:
+                    obj.path = f'{import_into}{PathDelimiter}{obj.path}'
+                if isinstance(obj.permissions, list):
+                    for p in obj.permissions:   # type: Permission
+                        if old_domain and new_domain:
+                            p.name = replace_email_domain(p.name, old_domain, new_domain)
+                        if isinstance(override_users, bool):
+                            p.manage_users = override_users
+                        if isinstance(override_records, bool):
+                            p.manage_records = override_records
+                added_folders.append(obj)
+            elif isinstance(obj, Team):
+                if old_domain and new_domain and obj.members:
+                    obj.members = [replace_email_domain(x, old_domain, new_domain) for x in obj.members]
+                added_teams.append(obj)
+
+        shared_folders = {}  # type: Dict[str, SharedFolder]
+        teams = {}           # type: Dict[str, Team]
 
         json_importer = KeeperJsonImporter()
-
         if os.path.exists(file_name):
-            for sf in json_importer.do_import(file_name, users_only=True):
-                if isinstance(sf, SharedFolder):
-                    shared_folders.append(sf)
-
-        json_shared_folders = set((x.uid for x in shared_folders))
-
-        added_members = []  # type: List[SharedFolder]
-        if source == 'keeper':
-            if params.shared_folder_cache:
-                for shared_folder_uid in params.shared_folder_cache:
-                    if shared_folder_uid in json_shared_folders:
-                        continue
-                    shared_folder = api.get_shared_folder(params, shared_folder_uid)
-                    sf = SharedFolder()
-                    sf.uid = shared_folder.shared_folder_uid
-                    sf.path = imp_exp.get_folder_path(params, shared_folder.shared_folder_uid)
-                    sf.manage_users = shared_folder.default_manage_users
-                    sf.manage_records = shared_folder.default_manage_records
-                    sf.can_edit = shared_folder.default_can_edit
-                    sf.can_share = shared_folder.default_can_share
-                    sf.permissions = []
-                    if shared_folder.teams:
-                        for team in shared_folder.teams:
-                            perm = Permission()
-                            perm.uid = team['team_uid']
-                            perm.name = team['name']
-                            set_permission(perm, team, permit, restrict, 'manage_users')
-                            set_permission(perm, team, permit, restrict, 'manage_records')
-                            sf.permissions.append(perm)
-                    if shared_folder.users:
-                        for user in shared_folder.users:
-                            perm = Permission()
-                            perm.name = user['username']
-                            set_permission(perm, user, permit, restrict, 'manage_users')
-                            set_permission(perm, user, permit, restrict, 'manage_records')
-                            sf.permissions.append(perm)
-                    added_members.append(sf)
-
-        elif source == 'lastpass':
-            username = input('...' + 'LastPass Username'.rjust(30) + ': ')
-            if not username:
-                logging.warning('LastPass username is required')
-                return
-            password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
-            if not password:
-                logging.warning('LastPass password is required')
-                return
-
-            print('Press <Enter> if account is not protected with Multifactor Authentication')
-            twofa_code = getpass.getpass(prompt='...' + 'Multifactor Password'.rjust(30) + ': ', stream=None)
-            if not twofa_code:
-                twofa_code = None
-
-            session = None
             try:
-                session = fetcher.login(username, password, twofa_code, None)
-                blob = fetcher.fetch(session)
-                encryption_key = blob.encryption_key(username, password)
-                vault = Vault(blob, encryption_key, session, shared_folder_details=False, get_attachments=False)
+                for obj in json_importer.do_import(file_name, users_only=True):
+                    if isinstance(obj, SharedFolder):
+                        if obj.uid:
+                            shared_folders[obj.uid] = obj
+                    elif isinstance(obj, Team):
+                        if obj.uid:
+                            teams[obj.uid] = obj
+            except:
+                pass
 
-                lastpass_shared_folder = [x for x in vault.shared_folders]
+        if added_folders or added_teams:
+            for sf in added_folders:
+                if sf.uid and sf.uid in shared_folders:
+                    del shared_folders[sf.uid]
+            for t in added_teams:
+                if t.uid and t.uid in teams:
+                    del teams[t.uid]
 
-                for lpsf in lastpass_shared_folder:
-                    if lpsf.id in json_shared_folders:
-                        continue
-
-                    logging.info('Loading shared folder membership for "%s"', lpsf.name)
-
-                    members, teams, error = fetcher.fetch_shared_folder_members(session, lpsf.id)
-                    sf = SharedFolder()
-                    sf.uid = lpsf.id
-                    if import_into:
-                        sf.path = f'{import_into}{PathDelimiter}{lpsf.name}'
-                    else:
-                        sf.path = lpsf.name
-                    sf.permissions = []
-                    if members:
-                        sf.permissions.extend((
-                            self._lastpass_permission(x, permit, restrict, old_host=old_domain, new_host=new_domain)
-                            for x in members
-                        ))
-                    if teams:
-                        sf.permissions.extend((
-                            self._lastpass_permission(x, permit, restrict, team=True) for x in teams
-                        ))
-                    added_members.append(sf)
-            except Exception as e:
-                logging.warning(e)
-            finally:
-                if session:
-                    fetcher.logout(session)
-
-        elif source == 'thycotic':
-            added_members.extend(DownloadMembershipCommand.get_thycotic_membership())
-
-        if added_members:
-            shared_folders.extend(added_members)
+            memberships = []
+            memberships.extend(shared_folders.values())
+            memberships.extend(teams.values())
+            memberships.extend(added_folders)
+            memberships.extend(added_teams)
             json_exporter = KeeperJsonExporter()
-            json_exporter.do_export(file_name, shared_folders)
-            logging.info('%d shared folder memberships downloaded.', len(added_members))
+            json_exporter.do_export(file_name, memberships)
+            if len(added_folders) > 0:
+                logging.info('%d shared folder memberships added.', len(added_folders))
+            if len(added_teams) > 0:
+                logging.info('%d team memberships added.', len(added_teams))
         else:
             logging.info('No folder memberships downloaded.')
 
-    @staticmethod
-    def _lastpass_permission(lp_permission, permit, restrict, team=False, old_host=None, new_host=None):
-        # type: (dict, dict, dict, Optional[bool], Optional[str], Optional[str]) -> Permission
-        permission = Permission()
-        if team:
-            permission.name = lp_permission['name']
-        else:
-            permission.name = replace_email_domain(lp_permission['username'], old_host, new_host)
-        manage_records = lp_permission['readonly'] == '0'
-        permission.manage_records = (manage_records or permit['manage_records']) and not restrict['manage_records']
-        manage_users = lp_permission['can_administer'] == '1'
-        permission.manage_users = (manage_users or permit['manage_users']) and not restrict['manage_users']
-        return permission
-
-    @staticmethod
-    def request_totp():
-        return input('...' + 'Enter TOTP Code'.rjust(30) + ': ')
-
-    @staticmethod
-    def get_thycotic_membership():    # type: () -> Iterable[Union[SharedFolder]]
-        url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
-        if not url:
-            logging.warning('Thycotic Host or URL is required')
-            return
-        if not url.startswith('https://'):
-            url = f'https://{url}/SecretServer'
-        username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
-        if not username:
-            logging.warning('Thycotic username is required')
-            return
-        password = getpass.getpass(prompt='...' + 'Thycotic Password'.rjust(30) + ': ', stream=None)
-        if not password:
-            logging.warning('Thycotic password is required')
-            return
-
-        auth = thycotic.ThycoticAuth(url)
-        auth.authenticate(username, password, on_totp=DownloadMembershipCommand.request_totp)
-
-        user_rs = auth.thycotic_search('/v1/users')
-        users = {x['id']: {
-            'emailAddress': x.get('emailAddress', ''),
-            'userName': x.get('userName', ''),
-        } for x in user_rs}
-
-        group_rs = auth.thycotic_search('/v1/groups/lookup')
-        for group in group_rs:
-            group_id = group['id']
-            group_name = group.pop('value', None)
-            if group_name:
-                group['name'] = group_name
-            members = auth.thycotic_search(f'/v1/groups/{group_id}/users')
-            group['members'] = [x['userId'] for x in members]
-        groups = {x['id']: x for x in group_rs}
-
-        folder_rs = auth.thycotic_search('/v1/folders?filter.onlyIncludeRootFolders=true')
-        pos = 0
-        while pos < len(folder_rs):
-            folder = folder_rs[pos]
-            pos += 1
-            folder_id = folder['id']
-            fs = auth.thycotic_search(f'/v1/folders?filter.parentFolderId={folder_id}')
-            folder_rs.extend(fs)
-        folders = {x['id']: {
-            'folderName': x['folderName'],
-            'folderPath': x['folderPath'],
-            'parentFolderId': x['parentFolderId'],
-        } for x in folder_rs}
-
-        personal_name = folders[1]['folderName'] if 1 in folders else ''
-        for folder in folders.values():
-            path = folder['folderPath']   # type: str
-            path = path.strip('\\')
-            if personal_name and path.startswith(personal_name):
-                path = path[len(personal_name):]
-                path = path.strip('\\')
-            folder['folderPath'] = path
-
-        for folder_id in folders:
-            folder = folders[folder_id]
-            if folder_id > 1:
-                permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
-                folder['permissions'] = [x for x in permissions if x['secretAccessRoleName'] != 'Owner' or x['folderAccessRoleName'] != 'Owner']
-            else:
-                folder['permissions'] = []
-
-        # remove permissions from Shared Folder Folders
-        user_folders = []
-        shared_folders = set()
-        for folder_id, folder in folders.items():
-            parent_folder_id = folder.get('parentFolderId', -1)
-            if parent_folder_id > 0:
-                continue
-            permissions = folder.get('permissions', [])
-            if len(permissions) == 0:
-                user_folders.append(folder_id)
-            else:
-                shared_folders.add(folder_id)
-
-        pos = 0
-        while pos < len(user_folders):
-            parent_folder_id = user_folders[pos]
-            pos += 1
-            for folder_id, folder in folders.items():
-                if folder['parentFolderId'] != parent_folder_id:
-                    continue
-                permissions = folder.get('permissions', [])
-                if len(permissions) == 0:
-                    user_folders.append(folder_id)
-                else:
-                    shared_folders.add(folder_id)
-        for folder_id in shared_folders:
-            folder = folders[folder_id]
-            shared_folder = SharedFolder()
-            shared_folder.path = folder['folderPath']
-            shared_folder.permissions = []
-            for p in folder.get('permissions', []):
-                folder_permission = p.get('folderAccessRoleName')
-                manage_users = folder_permission in ('Owner', 'Edit')
-                secret_permission = p.get('secretAccessRoleName')
-                manage_records = secret_permission in ('Owner', 'Edit') or folder_permission == 'Add Secret'
-
-                user_id = p.get('userId', -1)
-                if user_id in users:
-                    user = users[user_id]
-                    email = user.get('emailAddress')
-                    if email:
-                        perm = Permission()
-                        perm.name = email
-                        perm.manage_users = manage_users
-                        perm.manage_records = manage_records
-                        shared_folder.permissions.append(perm)
-                else:
-                    group_id = p.get('groupId', -1)
-                    if group_id in groups:
-                        group = groups[group_id]
-                        team_name = group.get('name')
-                        if team_name:
-                            perm = Permission()
-                            perm.name = team_name
-                            perm.manage_users = manage_users
-                            perm.manage_records = manage_records
-                            shared_folder.permissions.append(perm)
-            yield shared_folder
-
 
 class ApplyMembershipCommand(Command):
-    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+    def get_parser(self):
         return apply_membership_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+    def execute(self, params, **kwargs):
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
         if not os.path.exists(file_name):
             logging.warning('Shared folder membership file "%s" not found', file_name)
@@ -574,12 +391,18 @@ class ApplyMembershipCommand(Command):
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
 
         shared_folders = []  # type: List[SharedFolder]
+        teams = []     # type: List[Team]
 
         if os.path.exists(file_name):
             json_importer = KeeperJsonImporter()
-            for sf in json_importer.do_import(file_name, users_only=True):
-                if isinstance(sf, SharedFolder):
-                    shared_folders.append(sf)
+            for obj in json_importer.do_import(file_name, users_only=True):
+                if isinstance(obj, SharedFolder):
+                    shared_folders.append(obj)
+                if isinstance(obj, Team):
+                    teams.append(obj)
 
         if len(shared_folders) > 0:
             imp_exp.import_user_permissions(params, shared_folders)
+
+        if len(teams) > 0:
+            imp_exp.import_teams(params, teams)
