@@ -30,7 +30,7 @@ from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
-                       Attachment as ImportAttachment, RecordSchemaField, File as ImportFile,
+                       Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
 from .. import api
 from .. import utils, crypto
@@ -387,6 +387,101 @@ def export(params, file_format, filename, **kwargs):
         exporter.execute(filename, to_export, file_password)
         params.queue_audit_event('exported_records', file_format=file_format)
         logging.info('%d records exported', rec_count)
+
+
+def import_teams(params, teams):   # type: (KeeperParams, List[ImportTeam]) -> None
+    if not params.enterprise:
+        logging.warning('Only enterprise administrator can import teams.')
+        return
+
+    team_lookup = {}    # type: Dict[str, Union[str, List[str]]]
+    if 'teams' in params.enterprise:
+        for t in params.enterprise['teams']:
+            team_uid = t.get('team_uid')
+            team_name = t.get('name')
+            if team_uid and team_name:
+                team_name = team_name.lower()
+                if team_name in team_lookup:
+                    tn = team_lookup[team_name]
+                    if not isinstance(tn, list):
+                        tn = [tn]
+                        team_lookup[team_name] = tn
+                    tn.append(team_uid)
+                else:
+                    team_lookup[team_name] = team_uid
+
+    user_lookup = {}    # type: Dict[str, int]
+    if 'users' in params.enterprise:
+        for u in params.enterprise['users']:
+            if u['status'] == 'active' and u['lock'] == 0:
+                user_lookup[u['username'].lower()] = u['enterprise_user_id']
+
+    users_to_add = []    # type: List[Tuple[str, str]]
+    for team in teams:
+        team_uid = None
+        if team.uid and isinstance(team.uid, str):
+            for v in team_lookup:
+                if isinstance(v, str):
+                    if v == team.uid:
+                        team_uid = team.uid
+                        break
+                elif isinstance(v, list):
+                    if team.uid in v:
+                        team_uid = team.uid
+                        break
+
+        if not team_uid:
+            if isinstance(team.name, str):
+                name = team.name.lower()
+                if name in team_lookup:
+                    v = team_lookup[name]
+                    if isinstance(v, str):
+                        team_uid = v
+                    elif isinstance(v, list):
+                        logging.warning('There are more than one teams with name \"%s\". Skipped from processing.', team.name)
+
+        if team_uid and isinstance(team.members, list):
+            current_members = set((x['enterprise_user_id'] for x in params.enterprise.get('team_users', []) if x['team_uid'] == team_uid))
+            for email in team.members:
+                if isinstance(email, str):
+                    email = email.lower()
+                    if email in user_lookup:
+                        user_id = user_lookup[email]
+                        if user_id not in current_members:
+                            users_to_add.append((email, team_uid))
+
+    if len(users_to_add) > 0:
+        emails = set((x[0] for x in users_to_add))
+        api.load_user_public_keys(params, list(emails))
+        team_uids = set((x[1] for x in users_to_add))
+        api.load_team_keys(params, list(team_uids))
+
+        rqs = []
+        for email, team_uid in users_to_add:
+            if team_uid in params.key_cache and email in params.key_cache and email in user_lookup:
+                team_key = params.key_cache[team_uid]
+                user_public_keys = params.key_cache[email]
+                if team_key.aes and user_public_keys.rsa:
+                    try:
+                        rsa_key = crypto.load_rsa_public_key(user_public_keys.rsa)
+                        team_key = team_key.aes
+
+                        rqs.append({
+                            'command': 'team_enterprise_user_add',
+                            'team_uid': team_uid,
+                            'enterprise_user_id': user_lookup[email],
+                            'user_type': 0,
+                            'team_key': utils.base64_url_encode(crypto.encrypt_rsa(team_key, rsa_key))
+                        })
+                    except Exception as e:
+                        logging.debug('Add user to team error: %s', str(e))
+        if rqs:
+            rs = api.execute_batch(params, rqs)
+            api.query_enterprise(params)
+            if rs:
+                users_added = sum((1 for x in rs if x.get('result') == 'success'))
+                if users_added > 0:
+                    logging.info("%d team membership(s) added", users_added)
 
 
 def import_user_permissions(params, shared_folders):  # type: (KeeperParams, List[ImportSharedFolder]) -> None

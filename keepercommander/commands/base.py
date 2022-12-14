@@ -376,7 +376,7 @@ def as_boolean(value, default=None):  # type: (Any, Optional[bool]) -> bool
 
 class CliCommand(abc.ABC):
     @abc.abstractmethod
-    def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, dict) -> any
+    def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, ...) -> Any
         pass
 
     def is_authorised(self):
@@ -388,11 +388,11 @@ class Command(CliCommand):
         super(Command, self).__init__()
         self.extra_parameters = ''
 
-    def execute(self, params, **kwargs):     # type: (KeeperParams, any) -> any
+    def execute(self, params, **kwargs):     # type: (KeeperParams, Any) -> Any
         raise NotImplementedError()
 
     def execute_args(self, params, args, **kwargs):
-        # type: (Command, KeeperParams, str, dict) -> any
+        # type: (Command, KeeperParams, str, ...) -> Any
 
         global parameter_pattern
         try:

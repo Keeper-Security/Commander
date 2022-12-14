@@ -134,6 +134,21 @@ class TestConnectedCommands(TestCase):
                     os.remove(f.name)
             cli.do_command(params, 'sync-down')
 
+            json_text = ''
+            with mock.patch('builtins.open', mock.mock_open()) as m_open, mock.patch('os.path.abspath', return_value='file/path'):
+                def file_write(text):
+                    nonlocal json_text
+                    json_text += text
+
+                m_open.return_value.write = file_write
+                cli.do_command(params, 'export --format=json file')
+            self.assertTrue(len(json_text) > 0)
+            exported = json.loads(json_text)
+            if len(params.record_cache) > 0:
+                self.assertEqual(len(params.record_cache), len(exported['records']))
+            if len(params.shared_folder_cache) > 0:
+                self.assertEqual(len(params.shared_folder_cache), len(exported['shared_folders']))
+
             rec = vault.KeeperRecord.load(params, record_uid)
             self.assertIsInstance(rec, vault.PasswordRecord)
             self.assertIsNotNone(rec.attachments)
@@ -164,19 +179,6 @@ class TestConnectedCommands(TestCase):
             with mock.patch('getpass.getpass', return_value='password'), mock.patch('builtins.input', return_value=''):
                 cli.do_command(params, 'import --format=keepass "{0}"'.format(file))
             cli.do_command(params, 'sync-down')
-
-            json_text = ''
-            with mock.patch('builtins.open', mock.mock_open()) as m_open, mock.patch('os.path.abspath', return_value='file/path'):
-                def file_write(text):
-                    nonlocal json_text
-                    json_text += text
-
-                m_open.return_value.write = file_write
-                cli.do_command(params, 'export --format=json file')
-            self.assertTrue(len(json_text) > 0)
-            exported = json.loads(json_text)
-            self.assertEqual(len(params.record_cache), len(exported['records']))
-            self.assertEqual(len(params.shared_folder_cache), len(exported['shared_folders']))
 
             TestConnectedCommands.wipe_out_data()
             with mock.patch('builtins.open', mock.mock_open()) as m_open, mock.patch('os.path.isfile', return_value=True):

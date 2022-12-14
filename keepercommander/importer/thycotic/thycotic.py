@@ -23,14 +23,151 @@ from urllib3.exceptions import InsecureRequestWarning
 import requests
 
 from urllib.parse import urlparse, urlunparse
-from typing import Tuple, Optional, Iterable, Union, Dict, Callable
+from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
-from ..importer import BaseImporter, Record, SharedFolder, Folder, Attachment, Permission, RecordField, BytesAttachment
+from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
+                        RecordField, BytesAttachment, Team)
 from ...params import KeeperParams
 from ... import record_types
 
 
-class ThycoticImporter(BaseImporter):
+class ThycoticMixin:
+    @staticmethod
+    def get_user_lookup(auth):  # type: (ThycoticAuth) -> Optional[Dict[int, Dict]]
+        try:
+            user_rs = auth.thycotic_search('/v1/users')
+            return {x['id']: {
+                'emailAddress': x.get('emailAddress', ''),
+                'userName': x.get('userName', ''),
+                'domainName': x.get('domainName', ''),
+            } for x in user_rs}
+        except:
+            pass
+
+    @staticmethod
+    def get_group_lookup(auth, on_progress=None):
+        # type: (ThycoticAuth, Optional[Callable[[int, int], None]]) -> Optional[Dict[int, Dict]]
+        try:
+            group_rs = auth.thycotic_search('/v1/groups')
+            lookup = {}
+            total = len(group_rs)
+            for i in range(total):
+                group = group_rs[i]
+                group_id = group['id']
+                g = {
+                    'name': group['name'],
+                    'users': [],   # type: List[int]
+                    'groups': [],  # type: List[int]
+                }
+                if group.get('memberCount', 0) > 0:
+                    member_rs = auth.thycotic_search(f'/v1/groups/{group_id}/users')
+                    if on_progress:
+                        on_progress(i, total)
+                    g['users'].extend((x['userId'] for x in member_rs if 'userId' in x and x['userId'] > 0))
+                    g['groups'].extend((x['groupId'] for x in member_rs if 'groupId' in x and x['groupId'] > 0))
+                lookup[group_id] = g
+            return lookup
+        except:
+            pass
+
+    @staticmethod
+    def get_folders(auth, on_progress=None):
+        # type: (ThycoticAuth, Optional[Callable[[int, int], None]]) -> Optional[Dict[int, Dict]]
+        logging.debug('Enter get_folders')
+        folder_rs = auth.thycotic_search('/v1/folders')
+        folders = {x['id']: {
+            'id': x['id'],
+            'folderName': x['folderName'],
+            'folderPath': x['folderPath'],
+            'inheritPermissions': x['inheritPermissions'],
+            'parentFolderId': x['parentFolderId'],
+        } for x in folder_rs}   # type: Dict[int, Dict[str, Any]]
+        logging.debug('Loaded %d folders', len(folders))
+
+        no = 0
+        total = len(folders)
+        for folder_id in folders:
+            if folder_id == 1:
+                continue
+            folder = folders[folder_id]
+            if folder.get('inheritPermissions') is True:
+                continue
+            folder['permissions'] = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+            if on_progress:
+                on_progress(no, total)
+            no += 1
+        logging.debug('Loaded folder permissions')
+
+        # Adjust inherited permissions
+        done = False
+        while not done:
+            done = True
+            to_check = [folder_id for folder_id, folder in folders.items() if folder_id > 1 and folder['inheritPermissions'] is False]
+            to_check.sort()
+            for folder_id in to_check:
+                parent_id = folder_id
+                while True:
+                    if parent_id not in folders:
+                        break
+                    new_parent_id = folders[parent_id].get('parentFolderId', -1)
+                    if new_parent_id not in folders:
+                        break
+                    parent = folders[new_parent_id]
+                    parent_id = new_parent_id
+                    if parent.get('inheritPermissions') is False:
+                        break
+                if parent_id != folder_id:
+                    folder_permissions = folders[folder_id].get('permissions', [])
+                    parent_permissions = folders[parent_id].get('permissions', [])
+                    if len(folder_permissions) == len(parent_permissions):
+                        set1 = set((f'{x.get("groupName") or ""}|{x.get("userName") or ""}|'
+                                    f'{x.get("folderAccessRoleName") or ""}|{x.get("secretAccessRoleName") or ""}'
+                                    for x in folder_permissions))
+                        set2 = set((f'{x.get("groupName") or ""}|{x.get("userName") or ""}|'
+                                    f'{x.get("folderAccessRoleName") or ""}|{x.get("secretAccessRoleName") or ""}'
+                                    for x in parent_permissions))
+                        if set1 == set2:
+                            del folders[folder_id]['permissions']
+                            folders[folder_id]['inheritPermissions'] = True
+                            done = False
+        logging.debug('Resolved inherited permissions')
+
+        # move records with permissions to root
+        for folder in folders.values():
+            if 'permissions' in folder:
+                folder['parentFolderId'] = -1
+
+        # delete self from permissions
+        for folder in folders.values():   # type: dict
+            if 'permissions' not in folder:
+                continue
+            permissions = folder['permissions']
+            if len(permissions) == 1:
+                permission = permissions[0]
+                user_id = permission.get('userId', 0)
+                if user_id > 0:
+                    folder['permissions'] = []
+
+        # build folder path
+        for folder in folders.values():
+            folder_path = folder['folderName']
+            parent = folder
+            while parent:
+                parent_id = parent.get('parentFolderId', -1)
+                if parent_id > 1 and parent_id in folders:
+                    parent = folders[parent_id]
+                    folder_path = parent['folderName'] + '\\' + folder_path
+                else:
+                    parent = None
+            folder['folderPath'] = folder_path
+        logging.debug('Folder path bui;t')
+
+        if 1 in folders:
+            del folders[1]
+        return folders
+
+
+class ThycoticImporter(BaseImporter, ThycoticMixin):
     def __init__(self):
         super().__init__()
 
@@ -116,91 +253,24 @@ class ThycoticImporter(BaseImporter):
                         elif totp_index > 0:
                             if totp_index < len(row) and row[totp_index]:
                                 totp_codes[row[0]] = row[totp_index]
-            except Exception as e:
+            except Exception:
                 pass
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
-        print('Loading folders ...', flush=True, end='')
-        try:
-            user_rs = auth.thycotic_search('/v1/users')
-            users = {x['id']: {
-                'emailAddress': x.get('emailAddress', ''),
-                'userName': x.get('userName', ''),
-            } for x in user_rs}
-        except:
-            users = []
+        users = ThycoticImporter.get_user_lookup(auth)
+        folders = ThycoticImporter.get_folders(auth)
 
-        try:
-            group_rs = auth.thycotic_search('/v1/groups/lookup')
-            for group in group_rs:
-                group_id = group['id']
-                group_name = group.pop('value', None)
-                if group_name:
-                    group['name'] = group_name
-                members = auth.thycotic_search(f'/v1/groups/{group_id}/users')
-                group['members'] = [x['userId'] for x in members]
-            groups = {x['id']: x for x in group_rs}
-        except:
-            groups = {}
-
-        folder_rs = auth.thycotic_search('/v1/folders?filter.onlyIncludeRootFolders=true')
-        pos = 0
-        while pos < len(folder_rs):
-            folder = folder_rs[pos]
-            pos += 1
-            folder_id = folder['id']
-            fs = auth.thycotic_search(f'/v1/folders?filter.parentFolderId={folder_id}')
-            folder_rs.extend(fs)
-        folders = {x['id']: {
-            'folderName': x['folderName'],
-            'folderPath': x['folderPath'],
-            'parentFolderId': x['parentFolderId'],
-        } for x in folder_rs}
-
-        personal_name = folders[1]['folderName'] if 1 in folders else ''
         for folder in folders.values():
-            path = folder['folderPath']   # type: str
-            path = path.strip('\\')
-            if personal_name and path.startswith(personal_name):
-                path = path[len(personal_name):]
-                path = path.strip('\\')
-            folder['folderPath'] = path
-
-        for folder_id in folders:
-            folder = folders[folder_id]
-            if folder_id > 1:
-                permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
-                folder['permissions'] = [x for x in permissions if x['secretAccessRoleName'] != 'Owner' or x['folderAccessRoleName'] != 'Owner']
-            else:
-                folder['permissions'] = []
-
-        # remove permissions from Shared Folder Folders
-        user_folders = []
-        shared_folders = set()
-        for folder_id, folder in folders.items():
-            parent_folder_id = folder.get('parentFolderId', -1)
-            if parent_folder_id > 0:
+            if folder.get('inheritPermissions', True):
                 continue
-            permissions = folder.get('permissions', [])
+            if 'permissions' not in folder:
+                continue
+            permissions = folder['permissions']
+            if not isinstance(permissions, list):
+                continue
             if len(permissions) == 0:
-                user_folders.append(folder_id)
-            else:
-                shared_folders.add(folder_id)
+                continue
 
-        pos = 0
-        while pos < len(user_folders):
-            parent_folder_id = user_folders[pos]
-            pos += 1
-            for folder_id, folder in folders.items():
-                if folder['parentFolderId'] != parent_folder_id:
-                    continue
-                permissions = folder.get('permissions', [])
-                if len(permissions) == 0:
-                    user_folders.append(folder_id)
-                else:
-                    shared_folders.add(folder_id)
-        for folder_id in shared_folders:
-            folder = folders[folder_id]
             shared_folder = SharedFolder()
             shared_folder.path = folder['folderPath']
             shared_folder.permissions = []
@@ -221,19 +291,14 @@ class ThycoticImporter(BaseImporter):
                         perm.manage_records = manage_records
                         shared_folder.permissions.append(perm)
                 else:
-                    group_id = p.get('groupId', -1)
-                    if group_id in groups:
-                        group = groups[group_id]
-                        team_name = group.get('name')
-                        if team_name:
-                            perm = Permission()
-                            perm.name = team_name
-                            perm.manage_users = manage_users
-                            perm.manage_records = manage_records
-                            shared_folder.permissions.append(perm)
+                    team_name = p.get('groupName') or ''
+                    if team_name:
+                        perm = Permission()
+                        perm.name = team_name
+                        perm.manage_users = manage_users
+                        perm.manage_records = manage_records
+                        shared_folder.permissions.append(perm)
             yield shared_folder
-
-        print(' Done')
 
         secrets_ids = [x['id'] for x in auth.thycotic_search(f'/v1/secrets/lookup')]
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
@@ -267,7 +332,7 @@ class ThycoticImporter(BaseImporter):
                 endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
                 if slug in ('private-key', 'public-key'):
                     if attachment_id:
-                        with auth.thycotic_raw(endpoint) as rs:
+                        with auth.thycotic_get(endpoint) as rs:
                             if rs.status_code == 200:
                                 try:
                                     key_text = rs.content.decode()
@@ -661,13 +726,21 @@ class ThycoticAuth:
             raise Exception(error_rs['message'])
         return rs.json()
 
-    def thycotic_raw(self, endpoint):    # type: (str) -> requests.Response
+    def thycotic_get(self, endpoint):    # type: (str) -> requests.Response
         self.ensure_auth_token()
         headers = {
             'Authorization': f'Bearer {self.access_token}'
         }
         return requests.get(self.base_url + 'api' + endpoint, headers=headers,
                             verify=False, proxies=self.proxy, stream=True)
+
+    def thycotic_post(self, endpoint, data):    # type: (str, dict) -> requests.Response
+        self.ensure_auth_token()
+        headers = {
+            'Authorization': f'Bearer {self.access_token}'
+        }
+        return requests.post(self.base_url + 'api' + endpoint, data=data, headers=headers,
+                             verify=False, proxies=self.proxy)
 
 
 class ThycoticAttachment(Attachment):
@@ -684,7 +757,7 @@ class ThycoticAttachment(Attachment):
         self._file_content = b''
 
     def prepare(self):
-        with self.auth.thycotic_raw(self.endpoint) as rs:
+        with self.auth.thycotic_get(self.endpoint) as rs:
             if rs.status_code == 200:
                 length = rs.headers.get('Content-Length', 0)
                 try:
@@ -692,3 +765,105 @@ class ThycoticAttachment(Attachment):
                 except:
                     pass
                 self._file_content = rs.content
+
+
+class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
+    @staticmethod
+    def request_totp():
+        return input('...' + 'Enter TOTP Code'.rjust(30) + ': ')
+
+    def download_membership(self, params):
+        url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
+        if not url:
+            logging.warning('Thycotic Host or URL is required')
+            return
+        if not url.startswith('https://'):
+            url = f'https://{url}'
+        username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
+        if not username:
+            logging.warning('Thycotic username is required')
+            return
+        password = getpass.getpass(prompt='...' + 'Thycotic Password'.rjust(30) + ': ', stream=None)
+        if not password:
+            logging.warning('Thycotic password is required')
+            return
+
+        auth = ThycoticAuth(url)
+        auth.authenticate(username, password, on_totp=ThycoticMembershipDownload.request_totp)
+
+        users = ThycoticMembershipDownload.get_user_lookup(auth)
+
+        sf_groups = set()
+        folders = ThycoticMembershipDownload.get_folders(auth)
+        for folder in folders.values():
+            if folder.get('inheritPermissions', True):
+                continue
+            if 'permissions' not in folder:
+                continue
+            permissions = folder['permissions']
+            if not isinstance(permissions, list):
+                continue
+            if len(permissions) == 0:
+                continue
+
+            shared_folder = SharedFolder()
+            shared_folder.uid = folder['id']
+            shared_folder.path = folder['folderPath']
+            shared_folder.permissions = []
+            for p in folder.get('permissions', []):
+                folder_permission = p.get('folderAccessRoleName')
+                manage_users = folder_permission in ('Owner', 'Edit')
+                secret_permission = p.get('secretAccessRoleName')
+                manage_records = secret_permission in ('Owner', 'Edit') or folder_permission == 'Add Secret'
+
+                user_id = p.get('userId', -1)
+                if user_id in users:
+                    user = users[user_id]
+                    email = user.get('emailAddress')
+                    if email:
+                        perm = Permission()
+                        perm.name = email
+                        perm.manage_users = manage_users
+                        perm.manage_records = manage_records
+                        shared_folder.permissions.append(perm)
+                else:
+                    team_name = p.get('groupName') or ''
+                    if team_name:
+                        perm = Permission()
+                        perm.name = team_name
+                        perm.manage_users = manage_users
+                        perm.manage_records = manage_records
+                        shared_folder.permissions.append(perm)
+                        group_id = p.get('groupId', -1)
+                        if group_id > 0:
+                            sf_groups.add(group_id)
+            yield shared_folder
+
+        if len(sf_groups) > 0:
+            shown = False
+
+            def progress(position, total):
+                nonlocal shown
+                if not shown:
+                    shown = True
+                    print(f'Loading {total} groups ', end='', flush=True)
+                if position % 10 == 9:
+                    print('.', end='', flush=True)
+            groups = ThycoticMembershipDownload.get_group_lookup(auth, on_progress=progress)
+            print(' Done', flush=True)
+
+            for group_id in list(sf_groups):
+                if group_id in groups:
+                    group = groups[group_id]
+                    team = Team()
+                    team.uid = group_id
+                    team.name = group['name']
+                    user_ids = set(group['users'])
+                    for sub_group_id in group['groups']:
+                        if sub_group_id in groups:
+                            sub_group = groups[sub_group_id]
+                            user_ids.update(sub_group['users'])
+                    emails = set((users[x]['emailAddress'] for x in user_ids if x in users and 'emailAddress' in users[x] and users[x]['emailAddress']))
+                    team.members = list(emails)
+
+                    yield team

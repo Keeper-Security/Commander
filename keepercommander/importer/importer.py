@@ -8,8 +8,8 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
 import abc
-import collections
 import importlib
 import io
 import json
@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from typing import List, Optional, Union, Dict, Iterable
 
 from ..error import CommandError
+from ..params import KeeperParams
 from ..recordv3 import RecordV3
 
 PathDelimiter = '\\'
@@ -123,6 +124,17 @@ class SharedFolder:
                     if hasattr(p, attr):
                         if not check_if_bool(getattr(p, attr)):
                             raise CommandError('import', 'shared folder permission. property \'{0}\' should be a boolean'.format(attr))
+
+
+class Team:
+    def __init__(self):
+        self.uid = None
+        self.name = None
+        self.members = None   # type: Optional[List[str]]
+
+    def validate(self):
+        if not self.name:
+            raise CommandError('', 'Team name cannot be empty')
 
 
 class Attachment(abc.ABC):
@@ -506,13 +518,12 @@ class BaseImporter(abc.ABC):
         return fl
 
 
-
 class BaseFileImporter(BaseImporter, abc.ABC):
     def __init__(self):
         super(BaseFileImporter, self).__init__()
 
     def execute(self, name, **kwargs):
-        # type: (str, ...) -> collections.Iterable[Union[Record, SharedFolder, File]]
+        # type: (str, ...) -> Iterable[Union[Record, SharedFolder, File]]
 
         path = os.path.expanduser(name)
         if not os.path.isfile(path):
@@ -521,7 +532,7 @@ class BaseFileImporter(BaseImporter, abc.ABC):
                 path = path + '.' + ext
 
         if not os.path.isfile(path):
-            raise CommandError('import', 'File \'{0}\' does not exist'.format(name))
+            raise CommandError('import', f'File \'{name}\' does not exist')
 
         yield from self.do_import(path, **kwargs)
 
@@ -531,7 +542,7 @@ class BaseExporter(abc.ABC):
         self.max_size = 10 * 1024 * 1024
 
     def execute(self, filename, items, file_password=None):
-        # type: (str, List[Union[Record, SharedFolder, File]], Optional[str]) -> None
+        # type: (str, List[Union[Record, SharedFolder, File, Team]], Optional[str]) -> None
         if filename:
             filename = os.path.expanduser(filename)
             if filename.find('.') < 0:
@@ -723,3 +734,9 @@ class BytesAttachment(Attachment):
     @contextmanager
     def open(self):
         yield io.BytesIO(self.data)
+
+
+class BaseDownloadMembership(abc.ABC):
+    @abc.abstractmethod
+    def download_membership(self, params):   # type: (KeeperParams) -> Iterable[Union[SharedFolder, Team]]
+        pass

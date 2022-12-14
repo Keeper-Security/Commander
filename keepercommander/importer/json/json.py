@@ -14,8 +14,11 @@ import sys
 
 from typing import List
 
-from ..importer import BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission
-from ... import record_types
+from .. import imp_exp
+from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission,
+                        Team, BaseDownloadMembership)
+from ... import api, utils, record_types
+from ...proto import enterprise_pb2
 
 
 class KeeperJsonImporter(BaseFileImporter):
@@ -30,6 +33,7 @@ class KeeperJsonImporter(BaseFileImporter):
             elif type(j) == dict:
                 records = j.get('records')
                 folders = j.get('shared_folders')
+                teams = j.get('teams') if users_only else None
 
             if folders:
                 for shf in folders:
@@ -56,6 +60,18 @@ class KeeperJsonImporter(BaseFileImporter):
                                     fol.permissions.append(p)
 
                     yield fol
+
+            if isinstance(teams, list):
+                for t in teams:
+                    team = Team()
+                    team.name = t.get('name')
+                    if team.name:
+                        team.uid = t.get('uid')
+                        ms = t.get('members')
+                        if isinstance(ms, list):
+                            team.members = [x for x in ms if isinstance(x, str) and len(x) > 3]
+
+                        yield team
 
             if not users_only and records:
                 for r in records:
@@ -167,12 +183,15 @@ class KeeperJsonExporter(BaseExporter):
     def do_export(self, filename, items, file_password=None):
         shared_folders = []     # type: List[SharedFolder]
         records = []            # type: List[Record]
+        teams = []              # type: List[Team]
 
         for item in items:
-            if isinstance(item, SharedFolder):
-                shared_folders.append(item)
-            elif isinstance(item, Record):
+            if isinstance(item, Record):
                 records.append(item)
+            elif isinstance(item, SharedFolder):
+                shared_folders.append(item)
+            elif isinstance(item, Team):
+                teams.append(item)
         """
         external_uids = {}
         external_id = 1
@@ -187,6 +206,17 @@ class KeeperJsonExporter(BaseExporter):
                 for ref in record.references:
                     ref.uids = [external_uids[x] for x in ref.uids if x in external_uids]
         """
+        ts = []
+        for t in teams:
+            team = {
+                'name': t.name,
+            }
+            if t.uid:
+                team['uid'] = t.uid
+            if t.members:
+                team['members'] = [x for x in t.members]
+            ts.append(team)
+
         sfs = []
         for sf in shared_folders:
             sfo = {
@@ -292,7 +322,14 @@ class KeeperJsonExporter(BaseExporter):
                             fo['can_share'] = True
             rs.append(ro)
 
-        jo = {'shared_folders': sfs, 'records': rs}
+        jo = {}
+        if ts:
+            jo['teams'] = ts
+        if sfs:
+            jo['shared_folders'] = sfs
+        if rs:
+            jo['records'] = rs
+
         if filename:
             with open(filename, mode="w", encoding='utf-8') as f:
                 json.dump(jo, f, indent=2, ensure_ascii=False)
@@ -314,3 +351,46 @@ class KeeperJsonExporter(BaseExporter):
 
     def supports_v3_record(self):
         return True
+
+
+class KeeperMembershipDownload(BaseDownloadMembership):
+    def download_membership(self, params):
+        teams = {}
+        if params.shared_folder_cache:
+            for shared_folder_uid in params.shared_folder_cache:
+                shared_folder = api.get_shared_folder(params, shared_folder_uid)
+                sf = SharedFolder()
+                sf.uid = shared_folder.shared_folder_uid
+                sf.path = imp_exp.get_folder_path(params, shared_folder.shared_folder_uid)
+                sf.manage_users = shared_folder.default_manage_users
+                sf.manage_records = shared_folder.default_manage_records
+                sf.can_edit = shared_folder.default_can_edit
+                sf.can_share = shared_folder.default_can_share
+                sf.permissions = []
+                if shared_folder.teams:
+                    for team in shared_folder.teams:
+                        perm = Permission()
+                        perm.uid = team['team_uid']
+                        perm.name = team['name']
+                        perm.manage_users = team.get('manage_users', False)
+                        perm.manage_records = team.get('manage_records', False)
+                        teams[perm.uid] = perm.name
+                        sf.permissions.append(perm)
+                if shared_folder.users:
+                    for user in shared_folder.users:
+                        perm = Permission()
+                        perm.name = user['username']
+                        perm.manage_users = user.get('manage_users', False)
+                        perm.manage_records = user.get('manage_records', False)
+                        sf.permissions.append(perm)
+                yield sf
+        if teams and params.enterprise_ec_key:
+            for team_uid in teams:
+                t = Team()
+                t.uid = team_uid
+                t.name = teams[team_uid]
+                rq = enterprise_pb2.GetTeamMemberRequest()
+                rq.teamUid = utils.base64_url_decode(team_uid)
+                rs = api.communicate_rest(params, rq, 'vault/get_team_members', rs_type=enterprise_pb2.GetTeamMemberResponse)
+                t.members = [x.email for x in rs.enterpriseUser]
+                yield t
