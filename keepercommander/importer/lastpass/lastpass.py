@@ -18,12 +18,12 @@ from glob import glob
 from typing import Optional, List
 
 from ..importer import (
-    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, replace_email_domain,
-    FIELD_TYPE_ONE_TIME_CODE
-)
+    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, BaseDownloadMembership,
+    replace_email_domain, FIELD_TYPE_ONE_TIME_CODE)
 from .account import Account
 from .exceptions import LastPassUnknownError
 from .vault import Vault, TMPDIR_PREFIX
+from . import fetcher
 
 
 class LastPassImporter(BaseImporter):
@@ -652,3 +652,61 @@ class LastPassAddress(object):
         address.country = notes.pop('Country', '')
 
         return address
+
+
+class LastpassMembershipDownload(BaseDownloadMembership):
+    def download_membership(self, params):
+        username = input('...' + 'LastPass Username'.rjust(30) + ': ')
+        if not username:
+            logging.warning('LastPass username is required')
+            return
+        password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
+        if not password:
+            logging.warning('LastPass password is required')
+            return
+
+        print('Press <Enter> if account is not protected with Multifactor Authentication')
+        twofa_code = getpass.getpass(prompt='...' + 'Multifactor Password'.rjust(30) + ': ', stream=None)
+        if not twofa_code:
+            twofa_code = None
+
+        session = None
+        try:
+            session = fetcher.login(username, password, twofa_code, None)
+            blob = fetcher.fetch(session)
+            encryption_key = blob.encryption_key(username, password)
+            vault = Vault(blob, encryption_key, session, shared_folder_details=False, get_attachments=False)
+
+            lastpass_shared_folder = [x for x in vault.shared_folders]
+
+            for lpsf in lastpass_shared_folder:
+                logging.info('Loading shared folder membership for "%s"', lpsf.name)
+
+                members, teams, error = fetcher.fetch_shared_folder_members(session, lpsf.id)
+                sf = SharedFolder()
+                sf.uid = lpsf.id
+                sf.path = lpsf.name
+                sf.permissions = []
+                if members:
+                    sf.permissions.extend((self._lastpass_permission(x) for x in members))
+                if teams:
+                    sf.permissions.extend((self._lastpass_permission(x, team=True) for x in teams))
+                yield sf
+
+        except Exception as e:
+            logging.warning(e)
+        finally:
+            if session:
+                fetcher.logout(session)
+
+    @staticmethod
+    def _lastpass_permission(lp_permission, team=False):  # type: (dict, Optional[bool]) -> Permission
+        permission = Permission()
+        if team:
+            permission.name = lp_permission['name']
+        else:
+            permission.name = lp_permission['username']
+        permission.manage_records = lp_permission['readonly'] == '0'
+        permission.manage_users = lp_permission['can_administer'] == '1'
+        return permission
+
