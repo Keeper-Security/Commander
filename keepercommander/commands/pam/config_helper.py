@@ -3,11 +3,11 @@ import os
 from keeper_secrets_manager_core.utils import string_to_bytes
 
 from keepercommander import api
-from keepercommander.proto import enterprise_pb2
+from keepercommander.proto import pam_pb2
 from keepercommander.proto.pam_pb2 import PAMDataOperation, PAMOperationType, PAMModifyRequest, PAMGenericUidRequest
 
 
-def config_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):
+def rotation_settings_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):
 
     config_operation = PAMDataOperation()
     config_operation.operationType = PAMOperationType.ADD
@@ -44,7 +44,7 @@ def config_create(params, gateway_uid_bytes, config_json_str, child_config_json_
             rq.operations.append(child_config_operation)
 
 
-    rs = api.communicate_rest(params, rq, 'pam/modify_configuration', rs_type=enterprise_pb2.PAMModifyResult)
+    rs = api.communicate_rest(params, rq, 'pam/modify_configuration', rs_type=pam_pb2.PAMModifyResult)
 
     return {
         'configUid': top_config_uid,
@@ -56,22 +56,22 @@ def config_update(params):
     pass
 
 
-def config_get_one(params, config_uid_bytes):
+def rotation_settings_get_one(params, config_uid_bytes):
     rq = PAMGenericUidRequest()
     rq.uid = config_uid_bytes
-    rs = api.communicate_rest(params, rq, 'pam/get_configuration', rs_type=enterprise_pb2.PAMConfiguration)
+    rs = api.communicate_rest(params, rq, 'pam/get_configuration', rs_type=pam_pb2.PAMConfiguration)
 
     return rs
 
 
-def config_get_all(params):
+def rotation_settings_get_all(params):
 
-    rs = api.communicate_rest(params, None, 'pam/get_configurations', rs_type=enterprise_pb2.PAMConfigurations)
+    rs = api.communicate_rest(params, None, 'pam/get_configurations', rs_type=pam_pb2.PAMConfigurations)
 
     return rs
 
 
-def config_remove(params, configuration_uid):
+def rotation_settings_remove(params, configuration_uid):
 
     config_operation = PAMDataOperation()
     config_operation.operationType = PAMOperationType.DELETE
@@ -81,7 +81,7 @@ def config_remove(params, configuration_uid):
     rq = PAMModifyRequest()
     rq.operations.append(config_operation)
 
-    rs = api.communicate_rest(params, rq, 'pam/modify_configuration', rs_type=enterprise_pb2.PAMModifyResult)
+    rs = api.communicate_rest(params, rq, 'pam/modify_configuration', rs_type=pam_pb2.PAMModifyResult)
 
     print(rs)
 

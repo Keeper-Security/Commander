@@ -2,6 +2,7 @@ import abc
 import base64
 import json
 from keepercommander import crypto
+from keepercommander.crypto import encrypt_aes_v2
 
 
 class RouterRequest:
@@ -103,10 +104,10 @@ class GatewayActionJobInfo(GatewayAction):
 
 class GatewayActionRotateInputs:
 
-    def __init__(self, record_uid, configuration_uid, pwd_complexity):
+    def __init__(self, record_uid, rotation_setting_uid, pwd_complexity_encrypted):
         self.recordUid = record_uid
-        self.configurationUid = configuration_uid
-        self.pwdComplexity = pwd_complexity
+        self.rotationSettingUid = rotation_setting_uid
+        self.pwdComplexity = pwd_complexity_encrypted
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)

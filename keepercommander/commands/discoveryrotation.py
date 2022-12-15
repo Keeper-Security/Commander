@@ -22,7 +22,7 @@ from keepercommander.commands.base import raise_parse_exception, suppress_exit, 
 from keepercommander.display import bcolors
 from .base import GroupCommand, dump_report_data
 from .pam import gateway_helper, router_helper
-from .pam.config_helper import config_get_all, config_create, config_get_one, config_remove
+from .pam.config_helper import rotation_settings_get_all, rotation_settings_create, rotation_settings_get_one, rotation_settings_remove
 from .pam.gateway_helper import create_gateway
 from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
     GatewayActionRotate, \
@@ -81,10 +81,10 @@ class PAMControllerCommand(GroupCommand):
 
     def __init__(self):
         super(PAMControllerCommand, self).__init__()
-        self.register_command('gateway', PAMGatewayCommand(), 'Manage PAM Gateways')
-        self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway')
-        self.register_command('config', PAMConfigsCommand(), 'Manage PAM Configurations')
+        self.register_command('gateway', PAMGatewayCommand(), 'Manage Gateways')
+        self.register_command('rotation-settings', PAMRotationSettingsCommand(), 'Manage Rotation Settings')
         self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations')
+        self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway')
 
 
 class PAMRotationCommand(GroupCommand):
@@ -121,14 +121,14 @@ class GatewayActionCommand(GroupCommand):
         # self.register_command('tunnel', DRTunnelCommand(), 'Tunnel to the server')
 
 
-class PAMConfigsCommand(GroupCommand):
+class PAMRotationSettingsCommand(GroupCommand):
 
     def __init__(self):
-        super(PAMConfigsCommand, self).__init__()
-        self.register_command('new', PAMConfigNewCommand(), "Create new configuration")
-        self.register_command('list', DRExecListConfigsCommand(), 'List available configurations on the Gateway')
-        self.register_command('list-access-records', DRExecListAccessRecordsCommand(), 'List available Access Records')
-        self.register_command('remove', PAMConfigRemoveCommand(), "Remove a configuration")
+        super(PAMRotationSettingsCommand, self).__init__()
+        self.register_command('new', PAMRotationSettingNewCommand(), "Create new rotation setting")
+        self.register_command('list', PAMRotationSettingsListCommand(), 'List available rotation settings associated with the Gateway')
+        # self.register_command('list-access-records', DRExecListAccessRecordsCommand(), 'List available Access Records')
+        self.register_command('remove', PAMRotationSettingsRemoveCommand(), "Remove a rotation setting")
 
 
 class PAMCmdListJobs(Command):
@@ -165,11 +165,8 @@ class PAMCreateRecordRotationCommand(Command):
     pam_scheduler_new_parser = argparse.ArgumentParser(prog='pam-create-record-rotation-scheduler')
     pam_scheduler_new_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
                                           help='Record UID that will be rotated manually or via schedule')
-    pam_scheduler_new_parser.add_argument('--config', '-c', required=True, dest='config_uid', action='store',
-                                          help='UID of the resource configuration '
-                                               'record. Note that this is not the '
-                                               'Access Record, but the second, child, '
-                                               'record in the configuration')
+    pam_scheduler_new_parser.add_argument('--rotationsetting', '-rs', required=True, dest='rotation_setting_uid', action='store',
+                                          help='UID of the resource rotation setting.')
     pam_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
                                           action='append',
                                           help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": '
@@ -177,11 +174,9 @@ class PAMCreateRecordRotationCommand(Command):
     pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
                                           action='append', help='Cron tab string of the scheduler. Example: to run job '
                                                                 'daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
-    pam_scheduler_new_parser.add_argument('--complexity', '-p', required=False, dest='pwd_complexity', action='store',
+    pam_scheduler_new_parser.add_argument('--complexity', '-c', required=False, dest='pwd_complexity', action='store',
                                           help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,'
                                                '5,5')
-    pam_scheduler_new_parser.add_argument('--script', '-s', required=False, dest='script_file_name', action='store',
-                                          help='Post execution script file name')
 
     pam_scheduler_new_parser.error = raise_parse_exception
     pam_scheduler_new_parser.exit = suppress_exit
@@ -192,12 +187,17 @@ class PAMCreateRecordRotationCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
 
         record_uid = kwargs.get('record_uid')
-        config_uid = kwargs.get('config_uid')
-        rule_string = kwargs.get("pwd_complexity")
-        script_name = kwargs.get('script_file_name')
+        rotation_setting_uid = kwargs.get('rotation_setting_uid')
+        pwd_complexity = kwargs.get("pwd_complexity")
 
         schedule_json_data = kwargs.get('schedule_json_data')
         schedule_cron_data = kwargs.get('schedule_cron_data') # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+
+        # Check if record uid is available to this user
+        record_to_rotate = params.record_cache.get(record_uid)
+        if not record_to_rotate:
+            print(f'{bcolors.FAIL}Record [{record_uid}] is not available.{bcolors.ENDC}')
+            return
 
         if schedule_json_data and schedule_cron_data:
             print(f'{bcolors.WARNING}Only one type of the schedule is allowed, JSON or Cron.{bcolors.ENDC}')
@@ -209,34 +209,33 @@ class PAMCreateRecordRotationCommand(Command):
             schedule_data = schedule_cron_data
 
         # 2. Load password complexity rules
-        if not rule_string:
-            rule_list_json_str = ''
+        if not pwd_complexity:
+            pwd_complexity_encrypted = None
         else:
-            rule_list = [s.strip() for s in rule_string.split(',')]
-            if len(rule_list) != 5 or not all(n.isnumeric() for n in rule_list):
+            pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',')]
+            if len(pwd_complexity_list) != 5 or not all(n.isnumeric() for n in pwd_complexity_list):
                 logging.warning(
                     'Invalid rules to generate password. Format is "length, upper, lower, digits, symbols". Ex: 32,5,5,5,5'
                 )
                 return
 
             rule_list_dict = {
-                'length': int(rule_list[0]),
-                'caps': int(rule_list[1]),
-                'lowercase': int(rule_list[2]),
-                'digits': int(rule_list[3]),
-                'special': int(rule_list[4])
+                'length': int(pwd_complexity_list[0]),
+                'caps': int(pwd_complexity_list[1]),
+                'lowercase': int(pwd_complexity_list[2]),
+                'digits': int(pwd_complexity_list[3]),
+                'special': int(pwd_complexity_list[4])
             }
 
-            rule_list_json_str = json.dumps(rule_list_dict)
+            rule_list_encrypted = router_helper.encrypt_pwd_complexity(
+                rule_list_dict, record_to_rotate.get('record_key_unencrypted'))
 
         # 3. Construct Request object
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
-        rq.configurationUid = url_safe_str_to_bytes(config_uid)
+        rq.configurationUid = url_safe_str_to_bytes(rotation_setting_uid)
         rq.schedule = json.dumps(schedule_data) if schedule_data else ''
-        rq.pwdComplexity = rule_list_json_str
-        rq.scriptName = script_name if script_name else ''
-
+        rq.pwdComplexity = rule_list_encrypted
         rs = router_set_record_rotation_information(params, rq)
 
         print(f"Successfully saved new Record Rotation Setting.")
@@ -271,7 +270,7 @@ class PAMListRecordRotationCommand(Command):
         enterprise_controllers_connected_resp = router_get_connected_gateways(params)
         enterprise_controllers_connected = list(enterprise_controllers_connected_resp.controllers)
 
-        all_configs = list(config_get_all(params).configurations)
+        all_rotation_settings = list(rotation_settings_get_all(params).configurations)
         table = []
 
         headers = []
@@ -284,9 +283,9 @@ class PAMListRecordRotationCommand(Command):
         if is_verbose:
             headers.append('Gateway UID')
 
-        headers.append('Configuration (Type)')
+        headers.append('Rotation Settings (Type)')
         if is_verbose:
-            headers.append('Configuration UID')
+            headers.append('Rotation Settings UID')
 
         for s in schedules:
             row = []
@@ -295,8 +294,8 @@ class PAMListRecordRotationCommand(Command):
             controller_uid = s.controllerUid
             controller_details = next((ctr for ctr in enterprise_all_controllers if ctr.controllerUid == controller_uid), None)
             configuration_uid = s.configurationUid
-            configuration = next((conf for conf in all_configs if conf.configurationUid == configuration_uid), None)
-            configuration_data = json.loads(configuration.data)
+            rotation_setting = next((rotation_setting for rotation_setting in all_rotation_settings if rotation_setting.configurationUid == configuration_uid), None)
+            rotation_setting_data = json.loads(rotation_setting.data)
 
             is_controller_online = next((poc for poc in enterprise_controllers_connected if poc.controllerUid == controller_uid), False)
 
@@ -351,7 +350,7 @@ class PAMListRecordRotationCommand(Command):
             if is_verbose:
                 row.append(f'{controller_color}{base64_url_encode(controller_uid)}{bcolors.ENDC}')
 
-            row.append(f"{json.loads(configuration.data).get('name')} ({json.loads(configuration.data).get('configType')})")
+            row.append(f"{json.loads(rotation_setting.data).get('name')} ({json.loads(rotation_setting.data).get('configType')})")
             if is_verbose:
                 row.append(f'{base64_url_encode(configuration_uid)}{bcolors.ENDC}')
 
@@ -534,29 +533,30 @@ class DRExecListAccessRecordsCommand(Command):
                          row_number=False, column_width=None)
 
 
-class DRExecListConfigsCommand(Command):
+class PAMRotationSettingsListCommand(Command):
 
     command_parser = argparse.ArgumentParser(prog='dr-exec-list-configs-command')
-    command_parser.add_argument('--config', '-c', required=False, dest='config',action='store', help='Configuration UID')
-    command_parser.add_argument('--verbose', '-v', required=False, dest='verbose',action='store_true', help='Verbose')
+    command_parser.add_argument('--rotation-setting', '-r', required=False, dest='rotation_setting',
+                                action='store', help='Specific Rotation Setting UID')
+    command_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true', help='Verbose')
 
     def get_parser(self):
         return self.command_parser
 
     def execute(self, params, **kwargs):
 
-        config_uid = kwargs.get('config')
+        rotation_setting_uid = kwargs.get('rotation_setting')
         is_verbose = kwargs.get('verbose')
 
-        if not config_uid: # Print ALL root level configs
-            DRExecListConfigsCommand.print_root_configs(params, is_verbose)
+        if not rotation_setting_uid:    # Print ALL root level configs
+            PAMRotationSettingsListCommand.print_root_rotation_setting(params, is_verbose)
         else:   # Print element configs (config that is not a root)
-            DRExecListConfigsCommand.print_config_details(params, config_uid, is_verbose)
+            PAMRotationSettingsListCommand.print_rotation_setting_details(params, rotation_setting_uid, is_verbose)
 
     @staticmethod
-    def print_config_details(params, config_uid, is_verbose=False):
+    def print_rotation_setting_details(params, config_uid, is_verbose=False):
         config_uid_bytes = url_safe_str_to_bytes(config_uid)
-        conf = config_get_one(params, config_uid_bytes)
+        rotation_setting = rotation_settings_get_one(params, config_uid_bytes)
 
         def print_config_element(child, level):
             level += 2
@@ -575,30 +575,30 @@ class DRExecListConfigsCommand(Command):
                     print_config_element(cc, level)
             # print(f'{spaces}----------------------')
 
-        print("--- CONFIGURATION ---")
-        print(f'Uid         : {CommonHelperMethods.bytes_to_url_safe_str(conf.configurationUid)}')
-        print(f'Node id     : {conf.nodeId}')
-        print(f'Gateway UID : {CommonHelperMethods.bytes_to_url_safe_str(conf.controllerUid)}')
+        print("--- ROTATION SETTING ---")
+        print(f'Uid         : {CommonHelperMethods.bytes_to_url_safe_str(rotation_setting.configurationUid)}')
+        print(f'Node id     : {rotation_setting.nodeId}')
+        print(f'Gateway UID : {CommonHelperMethods.bytes_to_url_safe_str(rotation_setting.controllerUid)}')
         if is_verbose:
-            data_str = " ".join(bytes_to_string(conf.data).replace("\n", " ").split())
+            data_str = " ".join(bytes_to_string(rotation_setting.data).replace("\n", " ").split())
             print(f'Data        : {bcolors.OKBLUE}{data_str}{bcolors.ENDC}')
         # print(f'created: {datetime.fromtimestamp(conf.created/1000)}')
         # print(f'lastModified: {datetime.fromtimestamp(conf.lastModified/1000)}')
 
-        if conf.children:
-            print(f"\n--- DEPENDENT CONFIGS {len(conf.children)}")
-            for c in conf.children:
+        if rotation_setting.children:
+            print(f"\n--- DEPENDENT ROTATION SETTINGS {len(rotation_setting.children)}")
+            for c in rotation_setting.children:
                 print_config_element(c, 0)
 
     @staticmethod
-    def print_root_configs(params, is_verbose=False):
-        resp = config_get_all(params)
+    def print_root_rotation_setting(params, is_verbose=False):
+        resp = rotation_settings_get_all(params)
 
         all_root_configs = resp.configurations
 
         table = []
         headers = ['UID',
-                   'Config Name',
+                   'Rotation Setting Name',
                    'Type',
                    'Node Id',
                    'Gateway UID',
@@ -632,79 +632,79 @@ class DRExecListConfigsCommand(Command):
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
-class PAMConfigRemoveCommand(Command):
-    pam_config_rem_command_parser = argparse.ArgumentParser(prog='dr-remove_config-command')
-    pam_config_rem_command_parser.add_argument('--config', '-c', required=True, dest='config',
-                                               action='store', help='Configuration or Configuration Element UID. '
-                                                                   'To view all configurations with their UIDs, '
-                                                                   'use command `pam config list`')
+class PAMRotationSettingsRemoveCommand(Command):
+    pam_rotation_settings_rem_command_parser = argparse.ArgumentParser(prog='dr-remove_config-command')
+    pam_rotation_settings_rem_command_parser.add_argument('--rotation-setting', '-r', required=True, dest='rotation_setting',
+                                               action='store', help='Rotation Setting or Rotation Setting Element UID. '
+                                                                   'To view all rotation settings with their UIDs, '
+                                                                   'use command `pam rotation-settings list`')
 
     def get_parser(self):
-        return self.pam_config_rem_command_parser
+        return self.pam_rotation_settings_rem_command_parser
 
     def execute(self, params, **kwargs):
-        config_uid = kwargs.get('config')
-        config_uid_bytes = url_safe_str_to_bytes(config_uid)
+        rotation_setting_uid = kwargs.get('rotation_setting')
+        rotation_setting_uid_bytes = url_safe_str_to_bytes(rotation_setting_uid)
 
-        is_removed = config_remove(params, config_uid_bytes)
+        is_removed = rotation_settings_remove(params, rotation_setting_uid_bytes)
 
         if is_removed:
-            print("Configuration was removed")
+            print("Rotation Setting was removed")
         else:
-            print("Couldn't delete configuration")
+            print("Couldn't delete Rotation Setting")
 
 
-class PAMConfigNewCommand(Command):
+class PAMRotationSettingNewCommand(Command):
 
-    dr_config_new_command_parser = argparse.ArgumentParser(prog='dr-create_config-command')
+    dr_rotation_settings_new_command_parser = argparse.ArgumentParser(prog='dr-create_rotation_settings_command')
 
-    dr_config_new_command_parser.add_argument('--gateway', '-g', required=True, dest='gateway',
-                                              action='store', help='Gateway Name or UID')
-    dr_config_new_command_parser.add_argument('--config', '-c', required=False, dest='config',
-                                              action='store', help='Parent Configuration UID. To view all '
-                                                                   'configurations with their UIDs, use command '
-                                                                   '`pam config list`')
+    dr_rotation_settings_new_command_parser.add_argument('--gateway', '-g', required=True, dest='gateway',
+                                                         action='store', help='Gateway Name or UID')
+    dr_rotation_settings_new_command_parser.add_argument('--rotation-setting', '-r', required=False, dest='rotation_setting',
+                                                         action='store', help='Parent Rotation Setting UID. To view all '
+                                                                   'rotation settings with their UIDs, use command '
+                                                                   '`pam rotation-settings list`')
 
     # dr_config_new_command_parser.add_argument('--config-data', '-d', required=False, dest='config_data',
     #                                           action='store', help='Raw config data in JSON')
     #
-    dr_config_new_command_parser.add_argument('--config-name', '-cn', required=False, dest='config_name',
-                                              action='store', help='Name of the configuration')
-    dr_config_new_command_parser.add_argument('--config-type', '-ct', required=False, dest='config_type',
-                                              action='store', help='Configuration type', choices=['aws', 'azure', 'local'])
-    dr_config_new_command_parser.add_argument('--config-primary-access-record-uid', '-cp', required=False,
-                                              dest='config_primary_access_record_uid', action='store',
-                                              help='Record UID that will be used as primary access to access resources.'
+    dr_rotation_settings_new_command_parser.add_argument('--name', '-n', required=False, dest='rotation_setting_name',
+                                                         action='store', help='Name of the rotation setting')
+    dr_rotation_settings_new_command_parser.add_argument('--type', '-t', required=False, dest='rotation_setting_type',
+                                                         action='store', help='Rotation Setting type', choices=['aws', 'azure', 'local'])
+    dr_rotation_settings_new_command_parser.add_argument('--primary-access-record-uid', '-p', required=False,
+                                                         dest='rotation_setting_primary_access_record_uid', action='store',
+                                                         help='Record UID that will be used as primary access to access resources.'
                                                    ' Example, this record will have root credentials to MySQL database '
                                                    'that can manage other users credentials.')
-    dr_config_new_command_parser.add_argument('--config-resource-records', '-cr', required=False,
-                                              dest='config_resource_access_records_uids', action='append',
-                                              help='', default=[])
+    dr_rotation_settings_new_command_parser.add_argument('--resource-records', '-rr', required=False,
+                                                         dest='rotation_setting_resource_access_records_uids', action='append',
+                                                         help='', default=[])
 
-    dr_config_new_command_parser.add_argument('--config-record-types', '-cy', required=False,
-                                              dest='config_record_types', action='store',
-                                              help='Record types that the action will be performed against',
-                                              nargs='+', default=[])
-    dr_config_new_command_parser.add_argument('--config-default-schedule', '-cd', required=False,
-                                              dest='config_default_schedule', action='store',
-                                              help='Default scheduler')
+    dr_rotation_settings_new_command_parser.add_argument('--record-types', '-rt', required=False,
+                                                         dest='rotation_setting_record_types', action='store',
+                                                         help='Record types that the action will be performed against',
+                                                         nargs='+', default=[])
+    dr_rotation_settings_new_command_parser.add_argument('--default-schedule', '-ds', required=False,
+                                                         dest='rotation_setting_default_schedule', action='store',
+                                                         help='Default scheduler')
 
     def get_parser(self):
-        return self.dr_config_new_command_parser
+        return self.dr_rotation_settings_new_command_parser
 
     def execute(self, params, **kwargs):
         gateway_str = kwargs.get('gateway')
-        config_uid = kwargs.get('config')
+        rotation_setting_uid = kwargs.get('rotation_setting')
         gateway_uid_bytes = url_safe_str_to_bytes(gateway_str)
         all_gateways = gateway_helper.get_all_gateways(params)
 
         config_data_raw = kwargs.get('config_data')
-        config_name = kwargs.get('config_name')
-        config_type = kwargs.get('config_type')
-        config_primary_access_record_uid = kwargs.get('config_primary_access_record_uid')
-        config_resource_access_records_uids = kwargs.get('config_resource_access_records_uids')
-        config_record_types = kwargs.get('config_record_types')
-        config_default_schedule = kwargs.get('config_default_schedule')
+        rotation_setting_name = kwargs.get('rotation_setting_name')
+        rotation_setting_type = kwargs.get('rotation_setting_type')
+        rotation_setting_primary_access_record_uid = kwargs.get('rotation_setting_primary_access_record_uid')
+        rotation_setting_resource_access_records_uids = kwargs.get('rotation_setting_resource_access_records_uids')
+        rotation_setting_record_types = kwargs.get('rotation_setting_record_types')
+        rotation_setting_default_schedule = kwargs.get('rotation_setting_default_schedule')
 
         found_gateways = list(filter(lambda g: g.controllerUid == gateway_uid_bytes or g.controllerName == gateway_str, all_gateways))
 
@@ -716,31 +716,31 @@ class PAMConfigNewCommand(Command):
             logging.warning(f'Following Gateway UIDs are already associated with [{bcolors.OKGREEN}{gateway_str}{bcolors.ENDC}] name: {found_gateway_uids_str}. Please use UID instead to identify the exact Gateway.')
             return
 
-        if not config_name:
-            logging.warning(f'Configuration name (--config-name, -cn) is required')
+        if not rotation_setting_name:
+            logging.warning(f'Rotation Setting name (--name, -n) is required')
             return
 
-        if not config_primary_access_record_uid:
-            logging.warning(f'Primary access record (--config-primary_access_record_uid, -cp) is required')
+        if not rotation_setting_primary_access_record_uid:
+            logging.warning(f'Primary access record (--primary_access_record_uid, -p) is required')
             return
 
-        if not config_type:
-            logging.warning(f'Configuration type (--config-type, -ct) is required. '
+        if not rotation_setting_type:
+            logging.warning(f'Rotation Setting type (--type, -t) is required. '
                             f'Use one of the following: aws, azure, local')
             return
 
-        config_type = config_type     # available options: AWS | Azure | Local
+        rotation_setting_type = rotation_setting_type     # available options: AWS | Azure | Local
 
         if config_data_raw:
             config_data_json = config_data_raw
         else:
 
             config_data_dict = {}
-            config_data_dict['name'] = config_name
-            config_data_dict['primaryAccessRecord'] = config_primary_access_record_uid
-            config_data_dict['type'] = config_type
-            config_data_dict['recordTypes'] = config_record_types
-            if config_default_schedule:
+            config_data_dict['name'] = rotation_setting_name
+            config_data_dict['primaryAccessRecord'] = rotation_setting_primary_access_record_uid
+            config_data_dict['type'] = rotation_setting_type
+            config_data_dict['recordTypes'] = rotation_setting_record_types
+            if rotation_setting_default_schedule:
                 # config_data_dict['defaultSchedule'] = config_default_schedule
                 config_data_dict['defaultSchedule'] = [
                     {"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1},
@@ -751,28 +751,28 @@ class PAMConfigNewCommand(Command):
 
         child_config_data_jsons = None
 
-        if config_resource_access_records_uids:
+        if rotation_setting_resource_access_records_uids:
             child_config_data_jsons = []
 
-            for craru in config_resource_access_records_uids:
+            for craru in rotation_setting_resource_access_records_uids:
                 child_config_data_dict = {}
                 child_config_data_dict['resourceRecord'] = craru
                 child_config_data_json = json.dumps(child_config_data_dict, indent=2)
                 child_config_data_jsons.append(child_config_data_json)
 
-        config_creation_resp = config_create(
+        config_creation_resp = rotation_settings_create(
             params=params,
             gateway_uid_bytes=gateway_uid_bytes,
             config_json_str=config_data_json,
             child_config_json_strings=child_config_data_jsons,
-            parent_uid_bytes=url_safe_str_to_bytes(config_uid) if config_uid else None
+            parent_uid_bytes=url_safe_str_to_bytes(rotation_setting_uid) if rotation_setting_uid else None
          )
 
-        print('Configuration has been created:')
-        print(f'\tConfig uid: {CommonHelperMethods.bytes_to_url_safe_str(config_creation_resp["configUid"])}')
+        print('Rotation Setting has been created:')
+        print(f'\tRotation Setting uid: {CommonHelperMethods.bytes_to_url_safe_str(config_creation_resp["configUid"])}')
         if config_creation_resp['childConfigUids']:
             for ccu in config_creation_resp['childConfigUids']:
-                print(f'\tDependent config uid: {CommonHelperMethods.bytes_to_url_safe_str(ccu)}')
+                print(f'\tDependent rotation settings uid: {CommonHelperMethods.bytes_to_url_safe_str(ccu)}')
 
 
 class PAMRouterGetRotationInfo(Command):
@@ -796,7 +796,7 @@ class PAMRouterGetRotationInfo(Command):
         if rri_status_name == 'RRS_ONLINE':
 
             print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
-            print(f"Configuration Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.configurationUid) if rri.configurationUid else '-') }{bcolors.ENDC}")
+            print(f"Rotation Setting Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.configurationUid) if rri.configurationUid else '-') }{bcolors.ENDC}")
             print(f'Node ID: {bcolors.OKBLUE}{rri}{bcolors.ENDC}')
             print(f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
             print(f"Gateway Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.controllerUid) if rri.controllerUid else '-') }{bcolors.ENDC}")
@@ -875,25 +875,22 @@ class PAMGatewayActionRotateCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        if not hasattr(params, 'pam_controllers'):
-            router_get_connected_gateways(params)
-
         record_uid = kwargs.get('record_uid')
         record_uid_bytes = url_safe_str_to_bytes(record_uid)
 
-        # rq = PAMGenericUidRequest()
-        # rq.uid = record_uid_bytes
-        #
-        # router_send_rotation_action_to_gateway(params, rq)
-        #
-        # return
+        record_to_rotate = params.record_cache.get(record_uid)
+        if not record_to_rotate:
+            print(f'{bcolors.FAIL}Record [{record_uid}] is not available.{bcolors.ENDC}')
+            return
 
-        # TODO: Check if this record even exist
+        if not hasattr(params, 'pam_controllers'):
+            router_get_connected_gateways(params)
 
         # Find record by record uid
         ri = router_get_record_rotation_info(params, record_uid_bytes)
-        ri_pwd_complexity = ri.pwdComplexity
-        ri_configuration_uid = base64_url_encode(ri.configurationUid)
+        ri_pwd_complexity_encrypted = ri.pwdComplexity
+
+        ri_rotation_setting_uid = base64_url_encode(ri.configurationUid) # Configuration on the UI is "Rotation Setting"
         ri_controller_uid = base64_url_encode(ri.controllerUid)
         ri_router_worker_lb_cookie_str = ri.cookie
 
@@ -918,8 +915,8 @@ class PAMGatewayActionRotateCommand(Command):
             print(f'{bcolors.FAIL}Unknown router rotation status [{rrs}]{bcolors.ENDC}')
             return
 
-        action_inputs = GatewayActionRotateInputs(record_uid=record_uid, configuration_uid=ri_configuration_uid,
-                                                  pwd_complexity=ri_pwd_complexity)
+        action_inputs = GatewayActionRotateInputs(record_uid=record_uid, rotation_setting_uid=ri_rotation_setting_uid,
+                                                  pwd_complexity_encrypted=ri_pwd_complexity_encrypted)
 
         message_id = GatewayAction.generate_message_id()
 

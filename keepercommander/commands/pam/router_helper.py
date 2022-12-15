@@ -328,3 +328,17 @@ def print_configs_from_router(params, router_response):
     table.sort(key=lambda x: (x[3] or '', x[1].lower()))
 
     dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
+
+
+def encrypt_pwd_complexity(rule_list_dict, record_key_unencrypted):
+    # With padding
+    # rule_list_json_bytes = api.get_record_data_json_bytes(rule_list_dict)
+    # rule_list_json_bytes_padded = api.pad_aes_gcm(rule_list_json_bytes)
+    # rule_list_json_bytes_padded_encrypted = crypto.encrypt_aes_v2(rule_list_json_bytes_padded, record_key_unencrypted)
+
+    # Without padding
+    rule_list_json = json.dumps(rule_list_dict)
+    rule_list_json_bytes = rule_list_json.encode('UTF-8')
+    rule_list_json_encrypted = crypto.encrypt_aes_v2(rule_list_json_bytes, record_key_unencrypted)
+
+    return rule_list_json_encrypted
