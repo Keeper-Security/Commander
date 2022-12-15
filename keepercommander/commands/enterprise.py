@@ -846,9 +846,9 @@ class EnterpriseNodeCommand(EnterpriseCommand):
             if not n:
                 n = node_lookup.get(parent_name.lower())
             if not n:
-                raise CommandError('enterprise-node', 'Cannot resolve parent node %s'.format(parent_name))
+                raise CommandError('enterprise-node', f'Cannot resolve parent node \"{parent_name}\"')
             if isinstance(n, list):
-                raise CommandError('enterprise-node', 'Parent node %s in not unique'.format(parent_name))
+                raise CommandError('enterprise-node', f'Parent node \"{parent_name}\" in not unique')
             parent_id = n['node_id']
 
         matched = {}
