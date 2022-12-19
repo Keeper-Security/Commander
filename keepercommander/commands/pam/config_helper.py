@@ -3,6 +3,8 @@ import os
 from keeper_secrets_manager_core.utils import string_to_bytes
 
 from keepercommander import api
+from keepercommander.display import bcolors
+from keepercommander.error import KeeperApiError
 from keepercommander.proto import pam_pb2
 from keepercommander.proto.pam_pb2 import PAMDataOperation, PAMOperationType, PAMModifyRequest, PAMGenericUidRequest
 
@@ -81,9 +83,13 @@ def rotation_settings_remove(params, configuration_uid):
     rq = PAMModifyRequest()
     rq.operations.append(config_operation)
 
-    rs = api.communicate_rest(params, rq, 'pam/modify_configuration', rs_type=pam_pb2.PAMModifyResult)
+    try:
+        rs = api.communicate_rest(params, rq, 'pam/modify_configuration', rs_type=pam_pb2.PAMModifyResult)
+        print(f'{bcolors.OKGREEN}Rotation Setting was removed successfully{bcolors.ENDC}')
 
-    print(rs)
-
-    return True
+    except KeeperApiError as ex:
+        if ex.result_code == 'doesnt_exist':
+            print(f'{bcolors.WARNING}This rotation setting does not exist{bcolors.ENDC}')
+        else:
+            print(f'{bcolors.WARNING}Error code: {ex.result_code}. {ex.message}{bcolors.ENDC}')
 

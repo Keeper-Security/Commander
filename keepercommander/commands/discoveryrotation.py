@@ -646,12 +646,7 @@ class PAMRotationSettingsRemoveCommand(Command):
         rotation_setting_uid = kwargs.get('rotation_setting')
         rotation_setting_uid_bytes = url_safe_str_to_bytes(rotation_setting_uid)
 
-        is_removed = rotation_settings_remove(params, rotation_setting_uid_bytes)
-
-        if is_removed:
-            print("Rotation Setting was removed")
-        else:
-            print("Couldn't delete Rotation Setting")
+        rotation_settings_remove(params, rotation_setting_uid_bytes)
 
 
 class PAMRotationSettingNewCommand(Command):
@@ -910,7 +905,7 @@ class PAMGatewayActionRotateCommand(Command):
             print(f'{bcolors.FAIL}There are no gateways associated with this Record Rotation Setting.{bcolors.ENDC}')
             return
         elif rrs == 'RRS_ONLINE':
-            print(f'{bcolors.OKGREEN}Controller is online{bcolors.ENDC}')
+            print(f'{bcolors.OKGREEN}Gateway is online{bcolors.ENDC}')
         else:
             print(f'{bcolors.FAIL}Unknown router rotation status [{rrs}]{bcolors.ENDC}')
             return
