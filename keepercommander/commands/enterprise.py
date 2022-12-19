@@ -14,7 +14,7 @@ import base64
 import copy
 import datetime
 import ipaddress
-from typing import Set, Dict, Optional, List
+from typing import Optional
 
 import itertools
 import json
@@ -46,13 +46,11 @@ from ..error import CommandError
 from ..generator import generate
 from ..params import KeeperParams
 from ..proto import record_pb2 as record_proto
-from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest,
-                                    GetSharingAdminsRequest, GetSharingAdminsResponse)
 from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
                                     SecurityReportResponse)
 from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
-                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest)
+                                    ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest,
+                                    GetSharingAdminsRequest, GetSharingAdminsResponse)
 
 
 def register_commands(commands):
@@ -140,6 +138,8 @@ enterprise_node_parser.add_argument('--parent', dest='parent', action='store', h
 enterprise_node_parser.add_argument('--name', dest='displayname', action='store', help='set node display name')
 enterprise_node_parser.add_argument('--delete', dest='delete', action='store_true', help='delete node')
 enterprise_node_parser.add_argument('--toggle-isolated', dest='toggle_isolated', action='store_true', help='Render node invisible')
+enterprise_node_parser.add_argument('--invite-email', dest='invite_email', action='store',
+                                    help='Sets invite email template from file. Saves current template if file does not exist. dash (-) use stdout')
 enterprise_node_parser.add_argument('node', type=str, nargs='+', help='Node Name or ID. Can be repeated.')
 enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
@@ -915,6 +915,121 @@ class EnterpriseNodeCommand(EnterpriseCommand):
 
             if not matched_nodes:
                 return
+
+            email_template = kwargs.get('invite_email')
+            if isinstance(email_template, str):
+                subject_section = 'Subject'
+                heading_section = 'Heading'
+                message_section = 'Message'
+                button_text_section = 'Button Text'
+
+                if email_template and email_template != '-':
+                    email_template = os.path.expanduser(email_template)
+                else:
+                    email_template = ''
+                if len(matched_nodes) != 1:
+                    raise CommandError('enterprise-node', 'Invitation email template can be set to one node at the time')
+                node = matched_nodes[0]
+                if email_template and os.path.isfile(email_template):
+                    logging.info('Loading email template from a file \"%s\"', email_template)
+                    with open(email_template, 'rt') as t:
+                        lines = t.readlines()
+
+                    lines = [x.strip() for x in lines if x and x[0] != '#']
+                    template = {}
+                    section = ''
+                    for line in lines:
+                        if not line:
+                            continue
+                        if line.startswith('[') and line.endswith(']'):
+                            section = line[1:-1].strip()
+                        else:
+                            current = template.get(section, '')
+                            if current:
+                                current += '\n'
+                            current += line
+                            template[section] = current
+
+                    subject = template.get(subject_section) or ''
+                    heading = template.get(heading_section) or ''
+                    message = template.get(message_section) or ''
+                    button_text = template.get(button_text_section) or ''
+
+                    valid = subject and heading and message and button_text
+                    missing = bcolors.FAIL + bcolors.BOLD + 'MISSING!' + bcolors.ENDC
+                    logging.info('')
+                    logging.info(f'[{subject_section}]')
+                    logging.info(subject or missing)
+                    logging.info('')
+                    logging.info(f'[{heading_section}]')
+                    logging.info(heading or missing)
+                    logging.info('')
+                    logging.info(f'[{message_section}]')
+                    logging.info(message or missing)
+                    logging.info('')
+                    logging.info(f'[{button_text_section}]')
+                    logging.info(button_text or missing)
+                    logging.info('')
+
+                    if valid:
+                        answer = user_choice('Do you want to use this email invitation template?', 'yn', 'y')
+                        answer = answer.lower()
+                        if answer in ['y', 'yes']:
+                            rq = {
+                                'command': 'set_enterprise_custom_invitation',
+                                'node_id': node['node_id'],
+                                'subject': subject,
+                                'header': heading,
+                                'body': message,
+                                'button_label': button_text
+                            }
+                            api.communicate(params, rq)
+                else:
+                    rq = {
+                        'command': 'get_enterprise_custom_invitation',
+                        'node_id': node['node_id']
+                    }
+                    try:
+                        rs = api.communicate(params, rq)
+                        description = ''
+                        subject = rs.get('subject') or ''
+                        heading = rs.get('header') or ''
+                        message = rs.get('body') or ''
+                        button_text = rs.get('button_label') or ''
+                    except:
+                        description = '# A line started with hash sign (#) is a comment'
+                        subject = '# The email subject line.\n#e.g. Keeper Invitation'
+                        heading = '# The header or title that is in bold and above the rest of the email content\n#e.g Invite to Join Keeper Company '
+                        message = '# The main body of text in the email. Any HTML present will be escaped such that it will show as plain text.\n' \
+                                  '# Newlines will be converted to <br> tags to allow text to move to a new line.\n' \
+                                  '#e.g Your organization has purchased Keeper, the world\'s leading password manager and digital vault.\n' \
+                                  '# Your Keeper admin has invited you to join your organization\'s account.'
+                        button_text = '# The label for the button at the bottom of the email.\n' \
+                                      '# This button/link will take the user to the vault to either join the enterprise, or sign up with Keeper then join the enterprise.\n' \
+                                      '#e.g Setup Account'
+                    lines = []
+                    if description:
+                        lines.append(description)
+                    lines.append(f'[{subject_section}]')
+                    lines.append(subject)
+                    lines.append('')
+                    lines.append(f'[{heading_section}]')
+                    lines.append(heading)
+                    lines.append('')
+                    lines.append(f'[{message_section}]')
+                    lines.append(message)
+                    lines.append('')
+                    lines.append(f'[{button_text_section}]')
+                    lines.append(button_text)
+
+                    if email_template:
+                        with open(email_template, 'wt') as t:
+                            t.writelines((f'{x}\n' for x in lines))
+
+                        logging.info('Email invitation template is written to file: \"%s\"', email_template)
+                    else:
+                        for line in lines:
+                            print(line)
 
             if kwargs.get('delete'):
                 depths = {}

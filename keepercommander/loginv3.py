@@ -24,8 +24,8 @@ from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 from . import api, rest_api, utils, crypto
 from .breachwatch import BreachWatch
 from .display import bcolors
-from .error import KeeperApiError
 from .humps import decamelize
+from .error import KeeperApiError
 from .params import KeeperParams
 from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto import breachwatch_pb2 as breachwatch_proto
