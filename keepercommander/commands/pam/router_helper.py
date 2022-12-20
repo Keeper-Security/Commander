@@ -288,7 +288,40 @@ def print_router_response(router_response, original_conversation_id=None):
             print(f"Scheduled action id: {bcolors.OKBLUE}{conversation_id}{bcolors.ENDC}")
             print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {conversation_id}{bcolors.ENDC}' to get status of the scheduled action")
         else:
-            print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
+
+            gateway_info = router_response_response_payload_dict.get('data')
+            print(f'KSM Application Details\n-------------------------')
+            ksm_app = gateway_info.get('ksm').get('app')
+            print(f'\tTitle             : {ksm_app.get("title")}')
+            print(f'\tNumber of Records : {ksm_app.get("records-count")}')
+            print(f'\tNumber of Folders : {ksm_app.get("folders-count")}')
+            print(f'\tWarnings          : {ksm_app.get("warnings")}')
+
+            print(f'\nHost Details\n-------------------------')
+            host_details = gateway_info.get('machine')
+            installed_packages_list = host_details.get('installed-python-packages')
+            installed_packages_str = ', '.join(installed_packages_list)
+
+            print(f'\tOS                : {host_details.get("os")}')
+            print(f'\tCurrent Time      : {host_details.get("current-time")}')
+            print(f'\tExecutable        : {host_details.get("executable")}')
+            print(f'\tPackage Directory : {host_details.get("package-dir")}')
+            print(f'\tWorking Directory : {host_details.get("working-dir")}')
+            print(f'\tInstalled Packages: {installed_packages_str}')
+
+            print(f'\nRouter Details\n-------------------------')
+            router_details = gateway_info.get('router').get('connection')
+            print(f'\tBase URL          : {router_details.get("base-url")}')
+            print(f'\tConnection Status : {router_details.get("status")}')
+
+            print(f'\nRotation Settings Available to Gateway\n-----------------------------------')
+            rotation_settings_list = gateway_info.get('rotation_settings')
+
+            for rs in rotation_settings_list:
+                print(f'\tUID          : {rs.get("configurationUid")}')
+
+
+            # print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
 
 
 def print_configs_from_router(params, router_response):
