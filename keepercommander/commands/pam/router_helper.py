@@ -175,7 +175,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
 
     router_server_cookie = found_gateway.cookie
 
-    msg_id = gateway_action.messageId if gateway_action.messageId else GatewayAction.generate_message_id()
+    msg_id = gateway_action.conversationId if gateway_action.conversationId else GatewayAction.generate_conversation_id()
     msg_id_bytes = string_to_bytes(msg_id)
 
     rq = RouterControllerMessage()
@@ -263,7 +263,7 @@ def router_send_message_to_gateway(params, transmission_key, router_server_cooki
     return rs
 
 
-def print_router_response(router_response, original_conversation_id=None):
+def print_router_response(router_response, response_type, original_conversation_id=None):
     if not router_response:
         return
 
@@ -280,48 +280,84 @@ def print_router_response(router_response, original_conversation_id=None):
 
     if not router_response_response_payload_dict.get('ok'):
         print(f"{bcolors.FAIL}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
-    else:
+
+    if router_response_response_payload_dict.get('isScheduled'):
         conversation_id = router_response_response_payload_dict.get('conversation_id')
 
-        if router_response_response_payload_dict.get('isScheduled'):
+        print(f"Scheduled action id: {bcolors.OKBLUE}{conversation_id}{bcolors.ENDC}")
+        print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {conversation_id}{bcolors.ENDC}' to get status of the scheduled action")
+        return
 
-            print(f"Scheduled action id: {bcolors.OKBLUE}{conversation_id}{bcolors.ENDC}")
-            print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {conversation_id}{bcolors.ENDC}' to get status of the scheduled action")
+    elif response_type == 'job_info':
+        job_info = router_response_response_payload_dict.get('data')
+        exec_response_value = job_info.get('execResponseValue')
+        exec_response_value_msg = exec_response_value.get('message') if exec_response_value else None
+        exec_duration = job_info.get('executionDuration')
+        exec_status = job_info.get('status')
+        exec_exception = job_info.get('execException')
+
+        print(f'Execution Details\n-------------------------')
+
+
+        if exec_status == 'finished':
+            font_color = bcolors.OKGREEN
+        elif exec_status == 'running':
+            font_color = bcolors.WARNING
         else:
+            font_color = bcolors.FAIL
 
-            gateway_info = router_response_response_payload_dict.get('data')
-            print(f'KSM Application Details\n-------------------------')
-            ksm_app = gateway_info.get('ksm').get('app')
-            print(f'\tTitle             : {ksm_app.get("title")}')
-            print(f'\tNumber of Records : {ksm_app.get("records-count")}')
-            print(f'\tNumber of Folders : {ksm_app.get("folders-count")}')
-            print(f'\tWarnings          : {ksm_app.get("warnings")}')
+        print(f'\t{font_color}Status              : {job_info.get("reason") if job_info.get("reason") else exec_status}{bcolors.ENDC}')
 
-            print(f'\nHost Details\n-------------------------')
-            host_details = gateway_info.get('machine')
-            installed_packages_list = host_details.get('installed-python-packages')
-            installed_packages_str = ', '.join(installed_packages_list)
 
-            print(f'\tOS                : {host_details.get("os")}')
-            print(f'\tCurrent Time      : {host_details.get("current-time")}')
-            print(f'\tExecutable        : {host_details.get("executable")}')
-            print(f'\tPackage Directory : {host_details.get("package-dir")}')
-            print(f'\tWorking Directory : {host_details.get("working-dir")}')
-            print(f'\tInstalled Packages: {installed_packages_str}')
+        if exec_duration:
+            print(f'\t{font_color}Duration            : {exec_duration}{bcolors.ENDC}')
 
-            print(f'\nRouter Details\n-------------------------')
-            router_details = gateway_info.get('router').get('connection')
-            print(f'\tBase URL          : {router_details.get("base-url")}')
-            print(f'\tConnection Status : {router_details.get("status")}')
+        if exec_response_value_msg:
+            print(f'\t{font_color}Response Message    : {exec_response_value_msg}{bcolors.ENDC}')
 
-            print(f'\nRotation Settings Available to Gateway\n-----------------------------------')
-            rotation_settings_list = gateway_info.get('rotation_settings')
+        if exec_exception:
+            print(f'\t{font_color}Execution Exception : {exec_exception}{bcolors.ENDC}')
 
+        # print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
+
+    elif response_type == 'gateway_info':
+
+        gateway_info = router_response_response_payload_dict.get('data')
+        print(f'KSM Application Details\n-------------------------')
+        ksm_app = gateway_info.get('ksm').get('app')
+        print(f'\tTitle             : {ksm_app.get("title")}')
+        print(f'\tNumber of Records : {ksm_app.get("records-count")}')
+        print(f'\tNumber of Folders : {ksm_app.get("folders-count")}')
+        print(f'\tWarnings          : {ksm_app.get("warnings")}')
+
+        print(f'\nHost Details\n-------------------------')
+        host_details = gateway_info.get('machine')
+        installed_packages_list = host_details.get('installed-python-packages')
+        installed_packages_str = ', '.join(installed_packages_list)
+
+        print(f'\tOS                : {host_details.get("os")}')
+        print(f'\tCurrent Time      : {host_details.get("current-time")}')
+        print(f'\tExecutable        : {host_details.get("executable")}')
+        print(f'\tPackage Directory : {host_details.get("package-dir")}')
+        print(f'\tWorking Directory : {host_details.get("working-dir")}')
+        print(f'\tInstalled Packages: {installed_packages_str}')
+
+        print(f'\nRouter Details\n-------------------------')
+        router_details = gateway_info.get('router').get('connection')
+        print(f'\tBase URL          : {router_details.get("base-url")}')
+        print(f'\tConnection Status : {router_details.get("status")}')
+
+        print(f'\nRotation Settings Available to Gateway\n-----------------------------------')
+        rotation_settings_list = gateway_info.get('rotation_settings')
+
+        if rotation_settings_list:
             for rs in rotation_settings_list:
                 print(f'\tUID          : {rs.get("configurationUid")}')
+        else:
+            print(f'\tNo Rotation Settings')
 
-
-            # print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
+    # else:
+    #     print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
 
 
 def print_configs_from_router(params, router_response):

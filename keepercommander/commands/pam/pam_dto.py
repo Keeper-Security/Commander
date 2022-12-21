@@ -33,18 +33,18 @@ class GatewayActionDiscoverInputs:
 
 class GatewayAction(metaclass=abc.ABCMeta):
 
-    def __init__(self, action, is_scheduled, gateway_destination=None, inputs=None, message_id=None):
+    def __init__(self, action, is_scheduled, gateway_destination=None, inputs=None, conversation_id=None):
         self.action = action
         self.is_scheduled = is_scheduled
         self.gateway_destination = gateway_destination
         self.inputs = inputs
-        self.messageId = message_id
+        self.conversationId = conversation_id
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
 
     @staticmethod
-    def generate_message_id(is_bytes=False):
+    def generate_conversation_id(is_bytes=False):
         message_id_bytes = crypto.get_random_bytes(16)
         if is_bytes:
             return message_id_bytes
@@ -55,10 +55,10 @@ class GatewayAction(metaclass=abc.ABCMeta):
 
 class GatewayActionGatewayInfo(GatewayAction):
 
-    def __init__(self, message_id=None, is_scheduled=False):
+    def __init__(self, conversation_id=None, is_scheduled=False):
         super().__init__(
             'gateway-info',
-            message_id=message_id,
+            conversation_id=conversation_id,
             is_scheduled=is_scheduled
         )
 
@@ -68,8 +68,8 @@ class GatewayActionGatewayInfo(GatewayAction):
 
 class GatewayActionDiscover(GatewayAction):
 
-    def __init__(self, inputs: GatewayActionDiscoverInputs, message_id=None):
-        super().__init__('discover', inputs=inputs, message_id=message_id, is_scheduled=True)
+    def __init__(self, inputs: GatewayActionDiscoverInputs, conversation_id=None):
+        super().__init__('discover', inputs=inputs, conversation_id=conversation_id, is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -86,8 +86,8 @@ class GatewayActionJobInfoInputs:
 
 class GatewayActionJobCancel(GatewayAction):
 
-    def __init__(self, inputs: GatewayActionJobInfoInputs, message_id=None):
-        super().__init__('job-cancel', inputs=inputs, message_id=message_id, is_scheduled=True)
+    def __init__(self, inputs: GatewayActionJobInfoInputs, conversation_id=None):
+        super().__init__('job-cancel', inputs=inputs, conversation_id=conversation_id, is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -95,8 +95,8 @@ class GatewayActionJobCancel(GatewayAction):
 
 class GatewayActionJobInfo(GatewayAction):
 
-    def __init__(self, inputs: GatewayActionJobInfoInputs, message_id=None):
-        super().__init__('job-info', inputs=inputs, message_id=message_id, is_scheduled=False)
+    def __init__(self, inputs: GatewayActionJobInfoInputs, conversation_id=None):
+        super().__init__('job-info', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -115,8 +115,8 @@ class GatewayActionRotateInputs:
 
 class GatewayActionRotate(GatewayAction):
 
-    def __init__(self, inputs: GatewayActionRotateInputs, message_id=None, gateway_destination=None):
-        super().__init__('rotate', inputs=inputs, message_id=message_id, gateway_destination=gateway_destination,
+    def __init__(self, inputs: GatewayActionRotateInputs, conversation_id=None, gateway_destination=None):
+        super().__init__('rotate', inputs=inputs, conversation_id=conversation_id, gateway_destination=gateway_destination,
                          is_scheduled=True)
 
     def toJSON(self):
@@ -131,8 +131,8 @@ class GatewayActionGetConfigsInputs:
 
 class GatewayActionGetConfigs(GatewayAction):
 
-    def __init__(self, message_id=None):
-        super().__init__('get-configs', message_id=message_id, is_scheduled=False)
+    def __init__(self, conversation_id=None):
+        super().__init__('get-configs', conversation_id=conversation_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -140,8 +140,8 @@ class GatewayActionGetConfigs(GatewayAction):
 
 class GatewayActionListAccessRecords(GatewayAction):
 
-    def __init__(self, message_id=None):
-        super().__init__('list-access-records', message_id=message_id, is_scheduled=False)
+    def __init__(self, conversation_id=None):
+        super().__init__('list-access-records', conversation_id=conversation_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)

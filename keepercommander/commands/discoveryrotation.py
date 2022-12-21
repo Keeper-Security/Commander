@@ -482,57 +482,6 @@ class PAMGatewayListCommand(Command):
                          row_number=False, column_width=None)
 
 
-class DRExecListAccessRecordsCommand(Command):
-    command_parser = argparse.ArgumentParser(prog='dr-exec-list-access-records-command')
-    command_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
-                                help='Destination Gateway')
-
-    def get_parser(self):
-        return self.command_parser
-
-    def execute(self, params, **kwargs):
-
-        if not hasattr(params, 'pam_controllers'):
-            gateway_helper.get_all_gateways(params)
-
-        message_id = GatewayAction.generate_message_id(is_bytes=True)
-
-        router_response = router_send_action_to_gateway(
-            params=params,
-            gateway_action=GatewayActionListAccessRecords(),
-            message_type=ControllerMessageType.Value('CMT_GENERAL'),
-            is_streaming=False
-        )
-
-        if not router_response:
-            return
-
-        access_records = router_response.get('response').get('data').get('access_records')
-
-        table = []
-        headers = ['UID', 'Title', 'Type', 'Has Access']
-
-        for ar in access_records:
-            has_access_to_record = ar.get("uid") in params.record_cache
-
-            row_color = bcolors.FAIL
-            if has_access_to_record:
-                row_color = bcolors.OKGREEN
-
-            row = [
-                f'{row_color}{ar.get("uid")}',
-                ar.get("title"),
-                ar.get("type"),
-                f"Yes{bcolors.ENDC}" if has_access_to_record else f"No{bcolors.ENDC}"
-            ]
-
-            table.append(row)
-        table.sort(key=lambda x: (x[3] or '', x[1].lower()))
-
-        dump_report_data(table, headers, fmt='table', filename="",
-                         row_number=False, column_width=None)
-
-
 class PAMRotationSettingsListCommand(Command):
 
     command_parser = argparse.ArgumentParser(prog='dr-exec-list-configs-command')
@@ -819,14 +768,14 @@ class PAMGatewayActionJobCancelCommand(Command):
 
         generic_job_id_inputs = GatewayActionJobInfoInputs(job_id)
 
-        message_id = GatewayAction.generate_message_id()
+        conversation_id = GatewayAction.generate_conversation_id()
         router_response = router_send_action_to_gateway(
             params=params,
-            gateway_action=GatewayActionJobCancel(inputs=generic_job_id_inputs, message_id=message_id),
+            gateway_action=GatewayActionJobCancel(inputs=generic_job_id_inputs, conversation_id=conversation_id),
             message_type=ControllerMessageType.Value('CMT_GENERAL'),
             is_streaming=False
         )
-        print_router_response(router_response, message_id)
+        print_router_response(router_response, conversation_id)
 
 
 class PAMGatewayActionJobCommand(Command):
@@ -844,16 +793,17 @@ class PAMGatewayActionJobCommand(Command):
 
         action_inputs = GatewayActionJobInfoInputs(job_id)
 
-        message_id = GatewayAction.generate_message_id()
+        conversation_id = GatewayAction.generate_conversation_id()
         router_response = router_send_action_to_gateway(
             params=params,
             gateway_action=GatewayActionJobInfo(
                 inputs=action_inputs,
-                message_id=message_id),
+                conversation_id=conversation_id),
             message_type=ControllerMessageType.Value('CMT_GENERAL'),
             is_streaming=False
         )
-        print_router_response(router_response, message_id)
+
+        print_router_response(router_response, original_conversation_id=conversation_id, response_type='job_info')
 
 
 class PAMGatewayActionRotateCommand(Command):
@@ -913,17 +863,17 @@ class PAMGatewayActionRotateCommand(Command):
         action_inputs = GatewayActionRotateInputs(record_uid=record_uid, rotation_setting_uid=ri_rotation_setting_uid,
                                                   pwd_complexity_encrypted=ri_pwd_complexity_encrypted)
 
-        message_id = GatewayAction.generate_message_id()
+        conversation_id = GatewayAction.generate_conversation_id()
 
         router_response = router_send_action_to_gateway(params=params,
                                                         gateway_action=GatewayActionRotate(inputs=action_inputs,
-                                                                                           message_id=message_id,
+                                                                                           conversation_id=conversation_id,
                                                                                            gateway_destination=ri_controller_uid),
                                                         message_type=ControllerMessageType.Value('CMT_ROTATE'),
                                                         is_streaming=False
                                                         )
 
-        print_router_response(router_response, message_id)
+        print_router_response(router_response, conversation_id)
 
 
 class PAMGatewayActionServerInfoCommand(Command):
@@ -943,7 +893,7 @@ class PAMGatewayActionServerInfoCommand(Command):
             is_streaming=False
         )
 
-        print_router_response(router_response)
+        print_router_response(router_response, response_type='gateway_info')
 
 
 class PAMGatewayActionDiscoverCommand(Command):
@@ -968,16 +918,16 @@ class PAMGatewayActionDiscoverCommand(Command):
         provider_record_uid = kwargs.get('provider_record_uid')
 
         action_inputs = GatewayActionDiscoverInputs(shared_folder_uid, provider_record_uid)
-        message_id = GatewayAction.generate_message_id()
+        conversation_id = GatewayAction.generate_conversation_id()
 
         router_response = router_send_action_to_gateway(
             params,
-            GatewayActionDiscover(inputs=action_inputs, message_id=message_id),
+            GatewayActionDiscover(inputs=action_inputs, conversation_id=conversation_id),
             message_type=ControllerMessageType.Value('CMT_GENERAL'),
             is_streaming=False
                                        )
 
-        print_router_response(router_response, message_id)
+        print_router_response(router_response, conversation_id)
 
 
 class PAMTunnelCommand(Command):
