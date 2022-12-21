@@ -860,7 +860,7 @@ class PAMGatewayActionRotateCommand(Command):
             print(f'{bcolors.FAIL}Unknown router rotation status [{rrs}]{bcolors.ENDC}')
             return
 
-        action_inputs = GatewayActionRotateInputs(record_uid=record_uid, rotation_setting_uid=ri_rotation_setting_uid,
+        action_inputs = GatewayActionRotateInputs(record_uid=record_uid, configuration_uid=ri_rotation_setting_uid,
                                                   pwd_complexity_encrypted=ri_pwd_complexity_encrypted)
 
         conversation_id = GatewayAction.generate_conversation_id()

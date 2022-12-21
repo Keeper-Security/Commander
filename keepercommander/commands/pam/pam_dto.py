@@ -104,9 +104,9 @@ class GatewayActionJobInfo(GatewayAction):
 
 class GatewayActionRotateInputs:
 
-    def __init__(self, record_uid, rotation_setting_uid, pwd_complexity_encrypted):
+    def __init__(self, record_uid, configuration_uid, pwd_complexity_encrypted):
         self.recordUid = record_uid
-        self.rotationSettingUid = rotation_setting_uid
+        self.configurationUid = configuration_uid
         self.pwdComplexity = pwd_complexity_encrypted
 
     def toJSON(self):
