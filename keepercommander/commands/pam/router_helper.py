@@ -148,7 +148,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
 
     # 1. Find connected gateway to send action to
     try:
-        enterprise_controllers_connected = router_get_connected_gateways(params).controllers
+        router_enterprise_controllers_connected = router_get_connected_gateways(params).controllers
 
     except requests.exceptions.ConnectionError as errc:
         logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_host}]{bcolors.ENDC}")
@@ -156,22 +156,22 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     except Exception as e:
         raise e
 
-    if not enterprise_controllers_connected or len(enterprise_controllers_connected) == 0:
+    if not router_enterprise_controllers_connected or len(router_enterprise_controllers_connected) == 0:
         print(f"{bcolors.WARNING}\tNo running or connected Gateways in your enterprise. "
               f"Start the Gateway before sending any action to it.{bcolors.ENDC}")
         return
-    elif len(enterprise_controllers_connected) == 1:
-        found_gateway = enterprise_controllers_connected[0]
+    elif len(router_enterprise_controllers_connected) == 1:
+        found_gateway = router_enterprise_controllers_connected[0]
     else:  # There are more than two Gateways connected. Selecting the right one
 
         if not gateway_action.gateway_destination:
             print(f"{bcolors.WARNING}There are more than one Gateways running in your enterprise. "
                   f"You need to proved gateway to the action. To find connected gateways run action "
-                  f"'{bcolors.OKBLUE}dr list{bcolors.WARNING}' and provide Gateway UID or Gateway Name.{bcolors.ENDC}")
+                  f"'{bcolors.OKBLUE}pam gateway list{bcolors.WARNING}' and provide Gateway UID or Gateway Name.{bcolors.ENDC}")
 
             return
 
-        found_gateway = gateway_helper.find_connected_gateways(params, gateway_action.gateway_destination)
+        found_gateway = gateway_helper.find_connected_gateways(router_enterprise_controllers_connected, gateway_action.gateway_destination)
 
     router_server_cookie = found_gateway.cookie
 

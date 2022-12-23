@@ -112,7 +112,7 @@ class GatewayActionCommand(GroupCommand):
     def __init__(self):
         super(GatewayActionCommand, self).__init__()
         self.register_command('gateway-info', PAMGatewayActionServerInfoCommand(), 'Info command')
-        # self.register_command('discover', GatewayActionDiscoverCommand(), 'Discover command')
+        self.register_command('unreleased-discover', PAMGatewayActionDiscoverCommand(), 'Discover command')
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details')
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details')
@@ -412,8 +412,8 @@ class PAMGatewayListCommand(Command):
 
         headers = []
         headers.append('KSM App name (UID)')
-        headers.append('Gateway UID')
         headers.append('Gateway Name')
+        headers.append('Gateway UID')
         headers.append('Status')
 
         if is_verbose:
@@ -870,7 +870,8 @@ class PAMGatewayActionRotateCommand(Command):
                                                                                            conversation_id=conversation_id,
                                                                                            gateway_destination=ri_controller_uid),
                                                         message_type=ControllerMessageType.Value('CMT_ROTATE'),
-                                                        is_streaming=False
+                                                        is_streaming=False,
+                                                        all_controllers=all_enterprise_controllers_all
                                                         )
 
         print_router_response(router_response, conversation_id)
@@ -914,8 +915,8 @@ class PAMGatewayActionDiscoverCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        shared_folder_uid = kwargs.get('shared_folder_uid')
         provider_record_uid = kwargs.get('provider_record_uid')
+        shared_folder_uid = kwargs.get('shared_folder_uid')
 
         action_inputs = GatewayActionDiscoverInputs(shared_folder_uid, provider_record_uid)
         conversation_id = GatewayAction.generate_conversation_id()

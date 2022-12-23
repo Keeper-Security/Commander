@@ -2,6 +2,7 @@ import logging
 
 from keepercommander import api, utils
 from keepercommander.commands.utils import KSMCommand
+from keepercommander.loginv3 import CommonHelperMethods
 from keepercommander.proto import pam_pb2
 
 
@@ -10,14 +11,11 @@ def get_all_gateways(params):
     return rs.controllers
 
 
-def find_connected_gateways(params, identifier):
+def find_connected_gateways(all_controllers, identifier):
     # Will search connected controllers by the "controllerName", "deviceName", or "deviceToken"
 
-    found_connected_controller = next((c for c in params.pam_controllers
-                                       if (
-                                               c['controllerName'] == identifier
-                                               or c['deviceName'] == identifier
-                                               or c['deviceToken'] == identifier)
+    found_connected_controller = next((c for c in all_controllers
+                                       if (CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid) == identifier)
                                        ), None)
 
     if found_connected_controller:
