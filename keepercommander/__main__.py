@@ -213,7 +213,7 @@ def main(from_package=False):
             params.password = pwd
 
     if opts.version:
-        print('Keeper Commander, version {0}'.format(__version__))
+        print(f'Keeper Commander, version {__version__}')
         return
 
     if flags and len(flags) > 0:

@@ -28,7 +28,7 @@ from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
                         RecordField, BytesAttachment, Team)
 from ...params import KeeperParams
-from ... import record_types
+from ... import record_types, vault
 
 
 class ThycoticMixin:
@@ -514,7 +514,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 if full_name_field in items:
                     full_name, field = ThycoticImporter.pop_field(items, full_name_field)
                     if full_name:
-                        name = BaseImporter.import_name_field(full_name)
+                        name = vault.TypedField.import_name_field(full_name)
                         if name:
                             field_label = field.get('fieldName') or ''
                             field_label = ThycoticImporter.adjust_field_label(record, 'name', field_label, rt)
@@ -533,7 +533,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             for phone_slug in ('contact-number', 'work-phone', 'home-phone', 'mobile-phone', 'fax'):
                 phone_number, field = ThycoticImporter.pop_field(items, phone_slug)
                 if phone_number:
-                    phone = BaseImporter.import_phone_field(phone_number)
+                    phone = vault.TypedField.import_phone_field(phone_number)
                     if phone:
                         if phone_slug.startswith('work'):
                             phone['type'] = 'Work'
@@ -558,7 +558,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 host_address, field = ThycoticImporter.pop_field(items, host_slug)
                 port = ThycoticImporter.pop_field_value(items, host_slug)
                 if host_address:
-                    host = BaseImporter.import_host_field(host_address)
+                    host = vault.TypedField.import_host_field(host_address)
                     if port:
                         host['port'] = port
                     field_label = field.get('fieldName') or ''
