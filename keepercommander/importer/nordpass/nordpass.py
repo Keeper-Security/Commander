@@ -14,7 +14,7 @@ import csv
 from typing import Union, Iterable
 
 from .. import importer
-
+from ... import vault
 
 """
 name,url,username,password,note,cardholdername,cardnumber,cvc,expirydate,zipcode,folder,full_name,phone_number,email,address1,address2,city,country,state,type
@@ -104,7 +104,7 @@ class NordpassCsvImporter(importer.BaseFileImporter):
 
                 full_name = row.get('full_name') or ''
                 if full_name:
-                    record.fields.append(importer.RecordField('name', '', NordpassCsvImporter.import_name_field(full_name)))
+                    record.fields.append(importer.RecordField('name', '', vault.TypedField.import_name_field(full_name)))
 
                 folder = row.get('folder') or ''
                 if folder:
