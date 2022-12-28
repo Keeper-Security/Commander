@@ -184,6 +184,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     rq.messageType = message_type
     rq.streamResponse = is_streaming
     rq.payload = string_to_bytes(gateway_action.toJSON())
+    rq.timeout = 15000  # Default time out how long the response from the Gateway should be
 
     transmission_key = utils.generate_aes_key()
 
