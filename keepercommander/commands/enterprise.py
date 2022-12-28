@@ -32,11 +32,13 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from . import aram  # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
 from . import compliance
 from .aram import ActionReportCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .breachwatch import BreachWatchResetCommand
 from .enterprise_common import EnterpriseCommand
 from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
@@ -47,7 +49,8 @@ from ..generator import generate
 from ..params import KeeperParams
 from ..proto import record_pb2 as record_proto
 from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
-                                    SecurityReportResponse)
+                                    SecurityReportResponse, SecurityReportSaveRequest, SecurityReport,
+                                    SecurityReportIncrementalData)
 from ..proto.enterprise_pb2 import (EnterpriseUserIds, ApproveUserDeviceRequest, ApproveUserDevicesRequest,
                                     ApproveUserDevicesResponse, EnterpriseUserDataKeys, SetRestrictVisibilityRequest,
                                     GetSharingAdminsRequest, GetSharingAdminsResponse)
@@ -273,6 +276,9 @@ enterprise_push_parser.exit = suppress_exit
 security_audit_report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
 security_audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 security_audit_report_parser.add_argument('-b', '--breachwatch', dest='breachwatch', action='store_true', help='display BreachWatch report')
+save_help = 'save upated security audit reports'
+security_audit_report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
+security_audit_report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
 security_audit_report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format.')
 security_audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 security_audit_report_parser.error = raise_parse_exception
@@ -2812,6 +2818,23 @@ class SecurityAuditReportCommand(EnterpriseCommand):
     def __init__(self):
         super(SecurityAuditReportCommand, self).__init__()
         self.user_lookup = None
+        self.enterprise_private_rsa_key = None
+        self.score_data_keys = (
+            'weak_record_passwords',
+            'strong_record_passwords',
+            'total_record_passwords',
+            'passed_records',
+            'at_risk_records',
+            'ignored_records'
+        )
+
+    def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
+        if not self.enterprise_private_rsa_key:
+            tree_key = params.enterprise['unencrypted_tree_key']
+            key = rest_api.decrypt_aes(enterprise_priv_key, tree_key)
+            key = crypto.load_rsa_private_key(key)
+            self.enterprise_private_rsa_key = key
+        return self.enterprise_private_rsa_key
 
     def get_parser(self):
         return security_audit_report_parser
@@ -2858,9 +2881,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
+        save_report = kwargs.get('save')
+        show_updated = save_report or kwargs.get('show_updated')
+        updated_security_reports = []
         rq = SecurityReportRequest()
         security_report_data_rs = api.communicate_rest(params, rq, 'enterprise/get_security_report_data', rs_type=SecurityReportResponse)
-
+        rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
         rows = []
         for sr in security_report_data_rs.securityReport:
             user_info = self.resolve_user_info(params, sr.enterpriseUserId)
@@ -2890,26 +2916,43 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             if sr.encryptedReportData:
                 sri = rest_api.decrypt_aes(sr.encryptedReportData, params.enterprise['unencrypted_tree_key'])
                 data = json.loads(sri)
-                if 'weak_record_passwords' in data:
-                    row['weak'] = data['weak_record_passwords']
-                if 'strong_record_passwords' in data:
-                    row['strong'] = data['strong_record_passwords']
-                if 'total_record_passwords' in data:
-                    row['total'] = data['total_record_passwords']
-                if 'passed_records' in data:
-                    row['passed'] = data['passed_records']
-                if 'at_risk_records' in data:
-                    row['at_risk'] = data['at_risk_records']
-                if 'ignored_records' in data:
-                    row['ignored'] = data['ignored_records']
+            else:
+                data = {dk: 0 for dk in self.score_data_keys}
 
-                row['medium'] = row['total'] - row['weak'] - row['strong']
-                row['unique'] = row['total'] - row['reused']
+            if show_updated:
+                data = self.get_updated_security_report_row(sr, rsa_key, data)
 
-                score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_password_strength)
-                score = int(100 * round(score, 2))
-                row['securityScore'] = score
+            if save_report:
+                updated_sr = sr
+                sr.revision = security_report_data_rs.asOfRevision
+                report = json.dumps(data).encode('utf-8')
+                updated_sr.encryptedReportData = rest_api.encrypt_aes(report, params.enterprise['unencrypted_tree_key'])
+                updated_security_reports.append(updated_sr)
+
+            if 'weak_record_passwords' in data:
+                row['weak'] = data['weak_record_passwords']
+            if 'strong_record_passwords' in data:
+                row['strong'] = data['strong_record_passwords']
+            if 'total_record_passwords' in data:
+                row['total'] = data['total_record_passwords']
+            if 'passed_records' in data:
+                row['passed'] = data['passed_records']
+            if 'at_risk_records' in data:
+                row['at_risk'] = data['at_risk_records']
+            if 'ignored_records' in data:
+                row['ignored'] = data['ignored_records']
+
+            row['medium'] = row['total'] - row['weak'] - row['strong']
+            row['unique'] = row['total'] - row['reused']
+
+            score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_password_strength)
+            score = int(100 * round(score, 2))
+            row['securityScore'] = score
+
             rows.append(row)
+
+        if save_report:
+            self.save_updated_security_reports(params, updated_security_reports)
 
         fields = ('username', 'email', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
             ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel', 'node_path')
@@ -2926,6 +2969,106 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 row.append(raw[f])
             table.append(row)
         return dump_report_data(table, field_descriptions, fmt=fmt, filename=kwargs.get('output'))
+
+    def get_updated_security_report_row(self, sr, rsa_key, last_saved_data):
+        # type: (SecurityReport, RSAPrivateKey, Dict[str, int]) -> Dict[str, int]
+        def apply_incremental_data(old_report_data, incremental_dataset, key):
+            # type: (Dict[str, int], List[SecurityReportIncrementalData], RSAPrivateKey) -> Dict[str, int]
+            def decrypt_security_data(sec_data, k): # type: (bytes, RSAPrivateKey) -> Dict[str, int] or None
+                if sec_data:
+                    decrypted = None
+                    try:
+                        decrypted = crypto.decrypt_rsa(sec_data, k)
+                    finally:
+                        return json.loads(decrypted.decode()) if decrypted else None
+                else:
+                    return None
+
+            def decrypt_incremental_data(inc_data):
+                # type: (SecurityReportIncrementalData) -> Dict[str, Dict[str, int] or None]
+                decrypted = {
+                    'old': decrypt_security_data(inc_data.oldSecurityData, key),
+                    'curr': decrypt_security_data(inc_data.currentSecurityData, key)
+                }
+                return decrypted
+
+            def decrypt_incremental_dataset(inc_dataset):
+                # type: (List[SecurityReportIncrementalData]) -> List[Dict[str, Dict[str, int] or None]]
+                return [decrypt_incremental_data(x) for x in inc_dataset]
+
+            def is_reset_needed(inc_datas):
+                doms = [(x.get('curr') or {}).get('domain') for x in inc_datas if x and (type(x) is dict)]
+                has_reset_inc_data = any([x for x in doms if x and x.endswith(BreachWatchResetCommand.URL_SUFFIX)])
+                return has_reset_inc_data
+
+            def reset_scores(sec_data):
+                new_scores = {k: 0 for k in self.score_data_keys}
+                return {**sec_data, **new_scores}
+
+            def get_security_score_deltas(rec_sec_data, delta):
+                bw_result = rec_sec_data.get('bw_result')
+                pw_strength = rec_sec_data.get('strength')
+                deltas = dict()
+                deltas['at_risk_records'] = delta if utils.is_rec_at_risk(bw_result) else 0
+                deltas['weak_record_passwords'] = delta if utils.is_pw_weak(pw_strength) else 0
+                deltas['strong_record_passwords'] = delta if utils.is_pw_strong(pw_strength) else 0
+                deltas['passed_records'] = delta if utils.passed_bw_check(bw_result) else 0
+                deltas['ignored_records'] = delta if bw_result == 4 else 0
+                deltas['total_record_passwords'] = delta
+                return deltas
+
+            def apply_score_deltas(sec_data, deltas):
+                new_scores = {k: v + sec_data.get(k, 0) for k, v in deltas.items()}
+                sec_data = {**sec_data, **new_scores}
+                return sec_data
+
+            def update_scores(user_sec_data, inc_dataset):
+                reset = is_reset_needed(inc_dataset)
+                resetsfx = BreachWatchResetCommand.URL_SUFFIX
+                if reset:
+                    user_sec_data = reset_scores(user_sec_data)
+
+                def update(u_sec_data, old_sec_d, diff):
+                    if not old_sec_d:
+                        return u_sec_data
+                    deltas = get_security_score_deltas(old_sec_d, diff)
+                    return apply_score_deltas(u_sec_data, deltas)
+
+                for inc_data in inc_dataset:
+                    old_sec_data = inc_data.get('old')
+                    curr_sec_data = inc_data.get('curr')
+                    existing_data_keys = [k for k, d in inc_data.items() if d]
+                    if reset:
+                        if old_sec_data and curr_sec_data:
+                            inc_datas = [v for v in inc_data.values() if v]
+                            reset_record = any([x for x in inc_datas if (x.get('domain') or '').endswith(resetsfx)])
+                            if reset_record and curr_sec_data:
+                                user_sec_data = update(user_sec_data, curr_sec_data, 1)
+                        else:
+                            if existing_data_keys:
+                                # Use existing security data
+                                dkey = next(iter(existing_data_keys))
+                                user_sec_data = update(user_sec_data, inc_data.get(dkey), 0 if dkey == 'old' else 1)
+                    else:
+                        for k in existing_data_keys:
+                            user_sec_data = update(user_sec_data, inc_data.get(k), -1 if k == 'old' else 1)
+
+                return user_sec_data
+
+            report_data = {**old_report_data}
+            if incremental_dataset:
+                incremental_dataset = decrypt_incremental_dataset(incremental_dataset)
+                report_data = update_scores(report_data, incremental_dataset)
+            return report_data
+
+        result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData, rsa_key)
+        return result
+
+    def save_updated_security_reports(self, params, reports):
+        save_rq = SecurityReportSaveRequest()
+        for r in reports:
+            save_rq.securityReport.append(r)
+        api.communicate_rest(params, save_rq, 'enterprise/save_summary_security_report')
 
     @staticmethod
     def get_title_for_field(field):  # type: (str) -> str

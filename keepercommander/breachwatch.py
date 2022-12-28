@@ -9,15 +9,18 @@
 # Contact: ops@keepersecurity.com
 #
 import base64
+import json
 import logging
 from urllib.parse import urlparse, urlunparse
 from typing import Iterator, Tuple, Optional, List, Callable, Union
 
+from .commands.breachwatch import BreachWatchResetCommand
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api
 from .proto import breachwatch_pb2 as breachwatch_proto, client_pb2 as client_proto
 from .proto import APIRequest_pb2 as api_request_proto
 from .error import KeeperApiError
+from .proto.APIRequest_pb2 import SecurityData, SecurityDataRequest, ReusedPasswordsRequest
 from .record import Record
 from .params import KeeperParams
 
@@ -80,7 +83,28 @@ class BreachWatch(object):
         for password in results:
             yield password, results[password]
 
-    def scan_and_store_record_status(self, params, record_uid):  # type: (KeeperParams, str) -> None
+    def scan_and_store_record_status(self, params, record_uid, force_update=False, is_reset=False, set_reused_pws=None):
+        # type: (KeeperParams, str, bool, bool, bool or None) -> None
+        def calculate_security_data(rec_uid, rec=None, bw_result=None, reset=False):
+            # type: (str, Record or None, int or None, bool) -> SecurityData
+            sec_data = SecurityData()
+            rec_sd = {}
+            if rec:
+                strength = utils.password_score(rec.password)
+                domain = urlparse(record.login_url).hostname
+                domain = domain or '' + BreachWatchResetCommand.URL_SUFFIX if reset else domain
+                rec_sd = {'strength': strength, 'domain': domain, 'bw_result': bw_result}
+            sec_data.uid = utils.base64_url_decode(rec_uid)
+            sec_data.data = crypto.encrypt_rsa(json.dumps(rec_sd).encode('utf-8'), params.enterprise_rsa_key)
+            return sec_data
+
+        def save_security_data(rec_uid, rec=None, bw_result=None, reset=False):
+            # type: (str, Record or None, int or None, bool) -> None
+            update_rq = SecurityDataRequest()
+            rec_sec_data = calculate_security_data(rec_uid, rec, bw_result, reset)
+            update_rq.recordSecurityData.append(rec_sec_data)
+            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
+
         record = api.get_record(params, record_uid)
         if not record:
             return
@@ -92,7 +116,7 @@ class BreachWatch(object):
                 data_obj = bw_record.get('data_unencrypted')
                 if data_obj and 'passwords' in data_obj:
                     password = next((x for x in data_obj['passwords'] if x.get('value', '') == record.password), None)
-                    if password:
+                    if password and not force_update:
                         return
                     euid = next((base64.b64decode(x['euid']) for x in data_obj['passwords'] if 'euid' in x), None)
 
@@ -125,6 +149,44 @@ class BreachWatch(object):
                     raise Exception(status.reason)
             except Exception as e:
                 logging.warning('BreachWatch: %s', str(e))
+            api.sync_down(params)
+            if params.enterprise_rsa_key and record.version in (2, 3):
+                bw_res = bw_data.passwords[0].status
+                save_security_data(record_uid, record, bw_res, is_reset)
+            else:
+                logging.info(f'Cannot update security data for rec_uid = {record_uid}')
+
+            if set_reused_pws is None:
+                self.save_reused_pw_count(params)
+
+    def save_reused_pw_count(self, params):
+        def get_reused_pw_count(recs):
+            pw_counts = {}
+            for rec in recs:
+                pw = rec.password
+                if pw or pw == 0:
+                    pw_count = pw_counts.get(pw, 0)
+                    pw_counts[rec.password] = pw_count + 1
+
+            dupe_pw_counts = {k: v for k, v in pw_counts.items() if v > 1}
+            return sum([count for count in dupe_pw_counts.values()])
+
+        api.sync_down(params)
+        rec_uids = params.record_cache.keys()
+        md_cache = params.meta_data_cache
+        owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
+        owned_recs = [api.get_record(params, ruid) for ruid in owned]
+        total_reused = get_reused_pw_count(owned_recs)
+        save_rq = ReusedPasswordsRequest()
+        save_rq.count = total_reused
+        api.communicate_rest(params, save_rq, 'enterprise/set_reused_passwords')
+
+    def calculate_record_pw_count(self, params):
+        rec_uids = params.record_cache.keys()
+        md_cache = params.meta_data_cache
+        owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
+        owned_recs = [api.get_record(params, ruid) for ruid in owned]
+        return len([rec for rec in owned_recs if rec.password or rec.password == 0])
 
     def delete_euids(self, params, euids):
         self._ensure_init(params)

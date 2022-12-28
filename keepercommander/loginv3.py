@@ -252,6 +252,8 @@ class LoginV3Flow:
                     rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
                     if rs.enterpriseECCPublicKey:
                         params.enterprise_ec_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
+                    if rs.enterprisePublicKey:
+                        params.enterprise_rsa_key = crypto.load_rsa_public_key(rs.enterprisePublicKey)
                 except Exception as e:
                     logging.debug('Get enterprise public key: %s', e)
 

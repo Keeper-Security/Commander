@@ -264,6 +264,22 @@ def password_score(password):  # type: (str) -> int
     return score if 0 <= score <= 100 else 0 if score < 0 else 100
 
 
+def is_pw_weak(pw_score):           # type: (int) -> bool
+    return pw_score <= 40
+
+
+def is_pw_strong(pw_score):         # type: (int) -> bool
+    return pw_score >= 60
+
+
+def is_rec_at_risk(bw_result):      # type (int) -> bool
+    return bw_result in (2, 3)
+
+
+def passed_bw_check(bw_result):     # type (int) -> bool
+    return bw_result in (0, 1)
+
+
 def confirm(msg):
     """Simple confirmation through user input
 
