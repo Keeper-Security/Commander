@@ -32,7 +32,7 @@ _V2_DERIVED_KEY = crypto.derive_keyhash_v2('data_key', _USER_PASSWORD, _USER_SAL
 _dk = rest_api.encrypt_aes(_USER_DATA_KEY, _V2_DERIVED_KEY)
 _ENCRYPTED_DATA_KEY = base64.urlsafe_b64encode(_dk).decode('utf-8').strip()
 
-_V1_DERIVED_KEY = api.derive_key(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
+_V1_DERIVED_KEY = crypto.derive_keyhash_v1(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
 _enc_iter = int.to_bytes(_USER_ITERATIONS, length=3, byteorder='big', signed=False)
 _enc_iv = os.urandom(16)
 _cipher = AES.new(_V1_DERIVED_KEY, AES.MODE_CBC, _enc_iv)
@@ -73,7 +73,7 @@ def get_connected_params():
     p.salt = _USER_SALT
     p.data_key = _USER_DATA_KEY
 
-    p.auth_verifier = api.auth_verifier(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
+    p.auth_verifier = utils.base64_url_encode(utils.create_auth_verifier(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS))
     p.rsa_key = RSA.importKey(_DER_PRIVATE_KEY)
     p.session_token = _SESSION_TOKEN
     return p

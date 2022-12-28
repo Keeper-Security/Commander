@@ -1,3 +1,4 @@
+import datetime
 import io
 from unittest import TestCase
 
@@ -5,7 +6,6 @@ from keepercommander import crypto, utils
 
 
 class TestCrypto(TestCase):
-
     def test_stream_decrypter(self):
         data = bytearray(999)
         for i in range(len(data)):

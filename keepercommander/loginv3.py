@@ -21,7 +21,7 @@ from google.protobuf.json_format import MessageToJson
 from sys import platform as _platform
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
-from . import api, rest_api, utils, crypto
+from . import api, rest_api, utils, crypto, constants
 from .breachwatch import BreachWatch
 from .display import bcolors
 from .humps import decamelize
@@ -164,7 +164,7 @@ class LoginV3Flow:
 
                     params.salt = salt_bytes
                     params.iterations = salt_iterations
-                    params.auth_verifier = LoginV3API.auth_verifier_loginv3(params)
+                    params.auth_verifier = crypto.derive_keyhash_v1(params.password, salt_bytes, salt_iterations)
 
                     try:
                         resp = LoginV3API.validateAuthHashMessage(params, resp.encryptedLoginToken)
@@ -286,7 +286,8 @@ class LoginV3Flow:
             login_type_message = bcolors.UNDERLINE + "Password"
 
         elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
-            decrypted_data_key = api.decrypt_data_key(params, resp.encryptedDataKey)
+            decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
+            decrypted_data_key = crypto.decrypt_aes_v2(resp.encryptedDataKey, decryption_key)
             login_type_message = bcolors.UNDERLINE + "Master Password"
 
         elif resp.encryptedDataKeyType == proto.NO_KEY \
@@ -1037,12 +1038,6 @@ class LoginV3API:
                 raise KeeperApiError(rs['error'], err_msg)
 
     @staticmethod
-    def auth_verifier_loginv3(params: KeeperParams):
-        derived_key = api.derive_key(params.password, params.salt, params.iterations)
-        derived_key = api.hashlib.sha256(derived_key).digest()
-        return derived_key
-
-    @staticmethod
     def validateAuthHashMessage(params: KeeperParams, encrypted_login_token_bytes):
 
         rq = proto.ValidateAuthHashRequest()
@@ -1122,17 +1117,21 @@ class LoginV3API:
         api.communicate_rest(params, rq, 'authentication/update_device')
 
     @staticmethod
-    def change_master_password(params: KeeperParams, password):
+    def change_master_password(params, password):  # type: (KeeperParams, str) -> None
+        iterations = max(params.iterations, constants.PBKDF2_ITERATIONS)
         auth_salt = os.urandom(16)
+        auth_verifier = utils.create_auth_verifier(password, auth_salt, iterations)
         data_salt = os.urandom(16)
+        encryption_params = utils.create_encryption_params(password, data_salt, iterations, params.data_key)
         rq = {
             'command': 'change_master_password',
-            'auth_verifier': api.create_auth_verifier(password, auth_salt, params.iterations),
-            'encryption_params': api.create_encryption_params(password, data_salt, params.iterations, params.data_key)
+            'auth_verifier': utils.base64_url_encode(auth_verifier),
+            'encryption_params': utils.base64_url_encode(encryption_params),
         }
-        rs = api.communicate(params, rq)
+        api.communicate(params, rq)
         params.password = password
         params.salt = auth_salt
+        params.iterations = iterations
 
     @staticmethod
     def register_encrypted_data_key_for_device(params: KeeperParams):
@@ -1217,48 +1216,6 @@ class LoginV3API:
         elif type(rs) == dict:
             raise KeeperApiError(rs['error'], rs['message'])
         raise KeeperApiError('Error', endpoint)
-
-    @staticmethod
-    def create_user(params, new_username, user_password, verification_code):
-        # type: (KeeperParams, str, str, Optional[str]) -> None
-        endpoint = 'authentication/request_create_user'
-        data_key = utils.generate_aes_key()
-        auth_verifier = utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000)
-        encryption_params = utils.create_encryption_params(user_password, crypto.get_random_bytes(16), 100000, data_key)
-
-        rsa_pri, rsa_pub = crypto.generate_rsa_key()
-        rsa_private = crypto.unload_rsa_private_key(rsa_pri)
-        rsa_private = crypto.encrypt_aes_v1(rsa_private, data_key)
-        rsa_public = crypto.unload_rsa_public_key(rsa_pub)
-
-        ec_pri, ec_pub = crypto.generate_ec_key()
-        ec_private = crypto.unload_ec_private_key(ec_pri)
-        ec_private = crypto.encrypt_aes_v2(ec_private, data_key)
-        ec_public = crypto.unload_ec_public_key(ec_pub)
-
-        create_user_rq = proto.CreateUserRequest()
-        create_user_rq.clientVersion = rest_api.CLIENT_VERSION
-        create_user_rq.username = new_username
-        create_user_rq.authVerifier = auth_verifier
-        create_user_rq.encryptionParams = encryption_params
-        create_user_rq.rsaPublicKey = rsa_public
-        create_user_rq.rsaEncryptedPrivateKey = rsa_private
-        create_user_rq.eccPublicKey = ec_public
-        create_user_rq.eccEncryptedPrivateKey = ec_private
-        create_user_rq.encryptedClientKey = crypto.encrypt_aes_v1(utils.generate_aes_key(), data_key)
-        create_user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
-
-        device_private_key = CommonHelperMethods.get_private_key_ecc(params)
-        create_user_rq.encryptedDeviceDataKey = crypto.encrypt_ec(data_key, device_private_key.public_key())
-
-        if verification_code:
-            create_user_rq.verificationCode = verification_code
-
-        api_request_payload = proto.ApiRequestPayload()
-        api_request_payload.payload = create_user_rq.SerializeToString()
-        rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
-        if isinstance(rs, dict):
-            raise KeeperApiError(rs['error'], rs['message'])
 
 
 class CommonHelperMethods:

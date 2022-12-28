@@ -19,7 +19,7 @@ from urllib.parse import urlunparse
 from .base import RecordMixin, raise_parse_exception, suppress_exit, try_resolve_path
 from .enterprise import EnterpriseCommand
 from .register import OneTimeShareCreateCommand
-from .. import api, crypto, utils, generator, rest_api, vault, record_management, vault_extensions
+from .. import api, crypto, utils, generator, rest_api, vault, record_management, vault_extensions, constants
 from ..constants import EMAIL_PATTERN
 from ..loginv3 import LoginV3API
 from ..params import KeeperParams
@@ -98,8 +98,10 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         user_rq.encryptedData = utils.base64_url_encode(crypto.encrypt_aes_v1(user_data, tree_key))
         user_rq.keyType = enterprise_pb2.ENCRYPTED_BY_DATA_KEY
         user_rq.enterpriseUsersDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
-        user_rq.authVerifier = utils.create_auth_verifier(user_password, crypto.get_random_bytes(16), 100000)
-        user_rq.encryptionParams = utils.create_encryption_params(user_password, crypto.get_random_bytes(16), 100000, user_data_key)
+        user_rq.authVerifier = utils.create_auth_verifier(
+            user_password, crypto.get_random_bytes(16), constants.PBKDF2_ITERATIONS)
+        user_rq.encryptionParams = utils.create_encryption_params(
+            user_password, crypto.get_random_bytes(16), constants.PBKDF2_ITERATIONS, user_data_key)
         user_rq.rsaPublicKey = rsa_public
         user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
         user_rq.eccPublicKey = ec_public

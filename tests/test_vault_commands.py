@@ -82,7 +82,7 @@ class TestConnectedCommands(TestCase):
         # self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 
     def test_commands(self):
-        params = TestConnectedCommands.params # type: KeeperParams
+        params = TestConnectedCommands.params   # type: KeeperParams
         with mock.patch('builtins.input', side_effect=KeyboardInterrupt()), mock.patch('builtins.print'):
             record_uid = cli.do_command(params,
                 'record-add --title="Record 1" --record-type=legacy login=user@keepersecurity.com password=$GEN url=https://keepersecurity.com/ cmdr:plugin=noop')

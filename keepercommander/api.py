@@ -63,18 +63,6 @@ def run_command(params, request):
     return rest_api.v2_execute(params.rest_context, request)
 
 
-def derive_key(password, salt, iterations):
-    # type: (str, bytes, int) -> bytes
-    return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations, 32)
-
-
-def auth_verifier(password, salt, iterations):
-    derived_key = derive_key(password, salt, iterations)
-    derived_key = hashlib.sha256(derived_key).digest()
-    au_ver = base64.urlsafe_b64encode(derived_key)
-    return au_ver.decode().rstrip('=')
-
-
 def login(params, new_login=False):
     # type: (KeeperParams, bool) -> None
 
@@ -811,43 +799,6 @@ def sync_down(params, record_types=False):
         if skip_records:
             logging.warning(bcolors.FAIL + 'Record loading is prevented in the configuration file.' + bcolors.ENDC)
             logging.info('To load records use \"sync-down --force\" command.')
-
-
-def create_auth_verifier(password, salt, iterations):
-    # type: (str, bytes, int) -> str
-
-    derived_key = derive_key(password, salt, iterations)
-    enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
-    auth_ver = b'\x01' + enc_iter + salt + derived_key
-    return loginv3.CommonHelperMethods.bytes_to_url_safe_str(auth_ver)
-
-
-def create_encryption_params(password, salt, iterations, data_key):
-    # type: (str, bytes, int, bytes) -> str
-
-    derived_key = derive_key(password, salt, iterations)
-    enc_iter = int.to_bytes(iterations, length=3, byteorder='big', signed=False)
-    enc_iv = os.urandom(16)
-    cipher = AES.new(derived_key, AES.MODE_CBC, enc_iv)
-    enc_data_key = cipher.encrypt(data_key + data_key)
-    enc_params = b'\x01' + enc_iter + salt + enc_iv + enc_data_key
-    return loginv3.CommonHelperMethods.bytes_to_url_safe_str(enc_params)
-
-
-def decrypt_data_key(params: KeeperParams, encrypted_data_key):
-
-    encrypted_data_key_len = len(encrypted_data_key)
-
-    # [12 bytes: nonce / iv]
-    # [32 bytes: ciphertext]
-    # [16 bytes: auth - tag]
-
-    if encrypted_data_key_len != 60:
-        raise Exception('Invalid encryption params: Encrypted data key was unexpected length ' + str(encrypted_data_key_len))
-
-    decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
-
-    return crypto.decrypt_aes_v2(encrypted_data_key, decryption_key)
 
 
 def get_record(params, record_uid):
