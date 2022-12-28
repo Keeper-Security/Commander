@@ -756,7 +756,7 @@ def sync_down(params, record_types=False):
             if 'record_key_unencrypted' not in record:
                 continue
             try:
-                if 'data' in bwr :
+                if 'data' in bwr:
                     data = utils.base64_url_decode(bwr['data'])
                     data = crypto.decrypt_aes_v2(data, record['record_key_unencrypted'])
                     data_obj = client_pb2.BreachWatchData()

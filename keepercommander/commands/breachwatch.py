@@ -27,12 +27,15 @@ breachwatch_list_parser.add_argument('--all', '-a', dest='all', action='store_tr
                                      help='Display all breached records (default is to show only first 30 records)')
 breachwatch_list_parser.add_argument('--owned', '-o', dest='owned', action='store_true',
                                      help='Display only breached records owned by user (omits records shared to user)')
+breachwatch_list_parser.add_argument('--numbered', '-n', action='store_true',
+                                     help='Display records as a numbered list')
 #breachwatch_list_parser.add_argument('--ignored', '-i', dest='ignored', action='store_true', help='Display ignored records')
 
 
 breachwatch_password_parser = argparse.ArgumentParser(prog='breachwatch-password')
 breachwatch_password_parser.add_argument('passwords', type=str, nargs='*', help='Password')
 
+breachwatch_reset_parser = argparse.ArgumentParser(prog='breachwatch-reset')
 
 breachwatch_scan_parser = argparse.ArgumentParser(prog='breachwatch-scan')
 
@@ -58,6 +61,7 @@ class BreachWatchCommand(GroupCommand):
         self.register_command('password', BreachWatchPasswordCommand(),
                               'Check a password against our database of breached accounts.')
         self.register_command('scan', BreachWatchScanCommand(), 'Scan vault passwords.')
+        self.register_command('reset', BreachWatchResetCommand(), 'Reset security audit data for all vault passwords.')
 
         self.default_verb = 'list'
 
@@ -83,7 +87,8 @@ class BreachWatchListCommand(Command):
             total = len(table)
             if not kwargs.get('all', False) and total > 32:
                 table = table[:30]
-            dump_report_data(table, ['Record UID', 'Title', 'Login'], title='Detected High-Risk Password(s)')
+            columns = ['Record UID', 'Title', 'Login']
+            dump_report_data(table, columns, title='Detected High-Risk Password(s)', row_number=kwargs.get('numbered'))
             if len(table) < total:
                 logging.info('')
                 logging.info('%d records skipped.', total - len(table))
@@ -123,6 +128,43 @@ class BreachWatchPasswordCommand(Command):
             print(f'{pwd:>16s}: {"WEAK" if result[1].breachDetected else "GOOD" }')
         if euids:
             params.breach_watch.delete_euids(params, euids)
+
+
+class BreachWatchResetCommand(Command):
+    URL_SUFFIX = '/reset_keeper_sec'
+
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return breachwatch_reset_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        def rescan_and_reset_security_data(ruid):
+            record = api.get_record(params, ruid)
+            result = api.update_record(params, record, **kwargs) if record.version in (2, 3) else None
+            if result:
+                api.sync_down(params)
+                params.sync_data = True
+                params.breach_watch.scan_and_store_record_status(
+                    params,
+                    ruid,
+                    force_update=True,
+                    is_reset=True,
+                    set_reused_pws=False
+                )
+                api.sync_down(params)
+
+        api.sync_down(params)
+        params.sync_data = True
+
+        rec_uids = params.record_cache.keys()
+        md_cache = params.meta_data_cache
+        owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
+
+        for rec_uid in owned:
+            rescan_and_reset_security_data(rec_uid)
+
+        api.sync_down(params)
+        params.sync_data = True
+        params.breach_watch.save_reused_pw_count(params)
 
 
 class BreachWatchScanCommand(Command):

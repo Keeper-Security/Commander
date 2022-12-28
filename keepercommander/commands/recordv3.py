@@ -950,6 +950,7 @@ class RecordRemoveCommand(Command):
                     }
                     api.communicate(params, rq)
 
+        params.breach_watch.save_reused_pw_count(params)
         params.sync_data = True
 
 

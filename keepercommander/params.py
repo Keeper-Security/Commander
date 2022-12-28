@@ -118,6 +118,7 @@ class KeeperParams:
         self.rsa_key = None
         self.ecc_key = None
         self.enterprise_ec_key = None
+        self.enterprise_rsa_key = None
         self.revision = 0
         self.record_cache = {}
         self.meta_data_cache = {}
@@ -177,6 +178,7 @@ class KeeperParams:
         self.rsa_key = None
         self.ecc_key = None
         self.enterprise_ec_key = None
+        self.enterprise_rsa_key = None
         self.revision = 0
         self.record_cache.clear()
         self.meta_data_cache.clear()
