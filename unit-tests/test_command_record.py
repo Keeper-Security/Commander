@@ -8,7 +8,7 @@ from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
 from keepercommander import api, utils, crypto, attachment, vault
-from keepercommander.commands import recordv2, record
+from keepercommander.commands import recordv2, record, record_edit
 from keepercommander.error import CommandError
 
 
@@ -22,10 +22,25 @@ class TestRecord(TestCase):
     def tearDown(self):
         mock.patch.stopall()
 
+    def test_parse_field(self):
+        prf = record_edit.RecordEditMixin.parse_field('text.aaa==bbb=ccc')
+        self.assertEqual(prf.type, 'text')
+        self.assertEqual(prf.label, 'aaa=bbb')
+        self.assertEqual(prf.value, 'ccc')
+
+        prf = record_edit.RecordEditMixin.parse_field('aaa==bbb==ccc=')
+        self.assertEqual(prf.type, '')
+        self.assertEqual(prf.label, 'aaa=bbb=ccc')
+        self.assertEqual(prf.value, '')
+
+        prf = record_edit.RecordEditMixin.parse_field('aaa====bbb= =ccc=')
+        self.assertEqual(prf.type, '')
+        self.assertEqual(prf.label, 'aaa==bbb')
+        self.assertEqual(prf.value, '=ccc=')
+
     def test_create_record(self):
         params = get_synced_params()
-        record = vault.KeeperRecord.create(params, 'login')
-        
+        r = vault.KeeperRecord.create(params, 'login')
 
     def test_add_command(self):
         params = get_synced_params()

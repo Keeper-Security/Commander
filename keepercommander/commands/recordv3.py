@@ -63,14 +63,15 @@ def register_command_info(aliases, command_info):
     aliases['rti'] = 'record-type-info'
     aliases['rt'] = 'record-type'
 
-    for p in [add_parser, edit_parser, rm_parser,  list_parser, append_parser,
+    for p in [rm_parser,  list_parser, append_parser,
               download_parser, upload_parser, delete_attachment_parser,
               totp_parser, record_type_info_parser, record_type_parser,
               file_report_parser]:
         command_info[p.prog] = p.description
 
 
-add_parser = argparse.ArgumentParser(prog='add', description='Add a record')
+add_parser = argparse.ArgumentParser(
+    prog='add', description='****** DEPRECATED - Use record-add ******** - Add a record')
 add_parser.add_argument('--login', dest='login', action='store', help='login name')
 command_group = add_parser.add_mutually_exclusive_group()
 command_group.add_argument('--pass', dest='password', action='store', help='password')
@@ -100,7 +101,7 @@ add_parser.error = raise_parse_exception
 add_parser.exit = suppress_exit
 
 
-edit_parser = argparse.ArgumentParser(prog='edit', description='Edit a record')
+edit_parser = argparse.ArgumentParser(prog='edit', description='****** DEPRECATED - Use record-update - Edit a record')
 edit_parser.add_argument('--login', dest='login', action='store', help='login name')
 command_group = edit_parser.add_mutually_exclusive_group()
 command_group.add_argument('--pass', dest='password', action='store', help='password')
@@ -949,6 +950,7 @@ class RecordRemoveCommand(Command):
                     }
                     api.communicate(params, rq)
 
+        params.breach_watch.save_reused_pw_count(params)
         params.sync_data = True
 
 

@@ -234,7 +234,7 @@ def do_command(params, command_line):
             return
         elif command_line.lower().startswith('switch-to-mc '):
             print("usage: switch-to-mc [-h] mcId")
-            print("\nSwitch user's company to Managed Company.")
+            print("\nSwitch user's context to Managed Company.")
             print("\npositional arguments:")
             print("  mcId               ID of the Managed Company")
             print("\noptional arguments:")

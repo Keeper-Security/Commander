@@ -16,7 +16,7 @@ import datetime
 import json
 import logging
 import os
-from typing import List, Optional, Any, Dict, Union
+from typing import List, Optional, Any, Dict, Union, Sequence
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -25,7 +25,6 @@ from .base import Command, RecordMixin
 from .. import api, vault, record_types, generator, crypto, attachment, record_management, record_facades
 from ..commands import recordv3
 from ..error import CommandError
-from ..importer.importer import BaseImporter
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..subfolder import try_resolve_path
 
@@ -80,12 +79,17 @@ Field labels are case insensitive
 Use full <FIELD_TYPE>.<FIELD_LABEL> syntax when field label collides with field type. 
 Example:  "password"          "password" field with no label
           "text.password"     "text" field with "password" label
-          "Password"          "text" field with "Password" label
+          "Password"          "text" field with "Password" label`
 
 Use full <FIELD_TYPE>.<FIELD_LABEL> syntax when field label contains a dot (.)
 Example:   "google.com"       Incorrect field type google
            "text.google.com"  Field type "text" field label "google.com"
            
+If field label contains equal sign '=' then double it. 
+If field value starts with equal sign then prepend a value with space
+Example:
+    text.aaa==bbb=" =ccc"     sets custom field with label "aaa=bbb" to "=ccc"        
+
 The Legacy records define the following field types.  
 1. login
 2. password
@@ -132,9 +136,11 @@ $<ACTION>[:<PARAMS>, <PARAMS>]   executes an action that returns a field value
 
 Value                   Field type         Description                      Example
 ====================    ===============    ===================              ==============
-$GEN                    password           Generates a random password      TBD
-$GEN                    oneTimeCode        Generates TOTP URL               TBD
-$GEN:[alg,][enc]}       privateKey         Generates a key pair and         $GEN:ec,enc
+$GEN:[alg],[n]          password           Generates a random password      $GEN:dice,5
+                                           Default algorith is rand         alg: [rand | dice]
+                                           Optional: password length        
+$GEN                    oneTimeCode        Generates TOTP URL               
+$GEN:[alg,][enc]        privateKey         Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc 
 $JSON:<JSON TEXT>       any object         Sets a field value as JSON       
                                            phone.Cell=$JSON:{"number": "(555) 555-1234", "type": "Mobile"} 
@@ -165,6 +171,14 @@ class RecordEditMixin:
             raise ValueError(f'Expected: <field>=<value>, got: {field}; Missing `=`')
         if not name:
             raise ValueError(f'Expected: <field>=<value>, got: {field}; Missing <field>')
+        while value.startswith('='):
+            name1, sel, value1 = value[1:].partition('=')
+            if sel:
+                name += sel + name1
+                value = value1
+            else:
+                break
+
         field_section = ''
         if name.startswith('f.') or name.startswith('c.'):
             field_section = name[0]
@@ -179,7 +193,7 @@ class RecordEditMixin:
             elif field_type not in record_types.RecordFields:
                 field_label = field_type
                 field_type = ''
-        return ParsedFieldValue(field_section, field_type, field_label, value)
+        return ParsedFieldValue(field_section, field_type, field_label, value.strip())
 
     def assign_legacy_fields(self, record, fields):
         # type: (vault.PasswordRecord, List[ParsedFieldValue]) -> None
@@ -194,7 +208,7 @@ class RecordEditMixin:
                 record.login = parsed_field.value
             elif parsed_field.type == 'password':
                 if self.is_generate_value(parsed_field.value, action_params):
-                    record.password = self.generate_password()
+                    record.password = self.generate_password(action_params)
                 else:
                     record.password = parsed_field.value
             elif parsed_field.type == 'url':
@@ -268,8 +282,38 @@ class RecordEditMixin:
         }
 
     @staticmethod
-    def generate_password():
-        return generator.generate(20)
+    def generate_password(parameters=None):   # type: (Optional[Sequence[str]]) -> str
+        if isinstance(parameters, (tuple, list, set)):
+            algorithm = next((x for x in parameters if x in ('rand', 'dice')), 'rand')
+            length = next((x for x in parameters if x.isnumeric()), None)
+            if isinstance(length, str) and len(length) > 0:
+                try:
+                    length = int(length)
+                except ValueError:
+                    pass
+        else:
+            algorithm = 'rand'
+            length = None
+
+        if algorithm == 'dice':
+            if isinstance(length, int):
+                if length < 1:
+                    length = 1
+                elif length > 40:
+                    length = 40
+            else:
+                length = 5
+            gen = generator.DicewarePasswordGenerator(length)
+            return gen.generate()
+        else:
+            if isinstance(length, int):
+                if length < 4:
+                    length = 4
+                elif length > 200:
+                    length = 200
+            else:
+                length = 20
+            return generator.generate(length)
 
     @staticmethod
     def generate_totp_url():
@@ -385,7 +429,7 @@ class RecordEditMixin:
                 action_params = []
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
-                        value = self.generate_password()
+                        value = self.generate_password(action_params)
                     elif record_field.type == 'oneTimeCode':
                         value = self.generate_totp_url()
                     elif record_field.type == 'keyPair':
@@ -428,26 +472,26 @@ class RecordEditMixin:
                             self.on_warning(f'Incorrect boolean value \"{parsed_field.value}\": [t]rue or [f]alse')
                     elif isinstance(ft.value, dict):
                         if ft.name == 'name':
-                            value = BaseImporter.import_name_field(parsed_field.value)
+                            value = vault.TypedField.import_name_field(parsed_field.value)
                         elif ft.name == 'address':
-                            value = BaseImporter.import_address_field(parsed_field.value)
+                            value = vault.TypedField.import_address_field(parsed_field.value)
                         elif ft.name == 'host':
-                            value = BaseImporter.import_host_field(parsed_field.value)
+                            value = vault.TypedField.import_host_field(parsed_field.value)
                         elif ft.name == 'phone':
-                            value = BaseImporter.import_phone_field(parsed_field.value)
+                            value = vault.TypedField.import_phone_field(parsed_field.value)
                         elif ft.name == 'paymentCard':
-                            value = BaseImporter.import_card_field(parsed_field.value)
+                            value = vault.TypedField.import_card_field(parsed_field.value)
                         elif ft.name == 'bankAccount':
-                            value = BaseImporter.import_account_field(parsed_field.value)
+                            value = vault.TypedField.import_account_field(parsed_field.value)
                         elif ft.name == 'securityQuestion':
                             value = []
                             for qa in parsed_field.value.split(';'):
                                 qa = qa.strip()
-                                qav = BaseImporter.import_q_and_a_field(qa)
+                                qav = vault.TypedField.import_q_and_a_field(qa)
                                 if qav:
                                     value.append(qav)
                         elif ft.name == 'privateKey':
-                            value = BaseImporter.import_ssh_key_field(parsed_field.value)
+                            value = vault.TypedField.import_ssh_key_field(parsed_field.value)
                         else:
                             self.on_warning(f'Unsupported field type: {record_field.type}')
                 if value:
@@ -698,6 +742,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
         elif isinstance(record, vault.TypedRecord):
             record_type = kwargs.get('record_type')
             if record_type:
+                record.type_name = record_type
                 rt_fields = self.get_record_type_fields(params, record_type)
                 if not rt_fields:
                     raise CommandError('record-update', f'Record type \"{record_type}\" cannot be found.')

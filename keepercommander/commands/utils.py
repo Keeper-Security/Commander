@@ -36,7 +36,7 @@ from .helpers.timeout import (
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .recordv3 import RecordRemoveCommand
 from .. import __version__
-from .. import api, rest_api, loginv3, crypto, utils, vault
+from .. import api, rest_api, loginv3, crypto, utils, vault, constants
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
@@ -2058,7 +2058,9 @@ class ResetPasswordCommand(Command):
             if not is_match:
                 failed_rules.append(rule['description'])
         if failed_rules:
-            logging.warning('\n%s\n%s', params.settings.get('password_rules_intro', 'Password rules:'), '\n'.join((f'  {x}' for x in failed_rules)))
+            logging.warning('\n%s\n%s',
+                            params.settings.get('password_rules_intro', 'Password rules:'),
+                            '\n'.join((f'  {x}' for x in failed_rules)))
             return
 
         if params.breach_watch:
@@ -2074,7 +2076,9 @@ class ResetPasswordCommand(Command):
             logging.info('Password strength: %s', 'WEAK' if score < 40 else 'FAIR' if score < 60 else 'MEDIUM' if score < 80 else 'STRONG')
 
         iterations = current_master.iterations if current_master else \
-            max((x['iterations'] for x in current_alternates)) if len(current_alternates) > 0 else 100000
+            max((x['iterations'] for x in current_alternates)) \
+            if len(current_alternates) > 0 else constants.PBKDF2_ITERATIONS
+        iterations = max(iterations, constants.PBKDF2_ITERATIONS)
 
         auth_salt = crypto.get_random_bytes(16)
         if is_sso_user:
@@ -2091,11 +2095,13 @@ class ResetPasswordCommand(Command):
             api.communicate_rest(params, ap_rq, 'authentication/set_v2_alternate_password')
             logging.info(f'SSO Master Password has been {("changed" if len(current_alternates) > 0 else "set")}')
         else:
+            auth_verifier = utils.create_auth_verifier(new_password, auth_salt, iterations)
             data_salt = crypto.get_random_bytes(16)
+            encryption_params = utils.create_encryption_params(new_password, data_salt, iterations, params.data_key)
             mp_rq = {
                 'command': 'change_master_password',
-                'auth_verifier': utils.base64_url_encode(utils.create_auth_verifier(new_password, auth_salt, iterations)),
-                'encryption_params': utils.base64_url_encode(utils.create_encryption_params(new_password, data_salt, iterations, params.data_key))
+                'auth_verifier': utils.base64_url_encode(auth_verifier),
+                'encryption_params': utils.base64_url_encode(encryption_params)
             }
             api.communicate(params, mp_rq)
             logging.info('Master Password has been changed')

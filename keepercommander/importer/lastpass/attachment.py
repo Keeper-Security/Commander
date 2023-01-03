@@ -1,10 +1,12 @@
 from contextlib import contextmanager
 
 from .attachment_reader import LastpassAttachmentReader
+from ..importer import Attachment
 
 
-class LastpassAttachment:
+class LastpassAttachment(Attachment):
     def __init__(self, id, parent, mimetype, storagekey, lastpass_size, filename):
+        super().__init__()
         self.file_id = id
         self.parent = parent
         self.mime = mimetype

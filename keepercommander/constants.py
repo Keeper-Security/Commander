@@ -220,6 +220,7 @@ def get_abbrev_by_host(host):
         return keys[0]
     return None
 
+
 # Messages
 # Account Transfer
 ACCOUNT_TRANSFER_MSG = """
@@ -228,3 +229,5 @@ in accordance with company operating procedures and policies.
 Please acknowledge this change in account settings by typing 'Accept'.
 If you do not accept this change by {0}, you will be locked out of your account.
 """
+
+PBKDF2_ITERATIONS = 1_000_000

@@ -14,6 +14,7 @@ import argparse
 import base64
 import copy
 import datetime
+import os
 import time
 import json
 import gzip
@@ -22,7 +23,7 @@ import platform
 import re
 from functools import partial
 
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Any
 
 import requests
 import socket
@@ -44,7 +45,7 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from .register import EMAIL_PATTERN
-from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled
+from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name
 from ..sox.sox_data import RebuildTask
 from ..sox.storage_types import StorageRecordAging
 from typing import Dict, Callable
@@ -108,8 +109,12 @@ audit_log_parser.exit = suppress_exit
 aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.')
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
-aging_report_parser.add_argument('--no-cache', '-nc', action='store_true',
+aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
+                                 help='Delete local record database')
+aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='store_true',
                                  help='remove any local non-memory storage of data upon command completion')
+aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['owner', 'title', 'last_changed'],
+                                 help='sort output')
 aging_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                  default='table', help='output format.')
 aging_report_parser.add_argument('--output', dest='output', action='store',
@@ -1406,6 +1411,15 @@ class AgingReportCommand(Command):
             return dt - datetime.timedelta(days=va)
 
         enterprise_id = next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
+        if kwargs.get('delete') is True:
+            db_name = get_sox_database_name(params, enterprise_id)
+            if os.path.isfile(db_name):
+                os.remove(db_name)
+                logging.info('Local encrypted storage has been deleted.')
+            else:
+                logging.info('Local encrypted storage does not exist.')
+            return
+
         dt = get_floor(kwargs.get('period'))
         if dt is None:
             return
@@ -1423,7 +1437,7 @@ class AgingReportCommand(Command):
         uid_lookup = {user.email: uid for uid, user in users.items()}
         username = kwargs.get('username')
         if username and username not in uid_lookup:
-            logging.info(f'user {username} is not a valid enterprise user')
+            logging.info(f'User {username} is not a valid enterprise user')
             clean_up()
             return
         else:
@@ -1449,7 +1463,24 @@ class AgingReportCommand(Command):
                 row = [email, ur.record.data.get('title'), change_dt, ur.record.shared, record_url]
                 table.append(row)
         clean_up()
-        return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'))
+
+        sort_column = None
+        sort_desc = False
+        sort_by = kwargs.get('sort_by')
+        if sort_by:
+            key_fn = None    # type: Optional[Callable[[Any], Any]]
+            if sort_by == 'owner':
+                sort_column = 0
+            elif sort_by == 'title':
+                sort_column = 1
+            elif sort_by == 'last_changed':
+                sort_desc = True
+                sort_column = 2
+            elif sort_by == 'shared':
+                sort_desc = True
+                sort_column = 3
+        return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'),
+                                sort_by=sort_column, sort_desc=sort_desc)
 
     @staticmethod
     def get_database_path(params):

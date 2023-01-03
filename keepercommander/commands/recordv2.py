@@ -53,7 +53,7 @@ def register_command_info(aliases, command_info):
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
 
-    for p in [totp_parser,  add_parser, edit_parser, rm_parser,
+    for p in [totp_parser, rm_parser,
               append_parser, download_parser, upload_parser, delete_attachment_parser]:
         command_info[p.prog] = p.description
 
@@ -527,6 +527,8 @@ class RecordRemoveCommand(Command):
                     }
                     api.communicate(params, rq)
                     params.sync_data = True
+                    if params.breach_watch:
+                        params.breach_watch.save_reused_pw_count(params)
 
 
 class RecordDownloadAttachmentCommand(Command):

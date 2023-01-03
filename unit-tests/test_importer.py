@@ -4,6 +4,8 @@ from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
 from keepercommander.importer import importer, commands
 from keepercommander.recordv3 import RecordV3
+from keepercommander import vault
+
 
 class TestImporterUtils(TestCase):
     def setUp(self):
@@ -74,9 +76,9 @@ class TestImporterUtils(TestCase):
             'hostName': 'keepersecurity.com',
             'port': '222'
         }
-        host_str = importer.BaseExporter.export_host_field(host)
+        host_str = vault.TypedField.export_host_field(host)
         self.assertIsNotNone(host_str)
-        host1 = importer.BaseImporter.import_host_field(host_str)
+        host1 = vault.TypedField.import_host_field(host_str)
         self.assertEqual(host, host1)
 
     def test_phone_serialization(self):
@@ -84,11 +86,11 @@ class TestImporterUtils(TestCase):
             'region': 'US',
             'number': '(555)123-4567',
             'ext': '',
-            'type': 'Movie'
+            'type': 'Mobile'
         }
-        str_value = importer.BaseExporter.export_phone_field(dict_value)
+        str_value = vault.TypedField.export_phone_field(dict_value)
         self.assertIsNotNone(str_value)
-        dict_value1 = importer.BaseImporter.import_phone_field(str_value)
+        dict_value1 = vault.TypedField.import_phone_field(str_value)
         self.assertEqual(dict_value, dict_value1)
 
     def test_name_serialization(self):
@@ -97,9 +99,9 @@ class TestImporterUtils(TestCase):
             'middle': 'Jr.',
             'last': 'Doe'
         }
-        str_value = importer.BaseExporter.export_name_field(dict_value)
+        str_value = vault.TypedField.export_name_field(dict_value)
         self.assertIsNotNone(str_value)
-        dict_value1 = importer.BaseImporter.import_name_field(str_value)
+        dict_value1 = vault.TypedField.import_name_field(str_value)
         self.assertEqual(dict_value, dict_value1)
 
     def test_address_serialization(self):
@@ -111,9 +113,9 @@ class TestImporterUtils(TestCase):
             'zip': '95762',
             'country': 'US'
         }
-        str_value = importer.BaseExporter.export_address_field(dict_value)
+        str_value = vault.TypedField.export_address_field(dict_value)
         self.assertIsNotNone(str_value)
-        dict_value1 = importer.BaseImporter.import_address_field(str_value)
+        dict_value1 = vault.TypedField.import_address_field(str_value)
         self.assertEqual(dict_value, dict_value1)
 
     def test_q_and_a_serialization(self):
@@ -121,9 +123,9 @@ class TestImporterUtils(TestCase):
             'question': 'What is the best password management application',
             'answer': 'keeper'
         }
-        str_value = importer.BaseExporter.export_q_and_a_field(dict_value)
+        str_value = vault.TypedField.export_q_and_a_field(dict_value)
         self.assertIsNotNone(str_value)
-        dict_value1 = importer.BaseImporter.import_q_and_a_field(str_value)
+        dict_value1 = vault.TypedField.import_q_and_a_field(str_value)
         self.assertTrue(isinstance(dict_value1, dict))
         orig_question = dict_value['question']
         if not orig_question.endswith('?'):
@@ -137,23 +139,21 @@ class TestImporterUtils(TestCase):
             'cardExpirationDate': '05/2025',
             'cardSecurityCode': '123'
         }
-        str_value = importer.BaseExporter.export_card_field(dict_value)
+        str_value = vault.TypedField.export_card_field(dict_value)
         self.assertIsNotNone(str_value)
-        dict_value1 = importer.BaseImporter.import_card_field(str_value)
+        dict_value1 = vault.TypedField.import_card_field(str_value)
         self.assertEqual(dict_value, dict_value1)
-        dict_value1 = importer.BaseImporter.import_card_field(
+        dict_value1 = vault.TypedField.import_card_field(
             f'{dict_value["cardNumber"]}  {dict_value["cardSecurityCode"]}  {dict_value["cardExpirationDate"]}')
         self.assertEqual(dict_value, dict_value1)
 
     def test_bank_account_serialization(self):
-        ee = RecordV3.get_field_type('securityQuestion')
-
         dict_value = {
             'accountType': 'Checking',
             'routingNumber': '123456789',
             'accountNumber': '98765432109876'
         }
-        str_value = importer.BaseExporter.export_account_field(dict_value)
+        str_value = vault.TypedField.export_account_field(dict_value)
         self.assertIsNotNone(str_value)
-        dict_value1 = importer.BaseImporter.import_account_field(str_value)
+        dict_value1 = vault.TypedField.import_account_field(str_value)
         self.assertEqual(dict_value, dict_value1)

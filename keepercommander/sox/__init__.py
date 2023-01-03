@@ -50,6 +50,11 @@ def is_compliance_reporting_enabled(params):
         return True
 
 
+def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -> str
+    path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
+    return os.path.join(path, f'sox_{enterprise_id}.db')
+
+
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False):
     # type: (KeeperParams, int, bool, int, bool, bool) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
@@ -115,8 +120,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 
     validate_data_access(params)
     enterprise_id = enterprise_id or next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
-    path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
-    database_name = os.path.join(path, f'sox_{enterprise_id}.db')
+    database_name = get_sox_database_name(params, enterprise_id)
     tree_key = params.enterprise['unencrypted_tree_key']
     ecc_key = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
     ecc_key = crypto.decrypt_aes_v2(ecc_key, tree_key)

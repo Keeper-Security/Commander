@@ -13,13 +13,14 @@ import argparse
 import collections
 import datetime
 import fnmatch
+import itertools
 import json
 import logging
 import re
 from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 
 from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand, RecordMixin
-from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3
+from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
 from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
@@ -65,7 +66,9 @@ def register_command_info(aliases, command_info):
 
 get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
-get_info_parser.add_argument('--format', dest='format', action='store', choices=['detail', 'json', 'password'], default='detail', help='output format')
+get_info_parser.add_argument(
+    '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
+    default='detail', help='output format')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID')
 
 
@@ -323,10 +326,10 @@ class RecordGetUidCommand(Command):
                 params.queue_audit_event('open_record', record_uid=uid)
                 if fmt == 'json':
                     ro = {
-                        'record_uid': r.record_uid,
-                        'title': r.title
+                        'record_uid': uid,
                     }
                     if version < 3:
+                        ro['title'] = r.title
                         if r.login:
                             ro['login'] = r.login
                         if r.password:
@@ -346,10 +349,7 @@ class RecordGetUidCommand(Command):
                     else:
                         data = rec['data_unencrypted'] if 'data_unencrypted' in rec else b'{}'
                         data = json.loads(data.decode())
-                        ro['type'] = data.get('type') or []
-                        ro['fields'] = data.get('fields') or []
-                        ro['custom'] = data.get('custom') or []
-
+                        ro.update(data)
                     if r.notes:
                         ro['notes'] = r.notes
                     ro['version'] = r.version
@@ -364,8 +364,99 @@ class RecordGetUidCommand(Command):
                         ro['share_admins'] = admins
 
                     ro['revision'] = r.revision
-
                     print(json.dumps(ro, indent=2))
+                elif fmt == 'fields':
+                    fields = collections.OrderedDict()    # type: Dict[str, str]
+                    record = vault.KeeperRecord.load(params, rec)
+                    if record:
+                        fields['--title'] = record.title
+                        fields['--notes'] = r.notes
+                        if isinstance(record, vault.PasswordRecord):
+                            fields['--record-type'] = 'legacy'
+                            fields['login'] = record.login
+                            fields['password'] = record.password
+                            fields['url'] = record.link
+                            fields['oneTimeCode'] = record.totp
+                            if record.custom:
+                                for cf in record.custom:
+                                    fields[cf.name] = cf.value
+                        elif isinstance(record, vault.TypedRecord):
+                            fields['--record-type'] = record.type_name
+                            for f in itertools.chain(record.fields, record.custom):
+                                if not isinstance(f.value, list):
+                                    continue
+                                f_type = f.type
+                                if f_type.endswith('Ref'):
+                                    continue
+                                if f_type not in record_types.RecordFields:
+                                    f_type = 'text'
+                                rf = record_types.RecordFields[f_type]
+                                ft = record_types.FieldTypes.get(rf.type)
+                                key = rf.name
+                                if rf.multiple == record_types.Multiple.Optional:
+                                    if f.label:
+                                        f_label = f.label.replace('\\', '\\\\').replace('"', '\\"').replace('=', '==')
+                                        if ' ' in f_label or "'" in f_label:
+                                            f_label = f'"{f_label}"'
+                                        key += f'.{f_label}'
+                                if len(f.value) == 0:
+                                    fields[key] = ''
+                                else:
+                                    value = ''
+                                    for f_value in f.value:
+                                        if isinstance(f_value, type(ft.value)):
+                                            if isinstance(f_value, str):
+                                                f_value = f_value.strip()
+                                                if f_value:
+                                                    value = f_value
+                                            elif isinstance(f_value, int):
+                                                if ft.name == 'date':
+                                                    if f_value > 0:
+                                                        dt = datetime.datetime.fromtimestamp(int(f_value / 1000)).date()
+                                                        value = str(dt)
+                                                else:
+                                                    value = str(f_value)
+                                            elif isinstance(value, bool):
+                                                value = '1' if value else '0'
+                                            elif isinstance(f_value, dict):
+                                                if ft.name == 'host':
+                                                    v = vault.TypedField.export_host_field(f_value)
+                                                elif ft.name == 'phone':
+                                                    v = vault.TypedField.export_phone_field(f_value)
+                                                elif ft.name == 'name':
+                                                    v = vault.TypedField.export_name_field(f_value)
+                                                elif ft.name == 'address':
+                                                    v = vault.TypedField.export_address_field(f_value)
+                                                elif ft.name == 'securityQuestion':
+                                                    v = vault.TypedField.export_q_and_a_field(f_value)
+                                                elif ft.name == 'paymentCard':
+                                                    v = vault.TypedField.export_card_field(f_value)
+                                                elif ft.name == 'bankAccount':
+                                                    v = vault.TypedField.export_account_field(f_value)
+                                                elif ft.name == 'privateKey':
+                                                    v = vault.TypedField.export_ssh_key_field(f_value)
+                                                else:
+                                                    continue
+                                                if v:
+                                                    if value:
+                                                        value += '; ' + v
+                                                    else:
+                                                        value = v
+                                        if value and rf.multiple != record_types.Multiple.Always:
+                                            break
+
+                                    fields[key] = value
+                        pairs = []
+                        for key, value in fields.items():
+                            value = value.replace('\r\n', '\n').replace('\r', '\n')
+                            value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                            if value.startswith('='):
+                                value = ' ' + value
+                            if ' ' in value or "'" in value:
+                                value = f'"{value}"'
+                            pairs.append(f'{key}={value}')
+
+                        print(' '.join(pairs))
                 elif fmt == 'password':
                     print(r.password)
                 else:
@@ -824,11 +915,17 @@ class TrashRestoreCommand(Command, TrashMixin):
             })
 
         api.execute_batch(params, batch)
+        api.sync_down(params)
         TrashMixin.last_revision = 0
-        params.sync_data = True
         for record_uid in to_restore:
+            if params.breach_watch:
+                params.breach_watch.scan_and_store_record_status(params, record_uid, True, False, False)
+                api.sync_down(params)
+
             params.queue_audit_event('record_restored', record_uid=record_uid)
 
+        params.sync_data = True
+        params.breach_watch.save_reused_pw_count(params)
 
 class TrashPurgeCommand(Command, TrashMixin):
     def get_parser(self):
@@ -919,7 +1016,8 @@ class RecordHistoryCommand(Command, RecordMixin):
                         rows.append([name, value])
                 modified = datetime.datetime.fromtimestamp(int(rev['client_modified_time'] / 1000.0))
                 rows.append(['Modified', modified])
-                dump_report_data(rows, headers=['Name', 'Value'], title=f'Record Revision V.{revision}', no_header=True, right_align=(0,))
+                dump_report_data(rows, headers=['Name', 'Value'],
+                                 title=f'Record Revision V.{revision}', no_header=True, right_align=(0,))
 
             elif action == 'diff':
                 count = 5

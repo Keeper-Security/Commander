@@ -21,7 +21,7 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List, Any
+from typing import Optional, Sequence, Callable, List, Any, Iterable
 
 import sys
 from tabulate import tabulate
@@ -177,14 +177,79 @@ def field_to_title(field):   # type: (str) -> str
     return ' '.join(words)
 
 
+def get_date_key(value):
+    if isinstance(value, datetime.datetime):
+        return int(value.timestamp())
+    if isinstance(value, datetime.date):
+        dt = datetime.datetime.combine(value, datetime.datetime.min.time())
+        return int(dt.timestamp())
+    return 0
+
+
+def get_str_key(value):
+    if isinstance(value, str):
+        return value.casefold()
+    return ''
+
+
+def get_num_key(value):
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, float):
+        return value
+    if isinstance(value, str):
+        if value.isnumeric():
+            try:
+                return float(value)
+            except:
+                pass
+    return 0.0
+
+
+def get_bool_key(value):
+    if isinstance(value, bool):
+        return value
+    return False
+
+
+def detect_column_type(values):  # type: (Iterable[Any]) -> Optional[Callable[[Any], Any]]
+    str_no = 0
+    date_no = 0
+    bool_no = 0
+    num_no = 0
+    for value in values:
+        if value is not None:
+            if isinstance(value, str):
+                str_no += 1
+            elif isinstance(value, (datetime.datetime, datetime.date)):
+                date_no += 1
+            elif isinstance(value, (int, float)):
+                num_no += 1
+            elif isinstance(value, bool):
+                bool_no += 1
+    nums = [('str', str_no), ('date', date_no), ('bool', bool_no), ('num', num_no)]
+    nums.sort(key=lambda x: x[1], reverse=True)
+    column_type, column_no = nums[0]
+    if column_no > 0:
+        if column_type == 'date':
+            return get_date_key
+        if column_type == 'str':
+            return get_str_key
+        if column_type == 'num':
+            return get_num_key
+        if column_type == 'bool':
+            return get_bool_key
+
+
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
     # type: (List[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
     #           row_number: boolean        - Add row number. table only
     #           column_width: int          - Truncate long columns. table only
     #           no_header: boolean         - Do not print header
-    #           group_by: int           - Sort and Group by columnNo
-    #           sort_by: int            - Sort by columnNo
+    #           group_by: int              - Sort and Group by columnNo
+    #           sort_by: int               - Sort by columnNo
+    #           sort_desc: bool            - Descending Sort
     #           align_right: Sequence[int] - Force right align
 
     sort_by = kwargs.get('sort_by')
@@ -194,7 +259,10 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
         sort_by = group_by
 
     if isinstance(sort_by, int):
-        data.sort(key=lambda x: x[sort_by] if 0 <= sort_by < len(x) else None)
+        key_fn = detect_column_type((x[sort_by] for x in data if 0 <= sort_by < len(x)))
+        if callable(key_fn):
+            reverse = kwargs.get('sort_desc') is True
+            data.sort(key=lambda r: key_fn(r[sort_by] if 0 <= sort_by < len(r) else None), reverse=reverse)
 
     if fmt == 'csv':
         if filename:
