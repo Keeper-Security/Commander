@@ -2911,7 +2911,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 'securityScore': 25,
                 'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
             }
-            master_password_strength = 1
+            master_pw_strength = 1
 
             if sr.encryptedReportData:
                 sri = rest_api.decrypt_aes(sr.encryptedReportData, params.enterprise['unencrypted_tree_key'])
@@ -2923,8 +2923,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 data = self.get_updated_security_report_row(sr, rsa_key, data)
 
             if save_report:
-                updated_sr = sr
-                sr.revision = security_report_data_rs.asOfRevision
+                updated_sr = SecurityReport()
+                updated_sr.revision = security_report_data_rs.asOfRevision
+                updated_sr.enterpriseUserId = sr.enterpriseUserId
                 report = json.dumps(data).encode('utf-8')
                 updated_sr.encryptedReportData = rest_api.encrypt_aes(report, params.enterprise['unencrypted_tree_key'])
                 updated_security_reports.append(updated_sr)
@@ -2945,7 +2946,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             row['medium'] = row['total'] - row['weak'] - row['strong']
             row['unique'] = row['total'] - row['reused']
 
-            score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_password_strength)
+            score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_pw_strength)
             score = int(100 * round(score, 2))
             row['securityScore'] = score
 
