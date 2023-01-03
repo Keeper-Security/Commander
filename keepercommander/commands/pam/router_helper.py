@@ -274,6 +274,12 @@ def print_router_response(router_response, response_type, original_conversation_
 
     gateway_response_conversation_id = base64_url_decode(router_response_response_payload_dict.get('conversation_id')).decode("utf-8")
 
+    if router_response_response_payload_dict.get('warnings'):
+        for w in router_response_response_payload_dict.get('warnings'):
+            if w:
+                print(f'{bcolors.WARNING}{w}{bcolors.ENDC}')
+
+
     if original_conversation_id and original_conversation_id != gateway_response_conversation_id:
         logging.error(f"Message ID that was sent to the server [{original_conversation_id}] and the conversation id "
                       f"received back is [{gateway_response_conversation_id}] were different. That probably means that "
@@ -293,6 +299,7 @@ def print_router_response(router_response, response_type, original_conversation_
         job_info = router_response_response_payload_dict.get('data')
         exec_response_value = job_info.get('execResponseValue')
         exec_response_value_msg = exec_response_value.get('message') if exec_response_value else None
+        exec_response_value_logs = exec_response_value.get('execLog') if exec_response_value else None
         exec_duration = job_info.get('executionDuration')
         exec_status = job_info.get('status')
         exec_exception = job_info.get('execException')
@@ -309,12 +316,22 @@ def print_router_response(router_response, response_type, original_conversation_
 
         print(f'\t{font_color}Status              : {job_info.get("reason") if job_info.get("reason") else exec_status}{bcolors.ENDC}')
 
-
         if exec_duration:
             print(f'\t{font_color}Duration            : {exec_duration}{bcolors.ENDC}')
 
         if exec_response_value_msg:
             print(f'\t{font_color}Response Message    : {exec_response_value_msg}{bcolors.ENDC}')
+
+        if exec_response_value_logs:
+            print(f'\t{font_color}Post-execution scripts logs:{bcolors.ENDC}')
+            for el in exec_response_value_logs:
+                print(f'\t\t{font_color}script: {el.get("name")}{bcolors.ENDC}')
+                print(f'\t\t{font_color}return code: {el.get("return_code")}{bcolors.ENDC}')
+                if el.get("stdout"):
+                    print(f'\t\t{font_color}stdout:\n---\n{bcolors.OKBLUE}{el.get("stdout")}{font_color}\n---{bcolors.ENDC}')
+                if el.get("stderr"):
+                    print(f'\t\t{font_color}stderr:\n---\n{bcolors.WARNING}{el.get("stderr")}{font_color}\n---{bcolors.ENDC}')
+                print(f'\n')
 
         if exec_exception:
             print(f'\t{font_color}Execution Exception : {exec_exception}{bcolors.ENDC}')
@@ -324,38 +341,38 @@ def print_router_response(router_response, response_type, original_conversation_
     elif response_type == 'gateway_info':
 
         gateway_info = router_response_response_payload_dict.get('data')
-        print(f'KSM Application Details\n-------------------------')
+        print(f'{bcolors.OKBLUE}KSM Application Details{bcolors.ENDC}')
         ksm_app = gateway_info.get('ksm').get('app')
-        print(f'\tTitle             : {ksm_app.get("title")}')
-        print(f'\tNumber of Records : {ksm_app.get("records-count")}')
-        print(f'\tNumber of Folders : {ksm_app.get("folders-count")}')
-        print(f'\tWarnings          : {ksm_app.get("warnings")}')
+        print(f'\t{bcolors.OKGREEN}Title             : {ksm_app.get("title")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Number of Records : {ksm_app.get("records-count")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Number of Folders : {ksm_app.get("folders-count")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Warnings          : {ksm_app.get("warnings")}{bcolors.ENDC}')
 
-        print(f'\nHost Details\n-------------------------')
+        print(f'\n{bcolors.OKBLUE}Host Details{bcolors.ENDC}')
         host_details = gateway_info.get('machine')
         installed_packages_list = host_details.get('installed-python-packages')
         installed_packages_str = ', '.join(installed_packages_list)
 
-        print(f'\tOS                : {host_details.get("os")}')
-        print(f'\tCurrent Time      : {host_details.get("current-time")}')
-        print(f'\tExecutable        : {host_details.get("executable")}')
-        print(f'\tPackage Directory : {host_details.get("package-dir")}')
-        print(f'\tWorking Directory : {host_details.get("working-dir")}')
-        print(f'\tInstalled Packages: {installed_packages_str}')
+        print(f'\t{bcolors.OKGREEN}OS                : {host_details.get("os")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Current Time      : {host_details.get("current-time")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Executable        : {host_details.get("executable")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Package Directory : {host_details.get("package-dir")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Working Directory : {host_details.get("working-dir")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Installed Packages: {installed_packages_str}{bcolors.ENDC}')
 
-        print(f'\nRouter Details\n-------------------------')
+        print(f'\n{bcolors.OKBLUE}Router Details{bcolors.ENDC}')
         router_details = gateway_info.get('router').get('connection')
-        print(f'\tBase URL          : {router_details.get("base-url")}')
-        print(f'\tConnection Status : {router_details.get("status")}')
+        print(f'\t{bcolors.OKGREEN}Base URL          : {router_details.get("base-url")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Connection Status : {router_details.get("status")}{bcolors.ENDC}')
 
-        print(f'\nRotation Settings Available to Gateway\n-----------------------------------')
+        print(f'\n{bcolors.OKBLUE}Rotation Setting(s) Available to Gateway{bcolors.ENDC}')
         rotation_settings_list = gateway_info.get('rotation_settings')
 
         if rotation_settings_list:
             for rs in rotation_settings_list:
-                print(f'\tUID          : {rs.get("configurationUid")}')
+                print(f'\t{bcolors.OKGREEN}UID          : {rs.get("configurationUid")}{bcolors.ENDC}')
         else:
-            print(f'\tNo Rotation Settings')
+            print(f'\t{bcolors.WARNING}No Rotation Settings{bcolors.ENDC}')
 
     # else:
     #     print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
