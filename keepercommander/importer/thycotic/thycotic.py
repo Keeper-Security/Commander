@@ -16,6 +16,7 @@ import getpass
 import json
 import logging
 import os
+import time
 import warnings
 from contextlib import contextmanager
 from urllib3.exceptions import InsecureRequestWarning
@@ -84,19 +85,19 @@ class ThycoticMixin:
         } for x in folder_rs}   # type: Dict[int, Dict[str, Any]]
         logging.debug('Loaded %d folders', len(folders))
 
-        no = 0
-        total = len(folders)
-        for folder_id in folders:
-            if folder_id == 1:
-                continue
-            folder = folders[folder_id]
-            if folder.get('inheritPermissions') is True:
-                continue
-            folder['permissions'] = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
-            if on_progress:
-                on_progress(no, total)
-            no += 1
-        logging.debug('Loaded folder permissions')
+        # no = 0
+        # total = len(folders)
+        # for folder_id in folders:
+        #    if folder_id == 1:
+        #        continue
+        #    folder = folders[folder_id]
+        #    if folder.get('inheritPermissions') is True:
+        #        continue
+        #    folder['permissions'] = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+        #    if on_progress:
+        #        on_progress(no, total)
+        #    no += 1
+        # logging.debug('Loaded folder permissions')
 
         # Adjust inherited permissions
         done = False
@@ -119,7 +120,7 @@ class ThycoticMixin:
                 if parent_id != folder_id:
                     folder_permissions = folders[folder_id].get('permissions', [])
                     parent_permissions = folders[parent_id].get('permissions', [])
-                    if len(folder_permissions) == len(parent_permissions):
+                    if len(folder_permissions) == len(parent_permissions) and len(folder_permissions) > 0:
                         set1 = set((f'{x.get("groupName") or ""}|{x.get("userName") or ""}|'
                                     f'{x.get("folderAccessRoleName") or ""}|{x.get("secretAccessRoleName") or ""}'
                                     for x in folder_permissions))
@@ -160,7 +161,7 @@ class ThycoticMixin:
                 else:
                     parent = None
             folder['folderPath'] = folder_path
-        logging.debug('Folder path bui;t')
+        logging.debug('Folder path built')
 
         if 1 in folders:
             del folders[1]
@@ -305,6 +306,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         secrets = []
         for secret_id in secrets_ids:
             secret = auth.thycotic_entity(f'/v1/secrets/{secret_id}')
+            if not secret:
+                continue
             secrets.append(secret)
             if len(secrets) % 10 == 9:
                 print('.', flush=True, end='')
@@ -329,37 +332,38 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 slug = item['slug']
                 item['itemValue'] = ''
                 attachment_id = item.get('fileAttachmentId')
+                if not attachment_id:
+                    continue
+                file_name = item.get('filename')
+                if not file_name:
+                    continue
+
                 endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
                 if slug in ('private-key', 'public-key'):
-                    if attachment_id:
-                        with auth.thycotic_get(endpoint) as rs:
-                            if rs.status_code == 200:
-                                try:
-                                    key_text = rs.content.decode()
-                                except:
-                                    key_text = ''
-                                is_key = 30 < len(key_text) < 5000
-                                if is_key:
-                                    item['itemValue'] = key_text
-                                else:
-                                    if not isinstance(record.attachments, list):
-                                        record.attachments = []
-                                    file_name = item.get('filename')
-                                    attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
-                                    if not isinstance(record.attachments, list):
-                                        record.attachments = []
-                                    record.attachments.append(attachment)
-                                    del items[slug]
+                    with auth.thycotic_get(endpoint) as rs:
+                        if rs.status_code == 200:
+                            try:
+                                key_text = rs.content.decode()
+                            except:
+                                key_text = ''
+                            is_key = 30 < len(key_text) < 5000
+                            if is_key:
+                                item['itemValue'] = key_text
+                            else:
+                                if not isinstance(record.attachments, list):
+                                    record.attachments = []
+                                attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
+                                if not isinstance(record.attachments, list):
+                                    record.attachments = []
+                                record.attachments.append(attachment)
                 else:
-                    if attachment_id:
-                        if not isinstance(record.attachments, list):
-                            record.attachments = []
-                        file_name = item.get('filename')
-                        attachment = ThycoticAttachment(auth, endpoint, file_name)
-                        if not isinstance(record.attachments, list):
-                            record.attachments = []
-                        record.attachments.append(attachment)
-                    del items[slug]
+                    if not isinstance(record.attachments, list):
+                        record.attachments = []
+                    attachment = ThycoticAttachment(auth, endpoint, file_name)
+                    if not isinstance(record.attachments, list):
+                        record.attachments = []
+                    record.attachments.append(attachment)
+                del items[slug]
 
             template_name = secret.get('secretTemplateName', '')
             if template_name in ('Pin', 'Security Alarm Code'):
@@ -688,17 +692,21 @@ class ThycoticAuth:
             'Authorization': f'Bearer {self.access_token}'
         }
 
-        urlp = urlparse(self.base_url + 'api/' + endpoint)
+        urlp = urlparse(self.base_url + 'api' + endpoint)
         queries = tuple(x for x in urlp.query.split(sep='&') if x)
         result = []
         skip = 0
         while True:
             q = list(queries)
-            q.append('take=100')
+            q.append('take=1000')
             if skip > 0:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
-            rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
+            try:
+                rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
+            except requests.exceptions.ConnectionError:
+                time.sleep(10)
+                rs = requests.get(url, headers=headers, verify=False, proxies=self.proxy)
             if rs.status_code != 200:
                 error_rs = rs.json()
                 raise Exception(error_rs['message'])
@@ -720,27 +728,34 @@ class ThycoticAuth:
             'Accept': 'application/json',
             'Authorization': f'Bearer {self.access_token}'
         }
-        rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
-        if rs.status_code != 200:
-            error_rs = rs.json()
-            raise Exception(error_rs['message'])
-        return rs.json()
+        try:
+            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
+        except requests.exceptions.ConnectionError:
+            time.sleep(10)
+            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
+        try:
+            if rs.status_code == 200:
+                return rs.json()
+            else:
+                error_rs = rs.json()
+                logging.info('"%s" returned %d: %s', endpoint, rs.status_code, error_rs.get('message', ''))
+        except Exception as e:
+            logging.info('"%s" error: %s', endpoint, str(e))
 
     def thycotic_get(self, endpoint):    # type: (str) -> requests.Response
         self.ensure_auth_token()
         headers = {
             'Authorization': f'Bearer {self.access_token}'
         }
-        return requests.get(self.base_url + 'api' + endpoint, headers=headers,
-                            verify=False, proxies=self.proxy, stream=True)
 
-    def thycotic_post(self, endpoint, data):    # type: (str, dict) -> requests.Response
-        self.ensure_auth_token()
-        headers = {
-            'Authorization': f'Bearer {self.access_token}'
-        }
-        return requests.post(self.base_url + 'api' + endpoint, data=data, headers=headers,
-                             verify=False, proxies=self.proxy)
+        try:
+            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers,
+                              verify=False, proxies=self.proxy, stream=True)
+        except requests.exceptions.ConnectionError:
+            time.sleep(10)
+            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers,
+                              verify=False, proxies=self.proxy, stream=True)
+        return rs
 
 
 class ThycoticAttachment(Attachment):
