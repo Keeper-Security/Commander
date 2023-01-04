@@ -1074,11 +1074,15 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
 
                 atta.prepare()
                 if isinstance(atta.size, int):
+                    if atta.size == 0:
+                        continue
                     if atta.size > 100 * 2 ** 20:  # hard limit at 100MB for upload
                         logging.warning(
                             f'Upload of {atta.name} failed: File size of {atta.size} exceeds the 100MB maximum.'
                         )
                         continue
+                else:
+                    continue
 
                 file_data = {
                     'name': atta.name,
