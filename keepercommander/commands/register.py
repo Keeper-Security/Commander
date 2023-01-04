@@ -576,7 +576,10 @@ class ShareRecordCommand(Command):
             folder = params.folder_cache[name]   # type: BaseFolderNode
             if isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
                 folder_uid = folder.uid
-                shared_folder_uid = folder.shared_folder_uid
+                if isinstance(folder, SharedFolderFolderNode):
+                    shared_folder_uid = folder.shared_folder_uid
+                else:
+                    shared_folder_uid = folder.uid
         elif name in params.shared_folder_cache:
             shared_folder_uid = name
         else:
@@ -1168,7 +1171,7 @@ class ShareReportCommand(Command):
                     headers = [field_to_title(x) for x in headers]
                 return dump_report_data(
                     table, headers, fmt=output_format, filename=kwargs.get('output'),
-                    group_by=0, row_number=True)
+                    sort_by=0, row_number=True)
 
     @staticmethod
     def get_permission_text(can_edit, can_share, can_view=True):
