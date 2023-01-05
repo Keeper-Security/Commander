@@ -722,7 +722,7 @@ class ThycoticAuth:
                 break
         return result
 
-    def thycotic_entity(self, endpoint):  # type: (str) -> dict
+    def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
         self.ensure_auth_token()
         headers = {
             'Accept': 'application/json',
@@ -730,9 +730,15 @@ class ThycoticAuth:
         }
         try:
             rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
-        except requests.exceptions.ConnectionError:
+        except Exception as e:
+            logging.warning('"%s" error: %s', endpoint, str(e))
             time.sleep(10)
-            rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
+            try:
+                rs = requests.get(self.base_url + 'api' + endpoint, headers=headers, verify=False, proxies=self.proxy)
+            except Exception as e:
+                logging.warning('Another "%s" error: %s', endpoint, str(e))
+                time.sleep(10)
+                return
         try:
             if rs.status_code == 200:
                 return rs.json()

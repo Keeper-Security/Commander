@@ -180,7 +180,7 @@ def execute_rest(context, endpoint, payload):
                 rs_body = decrypt_aes(rs.content, context.transmission_key)
             return rs_body
         elif rs.status_code >= 400:
-            if content_type == 'application/json':
+            if content_type.startswith('application/json'):
                 failure = rs.json()
                 logging.debug('<<< Response Error: [%s]', failure)
                 if rs.status_code == 401:
