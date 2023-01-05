@@ -30,7 +30,7 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_record_rotation_info, \
-    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules
+    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, get_router_url
 from .utils import KSMCommand
 from ..loginv3 import CommonHelperMethods
 from ..proto.pam_pb2 import PAMGenericUidsRequest, \
@@ -411,7 +411,7 @@ class PAMGatewayListCommand(Command):
         table = []
 
         headers = []
-        headers.append('KSM App name (UID)')
+        headers.append('KSM Application Name (UID)')
         headers.append('Gateway Name')
         headers.append('Gateway UID')
         headers.append('Status')
@@ -422,7 +422,6 @@ class PAMGatewayListCommand(Command):
             headers.append('Created On')
             headers.append('Last Modified')
             headers.append('Node ID')
-            headers.append('Router Cookie')
 
         for c in enterprise_controllers_all:
 
@@ -431,7 +430,7 @@ class PAMGatewayListCommand(Command):
                 # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
                 router_controllers = list(enterprise_controllers_connected.controllers)
                 connected_controller = next((ent_con_cntr for ent_con_cntr in router_controllers if
-                                             ent_con_cntr.controllerUid == c.controllerUid), None)
+                                             ent_con_cntr == c.controllerUid), None)
 
             row_color = ''
             if not is_router_down:
@@ -453,30 +452,34 @@ class PAMGatewayListCommand(Command):
                 ksm_app_title = ksm_app_data_unencrypted_dict.get('title')
                 ksm_app_info = f'{ksm_app_title} ({ksm_app_uid_str})'
             else:
-                ksm_app_info = f'[APP NOT ACCESSIBLE OR DELETED] (uid: {ksm_app_uid_str})'
+                ksm_app_info = f'[APP NOT ACCESSIBLE OR DELETED] ({ksm_app_uid_str})'
 
-            row.append(f'{row_color}{ksm_app_info}')
-            row.append(c.controllerName)
-            row.append(CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid))
+            row.append(f'{row_color if ksm_app else bcolors.WHITE}{ksm_app_info}{bcolors.ENDC}')
+            row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
+            row.append(f'{row_color}{CommonHelperMethods.bytes_to_url_safe_str(c.controllerUid)}{bcolors.ENDC}')
 
             if is_router_down:
-                row.append('UNKNOWN' + bcolors.ENDC)
+                status = 'UNKNOWN'
             elif connected_controller:
-                row.append("ONLINE" + bcolors.ENDC)
-                add_cookie = True
+                status = "ONLINE"
             else:
-                row.append("OFFLINE" + bcolors.ENDC)
+                status = "OFFLINE"
+
+            row.append(f'{row_color}{status}{bcolors.ENDC}')
 
             if is_verbose:
-                row.append(c.deviceName)
-                row.append(c.deviceToken)
-                row.append(datetime.fromtimestamp(c.created/1000))
-                row.append(datetime.fromtimestamp(c.lastModified/1000))
-                row.append(c.nodeId)
-                row.append(f"{connected_controller.cookie}{bcolors.ENDC}" if add_cookie else "")
+                row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
+                row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
+                row.append(f'{row_color}{datetime.fromtimestamp(c.created/1000)}{bcolors.ENDC}')
+                row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified/1000)}{bcolors.ENDC}')
+                row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
 
             table.append(row)
         table.sort(key=lambda x: (x[3] or '', x[0].lower()))
+
+        if is_verbose:
+            krouter_host = get_router_url(params)
+            print(f"\n{bcolors.BOLD}Router Host: {bcolors.OKBLUE}{krouter_host}{bcolors.ENDC}\n")
 
         dump_report_data(table, headers, fmt='table', filename="",
                          row_number=False, column_width=None)
