@@ -44,7 +44,7 @@ from .. import api
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
-from .register import EMAIL_PATTERN
+from ..constants import EMAIL_PATTERN
 from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name
 from ..sox.sox_data import RebuildTask
 from ..sox.storage_types import StorageRecordAging
