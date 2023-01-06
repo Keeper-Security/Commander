@@ -206,7 +206,10 @@ class LastPassImporter(BaseImporter):
                     record.attachments = []
                 record.attachments = account.attachments
             if account.notes:
-                notes = account.notes.decode('utf-8')
+                try:
+                    notes = account.notes.decode('utf-8')
+                except UnicodeDecodeError:
+                    notes = ''
                 if notes.startswith('NoteType:'):
                     typed_values = self.parse_typed_notes(notes)
                     if 'NoteType' in typed_values:
