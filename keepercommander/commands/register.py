@@ -11,6 +11,7 @@
 
 import argparse
 import datetime
+import getpass
 import hashlib
 import itertools
 import json
@@ -26,14 +27,13 @@ from tabulate import tabulate
 from . import base
 from .base import dump_report_data, field_to_title, raise_parse_exception, suppress_exit, Command, GroupCommand, FolderMixin
 from .helpers.timeout import parse_timeout
-from .. import api, utils, crypto
+from .. import api, utils, crypto, constants, rest_api
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
-from ..proto import APIRequest_pb2, folder_pb2, record_pb2
+from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
-
-EMAIL_PATTERN = r"(?i)^[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$"
+from ..loginv3 import LoginV3API
 
 
 def register_commands(commands):
@@ -43,6 +43,7 @@ def register_commands(commands):
     commands['record-permission'] = RecordPermissionCommand()
     commands['find-duplicate'] = FindDuplicateCommand()
     commands['share'] = OneTimeShareCommand()
+    commands['create-account'] = CreateRegularUserCommand()
     # commands['file-report'] = FileReportCommand()
 
 
@@ -175,6 +176,9 @@ one_time_share_remove_parser = argparse.ArgumentParser(prog='one-time-share-remo
 one_time_share_remove_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 one_time_share_remove_parser.add_argument('share', nargs='?', type=str, action='store', help='one-time share name or ID')
 
+create_account_parser = argparse.ArgumentParser(prog='create-account', description='Create Keeper Account')
+create_account_parser.add_argument('email', help='email')
+
 
 class ShareFolderCommand(Command):
     def get_parser(self):
@@ -230,7 +234,7 @@ class ShareFolderCommand(Command):
                 if u == '*':
                     default_account = True
                 else:
-                    em = re.match(EMAIL_PATTERN, u)
+                    em = re.match(constants.EMAIL_PATTERN, u)
                     if em is not None:
                         as_users.add(u.lower())
                     else:
@@ -2052,3 +2056,92 @@ class OneTimeShareCreateCommand(Command):
                 print('{0:>10s} : {1}'.format('URL', url))
             else:
                 return url
+
+
+class CreateRegularUserCommand(Command):
+    def is_authorised(self):
+        return False
+
+    def get_parser(self):
+        return create_account_parser
+
+    def execute(self, params, **kwargs):
+        email = kwargs.get('email')
+        email_pattern = re.compile(constants.EMAIL_PATTERN)
+        match = email_pattern.match(email)
+        if not match:
+            logging.warning('"%s" appears not a valid email address. Skipping.', email)
+            return
+
+        rules_rq = enterprise_pb2.DomainPasswordRulesRequest()
+        rules_rq.username = email
+        rules_rs = api.communicate_rest(params, rules_rq, 'authentication/get_domain_password_rules',
+                                        rs_type=APIRequest_pb2.NewUserMinimumParams)
+        iterations = max(rules_rs.minimumIterations, constants.PBKDF2_ITERATIONS)
+
+        while True:
+            password1 = getpass.getpass(prompt='  New User Password: ', stream=None)
+            if not password1:
+                return
+            password2 = getpass.getpass(prompt='User Password Again: ', stream=None)
+            if password1 == password2:
+                password_ok = True
+                for i in range(len(rules_rs.passwordMatchRegex)):
+                    pattern = re.compile(rules_rs.passwordMatchRegex[i])
+                    if not re.match(pattern, password1):
+                        password_ok = False
+                        logging.info('Your Master Password must follow this rule:')
+                        logging.info(f'* {rules_rs.passwordMatchDescription[i]}')
+                        break
+                if password_ok:
+                    break
+            else:
+                logging.warning('Passwords do not match.')
+            answer = base.user_choice('Try again?', 'yn', 'n').lower()
+            if answer not in ('y', 'yes'):
+                return
+
+        user_password = password1
+        user_data_key = utils.generate_aes_key()
+        rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
+        rsa_private = crypto.unload_rsa_private_key(rsa_private_key)
+        rsa_public = crypto.unload_rsa_public_key(rsa_public_key)
+
+        ec_private_key, ec_public_key = crypto.generate_ec_key()
+        ec_private = crypto.unload_ec_private_key(ec_private_key)
+        ec_public = crypto.unload_ec_public_key(ec_public_key)
+
+        user_rq = APIRequest_pb2.CreateUserRequest()
+        user_rq.username = email
+        user_rq.authVerifier = utils.create_auth_verifier(
+            user_password, crypto.get_random_bytes(16), iterations)
+        user_rq.encryptionParams = utils.create_encryption_params(
+            user_password, crypto.get_random_bytes(16), iterations, user_data_key)
+        user_rq.rsaPublicKey = rsa_public
+        user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
+        user_rq.eccPublicKey = ec_public
+        user_rq.eccEncryptedPrivateKey = crypto.encrypt_aes_v2(ec_private, user_data_key)
+        user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
+        user_rq.encryptedClientKey = crypto.encrypt_aes_v1(utils.generate_aes_key(), user_data_key)
+        user_rq.clientVersion = rest_api.CLIENT_VERSION
+
+        api.communicate_rest(params, user_rq, 'authentication/request_create_user')
+        logging.info('Please check your email and enter the verification code below')
+        logging.info('Press Enter to resume without code verification step.')
+        while True:
+            verification_code = getpass.getpass(prompt='Verification Code: ', stream=None)
+            if not verification_code:
+                break
+            rq = APIRequest_pb2.ValidateCreateUserVerificationCodeRequest()
+            rq.username = email
+            rq.clientVersion = rest_api.CLIENT_VERSION
+            rq.verificationCode = verification_code
+            try:
+                api.communicate_rest(params, rq, 'authentication/validate_create_user_verification_code')
+                logging.info('Account \"%s\" has been created.', email)
+                break
+            except KeeperApiError as kae:
+                if kae.result_code == 'link_or_code_expired':
+                    logging.warning(kae.message)
+                else:
+                    raise kae

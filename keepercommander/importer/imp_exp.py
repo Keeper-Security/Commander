@@ -42,8 +42,8 @@ from ..proto import record_pb2, folder_pb2
 from ..recordv3 import RecordV3
 from ..rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders, try_resolve_path
+from ..constants import EMAIL_PATTERN
 
-EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 IV_LEN = 12
 GCM_TAG_LEN = 16
 RECORD_MAX_DATA_LEN = 32000
