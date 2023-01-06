@@ -249,9 +249,10 @@ class KeeperJsonExporter(BaseExporter):
         rs = []
         for r in records:
             ro = {
-                'uid': r.uid or '',
                 'title': r.title or ''
             }
+            if r.uid:
+                ro['uid'] = r.uid
             if r.login:
                 ro['login'] = r.login
             if r.password:

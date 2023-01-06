@@ -178,7 +178,7 @@ class LastPassImporter(BaseImporter):
             record = Record()
             is_secure_note = False
             if account.url:
-                record.login_url = account.url.decode('utf-8')
+                record.login_url = account.url.decode('utf-8', 'ignore')
                 if record.login_url == 'http://sn':
                     is_secure_note = True
                     record.login_url = None
@@ -188,15 +188,15 @@ class LastPassImporter(BaseImporter):
             if account.id:
                 record.uid = account.id
             if account.name:
-                record.title = account.name.decode('utf-8')
+                record.title = account.name.decode('utf-8', 'ignore')
             else:
                 missing_titles += 1
                 record.title = f'Missing Title {missing_titles}'
                 logging.warning(f'Missing title in record from LastPass. Assigning title "{record.title}"')
             if account.username:
-                record.login = account.username.decode('utf-8')
+                record.login = account.username.decode('utf-8', 'ignore')
             if account.password:
-                record.password = account.password.decode('utf-8')
+                record.password = account.password.decode('utf-8', 'ignore')
             if account.totp_url:
                 record.fields.append(
                     RecordField(type=FIELD_TYPE_ONE_TIME_CODE, value=account.totp_url)
@@ -206,7 +206,10 @@ class LastPassImporter(BaseImporter):
                     record.attachments = []
                 record.attachments = account.attachments
             if account.notes:
-                notes = account.notes.decode('utf-8')
+                try:
+                    notes = account.notes.decode('utf-8', 'ignore')
+                except UnicodeDecodeError:
+                    notes = ''
                 if notes.startswith('NoteType:'):
                     typed_values = self.parse_typed_notes(notes)
                     if 'NoteType' in typed_values:
