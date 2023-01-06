@@ -840,7 +840,6 @@ class PAMGatewayActionRotateCommand(Command):
 
         ri_rotation_setting_uid = base64_url_encode(ri.configurationUid) # Configuration on the UI is "Rotation Setting"
         ri_controller_uid = base64_url_encode(ri.controllerUid)
-        ri_router_worker_lb_cookie_str = ri.cookie
 
         all_enterprise_controllers_all = list(gateway_helper.get_all_gateways(params))
 
@@ -881,6 +880,8 @@ class PAMGatewayActionRotateCommand(Command):
 
 class PAMGatewayActionServerInfoCommand(Command):
     pam_cmd_discover_command_parser = argparse.ArgumentParser(prog='dr-info-command')
+    pam_cmd_discover_command_parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid',
+                                                 action='store', help='Gateway UID')
     pam_cmd_discover_command_parser.error = raise_parse_exception
     pam_cmd_discover_command_parser.exit = suppress_exit
 
@@ -888,12 +889,13 @@ class PAMGatewayActionServerInfoCommand(Command):
         return self.pam_cmd_discover_command_parser
 
     def execute(self, params, **kwargs):
-
+        destination_gateway_uid_str = kwargs.get('gateway_uid')
         router_response = router_send_action_to_gateway(
             params=params,
             gateway_action=GatewayActionGatewayInfo(is_scheduled=False),
             message_type=ControllerMessageType.Value('CMT_GENERAL'),
-            is_streaming=False
+            is_streaming=False,
+            destination_gateway_uid_str=destination_gateway_uid_str
         )
 
         print_router_response(router_response, response_type='gateway_info')

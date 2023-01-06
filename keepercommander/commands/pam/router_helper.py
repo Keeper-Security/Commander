@@ -3,10 +3,10 @@ import logging
 import os
 
 import requests
-from keeper_secrets_manager_core.utils import bytes_to_base64
+from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
 from requests import ConnectionError
 
-from keepercommander import crypto, utils, rest_api
+from keepercommander import crypto, utils, rest_api, loginv3
 from keepercommander.commands.base import dump_report_data
 from keepercommander.commands.pam import gateway_helper
 from keepercommander.commands.pam.pam_dto import GatewayAction
@@ -16,7 +16,7 @@ from keepercommander.params import KeeperParams
 from keepercommander.proto.pam_pb2 import PAMOnlineControllers, PAMGenericUidRequest, PAMRotationSchedulesResponse, \
     ControllerResponse
 from keepercommander.proto.router_pb2 import RouterRotationInfo, RouterResponse, RouterResponseCode, RRC_OK, \
-    RouterControllerMessage, RRC_BAD_STATE, RRC_TIMEOUT
+    RouterControllerMessage, RRC_BAD_STATE, RRC_TIMEOUT, RRC_CONTROLLER_DOWN
 from keepercommander.utils import base64_url_decode, string_to_bytes
 
 VERIFY_SSL = True
@@ -27,12 +27,10 @@ def get_router_url(params: KeeperParams):
     krouter_env_var_name = "KROUTER_URL"
 
     if os.getenv(krouter_env_var_name):
-        krouter_env_var_val = os.getenv(krouter_env_var_name)
-        logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_env_var_val}'")
-        return krouter_env_var_val    # 'KROUTER_URL = http://localhost:6001' OR 'http://localhost:5001'
-
-    krouter_server_url = 'https://connect.' + params.server  # https://connect.dev.keepersecurity.com
-    logging.debug(f"KRouter url '${krouter_server_url}")
+        krouter_server_url = os.getenv(krouter_env_var_name)
+        logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_server_url}'")
+    else:
+        krouter_server_url = 'https://connect.' + params.server  # https://connect.dev.keepersecurity.com
 
     return krouter_server_url
 
@@ -85,7 +83,7 @@ def router_get_rotation_schedules(params, proto_request):
     return None
 
 
-def _post_request_to_router(params, path, rq_proto=None, method='post'):
+def _post_request_to_router(params, path, rq_proto=None, method='post', raw_without_status_check_response=False):
     krouter_host = get_router_url(params)
 
     transmission_key = utils.generate_aes_key()
@@ -115,7 +113,10 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
 
     content_type = rs.headers.get('Content-Type') or ''
 
-    if rs.status_code == 200:
+    if raw_without_status_check_response:
+        return rs
+
+    if rs.status_code < 400:
         if content_type == 'application/json':
             return rs.json()
 
@@ -142,7 +143,38 @@ def _post_request_to_router(params, path, rq_proto=None, method='post'):
         raise KeeperApiError(rs.status_code, rs.text)
 
 
-def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming):
+def get_controller_cookie(params, destination_controller_uid_str):
+
+    # TODO: Cache the cookies for controller UIDs to improve the performance
+    max_count = 100
+    curr_count = 0
+
+    while True:
+        if curr_count > max_count:
+            logging.error(f"Too many calls without getting good response from the server. max_count={max_count}")
+
+            return None
+
+        resp = _post_request_to_router(params,
+                                       f'bind_to_controller/{destination_controller_uid_str}',
+                                       method='get',
+                                       raw_without_status_check_response=True)
+
+        # print('Cookies:')
+        # for c in resp.cookies:
+        #     print(c.name, c.value)
+
+        if resp.status_code == 200:
+            logging.debug("Found right host")
+            return resp.cookies
+        if resp.status_code == 303:
+            logging.debug("Controller connected to the router, but on the another host. Try another call...")
+        else:
+            logging.warning("Looks like there is no such controller connected to the router.")
+            return None
+
+
+def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming, destination_gateway_uid_str=None):
 
     krouter_host = get_router_url(params)
 
@@ -156,31 +188,39 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     except Exception as e:
         raise e
 
-    if not router_enterprise_controllers_connected or len(router_enterprise_controllers_connected) == 0:
-        print(f"{bcolors.WARNING}\tNo running or connected Gateways in your enterprise. "
-              f"Start the Gateway before sending any action to it.{bcolors.ENDC}")
-        return
-    elif len(router_enterprise_controllers_connected) == 1:
-        found_gateway = router_enterprise_controllers_connected[0]
-    else:  # There are more than two Gateways connected. Selecting the right one
+    if destination_gateway_uid_str:
+        # Means that we want to get info for a specific Gateway
 
-        if not gateway_action.gateway_destination:
-            print(f"{bcolors.WARNING}There are more than one Gateways running in your enterprise. "
-                  f"You need to proved gateway to the action. To find connected gateways run action "
-                  f"'{bcolors.OKBLUE}pam gateway list{bcolors.WARNING}' and provide Gateway UID or Gateway Name.{bcolors.ENDC}")
+        destination_gateway_uid_bytes = url_safe_str_to_bytes(destination_gateway_uid_str)
 
+        if destination_gateway_uid_bytes not in router_enterprise_controllers_connected:
+            print(f"{bcolors.WARNING}\tThis Gateway currently is not online.{bcolors.ENDC}")
             return
+    else:
+        if not router_enterprise_controllers_connected or len(router_enterprise_controllers_connected) == 0:
+            print(f"{bcolors.WARNING}\tNo running or connected Gateways in your enterprise. "
+                  f"Start the Gateway before sending any action to it.{bcolors.ENDC}")
+            return
+        elif len(router_enterprise_controllers_connected) == 1:
+            destination_gateway_uid_bytes = router_enterprise_controllers_connected[0]
+            destination_gateway_uid_str = loginv3.CommonHelperMethods.bytes_to_url_safe_str(destination_gateway_uid_bytes)
+        else:  # There are more than two Gateways connected. Selecting the right one
 
-        found_gateway = gateway_helper.find_connected_gateways(router_enterprise_controllers_connected, gateway_action.gateway_destination)
+            if not gateway_action.gateway_destination:
+                print(f"{bcolors.WARNING}There are more than one Gateways running in your enterprise. "
+                      f"You need to proved gateway to the action. To find connected gateways run action "
+                      f"'{bcolors.OKBLUE}pam gateway list{bcolors.WARNING}' and provide Gateway UID or Gateway Name.{bcolors.ENDC}")
 
-    router_server_cookie = found_gateway.cookie
+                return
+
+            destination_gateway_uid_bytes = gateway_helper.find_connected_gateways(router_enterprise_controllers_connected, gateway_action.gateway_destination)
 
     msg_id = gateway_action.conversationId if gateway_action.conversationId else GatewayAction.generate_conversation_id()
     msg_id_bytes = string_to_bytes(msg_id)
 
     rq = RouterControllerMessage()
     rq.messageUid = msg_id_bytes
-    rq.controllerUid = found_gateway.controllerUid
+    rq.controllerUid = destination_gateway_uid_bytes
     rq.messageType = message_type
     rq.streamResponse = is_streaming
     rq.payload = string_to_bytes(gateway_action.toJSON())
@@ -191,8 +231,8 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     response = router_send_message_to_gateway(
         params=params,
         transmission_key=transmission_key,
-        router_server_cookie=router_server_cookie,
-        rq_proto=rq)
+        rq_proto=rq,
+        destination_gateway_uid_str=destination_gateway_uid_str)
 
     rs_body = response.content
 
@@ -205,7 +245,12 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
             raise Exception(router_response.errorMessage + ' response code: ' + rrc)
 
         if router_response.responseCode == RRC_TIMEOUT:
-            # Router tried to send message to the Controller but the response didn't arrive on time (3 sec).
+            # Router tried to send message to the Controller but the response didn't arrive on time
+            # ex. if Router is expecting response to be within 3 sec, but the gateway didn't respond within that time
+            raise Exception(router_response.errorMessage + ' response code: ' + rrc)
+
+        if router_response.responseCode == RRC_CONTROLLER_DOWN:
+            # Sent an action to the Controller that is no longer online
             raise Exception(router_response.errorMessage + ' response code: ' + rrc)
 
         if router_response.responseCode != RRC_OK:
@@ -231,7 +276,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         }
 
 
-def router_send_message_to_gateway(params, transmission_key, router_server_cookie, rq_proto):
+def router_send_message_to_gateway(params, transmission_key, rq_proto, destination_gateway_uid_str):
 
     krouter_host = get_router_url(params)
 
@@ -244,6 +289,12 @@ def router_send_message_to_gateway(params, transmission_key, router_server_cooki
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
     encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
+    destination_gateway_cookies = get_controller_cookie(params, destination_gateway_uid_str)
+
+    if not destination_gateway_cookies:
+        raise Exception('Even thought it seems that the Gateway is online, but Commander was not able to get the '
+                        'cookies to connect to the Gateway')
+
     rs = requests.post(
         krouter_host+"/send_controller_message",
         verify=VERIFY_SSL,
@@ -252,9 +303,7 @@ def router_send_message_to_gateway(params, transmission_key, router_server_cooki
             'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
             'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
         },
-        cookies={
-            'AWSALB': router_server_cookie
-        },
+        cookies=dict(destination_gateway_cookies),
         data=encrypted_payload if rq_proto else None
     )
 
@@ -365,14 +414,14 @@ def print_router_response(router_response, response_type, original_conversation_
         print(f'\t{bcolors.OKGREEN}Base URL          : {router_details.get("base-url")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Connection Status : {router_details.get("status")}{bcolors.ENDC}')
 
-        print(f'\n{bcolors.OKBLUE}Rotation Setting(s) Available to Gateway{bcolors.ENDC}')
+        print(f'\n{bcolors.OKBLUE}PAM Configurations(s) Available to Gateway{bcolors.ENDC}')
         rotation_settings_list = gateway_info.get('rotation_settings')
 
         if rotation_settings_list:
             for rs in rotation_settings_list:
                 print(f'\t{bcolors.OKGREEN}UID          : {rs.get("configurationUid")}{bcolors.ENDC}')
         else:
-            print(f'\t{bcolors.WARNING}No Rotation Settings{bcolors.ENDC}')
+            print(f'\t{bcolors.WARNING}No PAM Configurations{bcolors.ENDC}')
 
     # else:
     #     print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
