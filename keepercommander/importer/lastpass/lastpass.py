@@ -153,25 +153,27 @@ class LastPassImporter(BaseImporter):
                 logging.warning(f'The following errors occurred retrieving Lastpass shared folder members:\n{err_list}')
 
         for shared_folder in vault.shared_folders:
-            folder = SharedFolder()
-            folder.path = shared_folder.name
-            folder.permissions = []
-            if shared_folder.members:
-                for member in shared_folder.members:
-                    perm = Permission()
-                    perm.name = replace_email_domain(member['username'], old_domain, new_domain)
-                    perm.manage_records = member['readonly'] == '0'
-                    perm.manage_users = member['can_administer'] == '1'
-                    folder.permissions.append(perm)
-            if shared_folder.teams:
-                for team in shared_folder.teams:
-                    perm = Permission()
-                    perm.name = team['name']
-                    perm.manage_records = team['readonly'] == '0'
-                    perm.manage_users = team['can_administer'] == '1'
-                    folder.permissions.append(perm)
+            if shared_folder.name:
+                folder = SharedFolder()
+                folder.path = shared_folder.name
 
-            yield folder
+                folder.permissions = []
+                if shared_folder.members:
+                    for member in shared_folder.members:
+                        perm = Permission()
+                        perm.name = replace_email_domain(member['username'], old_domain, new_domain)
+                        perm.manage_records = member['readonly'] == '0'
+                        perm.manage_users = member['can_administer'] == '1'
+                        folder.permissions.append(perm)
+                if shared_folder.teams:
+                    for team in shared_folder.teams:
+                        perm = Permission()
+                        perm.name = team['name']
+                        perm.manage_records = team['readonly'] == '0'
+                        perm.manage_users = team['can_administer'] == '1'
+                        folder.permissions.append(perm)
+
+                yield folder
 
         missing_titles = 0
         for account in vault.accounts:  # type: Account
