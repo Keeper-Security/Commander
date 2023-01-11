@@ -179,7 +179,6 @@ one_time_share_remove_parser.add_argument('share', nargs='?', type=str, action='
 create_account_parser = argparse.ArgumentParser(prog='create-account', description='Create Keeper Account')
 create_account_parser.add_argument('email', help='email')
 
-
 class ShareFolderCommand(Command):
     def get_parser(self):
         return share_folder_parser
@@ -1437,6 +1436,32 @@ class RecordPermissionCommand(Command):
         shared_folder_skip = {}    # type: Dict[str, Dict[str, folder_pb2.SharedFolderUpdateRecord]]
 
         if share_folder:
+            share_admin_in_folders = set()   # type: Set[str]
+            for folder in flat_subfolders:
+                shared_folder_uid = None
+                if folder.type == BaseFolderNode.SharedFolderType:
+                    shared_folder_uid = folder.uid
+                elif folder.type == BaseFolderNode.SharedFolderFolderType:
+                    shared_folder_uid = folder.shared_folder_uid
+                if shared_folder_uid:
+                    if shared_folder_uid not in share_admin_in_folders and shared_folder_uid in params.shared_folder_cache:
+                        share_admin_in_folders.add(shared_folder_uid)
+            if len(share_admin_in_folders) > 0:
+                rq = record_pb2.AmIShareAdmin()
+                for shared_folder_uid in share_admin_in_folders:
+                    osa = record_pb2.IsObjectShareAdmin()
+                    osa.uid = utils.base64_url_decode(shared_folder_uid)
+                    osa.objectType = record_pb2.CHECK_SA_ON_SF
+                    rq.isObjectShareAdmin.append(osa)
+                share_admin_in_folders.clear()
+                try:
+                    rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
+                    for osa in rs.isObjectShareAdmin:
+                        if osa.isAdmin:
+                            share_admin_in_folders.add(utils.base64_url_encode(osa.uid))
+                except:
+                    pass
+
             for folder in flat_subfolders:
                 if folder.type not in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                     continue
@@ -1447,12 +1472,15 @@ class RecordPermissionCommand(Command):
                 shared_folder_uid = folder.uid
                 if type(folder) == SharedFolderFolderNode:
                     shared_folder_uid = folder.shared_folder_uid
+
                 if shared_folder_uid in params.shared_folder_cache:
+                    is_share_admin = shared_folder_uid in share_admin_in_folders
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     team_uid = None
-                    has_manage_records_permission = False
-                    if 'shared_folder_key' in shared_folder:
-                        has_manage_records_permission = shared_folder.get('manage_records') or False
+                    has_manage_records_permission = is_share_admin
+                    if not has_manage_records_permission:
+                        if 'shared_folder_key' in shared_folder:
+                            has_manage_records_permission = shared_folder.get('manage_records') or False
                     if not has_manage_records_permission:
                         if 'teams' in shared_folder:
                             for sft in shared_folder['teams']:
@@ -1465,18 +1493,22 @@ class RecordPermissionCommand(Command):
                     if 'records' in shared_folder:
                         for rp in shared_folder['records']:
                             record_uid = rp['record_uid']
-                            has_record_share_permissions = False
-                            has_record_edit_permissions = False
-                            if record_uid in params.meta_data_cache:
-                                md = params.meta_data_cache[record_uid]
-                                has_record_share_permissions = md.get('can_share', False)
-                                has_record_edit_permissions = md.get('can_edit', False)
-                            if has_manage_records_permission:
-                                if not has_record_share_permissions or not has_record_edit_permissions:
-                                    if not has_record_edit_permissions:
-                                        has_record_edit_permissions = rp.get('can_edit', False)
-                                    if not has_record_share_permissions:
-                                        has_record_share_permissions = rp.get('can_share', False)
+                            if is_share_admin:
+                                has_record_share_permissions = True
+                                has_record_edit_permissions = True
+                            else:
+                                has_record_share_permissions = False
+                                has_record_edit_permissions = False
+                                if record_uid in params.meta_data_cache:
+                                    md = params.meta_data_cache[record_uid]
+                                    has_record_share_permissions = md.get('can_share', False)
+                                    has_record_edit_permissions = md.get('can_edit', False)
+                                if has_manage_records_permission:
+                                    if not has_record_share_permissions or not has_record_edit_permissions:
+                                        if not has_record_edit_permissions:
+                                            has_record_edit_permissions = rp.get('can_edit', False)
+                                        if not has_record_share_permissions:
+                                            has_record_share_permissions = rp.get('can_share', False)
 
                             if not has_manage_records_permission:
                                 container = shared_folder_skip
