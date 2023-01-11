@@ -756,27 +756,26 @@ def sync_down(params, record_types=False):
 
     if 'full_sync' in response_json or record_types:
         # Record V3 types cache population
-        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-        if v3_enabled:
-            rq = records.RecordTypesRequest()
-            rq.standard = True
-            rq.user = True
-            rq.enterprise = True
-            record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
+        rq = records.RecordTypesRequest()
+        rq.standard = True
+        rq.user = True
+        rq.enterprise = True
+        # rq.pam = True
+        record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
 
-            if len(record_types_rs.recordTypes) > 0:
-                params.record_type_cache = {}
-                conflict_type_id = 1000000
-                for rt in record_types_rs.recordTypes:
-                    type_id = rt.recordTypeId
-                    if rt.scope == records.RT_ENTERPRISE:
-                        type_id += 1000
-                    elif rt.scope == records.RT_USER:
-                        continue
-                    while type_id in params.record_type_cache:
-                        conflict_type_id += 1
-                        type_id = conflict_type_id
-                    params.record_type_cache[type_id] = rt.content
+        if len(record_types_rs.recordTypes) > 0:
+            params.record_type_cache = {}
+            conflict_type_id = 1000000
+            for rt in record_types_rs.recordTypes:
+                type_id = rt.recordTypeId
+                if rt.scope == records.RT_ENTERPRISE:
+                    type_id += 1000
+                elif rt.scope == records.RT_USER:
+                    continue
+                while type_id in params.record_type_cache:
+                    conflict_type_id += 1
+                    type_id = conflict_type_id
+                params.record_type_cache[type_id] = rt.content
 
     if 'full_sync' in response_json:
         if params.breach_watch:
