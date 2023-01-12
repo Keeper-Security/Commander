@@ -38,7 +38,6 @@ from . import aram  # audit_report_parser, audit_log_parser, AuditLogCommand, Au
 from . import compliance
 from .aram import ActionReportCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
-from .breachwatch import BreachWatchResetCommand
 from .enterprise_common import EnterpriseCommand
 from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
@@ -2998,11 +2997,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 return [decrypt_incremental_data(x) for x in inc_dataset]
 
             def is_reset_needed(inc_datas):
-                doms = [(x.get('curr') or {}).get('domain') for x in inc_datas if x and (type(x) is dict)]
-                has_reset_inc_data = any([x for x in doms if x and x.endswith(BreachWatchResetCommand.URL_SUFFIX)])
+                inc_datas = [x for x in inc_datas if x and isinstance(x, dict)]
+                curr_inc_datas = [x.get('curr', dict()) for x in inc_datas]
+                has_reset_inc_data = any([x for x in curr_inc_datas if x and x.get('reset')])
                 return has_reset_inc_data
 
-            def reset_scores(sec_data):
+            def clear_scores(sec_data):
                 new_scores = {k: 0 for k in self.score_data_keys}
                 return {**sec_data, **new_scores}
 
@@ -3025,9 +3025,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
             def update_scores(user_sec_data, inc_dataset):
                 reset = is_reset_needed(inc_dataset)
-                resetsfx = BreachWatchResetCommand.URL_SUFFIX
                 if reset:
-                    user_sec_data = reset_scores(user_sec_data)
+                    user_sec_data = clear_scores(user_sec_data)
 
                 def update(u_sec_data, old_sec_d, diff):
                     if not old_sec_d:
@@ -3036,20 +3035,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     return apply_score_deltas(u_sec_data, deltas)
 
                 for inc_data in inc_dataset:
-                    old_sec_data = inc_data.get('old')
                     curr_sec_data = inc_data.get('curr')
                     existing_data_keys = [k for k, d in inc_data.items() if d]
                     if reset:
-                        if old_sec_data and curr_sec_data:
-                            inc_datas = [v for v in inc_data.values() if v]
-                            reset_record = any([x for x in inc_datas if (x.get('domain') or '').endswith(resetsfx)])
-                            if reset_record and curr_sec_data:
-                                user_sec_data = update(user_sec_data, curr_sec_data, 1)
-                        else:
-                            if existing_data_keys:
-                                # Use existing security data
-                                dkey = next(iter(existing_data_keys))
-                                user_sec_data = update(user_sec_data, inc_data.get(dkey), 0 if dkey == 'old' else 1)
+                        if curr_sec_data:
+                            user_sec_data = update(user_sec_data, curr_sec_data, 1)
                     else:
                         for k in existing_data_keys:
                             user_sec_data = update(user_sec_data, inc_data.get(k), -1 if k == 'old' else 1)
