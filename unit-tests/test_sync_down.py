@@ -3,6 +3,7 @@ from unittest import TestCase, mock
 from data_vault import VaultEnvironment, get_connected_params, get_sync_down_response, get_synced_params
 from helper import KeeperApiHelper
 from keepercommander.api import sync_down
+from keepercommander.proto import record_pb2
 
 vault_env = VaultEnvironment()
 
@@ -12,6 +13,7 @@ class TestSyncDown(TestCase):
     def setUp(self):
         self.communicate_mock = mock.patch('keepercommander.api.communicate').start()
         self.communicate_mock.side_effect = KeeperApiHelper.communicate_command
+        self.communicate_rest = mock.patch('keepercommander.api.communicate_rest').start()
 
     def tearDown(self):
         mock.patch.stopall()
@@ -20,6 +22,7 @@ class TestSyncDown(TestCase):
         params = get_connected_params()
         self.communicate_mock.side_effect = None
         self.communicate_mock.return_value = get_sync_down_response()
+        self.communicate_rest.return_value = record_pb2.RecordTypesResponse()
 
         sync_down(params)
 
