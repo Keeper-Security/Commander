@@ -12,9 +12,8 @@ import base64
 import json
 import logging
 from urllib.parse import urlparse, urlunparse
-from typing import Iterator, Tuple, Optional, List, Callable, Union
+from typing import Iterator, Tuple, Optional, List, Callable
 
-from .commands.breachwatch import BreachWatchResetCommand
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api
 from .proto import breachwatch_pb2 as breachwatch_proto, client_pb2 as client_proto
@@ -91,9 +90,13 @@ class BreachWatch(object):
             rec_sd = {}
             if rec:
                 strength = utils.password_score(rec.password)
+                rec_sd = {'strength': strength, 'bw_result': bw_result}
                 domain = urlparse(record.login_url).hostname
-                domain = domain or '' + BreachWatchResetCommand.URL_SUFFIX if reset else domain
-                rec_sd = {'strength': strength, 'domain': domain, 'bw_result': bw_result}
+                if domain:
+                    # truncate domain string if needed to avoid reaching RSA encryption data size limitation
+                    rec_sd['domain'] = domain[:200]
+                if reset:
+                    rec_sd['reset'] = reset
             sec_data.uid = utils.base64_url_decode(rec_uid)
             sec_data.data = crypto.encrypt_rsa(json.dumps(rec_sd).encode('utf-8'), params.enterprise_rsa_key)
             return sec_data

@@ -131,8 +131,6 @@ class BreachWatchPasswordCommand(Command):
 
 
 class BreachWatchResetCommand(Command):
-    URL_SUFFIX = '/reset_keeper_sec'
-
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return breachwatch_reset_parser
 
