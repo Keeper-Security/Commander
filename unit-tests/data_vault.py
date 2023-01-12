@@ -8,6 +8,7 @@ from unittest import mock
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
 from keepercommander import rest_api, api, params, record, shared_folder, team, crypto, utils
+from keepercommander.proto import record_pb2
 
 _USER_NAME = 'unit.test@company.com'
 _USER_PASSWORD = base64.b64encode(os.urandom(8)).decode('utf-8').strip('=')
@@ -81,8 +82,9 @@ def get_connected_params():
 
 def get_synced_params():
     p = get_connected_params()
-    with mock.patch('keepercommander.api.communicate') as mock_comm:
+    with mock.patch('keepercommander.api.communicate') as mock_comm, mock.patch('keepercommander.api.communicate_rest') as mock_rest:
         mock_comm.return_value = get_sync_down_response()
+        mock_rest.return_value = record_pb2.RecordTypesResponse()
         api.sync_down(p)
 
     p.record_type_cache[1] = {
