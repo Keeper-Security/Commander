@@ -1,7 +1,7 @@
 import xml.sax
 import logging
-from typing import Optional, Dict, Tuple
-from keepercommander.importer.importer import Record, Folder, RecordField
+from typing import Optional, Dict, List
+from keepercommander.importer.importer import Record, Folder, RecordField, SharedFolder
 from keepercommander.importer.json import Exporter
 from keepercommander import record_types, vault
 
@@ -12,8 +12,10 @@ class ThycoticHandler(xml.sax.handler.ContentHandler):
         self.stack = []
         self.templates = {}
         self.secrets = []
+        self.folders = []
         self.template = None   # type: Optional[dict]
         self.secret = None     # type: Optional[dict]
+        self.folder = None     # type: Optional[dict]
 
     def startElement(self, name, attrs):
         if len(self.stack) == 0 and name != 'ImportFile':
@@ -24,38 +26,44 @@ class ThycoticHandler(xml.sax.handler.ContentHandler):
                 if name == 'secrettype':
                     if self.template is not None:
                         logging.info('Secret template has not been saved')
-                    self.template = {
-                        'name': '',
-                        'fields': {},
-                        'field': None,     # type: Optional[dict]
-                    }
+                    self.template = {'name': '', 'fields': {}, 'field': None}
+
             elif self.stack[1] == 'Secrets':
                 if name == 'Secret':
                     if self.secret is not None:
                         logging.info('Secret has not been saved')
-                    self.secret = {
-                        'name': '',
-                        'template': '',
-                        'folder': '',
-                        'items': {},
-                        'item': None,    # type: Optional[dict]
-                    }
+                    self.secret = {'name': '', 'template': '', 'folder': '', 'totp_code': '', 'items': {}, 'item': None}
+
+            elif self.stack[1] == 'Folders':
+                if name == 'Folder':
+                    if self.folder is not None:
+                        logging.info('Folder has not been saved')
+                    self.folder = {'name': '', 'path': '', 'permissions': [], 'permission': None, 'shared': False}
+
         elif len(self.stack) == 4:
             if name == 'field' and self.stack[1] == 'SecretTemplates' and self.stack[2] == 'secrettype' and self.stack[3] == 'fields':
-                if self.template['field']:
-                    logging.warning('Secret template: field has not been saved')
-                self.template['field'] = {
-                    'field_name': '',
-                    'slug': '',
-                }
+                if self.template:
+                    if self.template['field']:
+                        logging.warning('Secret template: field has not been saved')
+                    self.template['field'] = {'field_name': '', 'slug': '', 'slug_type': ''}
+                else:
+                    logging.warning('Secret template: field has not been created')
+
             elif name == 'SecretItem' and self.stack[1] == 'Secrets' and self.stack[2] == 'Secret' and self.stack[3] == 'SecretItems':
-                if self.secret['item']:
-                    logging.warning('Secret: item has not been saved')
-                self.secret['item'] = {
-                    'field_name': '',
-                    'slug': '',
-                    'value': '',
-                }
+                if self.secret:
+                    if self.secret['item']:
+                        logging.warning('Secret: item has not been saved')
+                    self.secret['item'] = {'field_name': '', 'slug': '', 'value': ''}
+                else:
+                    logging.warning('Secret: item has not been created')
+
+            elif name == 'Permission' and self.stack[1] == 'Folders' and self.stack[2] == 'Folder' and self.stack[3] == 'Permissions':
+                if self.folder:
+                    if self.folder['permission']:
+                        logging.warning('Folder: permission has not been saved')
+                    self.folder['permission'] = {'group_name': '', 'user_name': '', 'secret_role': '', 'folder_role': ''}
+                else:
+                    logging.warning('Folder: permission has not been created')
 
         self.stack.append(name)
 
@@ -80,17 +88,26 @@ class ThycoticHandler(xml.sax.handler.ContentHandler):
                         self.secret = None
                     else:
                         logging.info('endElement: Secret has not been created')
+            elif self.stack[1] == 'Folders':
+                if name == 'Folder':
+                    if self.folder is not None:
+                        self.folders.append(self.folder)
+                        self.folder = None
+                    else:
+                        logging.info('endElement: Folder has not been created')
+
         elif len(self.stack) == 4:
             if name == 'field' and self.stack[1] == 'SecretTemplates' and self.stack[2] == 'secrettype' and self.stack[3] == 'fields':
-                if isinstance(self.template['field'], dict):
-                    key = self.template['field'].get('fieldslugname') or self.template['field'].get('name')
+                if self.template and isinstance(self.template['field'], dict):
+                    key = self.template['field'].get('slug') or self.template['field'].get('field_name')
                     if key:
                         self.template['fields'][key] = self.template['field']
                     self.template['field'] = None
                 else:
                     logging.warning('Secret template: field has not been created')
+
             elif name == 'SecretItem' and self.stack[1] == 'Secrets' and self.stack[2] == 'Secret' and self.stack[3] == 'SecretItems':
-                if isinstance(self.secret['item'], dict):
+                if self.secret and isinstance(self.secret['item'], dict):
                     key = self.secret['item'].get('slug') or self.secret['item'].get('field_name')
                     value = self.secret['item'].get('value')
                     if key and value:
@@ -99,14 +116,24 @@ class ThycoticHandler(xml.sax.handler.ContentHandler):
                 else:
                     logging.warning('Secret: item has not been created')
 
+            elif name == 'Permission' and self.stack[1] == 'Folders' and self.stack[2] == 'Folder' and self.stack[3] == 'Permissions':
+                if self.folder and isinstance(self.folder['permission'], dict):
+                    self.folder['permissions'].append(self.folder['permission'])
+                    self.folder['permission'] = None
+                else:
+                    logging.warning('Folder: permission has not been created')
+
     def characters(self, content):
         if len(self.stack) < 4:
             return
+        if len(content) == 0:
+            return
+
         if self.stack[1] == 'SecretTemplates' and self.stack[2] == 'secrettype':
             if self.template is not None:
                 if len(self.stack) == 4 and self.stack[3] == 'name':
-                    self.template['name'] = content
-                if self.stack[3] == 'fields':
+                    self.template['name'] += content
+                elif self.stack[3] == 'fields':
                     if isinstance(self.template['field'], dict):
                         if len(self.stack) == 6 and self.stack[4] == 'field':
                             if self.stack[5] == 'fieldslugname':
@@ -127,27 +154,20 @@ class ThycoticHandler(xml.sax.handler.ContentHandler):
             if self.secret is not None:
                 if len(self.stack) == 4:
                     if self.stack[3] == 'SecretName':
-                        self.secret['name'] = content
+                        self.secret['name'] += content
                     elif self.stack[3] == 'SecretTemplateName':
-                        self.secret['template'] = content
+                        self.secret['template'] += content
                     elif self.stack[3] == 'FolderPath':
-                        content = content.strip('\\')
-                        if content.startswith('Personal Folders\\'):
-                            content = content.replace('Personal Folders\\', '')
-                        self.secret['folder'] = content
+                        self.secret['folder'] += content
                     elif self.stack[3] == 'TotpKey':
-                        if content:
-                            self.secret['items']['totp'] = {
-                                'field_name': 'Totp Key',
-                                'slug': 'totp',
-                                'value': content,
-                            }
+                        self.secret['totp_code'] += content
+
                 elif len(self.stack) == 6 and self.stack[3] == 'SecretItems' and self.stack[4] == 'SecretItem':
                     if isinstance(self.secret['item'], dict):
                         if self.stack[5] == 'FieldName':
                             field_name = self.secret['item'].get('field_name') or ''
-                            field_name += field_name
-                            self.secret['item']['field_name'] = content
+                            field_name += content
+                            self.secret['item']['field_name'] = field_name
                         elif self.stack[5] == 'Slug':
                             slug = self.secret['item'].get('slug') or ''
                             slug += content
@@ -161,45 +181,96 @@ class ThycoticHandler(xml.sax.handler.ContentHandler):
             else:
                 logging.info('characters: Secret has not been created')
 
+        elif self.stack[1] == 'Folders' and self.stack[2] == 'Folder':
+            if self.folder is not None:
+                if len(self.stack) == 4:
+                    if self.stack[3] == 'FolderName':
+                        self.folder['name'] += content
+                    elif self.stack[3] == 'FolderPath':
+                        self.folder['path'] += content
+
+                elif len(self.stack) == 6 and self.stack[3] == 'Permissions' and self.stack[4] == 'Permission':
+                    if isinstance(self.folder['permission'], dict):
+                        if self.stack[5] == 'GroupName':
+                            group_name = self.folder['permission'].get('group_name') or ''
+                            group_name += content
+                            self.folder['permission']['group_name'] = group_name
+                        if self.stack[5] == 'UserName':
+                            user_name = self.folder['permission'].get('user_name') or ''
+                            user_name += content
+                            self.folder['permission']['user_name'] = user_name
+                        elif self.stack[5] == 'SecretAccessRoleName':
+                            secret_role = self.folder['permission'].get('secret_role') or ''
+                            secret_role += content
+                            self.folder['permission']['secret_role'] = secret_role
+                        elif self.stack[5] == 'FolderAccessRoleName':
+                            folder_role = self.folder['permission'].get('folder_role') or ''
+                            folder_role += content
+                            self.folder['permission']['folder_role'] = folder_role
+                    else:
+                        logging.info('characters: Folder permission has not been created')
+            else:
+                logging.info('characters: Folder has not been created')
+
 
 handler = ThycoticHandler()
 xml.sax.parse('secrets-export.xml', handler)
 
 
-def pop_field(items, name):     # type: (Dict[str, str], str) -> Tuple[str, Optional[Dict[str, str]]]
-    item = items.pop(name, None)
-    if isinstance(item, dict):
-        value = item.get('value') or ''
-        return str(value), item
-
-    ln = name.replace('-', ' ').replace('   ', ' - ').lower()
-    for key in list(items.keys()):
-        lkey = key.lower()
-        if lkey == ln:
-            item = items.pop(lkey, None)
-            if isinstance(item, dict):
-                value = item.get('value') or ''
-                return str(value), item
-    return '', None
+PERSONAL_FOLDER = '\\Personal Folders'
 
 
-def pop_field_value(items, name):     # type: (Dict[str, str], str) -> str
-    value, _ = pop_field(items, name)
-    return value
+def trim_personal_folder(folder_path):    # type: (str) -> str
+    if folder_path.startswith(PERSONAL_FOLDER):
+        folder_path = folder_path[len(PERSONAL_FOLDER):]
+    return folder_path.lstrip('\\')
 
 
-def has_field(items, name):     # type: (Dict[str, str], str) -> bool
-    if name in items:
-        return True
+for f in handler.folders:
+    f['path'] = trim_personal_folder(f['path'])
 
-    ln = name.replace('-', ' ').replace('   ', ' - ').lower()
-    for key in list(items.keys()):
-        lkey = key.lower()
-        if lkey == ln:
-            return True
-    return False
+for s in handler.secrets:
+    s['folder'] = trim_personal_folder(s['folder'])
 
-records = []
+idx = next((i for i, x in enumerate(handler.folders) if not x['path']), -1)
+if idx >= 0:
+    handler.folders.pop(idx)
+
+root_folders = {}
+for f in handler.folders:
+    if f['name'] == f['path']:
+        root_folders[f['path']] = f
+    permissions = f.get('permissions')
+    if isinstance(permissions, list):
+        if len(permissions) == 1 and permissions[0].get('folder_role', '') != 'Owner' and \
+                permissions[0].get('secret_role', '') != 'Owner':
+            f['shared'] = True
+
+for f in handler.folders:
+    if f['shared'] is True and f['name'] != f['path']:
+        root, sep, rest = f['path'].partition('\\')
+        if sep:
+            if root in root_folders:
+                root_folders[root]['shared'] = True
+
+
+def pop_field(items, item_name):     # type: (Dict[str, str], str) -> Optional[Dict[str, str]]
+    return items.pop(item_name, None)
+
+
+def pop_field_value(items, item_name):     # type: (Dict[str, str], str) -> str
+    item = pop_field(items, item_name)
+    if item:
+        return item.get('value')
+
+
+shared_folders = []    # type: List[SharedFolder]
+records = []           # type: List[Record]
+
+for f in root_folders.values():
+    sf = SharedFolder()
+    sf.path = f['path']
+    shared_folders.append(sf)
 
 for secret in handler.secrets:
     record = Record()
@@ -219,20 +290,20 @@ for secret in handler.secrets:
         record.type = 'address'
     elif template_name == 'Credit Card':
         record.type = 'bankCard'
-    elif has_field(items, 'card-number'):
+    elif 'card-number' in items:
         record.type = 'bankCard'
-    elif has_field(items, 'account-number') and has_field(items, 'routing-number'):
+    elif 'account-number' in items and 'routing-number' in items:
         record.type = 'bankAccount'
-    elif has_field(items, 'ssn'):
+    elif 'ssn' in items:
         record.type = 'ssnCard'
-    elif has_field(items, 'license-key'):
+    elif 'license-key' in items:
         record.type = 'softwareLicense'
-    elif has_field(items, 'combination'):
+    elif 'combination' in items:
         record.type = 'encryptedNotes'
-    elif has_field(items, 'healthcare-provider-name'):
+    elif 'healthcare-provider-name' in items:
         record.type = 'healthInsurance'
     elif any(True for x in ('host', 'server', 'machine', 'ip-address---host-name') if x in items):
-        if has_field(items, 'database'):
+        if 'database' in items:
             record.type = 'databaseCredentials'
         else:
             record.type = 'serverCredentials'
@@ -276,30 +347,28 @@ for secret in handler.secrets:
             record.fields.append(RecordField(type='text', label='cardholderName', value=name_on_card))
 
     for login_field in ('username', 'client-id'):
-        if has_field(items, login_field):
-            username, field = pop_field(items, login_field)
-            if username:
+        if login_field in items:
+            field = pop_field(items, login_field)
+            username = field.get('value') if field else ''
+            if field and username:
                 if record.login:
-                    field_label = ''
-                    if field:
-                        field_label = field.get('field_name', '')
+                    field_label = field.get('field_name', '')
                     record.fields.append(RecordField(type='login', label=field_label, value=username))
                 else:
                     record.login = username
 
     for password_field in ('password', 'client-secret'):
-        if has_field(items, password_field):
-            password, field = pop_field(items, password_field)
-            if password:
+        if password_field in items:
+            field = pop_field(items, password_field)
+            password = field.get('value') if field else ''
+            if field and password:
                 if record.password:
-                    field_label = ''
-                    if field:
-                        field_label = field.get('field_name', '')
-                    record.fields.append(RecordField(type='password', label=field_label, value=password))
+                    field_label = field.get('field_name', '')
+                    record.fields.append(RecordField(type='secret', label=field_label, value=password))
                 else:
                     record.password = password
 
-    if has_field(items, 'address-1'):
+    if 'address-1' in items:
         address = record_types.FieldTypes['address'].value.copy()
         address['street1'] = pop_field_value(items, 'address-1')
         address['street2'] = pop_field_value(items, 'address-2')
@@ -316,7 +385,7 @@ for secret in handler.secrets:
                 address['zip'] = zip_code
         record.fields.append(RecordField(type='address', label='', value=address))
 
-    if has_field(items, 'address1'):
+    if 'address1' in items:
         address = record_types.FieldTypes['address'].value.copy()    # type: dict
         address['street1'] = pop_field_value(items, 'address1')
         a2 = pop_field_value(items, 'address2')
@@ -332,7 +401,7 @@ for secret in handler.secrets:
         if any(True for x in address.values() if x):
             record.fields.append(RecordField(type='address', label='', value=address))
 
-    if has_field(items, 'last-name'):
+    if 'last-name' in items:
         name = record_types.FieldTypes['name'].value.copy()
         name['last'] = pop_field_value(items, 'last-name')
         name['first'] = pop_field_value(items, 'first-name')
@@ -340,7 +409,7 @@ for secret in handler.secrets:
             record.fields.append(RecordField(type='name', label='', value=name))
 
     for full_name_field in ('name'):
-        if has_field(items, full_name_field):
+        if full_name_field in items:
             full_name = pop_field_value(items, full_name_field)
             if full_name:
                 name = vault.TypedField.import_name_field(full_name)
@@ -352,20 +421,18 @@ for secret in handler.secrets:
         if number:
             record.fields.append(RecordField(type='accountNumber', label='identityNumber', value=number))
 
-    if has_field(items, 'combination') and record.type == 'encryptedNotes':
+    if 'combination' in items and record.type == 'encryptedNotes':
         combination = pop_field_value(items, 'combination')
         if combination:
             record.fields.append(RecordField(type='note', label='', value=combination))
 
     for phone_slug in ('contact-number', 'work-phone', 'home-phone', 'mobile-phone', 'fax'):
-        phone_number, field = pop_field(items, phone_slug)
-        if phone_number:
+        field = pop_field(items, phone_slug)
+        phone_number = field.get('value') if field else ''
+        if field and phone_number:
             phone = vault.TypedField.import_phone_field(phone_number)
             if phone:
-                field_label = ''
-                if field:
-                    field_label = field.get('field_name', '')
-
+                field_label = field.get('field_name', '')
                 if phone_slug.startswith('work'):
                     phone['type'] = 'Work'
                 elif phone_slug.startswith('mobile'):
@@ -374,59 +441,67 @@ for secret in handler.secrets:
                     phone['type'] = 'Home'
                 record.fields.append(RecordField(type='phone', label=field_label, value=phone))
 
-    for url_slug in ('website', 'blog', 'resource', 'url', 'tenant'):
-        url, field = pop_field(items, url_slug)
-        if url:
+    for url_slug in ('website', 'url'):
+        field = pop_field(items, url_slug)
+        url = field.get('value') if field else ''
+        if field and url:
             if record.login_url:
-                field_label = ''
-                if field:
-                    field_label = field.get('field_name', '')
+                field_label = field.get('field_name', '')
                 record.fields.append(RecordField(type='url', label=field_label, value=url))
             else:
                 record.login_url = url
-
+    host_no = 0
     for host_slug in ('server', 'host', 'machine', 'ip-address---host-name'):
-        host_address = pop_field_value(items, host_slug)
+        field = pop_field(items, host_slug)
+        host_address = field.get('value') if field else ''
         port = pop_field_value(items, host_slug)
         if host_address:
             host = vault.TypedField.import_host_field(host_address)
             if port:
                 host['port'] = port
-            record.fields.append(RecordField(type='host', label='', value=host))
+            host_no += 1
+            if host_no == 1:
+                record.fields.append(RecordField(type='host', label='', value=host))
+            else:
+                field_label = field.get('field_name', '')
+                record.fields.append(RecordField(type='host', label=field_label, value=host))
 
     for num_slug in ('policy-number', 'group-number'):
-        if has_field(items, num_slug):
-            number, field = pop_field(items, num_slug)
+        if num_slug in items:
+            field = pop_field(items, num_slug)
+            number = field.get('value') if field else ''
             if number:
-                field_label = ''
-                if field:
-                    field_label = field.get('field_name', '')
+                field_label = field.get('field_name', '')
                 record.fields.append(RecordField(type='accountNumber', label=field_label, value=number))
 
     for email_slug in ('email'):
-        if has_field(items, email_slug):
-            email = pop_field_value(items, email_slug)
-            if email:
-                record.fields.append(RecordField(type='email', label='', value=email))
+        if email_slug in items:
+            field = pop_field(items, email_slug)
+            email = field.get('value') if field else ''
+            if field and email:
+                field_label = field.get('field_name', '')
+                record.fields.append(RecordField(type='email', label=field_label, value=email))
 
-    if has_field(items, 'totp'):
-        totp_code = pop_field_value(items, 'totp')
-        if totp_code:
-            field_value = f'otpauth://totp/?secret={totp_code}'
-            record.fields.append(RecordField(type='oneTimeCode', label='', value=field_value))
+    totp_code = secret.get('totp_code')
+    if totp_code:
+        field_value = f'otpauth://totp/?secret={totp_code}'
+        record.fields.append(RecordField(type='oneTimeCode', label='', value=field_value))
 
     for slug in list(items.keys()):
-        field_value, field = pop_field(items, slug)
+        field = pop_field(items, slug)
+        if not field:
+            continue
+        field_value = field.get('value') if field else ''
         if not field_value:
             continue
 
-        field_label = ''
-        if field:
-            field_label = field.get('field_name', '')
+        field_label = field.get('field_name', '')
         slug_type = ''
         if template_name in handler.templates:
             template = handler.templates[template_name]
-            slug_type = template['fields'].get(slug) or ''
+            st = template['fields'].get(slug) or ''
+            if isinstance(st, dict):
+                slug_type = st.get('slug_type', '')
 
         is_password = slug_type == 'ispassword'
         is_url = slug_type == 'isurl'
@@ -450,5 +525,8 @@ for secret in handler.secrets:
     records.append(record)
 
 exporter = Exporter()
-exporter.execute('keeper-import.json', records)
+data = []
+data.extend(shared_folders)
+data.extend(records)
+exporter.execute('keeper-import.json', data)
 logging.info('Exported %d records', len(records))
