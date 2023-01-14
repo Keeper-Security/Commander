@@ -12,6 +12,6 @@ pykeepass
 pyperclip
 pysocks
 pytest
-requests
+requests==2.28.1
 tabulate
 keeper-secrets-manager-core>=16.2.0
