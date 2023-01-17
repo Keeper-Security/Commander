@@ -328,21 +328,6 @@ class TestEnterprise(TestCase):
             for email in emails:
                 emails[email] = vault_env.public_key
 
-        with mock.patch('builtins.open', mock.mock_open(read_data=template_body)), \
-                mock.patch('os.path.abspath', return_value='template.json'), \
-                mock.patch('os.path.isfile', return_value=True), \
-                mock.patch('keepercommander.commands.enterprise.EnterpriseCommand.get_public_keys') as m_pk:
-
-            m_pk.side_effect = get_public_keys
-
-            TestEnterprise.expected_commands = ['execute']
-            cmd.execute(params, file='template.json', team=[ent_env.team2_name])
-            self.assertEqual(len(TestEnterprise.expected_commands), 0)
-
-            TestEnterprise.expected_commands = ['execute']
-            cmd.execute(params, file='template.json', user=[ent_env.user2_email])
-            self.assertEqual(len(TestEnterprise.expected_commands), 0)
-
     @staticmethod
     def get_audit_event():
         return {

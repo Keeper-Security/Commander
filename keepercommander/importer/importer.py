@@ -283,7 +283,7 @@ class BaseImporter(abc.ABC):
     def extension(self):
         return ''
 
-    def source_folder_filter(self):
+    def support_folder_filter(self):
         return False
 
     @staticmethod

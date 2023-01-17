@@ -172,7 +172,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
     def __init__(self):
         super().__init__()
 
-    def source_folder_filter(self):
+    def support_folder_filter(self):
         return True
 
     @staticmethod
@@ -263,15 +263,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         # users = ThycoticImporter.get_user_lookup(auth)
         folders = ThycoticImporter.get_folders(auth)
-        source_folder = kwargs.get('source_folder')
-        if source_folder:
-            if source_folder == 'Personal Folders':
+        filter_folder = kwargs.get('filter_folder')
+        if filter_folder:
+            if filter_folder == 'Personal Folders':
                 folder_ids = [1]
             else:
                 folder_ids = [x['id'] for x in folders.values()
-                              if x['folderName'] == x['folderPath'] and x['folderName'].lower() == source_folder.lower()]
+                              if x['folderName'] == x['folderPath'] and x['folderName'].lower() == filter_folder.lower()]
             if len(folder_ids) == 0:
-                logging.warning('Folder \"%s\" not found', source_folder)
+                logging.warning('Folder \"%s\" not found', filter_folder)
             pos = 0
             while pos < len(folder_ids):
                 folder_id = folder_ids[pos]
@@ -287,8 +287,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             shared_folder.path = folder['folderPath']
             yield shared_folder
 
-        if source_folder:
-            if source_folder == 'Personal Folders':
+        if filter_folder:
+            if filter_folder == 'Personal Folders':
                 root_folder_ids = [1]
             else:
                 root_folder_ids = [x['id'] for x in folders.values() if x['folderName'] == x['folderPath']]

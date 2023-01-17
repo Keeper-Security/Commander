@@ -49,8 +49,11 @@ class TestCrossEnterpriseCommands(TestCase):
         self.assertGreater(len(users), 0, 'cannot resolve user')
         user = users[0]
         ent2_user_id = user['enterprise_user_id']
-        cmd = EnterpriseUserCommand()
-        pk = cmd.get_public_key(param2, user['username'])
+
+        api.load_user_public_keys(param2, [user['username']], send_invites=False)
+        pk = param2.key_cache[user['username']]
+        self.assertIsNotNone(pk)
+        public_key = crypto.load_rsa_public_key(pk.rsa)
 
         #real team
         uids = []
@@ -70,7 +73,7 @@ class TestCrossEnterpriseCommands(TestCase):
             "team_uid": ent1_team_uid,
             "enterprise_user_id": ent2_user_id,
             "user_type": 0,
-            "team_key": crypto.encrypt_rsa(team_key, pk)
+            "team_key": crypto.encrypt_rsa(team_key, public_key)
         }
         failed = False
         try:

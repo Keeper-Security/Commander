@@ -11,21 +11,18 @@
 
 import argparse
 import base64
-import copy
 import datetime
 import ipaddress
-from typing import Optional
-
 import itertools
 import json
 import logging
 import os
-import re
 import string
 import time
 from argparse import RawTextHelpFormatter
 from collections import OrderedDict as OD
-from typing import Set, Dict, Any, Union, List
+from typing import Optional
+from typing import Set, Dict, Union, List
 
 from asciitree import LeftAligned
 from cryptography.hazmat.backends import default_backend
@@ -41,10 +38,10 @@ from .base import user_choice, suppress_exit, raise_parse_exception, dump_report
 from .enterprise_common import EnterpriseCommand
 from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
+from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .. import api, rest_api, crypto, utils, constants
 from ..display import bcolors
 from ..error import CommandError
-from ..generator import generate
 from ..params import KeeperParams
 from ..proto import record_pb2 as record_proto
 from ..proto.APIRequest_pb2 import (UserDataKeyRequest, UserDataKeyResponse, SecurityReportRequest,
@@ -262,14 +259,6 @@ scim_parser.add_argument('--unique-groups', dest='unique_groups', action='store_
                          help='Unique Groups. Command: create, edit')
 scim_parser.error = raise_parse_exception
 scim_parser.exit = suppress_exit
-
-enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
-enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')
-enterprise_push_parser.add_argument('--team', dest='team', action='append', help='Team name or team UID. Records will be assigned to all users in the team.')
-enterprise_push_parser.add_argument('--email', dest='user', action='append', help='User email or User ID. Records will be assigned to the user.')
-enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store', help='File name in JSON format that contains template records.')
-enterprise_push_parser.error = raise_parse_exception
-enterprise_push_parser.exit = suppress_exit
 
 
 security_audit_report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
@@ -3077,238 +3066,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             return 'At Risk'
 
         return field.capitalize()
-
-
-enterprise_push_description = '''
-Template record file example:
-
-[
-    {
-        "title": "Record For ${user_name}",
-        "login": "${user_email}",
-        "password": "${generate_password}",
-        "login_url": "",
-        "notes": "",
-        "custom_fields": {
-            "key1": "value1",
-            "key2": "value2"
-        }
-    }
-]
-
-
-Supported template parameters:
-
-    ${user_email}            User email address
-    ${generate_password}     Generate random password
-    ${user_name}             User name
-
-'''
-parameter_pattern = re.compile(r'\${(\w+)}')
-
-
-class EnterprisePushCommand(EnterpriseCommand):
-
-    @staticmethod
-    def substitute_field_params(field, values):
-        # type: (str, dict) -> str
-        global parameter_pattern
-        value = field
-        while True:
-            m = parameter_pattern.search(value)
-            if not m:
-                break
-            p = m.group(1)
-            pv = values.get(p) or p
-            value = value[:m.start()] + pv + value[m.end():]
-        return value
-
-    @staticmethod
-    def enumerate_and_substitute_list_values(container, values):
-        # type: (list, dict) -> list
-        result = []
-        for p in container:
-            if type(p) == str:
-                value = EnterprisePushCommand.substitute_field_params(p, values)
-                result.append(value)
-            elif type(p) == dict:
-                EnterprisePushCommand.enumerate_and_substitute_dict_fields(p, values)
-                result.append(p)
-            elif type(p) == list:
-                result.append(EnterprisePushCommand.enumerate_and_substitute_list_values(p, values))
-            else:
-                result.append(p)
-        return result
-
-    @staticmethod
-    def enumerate_and_substitute_dict_fields(container, values):
-        # type: (dict, dict) -> None
-        for p in container.items():
-            if type(p[1]) == str:
-                value = EnterprisePushCommand.substitute_field_params(p[1], values)
-                if p[1] != value:
-                    container[p[0]] = value
-            elif type(p[1]) == dict:
-                EnterprisePushCommand.enumerate_and_substitute_dict_fields(p[1], values)
-            elif type(p[1]) == list:
-                container[p[0]] = EnterprisePushCommand.enumerate_and_substitute_list_values(p[1], values)
-
-    @staticmethod
-    def substitute_record_params(params, email, record_data):
-        # type: (KeeperParams, str, dict) -> None
-
-        values = {
-            'user_email': email,
-            'generate_password': generate(length=32)
-        }
-        for u in params.enterprise['users']:
-            if u['username'].lower() == email.lower():
-                values['user_name'] = u['data'].get('displayname') or ''
-                break
-
-        EnterprisePushCommand.enumerate_and_substitute_dict_fields(record_data, values)
-
-    def get_parser(self):
-        return enterprise_push_parser
-
-    def execute(self, params, **kwargs):
-        if kwargs.get('syntax_help'):
-            logging.info(enterprise_push_description)
-            return
-
-        name = kwargs.get('file') or ''
-        if not name:
-            raise CommandError('enterprise-push', 'The template file name arguments are required')
-
-        file_name = os.path.abspath(os.path.expanduser(name))
-        if os.path.isfile(file_name):
-            with open(file_name, 'r') as f:
-                template_records = json.load(f)
-        else:
-            raise CommandError('enterprise-push', 'File {0} does not exists'.format(name))
-
-        emails = EnterprisePushCommand.collect_emails(params, kwargs)   # type: Dict[str, Any]
-
-        if len(emails) == 0:
-            raise CommandError('enterprise-push', 'No users')
-
-        self.get_public_keys(params, emails)
-        commands = []
-        record_keys = {}
-        for email in emails:
-            if emails[email]:
-                record_keys[email] = {}
-                if template_records:
-                    for r in template_records:
-                        record = copy.deepcopy(r)
-                        EnterprisePushCommand.substitute_record_params(params, email, record)
-                        record_uid = api.generate_record_uid()
-                        record_key = api.generate_aes_key()
-                        record_add_command = {
-                            'command': 'record_add',
-                            'record_uid': record_uid,
-                            'record_type': 'password',
-                            'record_key': api.encrypt_aes(record_key, params.data_key),
-                            'folder_type': 'user_folder',
-                            'how_long_ago': 0
-                        }
-
-                        data = {
-                            'title': record.get('title') or '',
-                            'secret1': record.get('login') or '',
-                            'secret2': record.get('password') or '',
-                            'link': record.get('login_url') or '',
-                            'notes': record.get('notes') or ''
-                        }
-                        if 'custom_fields' in record:
-                            data['custom'] = [{
-                                'name': x[0],
-                                'value': x[1]
-                            } for x in record['custom_fields'].items()]
-                        record_add_command['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
-                        commands.append(record_add_command)
-
-                        encrypted_record_key = crypto.encrypt_rsa(record_key, emails[email])
-                        record_keys[email][record_uid] = utils.base64_url_encode(encrypted_record_key)
-            else:
-                logging.warning('User %s is not created yet', email)
-
-        for email in record_keys:
-            for record_uid, record_key in record_keys[email].items():
-
-                commands.append({
-                    'command': 'record_share_update',
-                    'pt': 'Commander',
-                    'add_shares': [{
-                                        'to_username': email,
-                                        'record_uid': record_uid,
-                                        'record_key': record_key,
-                                        'transfer': True
-                                    }]
-                })
-
-        rss = api.execute_batch(params, commands)
-        if rss:
-            for rs in rss:
-                if 'result' in rs:
-                    if rs['result'] != 'success':
-                        logging.error('Push error (%s): %s', rs.get('result_code'), rs.get('message'))
-        params.sync_data = True
-
-    @staticmethod
-    def collect_emails(params, kwargs):
-        # Collect emails from individual users and from teams
-        emails = {}
-
-        users = kwargs.get('user')
-        if type(users) is list:
-            for user in users:
-                user_email = None
-                for u in params.enterprise['users']:
-                    if user.lower() in [u['username'].lower(), (u['data'].get('displayname') or '').lower(), str(u['enterprise_user_id'])]:
-                        user_email = u['username']
-                        break
-                if user_email:
-                    if user_email.lower() != params.user.lower():
-                        emails[user_email] = None
-                else:
-                    logging.warning('Cannot find user %s', user)
-
-        teams = kwargs.get('team')
-        if type(teams) is list:
-            users_map = {}
-            for u in params.enterprise['users']:
-                users_map[u['enterprise_user_id']] = u['username']
-            users_in_team = {}
-
-            if 'team_users' in params.enterprise:
-                for tu in params.enterprise['team_users']:
-                    team_uid = tu['team_uid']
-                    if not team_uid in users_in_team:
-                        users_in_team[team_uid] = []
-                    if tu['enterprise_user_id'] in users_map:
-                        users_in_team[team_uid].append(users_map[tu['enterprise_user_id']])
-
-            if 'teams' in params.enterprise:
-                for team in teams:
-                    team_uid = None
-                    if team in params.enterprise['teams']:
-                        team_uid = team_uid
-                    else:
-                        for t in params.enterprise['teams']:
-                            if team.lower() == t['name'].lower():
-                                team_uid = t['team_uid']
-                    if team_uid:
-                        if team_uid in users_in_team:
-                            for user_email in users_in_team[team_uid]:
-                                if user_email.lower() != params.user.lower():
-                                    emails[user_email] = None
-                    else:
-                        logging.warning('Cannot find team %s', team)
-            else:
-                logging.warning('There are no teams to manage. Try to refresh your local data by synching data from the server (use command `enterprise-down`).')
-
-        return emails
 
 
 class UserReportCommand(EnterpriseCommand):

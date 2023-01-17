@@ -547,7 +547,7 @@ def _import(params, file_format, filename, **kwargs):
     new_domain = kwargs.get('new_domain')
     tmpdir = kwargs.get('tmpdir')
     record_type = kwargs.get('record_type')
-    source_folder = kwargs.get('source_folder')
+    filter_folder = kwargs.get('filter_folder')
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -562,12 +562,12 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
-    source_folder_lower = source_folder.lower() if isinstance(source_folder, str) else ''
+    filter_folder_lower = filter_folder.lower() if isinstance(filter_folder, str) else ''
 
-    for x in importer.execute(filename, params=params, users_only=import_users, source_folder=source_folder,
+    for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir):
         if isinstance(x, ImportRecord):
-            if source_folder and not importer.source_folder_filter():
+            if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
                     continue
                 folder_match = None
@@ -575,12 +575,12 @@ def _import(params, file_format, filename, **kwargs):
                 for f in x.folders:
                     if f.domain:
                         name = f.domain.lower()
-                        if name == source_folder_lower or name.startswith(f'{source_folder_lower}\\'):
+                        if name == filter_folder_lower or name.startswith(f'{filter_folder_lower}\\'):
                             folder_match = f
                             break
                     elif f.path:
                         name = f.path.lower().lstrip('\\')
-                        if name == source_folder_lower or name.startswith(f'{source_folder_lower}\\'):
+                        if name == filter_folder_lower or name.startswith(f'{filter_folder_lower}\\'):
                             folder_match = f
                             break
                 if folder_match:
@@ -620,10 +620,10 @@ def _import(params, file_format, filename, **kwargs):
         elif isinstance(x, ImportSharedFolder):
             if shared:
                 continue
-            if source_folder and not importer.source_folder_filter():
+            if filter_folder and not importer.support_folder_filter():
                 name = x.path.lower().lstrip('\\')
-                if name != source_folder_lower:
-                    if not name.startswith(f'{source_folder_lower}\\'):
+                if name != filter_folder_lower:
+                    if not name.startswith(f'{filter_folder_lower}\\'):
                         continue
             x.validate()
             if import_into:
