@@ -228,7 +228,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             raise Exception('Import canceled')
 
         auth = ThycoticAuth(host)
-        auth.proxy = params.rest_context.proxies
+        auth.proxy = params.rest_context.proxies if params else None
         auth.authenticate(username, password, ThycoticImporter.request_totp)
 
         totp_codes = {}
@@ -260,48 +260,36 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         users = ThycoticImporter.get_user_lookup(auth)
         folders = ThycoticImporter.get_folders(auth)
+        source_folder = kwargs.get('source_folder')
+        if source_folder:
+            folder_ids = [x['id'] for x in folders.values()
+                          if x['folderName'] == x['folderPath'] and x['folderName'].lower() == source_folder.lower()]
+            if len(folder_ids) == 0:
+                logging.warning('Folder \"%s\" not found', source_folder)
+            pos = 0
+            while pos < len(folder_ids):
+                folder_id = folder_ids[pos]
+                pos += 1
+                folder_ids.extend((x['id'] for x in folders.values() if x['parentFolderId'] == folder_id))
+            folder_ids = set(folder_ids)
+            folders = {i: x for i, x in folders.items() if i in folder_ids}
 
-        for folder in folders.values():
-            if folder.get('inheritPermissions', True):
+        for folder in (x for x in folders.values() if x['folderName'] == x['folderPath']):
+            if folder.get('parentFolderId') == 1:
                 continue
-            if 'permissions' not in folder:
-                continue
-            permissions = folder['permissions']
-            if not isinstance(permissions, list):
-                continue
-            if len(permissions) == 0:
-                continue
-
             shared_folder = SharedFolder()
             shared_folder.path = folder['folderPath']
-            shared_folder.permissions = []
-            for p in folder.get('permissions', []):
-                folder_permission = p.get('folderAccessRoleName')
-                manage_users = folder_permission in ('Owner', 'Edit')
-                secret_permission = p.get('secretAccessRoleName')
-                manage_records = secret_permission in ('Owner', 'Edit') or folder_permission == 'Add Secret'
-
-                user_id = p.get('userId', -1)
-                if user_id in users:
-                    user = users[user_id]
-                    email = user.get('emailAddress')
-                    if email:
-                        perm = Permission()
-                        perm.name = email
-                        perm.manage_users = manage_users
-                        perm.manage_records = manage_records
-                        shared_folder.permissions.append(perm)
-                else:
-                    team_name = p.get('groupName') or ''
-                    if team_name:
-                        perm = Permission()
-                        perm.name = team_name
-                        perm.manage_users = manage_users
-                        perm.manage_records = manage_records
-                        shared_folder.permissions.append(perm)
             yield shared_folder
 
-        secrets_ids = [x['id'] for x in auth.thycotic_search(f'/v1/secrets/lookup')]
+        if source_folder:
+            root_folder_ids = [x['id'] for x in folders.values() if x['folderName'] == x['folderPath']]
+            secrets_ids = []
+            for folder_id in root_folder_ids:
+                query = f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true'
+                secrets_ids.extend([x['id'] for x in auth.thycotic_search(query)])
+        else:
+            secrets_ids = [x['id'] for x in auth.thycotic_search(f'/v1/secrets/lookup')]
+
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
         for secret_id in secrets_ids:

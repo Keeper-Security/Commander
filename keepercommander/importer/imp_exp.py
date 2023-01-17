@@ -547,6 +547,7 @@ def _import(params, file_format, filename, **kwargs):
     new_domain = kwargs.get('new_domain')
     tmpdir = kwargs.get('tmpdir')
     record_type = kwargs.get('record_type')
+    source_folder = kwargs.get('source_folder')
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -561,9 +562,27 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
-    for x in importer.execute(filename, params=params, users_only=import_users,
+    for x in importer.execute(filename, params=params, users_only=import_users, source_folder=source_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir):
         if isinstance(x, ImportRecord):
+            if source_folder:
+                if not x.folders:
+                    continue
+                matches = False
+                for f in x.folders:
+                    if f.domain:
+                        name = f.domain.lower().lstrip('\\')
+                        if name.startswith(f'{source_folder.lower()}\\'):
+                            matches = True
+                            break
+                    elif f.path:
+                        name = f.path.lower().lstrip('\\')
+                        if name.startswith(f'{source_folder.lower()}\\'):
+                            matches = True
+                            break
+                if not matches:
+                    continue
+
             if shared or import_into:
                 if not x.folders:
                     x.folders = [ImportFolder()]
@@ -596,6 +615,11 @@ def _import(params, file_format, filename, **kwargs):
         elif isinstance(x, ImportSharedFolder):
             if shared:
                 continue
+            if source_folder:
+                name = x.path.lower().lstrip('\\')
+                if name != source_folder.lower():
+                    if not name.startswith(f'{source_folder.lower()}\\'):
+                        continue
             x.validate()
             if import_into:
                 if x.path:
