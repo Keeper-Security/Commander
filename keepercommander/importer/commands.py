@@ -48,7 +48,7 @@ import_parser.add_argument(
 )
 import_parser.add_argument('--folder', dest='folder', action='store',
                            help='import into a separate folder.')
-import_parser.add_argument('--source-folder', dest='source_folder', action='store',
+import_parser.add_argument('--filter-folder', dest='filter_folder', action='store',
                            help='Import data from the specific folder only.')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
                            help='import folders as Keeper shared folders')
@@ -213,7 +213,7 @@ class RecordImportCommand(ImporterCommand):
                             manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
                             can_edit=can_edit, can_share=can_share, update_flag=update_flag, tmpdir=kwargs.get('tmpdir'),
                             old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'),
-                            record_type=record_type, source_folder=kwargs.get('source_folder'))
+                            record_type=record_type, filter_folder=kwargs.get('filter_folder'))
         else:
             logging.error('Missing argument')
 
