@@ -249,7 +249,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
     #           group_by: int              - Sort and Group by columnNo
     #           sort_by: int               - Sort by columnNo
     #           sort_desc: bool            - Descending Sort
-    #           align_right: Sequence[int] - Force right align
+    #           right_align: Sequence[int] - Force right align
 
     sort_by = kwargs.get('sort_by')
     group_by = kwargs.get('group_by')
