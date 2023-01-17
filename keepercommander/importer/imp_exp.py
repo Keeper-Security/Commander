@@ -562,25 +562,30 @@ def _import(params, file_format, filename, **kwargs):
     records = []        # type: List[ImportRecord]
     files = []          # type: List[ImportFile]
 
+    source_folder_lower = source_folder.lower() if isinstance(source_folder, str) else ''
+
     for x in importer.execute(filename, params=params, users_only=import_users, source_folder=source_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir):
         if isinstance(x, ImportRecord):
-            if source_folder:
+            if source_folder and not importer.source_folder_filter():
                 if not x.folders:
                     continue
-                matches = False
+                folder_match = None
+
                 for f in x.folders:
                     if f.domain:
-                        name = f.domain.lower().lstrip('\\')
-                        if name.startswith(f'{source_folder.lower()}\\'):
-                            matches = True
+                        name = f.domain.lower()
+                        if name == source_folder_lower or name.startswith(f'{source_folder_lower}\\'):
+                            folder_match = f
                             break
                     elif f.path:
                         name = f.path.lower().lstrip('\\')
-                        if name.startswith(f'{source_folder.lower()}\\'):
-                            matches = True
+                        if name == source_folder_lower or name.startswith(f'{source_folder_lower}\\'):
+                            folder_match = f
                             break
-                if not matches:
+                if folder_match:
+                    x.folders = [folder_match]
+                else:
                     continue
 
             if shared or import_into:
@@ -615,10 +620,10 @@ def _import(params, file_format, filename, **kwargs):
         elif isinstance(x, ImportSharedFolder):
             if shared:
                 continue
-            if source_folder:
+            if source_folder and not importer.source_folder_filter():
                 name = x.path.lower().lstrip('\\')
-                if name != source_folder.lower():
-                    if not name.startswith(f'{source_folder.lower()}\\'):
+                if name != source_folder_lower:
+                    if not name.startswith(f'{source_folder_lower}\\'):
                         continue
             x.validate()
             if import_into:

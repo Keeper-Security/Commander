@@ -172,6 +172,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
     def __init__(self):
         super().__init__()
 
+    def source_folder_filter(self):
+        return True
+
     @staticmethod
     def pop_field(fields, key):  # type: (Dict[str, Dict[str, str]], str) -> Tuple[str, Optional[Dict[str, str]]]
         field = fields.pop(key, None)
@@ -258,12 +261,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 pass
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
-        users = ThycoticImporter.get_user_lookup(auth)
+        # users = ThycoticImporter.get_user_lookup(auth)
         folders = ThycoticImporter.get_folders(auth)
         source_folder = kwargs.get('source_folder')
         if source_folder:
-            folder_ids = [x['id'] for x in folders.values()
-                          if x['folderName'] == x['folderPath'] and x['folderName'].lower() == source_folder.lower()]
+            if source_folder == 'Personal Folders':
+                folder_ids = [1]
+            else:
+                folder_ids = [x['id'] for x in folders.values()
+                              if x['folderName'] == x['folderPath'] and x['folderName'].lower() == source_folder.lower()]
             if len(folder_ids) == 0:
                 logging.warning('Folder \"%s\" not found', source_folder)
             pos = 0
@@ -282,7 +288,10 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             yield shared_folder
 
         if source_folder:
-            root_folder_ids = [x['id'] for x in folders.values() if x['folderName'] == x['folderPath']]
+            if source_folder == 'Personal Folders':
+                root_folder_ids = [1]
+            else:
+                root_folder_ids = [x['id'] for x in folders.values() if x['folderName'] == x['folderPath']]
             secrets_ids = []
             for folder_id in root_folder_ids:
                 query = f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true'

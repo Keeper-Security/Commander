@@ -11,6 +11,7 @@
 import argparse
 import base64
 import datetime
+import json
 import logging
 import os
 from urllib.parse import urlparse, urlunparse
@@ -25,6 +26,8 @@ scim_list_parser = argparse.ArgumentParser(prog='scim-list', description='Displa
 
 scim_view_parser = argparse.ArgumentParser(prog='scim-view', description='Display a SCIM endpoint details.')
 scim_view_parser.add_argument('target', help='SCIM ID')
+scim_view_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table', help='output format.')
+scim_view_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 
 scim_create_parser = argparse.ArgumentParser(prog='scim-create', description='Create SCIM endpoint.')
 scim_create_parser.add_argument('--node', dest='node', required=True, help='Node Name or ID.')
@@ -153,19 +156,42 @@ class ScimViewCommand(EnterpriseCommand):
 
     def execute(self, params, target=None, **kwargs):
         scim = find_scim(params, target)
-
-        logging.info('{0:>20s}: {1}'.format('SCIM ID', scim['scim_id']))
+        fmt = kwargs.get('format')
         node_id = scim['node_id']
-        logging.info('{0:>20s}: {1}'.format('SCIM URL', get_scim_url(params, node_id)))
-        logging.info('{0:>20s}: {1}'.format('Node ID', node_id))
-        logging.info('{0:>20s}: {1}'.format('Node Name', self.get_node_path(params, node_id)))
-        logging.info('{0:>20s}: {1}'.format('Status', scim['status']))
-        logging.info('{0:>20s}: {1}'.format('Prefix', scim.get('role_prefix') or ''))
-        logging.info('{0:>20s}: {1}'.format('Unique Groups', scim.get('unique_groups', False)))
+        node_name = self.get_node_path(params, node_id)
         last_synced = scim.get('last_synced')
         if isinstance(last_synced, int):
-            dt = datetime.datetime.fromtimestamp(last_synced / 1000)
-            logging.info('{0:>20s}: {1}'.format('Last Synced', dt.strftime('%c')))
+            last_synced = datetime.datetime.fromtimestamp(last_synced / 1000)
+        else:
+            last_synced = None
+
+        if fmt == 'json':
+            j_output = {
+                'scim_id': scim['scim_id'],
+                'scim_url': get_scim_url(params, node_id),
+                'node_id': node_id,
+                'node_name': node_name,
+                'status': scim['status'],
+                'prefix': scim.get('role_prefix') or '',
+                'unique_groups': scim.get('unique_groups', False)
+            }
+            if last_synced:
+                j_output['last_synced'] = last_synced.strftime('%c')
+            output_file = kwargs.get('output')
+            if output_file:
+                with open(output_file, 'w') as f:
+                    json.dump(j_output, f, indent=2)
+                logging.info('File name: %s', os.path.abspath(output_file))
+            else:
+                return json.dumps(j_output, indent=2)
+        else:
+            table = [
+                ['SCIM ID', scim['scim_id']], ['SCIM URL', get_scim_url(params, node_id)], ['Node ID', node_id], ['Node Name', node_name],
+                ['Status', scim['status']], ['Prefix', scim.get('role_prefix') or ''], ['Unique Groups', scim.get('unique_groups', False)]
+            ]
+            if last_synced:
+                table.append(['Last Synced', last_synced.strftime('%c')])
+            dump_report_data(table, ['key', 'value'], no_header=True, right_align=(0,))
 
 
 class ScimEditCommand(EnterpriseCommand):

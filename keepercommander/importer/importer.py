@@ -283,6 +283,9 @@ class BaseImporter(abc.ABC):
     def extension(self):
         return ''
 
+    def source_folder_filter(self):
+        return False
+
     @staticmethod
     def import_field(field_type, field_value):  # type: (str, str) -> any
         if not field_value:
