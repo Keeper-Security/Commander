@@ -88,6 +88,7 @@ class _EnterpriseLoader(object):
             proto.ROLE_ENFORCEMENTS: _EnterpriseRoleEnforcements(self._enterprise),
             proto.MANAGED_COMPANIES: _EnterpriseManagedCompanyEntity(self._enterprise),
             proto.DEVICES_REQUEST_FOR_ADMIN_APPROVAL: _EnterpriseAdminApprovalRequestEntity(self._enterprise),
+            proto.USER_ALIASES: _EnterpriseUserAliasEntity(self._enterprise),
         }
         teams = self._data_types[proto.TEAMS]
         if isinstance(teams, _EnterpriseEntity):
@@ -888,6 +889,25 @@ class _EnterpriseQueuedTeamUserEntity(_EnterpriseDataParser):
 
     def to_keeper_entity(self, proto_entity, keeper_entity):
         pass
+
+
+class _EnterpriseUserAliasEntity(_EnterpriseEntity):
+    def to_keeper_entity(self, proto_entity, keeper_entity):
+        # type: (proto.UserAlias, dict) -> None
+        _set_or_remove(keeper_entity, 'username', proto_entity.username)
+        _set_or_remove(keeper_entity, 'enterprise_user_id', proto_entity.enterpriseUserId)
+
+    def get_keeper_entity_id(self, entity):  # type: (dict) -> any
+        return entity['username']
+
+    def get_proto_entity_id(self, entity):  # type: (proto.UserAlias) -> any
+        return entity.username
+
+    def get_entity_type(self):
+        return proto.UserAlias
+
+    def get_keeper_entity_name(self):  # type: () -> str
+        return 'user_aliases'
 
 
 class _EnterpriseAdminApprovalRequestEntity(_EnterpriseEntity):
