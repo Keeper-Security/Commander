@@ -2026,6 +2026,9 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                                 rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
                                 rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
                                 add_teams.append(rq)
+                            elif team_keys.aes:
+                                rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes))
+                                add_teams.append(rq)
                         continue
 
                     if username:
