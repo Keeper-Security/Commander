@@ -1,4 +1,4 @@
-![Keeper Commander](https://raw.githubusercontent.com/Keeper-Security/Commander/master/keepercommander/images/commander-black.png)
+![Keeper Commander](https://raw.githubusercontent.com/Keeper-Security/Commander/master/images/commander-black.png)
 
 ### About Keeper Commander
 Keeper Commander is a command-line and SDK interface to Keeper® Password Manager. Commander can be used to access and control your Keeper vault, perform administrative functions (such as end-user onboarding and data import/export), launch remote sessions, rotate passwords, eliminate hardcoded passwords and more. Keeper Commander is an open source project with contributions from Keeper's engineering team and partners.
