@@ -319,7 +319,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     if not isinstance(record.attachments, list):
                         record.attachments = []
                     record.attachments.append(attachment)
-                del items[slug]
+                    del items[slug]
 
             template_name = secret.get('secretTemplateName', '')
             if template_name in ('Pin', 'Security Alarm Code'):
