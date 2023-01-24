@@ -179,6 +179,7 @@ one_time_share_remove_parser.add_argument('share', nargs='?', type=str, action='
 create_account_parser = argparse.ArgumentParser(prog='create-account', description='Create Keeper Account')
 create_account_parser.add_argument('email', help='email')
 
+
 class ShareFolderCommand(Command):
     def get_parser(self):
         return share_folder_parser
@@ -331,7 +332,6 @@ class ShareFolderCommand(Command):
                     'can_share': False if action == 'grant' else True,
                     'can_edit': False if action == 'grant' else True,
                 } for x in record_uids]
-            logging.info('Shared folder key is not available.')
 
         rq = folder_pb2.SharedFolderUpdateV3Request()
         rq.sharedFolderUid = utils.base64_url_decode(sh_fol['shared_folder_uid'])
@@ -427,7 +427,8 @@ class ShareFolderCommand(Command):
                                     continue
                             else:
                                 continue
-
+                    else:
+                        logging.info('Shared folder key is not available.')
                     rq.sharedFolderAddTeam.append(to)
 
         ce = kwargs.get('can_edit')
