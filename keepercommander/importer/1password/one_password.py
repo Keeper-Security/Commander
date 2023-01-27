@@ -33,6 +33,9 @@ class OnePasswordImporter(BaseImporter):
     def extension(self):
         return '1pux'
 
+    def support_folder_filter(self):
+        return True
+
     @staticmethod
     def get_field_value(field):  # type: (dict) -> Optional[Tuple[str, Any]]
         if isinstance(field, dict):
@@ -67,21 +70,27 @@ class OnePasswordImporter(BaseImporter):
                 return
             with zip_file.open('export.data', mode='r') as data_file:
                 export_data = json.load(data_file)
+
+            filter_folder = kwargs.get('filter_folder')
             if 'accounts' in export_data:
                 for account in export_data['accounts']:
                     for vault in account.get('vaults', []):
                         vault_name = None
                         is_shared = False
                         if 'attrs' in vault:
+                            name = vault['attrs'].get('name')
+                            if filter_folder and name != filter_folder:
+                                continue
+
                             vault_type = vault['attrs'].get('type', '')
                             if vault_type == 'E':
-                                vault_name = vault['attrs'].get('name')
+                                vault_name = name
                                 is_shared = True
                                 sf = SharedFolder()
                                 sf.path = vault_name
                                 yield sf
                             elif vault_type == 'U':
-                                vault_name = vault['attrs'].get('name')
+                                vault_name = name
 
                         vault_records = {}
                         references = {}   # type: Dict[str, Set[str]]
