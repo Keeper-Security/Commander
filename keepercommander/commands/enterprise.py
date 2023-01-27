@@ -3142,7 +3142,7 @@ class UserReportCommand(EnterpriseCommand):
                     self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
         look_back_days = kwargs.get('days') or 365
-        report_filter = {'audit_event_type': 'login'}
+        report_filter = {'audit_event_type': ['login', 'login_console']}
         if isinstance(look_back_days, int) and look_back_days > 0:
             logging.info(f'Querying latest login for the last {look_back_days} days')
             from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
