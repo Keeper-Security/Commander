@@ -470,6 +470,11 @@ def sync_down(params, record_types=False):
                 # incremental shared folder upgrade
                 existing_sf = params.shared_folder_cache[shared_folder_uid]
 
+                existing_sf['default_can_edit'] = shared_folder['default_can_edit']
+                existing_sf['default_can_share'] = shared_folder['default_can_share']
+                existing_sf['default_manage_records'] = shared_folder['default_manage_records']
+                existing_sf['default_manage_users'] = shared_folder['default_manage_users']
+
                 if ('records_removed' in shared_folder) and ('records' in existing_sf):
                     rrs = set(shared_folder['records_removed'])
                     for record_uid in rrs:

@@ -85,76 +85,35 @@ class ThycoticMixin:
         } for x in folder_rs}   # type: Dict[int, Dict[str, Any]]
         logging.debug('Loaded %d folders', len(folders))
 
-        # no = 0
-        # total = len(folders)
-        # for folder_id in folders:
-        #    if folder_id == 1:
-        #        continue
-        #    folder = folders[folder_id]
-        #    if folder.get('inheritPermissions') is True:
-        #        continue
-        #    folder['permissions'] = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
-        #    if on_progress:
-        #        on_progress(no, total)
-        #    no += 1
-        # logging.debug('Loaded folder permissions')
-
-        # Adjust inherited permissions
-        done = False
-        while not done:
-            done = True
-            to_check = [folder_id for folder_id, folder in folders.items() if folder_id > 1 and folder['inheritPermissions'] is False]
-            to_check.sort()
-            for folder_id in to_check:
-                parent_id = folder_id
-                while True:
-                    if parent_id not in folders:
-                        break
-                    new_parent_id = folders[parent_id].get('parentFolderId', -1)
-                    if new_parent_id not in folders:
-                        break
-                    parent = folders[new_parent_id]
-                    parent_id = new_parent_id
-                    if parent.get('inheritPermissions') is False:
-                        break
-                if parent_id != folder_id:
-                    folder_permissions = folders[folder_id].get('permissions', [])
-                    parent_permissions = folders[parent_id].get('permissions', [])
-                    if len(folder_permissions) == len(parent_permissions) and len(folder_permissions) > 0:
-                        set1 = set((f'{x.get("groupName") or ""}|{x.get("userName") or ""}|'
-                                    f'{x.get("folderAccessRoleName") or ""}|{x.get("secretAccessRoleName") or ""}'
-                                    for x in folder_permissions))
-                        set2 = set((f'{x.get("groupName") or ""}|{x.get("userName") or ""}|'
-                                    f'{x.get("folderAccessRoleName") or ""}|{x.get("secretAccessRoleName") or ""}'
-                                    for x in parent_permissions))
-                        if set1 == set2:
-                            del folders[folder_id]['permissions']
-                            folders[folder_id]['inheritPermissions'] = True
-                            done = False
-        logging.debug('Resolved inherited permissions')
-
-        # move records with permissions to root
-        for folder in folders.values():
-            if 'permissions' in folder:
-                folder['parentFolderId'] = -1
-
-        # delete self from permissions
-        for folder in folders.values():   # type: dict
-            if 'permissions' not in folder:
+        # load permissions for shared folders
+        test_folders = [x['id'] for x in folders.values() if (x.get('parentFolderId') or 0) <= 1 and x['id'] != 1]
+        pos = 0
+        while pos < len(test_folders):
+            folder_id = test_folders[pos]
+            pos += 1
+            folder = folders.get(folder_id)
+            if not folders:
                 continue
-            permissions = folder['permissions']
-            if len(permissions) == 1:
-                permission = permissions[0]
-                user_id = permission.get('userId', 0)
-                if user_id > 0:
-                    folder['permissions'] = []
+            inherited = folder.get('inheritPermissions', False)
+            if not inherited:
+                permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+                if isinstance(permissions, list):
+                    if len(permissions) == 1:
+                        permission = permissions[0]
+                        user_id = permission.get('userId') or 0
+                        if user_id > 0:
+                            permissions = []
+                    if len(permissions) > 0:
+                        folder['permissions'] = permissions
+                        continue
+                test_folders.extend((x['id'] for x in folders.values() if (x.get('parentFolderId') or 0) == folder_id))
 
         # build folder path
         for folder in folders.values():
             folder_path = folder['folderName']
             parent = folder
             while parent:
-                parent_id = parent.get('parentFolderId', -1)
+                parent_id = parent.get('parentFolderId') or -1
                 if parent_id > 1 and parent_id in folders:
                     parent = folders[parent_id]
                     folder_path = parent['folderName'] + '\\' + folder_path
@@ -360,7 +319,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     if not isinstance(record.attachments, list):
                         record.attachments = []
                     record.attachments.append(attachment)
-                del items[slug]
+                    del items[slug]
 
             template_name = secret.get('secretTemplateName', '')
             if template_name in ('Pin', 'Security Alarm Code'):

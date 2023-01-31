@@ -151,6 +151,7 @@ enterprise_user_parser.add_argument('--add', dest='add', action='store_true', he
 enterprise_user_parser.add_argument('--invite', dest='invite', action='store_true', help='invite user')
 enterprise_user_parser.add_argument('--delete', dest='delete', action='store_true', help='delete user')
 enterprise_user_parser.add_argument('--name', dest='displayname', action='store', help='set user display name')
+enterprise_user_parser.add_argument('--job-title', dest='jobtitle', action='store', help='set user job title')
 enterprise_user_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 enterprise_user_parser.add_argument('--add-role', dest='add_role', action='append', help='role name or role ID')
 enterprise_user_parser.add_argument('--remove-role', dest='remove_role', action='append', help='role name or role ID')
@@ -158,8 +159,6 @@ enterprise_user_parser.add_argument('--add-team', dest='add_team', action='appen
 enterprise_user_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-team only')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
-enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL", help='new email alias for a user')
-enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL", help='delete email alias')
 enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
@@ -1245,6 +1244,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
             node_id = nodes[0]['node_id']
 
         user_name = kwargs.get('displayname')
+        jobtitle = kwargs.get('jobtitle')
 
         request_batch = []
         disable_2fa_users = []
@@ -1263,6 +1263,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 dt = {}
                 if user_name:
                     dt['displayname'] = user_name
+
                 encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
                 rq = {
                     'command': 'enterprise_user_add',
@@ -1271,6 +1272,11 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     'encrypted_data': encrypted_data,
                     'enterprise_user_username': email
                 }
+                if jobtitle:
+                    rq['job_title'] = jobtitle
+                if user_name:
+                    dt['full_name'] = user_name
+
                 request_batch.append(rq)
             for user in matched_users:
                 if user.get('status') == 'invited':
@@ -1305,50 +1311,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         }
                         request_batch.append(rq)
             else:
-                if kwargs.get('add_alias'):
-                    new_alias = kwargs['add_alias'].lower()
-                    if len(matched_users) == 1:
-                        user = matched_users[0]
-                        enterprise_user_id = user['enterprise_user_id']
-                        aliases = {x['username'].lower() for x in params.enterprise.get('user_aliases', []) if x['enterprise_user_id'] == enterprise_user_id}
-                        existing_alias = new_alias in aliases
-                        if existing_alias:
-                            endpoint = 'enterprise/enterprise_user_set_primary_alias'
-                            rq = APIRequest_pb2.EnterpriseUserAliasRequest()
-                            rq.enterpriseUserId = enterprise_user_id
-                            rq.alias = new_alias
-                        else:
-                            endpoint = 'enterprise/enterprise_user_add_alias'
-                            rq = APIRequest_pb2.EnterpriseUserAddAliasRequest()
-                            rq.enterpriseUserId = enterprise_user_id
-                            rq.alias = new_alias
-                            rq.primary = True
-                        try:
-                            api.communicate_rest(params, rq, endpoint)
-                            logging.info('Added alias \"%s\" for user \"%s\"', new_alias, user['username'])
-                            api.query_enterprise(params)
-                        except KeeperApiError as kae:
-                            logging.warning('Failed to add alias for user \"%s\": %s', user['username'], kae.message)
-                    else:
-                        logging.warning('Alias can be added to a single user only: Skipping')
-                    return
-                elif kwargs.get('delete_alias'):
-                    alias = kwargs['delete_alias']
-                    if len(matched_users) == 1:
-                        user = matched_users[0]
-                        rq = APIRequest_pb2.EnterpriseUserAddAliasRequest()
-                        rq.enterpriseUserId = user['enterprise_user_id']
-                        rq.alias = alias
-                        try:
-                            api.communicate_rest(params, rq, 'enterprise/enterprise_user_delete_alias')
-                            logging.info('Alias \"%s\" deleted from user \"%s\"', alias, user['username'])
-                            api.query_enterprise(params)
-                        except KeeperApiError as kae:
-                            logging.warning('Failed to delete alias \"%s\" from user \"%s\": %s', alias, user['username'], kae.message)
-                    else:
-                        logging.warning('Alias can be deleted from a single user only: Skipping')
-                    return
-                elif kwargs.get('lock') or kwargs.get('unlock'):
+                if kwargs.get('lock') or kwargs.get('unlock'):
                     for user in matched_users:
                         if user['status'] == 'active':
                             to_lock = kwargs.get('lock')
@@ -1542,23 +1505,26 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                         'team_uid': team_uid
                                     }
                                     request_batch.append(rq)
-                if node_id:
+                if node_id or jobtitle or user_name:
                     for user in matched_users:
-                        if node_id != user['node_id']:
-                            encrypted_data = user['encrypted_data']
-                            if 'key_type' in user and user['key_type'] == 'no_key':
-                                dt = {
-                                    'displayname': user['data'].get('displayname') or ''
-                                }
-                                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
-                            rq = {
-                                'command': 'enterprise_user_update',
-                                'enterprise_user_id': user['enterprise_user_id'],
-                                'node_id': node_id,
-                                'encrypted_data': encrypted_data,
-                                'enterprise_user_username': user['username']
+                        encrypted_data = user['encrypted_data']
+                        if 'key_type' in user and user['key_type'] == 'no_key' or user_name:
+                            dt = {
+                                'displayname': user_name or user['data'].get('displayname') or ''
                             }
-                            request_batch.append(rq)
+                            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                        rq = {
+                            'command': 'enterprise_user_update',
+                            'enterprise_user_id': user['enterprise_user_id'],
+                            'node_id': node_id or user['node_id'],
+                            'encrypted_data': encrypted_data,
+                            'enterprise_user_username': user['username']
+                        }
+                        if jobtitle:
+                            rq['job_title'] = jobtitle
+                        if user_name:
+                            rq['full_name'] = user_name
+                        request_batch.append(rq)
 
         if request_batch:
             rss = api.execute_batch(params, request_batch)
@@ -1599,12 +1565,10 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             else:
                                 logging.warning('%s failed to delete user: %s', user['username'], rs['message'])
                         elif command == 'enterprise_user_update':
-                            node_names = [x['data'].get('displayname') for x in params.enterprise['nodes'] if x['node_id'] == rq['node_id']]
-                            node_name = node_names[0] if len(node_names) > 0 else str(rq['node_id'])
                             if rs['result'] == 'success':
-                                logging.info('%s user moved to node \'%s\'', user['username'], node_name or 'Root')
+                                logging.info('%s user updated', user['username'])
                             else:
-                                logging.warning('%s failed to move user to node \'%s\': %s', user['username'], node_name or 'Root', rs['message'])
+                                logging.warning('%s failed to update user: %s', user['username'], rs['message'])
                         elif command == 'enterprise_user_lock':
                             is_locked = rq['lock'] == 'locked'
                             if rs['result'] == 'success':
@@ -3187,7 +3151,7 @@ class UserReportCommand(EnterpriseCommand):
                     self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
         look_back_days = kwargs.get('days') or 365
-        report_filter = {'audit_event_type': 'login'}
+        report_filter = {'audit_event_type': ['login', 'login_console']}
         if isinstance(look_back_days, int) and look_back_days > 0:
             logging.info(f'Querying latest login for the last {look_back_days} days')
             from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
