@@ -780,7 +780,9 @@ class LoginV3Flow:
             mfa_expiration = \
                 proto.TWO_FA_EXP_IMMEDIATELY if config_expiration == 'login' else \
                     proto.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
-                        proto.TWO_FA_EXP_30_DAYS
+                        proto.TWO_FA_EXP_12_HOURS if config_expiration == '12_hours' else \
+                            proto.TWO_FA_EXP_24_HOURS if config_expiration == '24_hours' else \
+                                proto.TWO_FA_EXP_30_DAYS
 
             otp_code = ''
             show_duration = True
@@ -788,9 +790,11 @@ class LoginV3Flow:
             while not otp_code:
                 if show_duration:
                     show_duration = False
-                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration=login|30_days|forever' \
+                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration=login|12_hours|24_hours|30_days|forever' \
                         .format('Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
                                 'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
+                                'Ask Every 12 hours' if mfa_expiration == proto.TWO_FA_EXP_12_HOURS else
+                                'Ask Every 24 hours' if mfa_expiration == proto.TWO_FA_EXP_24_HOURS else
                                 'Ask Every 30 days')
                     print(prompt_exp)
 
@@ -802,13 +806,19 @@ class LoginV3Flow:
                 m_duration = re.match(mfa_pattern, answer)
                 if m_duration:
                     answer = m_duration.group(1).strip().lower()
-                    if answer not in ['login', '30_days', 'forever']:
-                        print('Invalid 2FA Duration: {0}'.format(answer))
+                    if answer not in ['login', '12_hours', '24_hours', '30_days', 'forever']:
+                        print(f'Invalid 2FA Duration: {answer}')
                         answer = ''
 
                 if answer == 'login':
                     show_duration = True
                     mfa_expiration = proto.TWO_FA_EXP_IMMEDIATELY
+                elif answer == '12_hours':
+                    show_duration = True
+                    mfa_expiration = proto.TWO_FA_EXP_12_HOURS
+                elif answer == '24_hours':
+                    show_duration = True
+                    mfa_expiration = proto.TWO_FA_EXP_24_HOURS
                 elif answer == '30_days':
                     show_duration = True
                     mfa_expiration = proto.TWO_FA_EXP_30_DAYS
