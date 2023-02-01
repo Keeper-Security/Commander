@@ -1,9 +1,27 @@
 import logging
 
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+
 from keepercommander import api, utils
 from keepercommander.commands.utils import KSMCommand
 from keepercommander.loginv3 import CommonHelperMethods
 from keepercommander.proto import pam_pb2
+
+
+def find_one_gateway_by_uid_or_name(params, gateway_name_or_uid):
+    all_gateways = get_all_gateways(params)
+    gateway_uid_bytes = url_safe_str_to_bytes(gateway_name_or_uid)
+
+    found_gateways = list(filter(lambda g: g.controllerUid == gateway_uid_bytes or g.controllerName == gateway_name_or_uid, all_gateways))
+    if not found_gateways:
+        return None
+
+    first_found_gateway_uid_bytes = found_gateways[0].controllerUid
+
+    # TODO: Print warning if there are more than 1 gateway found
+    found_gateway_uid_str = CommonHelperMethods.bytes_to_url_safe_str(first_found_gateway_uid_bytes)
+
+    return found_gateway_uid_str
 
 
 def get_all_gateways(params):

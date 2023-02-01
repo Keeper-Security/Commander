@@ -774,6 +774,7 @@ def sync_down(params, record_types=False):
             rq.standard = True
             rq.user = True
             rq.enterprise = True
+            rq.pam = True
             record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
 
             if len(record_types_rs.recordTypes) > 0:

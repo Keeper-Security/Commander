@@ -48,19 +48,19 @@ def router_get_connected_gateways(params):
     return None
 
 
-def router_get_record_rotation_info(params, record_uid_bytes):
-    rq = PAMGenericUidRequest()
-    rq.uid = record_uid_bytes
-
-    rs = _post_request_to_router(params, 'get_rotation_info', rq_proto=rq)
-
-    if type(rs) == bytes:
-        rri = RouterRotationInfo()
-        rri.ParseFromString(rs)
-
-        return rri
-
-    return None
+# def router_get_record_rotation_info(params, record_uid_bytes):
+#     rq = PAMGenericUidRequest()
+#     rq.uid = record_uid_bytes
+#
+#     rs = _post_request_to_router(params, 'get_rotation_info', rq_proto=rq)
+#
+#     if type(rs) == bytes:
+#         rri = RouterRotationInfo()
+#         rri.ParseFromString(rs)
+#
+#         return rri
+#
+#     return None
 
 
 def router_set_record_rotation_information(params, proto_request):
@@ -334,10 +334,10 @@ def print_router_response(router_response, response_type, original_conversation_
                       f"received back is [{gateway_response_conversation_id}] were different. That probably means that "
                       f"the gateway sent a wrong response that was not associated with the reqeust.")
 
-    if not router_response_response_payload_dict.get('ok'):
+    if not router_response_response_payload_dict.get('is_ok'):
         print(f"{bcolors.FAIL}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
 
-    if router_response_response_payload_dict.get('isScheduled'):
+    if router_response_response_payload_dict.get('isScheduled') or router_response_response_payload_dict.get('is_scheduled'):
         conversation_id = router_response_response_payload_dict.get('conversation_id')
 
         print(f"Scheduled action id: {bcolors.OKBLUE}{conversation_id}{bcolors.ENDC}")
@@ -354,7 +354,6 @@ def print_router_response(router_response, response_type, original_conversation_
         exec_exception = job_info.get('execException')
 
         print(f'Execution Details\n-------------------------')
-
 
         if exec_status == 'finished':
             font_color = bcolors.OKGREEN
