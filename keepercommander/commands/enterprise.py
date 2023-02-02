@@ -1846,8 +1846,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 enforcement_value = 'enforce'
                             elif enforcement_value in {'d', 'disable'}:
                                 enforcement_value = 'disable'
+                            elif enforcement_value in {'n', 'null'}:
+                                enforcement_value = None
                             else:
-                                logging.warning('Enforcement %s expects either "enforce" or "disable"', key)
+                                logging.warning('Enforcement %s expects either "[e]nforce", "[d]isable", or "[n]ull"', key)
                                 continue
                         elif enforcement_type == 'two_factor_duration':
                             if enforcement_value == 'login':
