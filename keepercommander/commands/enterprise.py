@@ -3292,7 +3292,7 @@ class ExternalSharesReportCommand(EnterpriseCommand):
         sd = self.get_sox_data(params, refresh_data)
 
         # Non-enterprise users
-        external_users = {uid: user for uid, user in sd.get_users().items() if user.status != enterprise_pb2.OK}
+        external_users = {uid: user for uid, user in sd.get_users().items() if (user.user_uid >> 32) == 0}
         ext_uuids = set(external_users.keys())
 
         def get_direct_shares():
