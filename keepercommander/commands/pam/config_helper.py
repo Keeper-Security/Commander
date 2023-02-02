@@ -11,7 +11,9 @@ from keepercommander.commands.recordv3 import RecordRemoveCommand
 from keepercommander.display import bcolors
 from keepercommander.loginv3 import CommonHelperMethods
 from keepercommander.proto import pam_pb2
-from keepercommander.proto.pam_pb2 import PAMDataOperation, PAMOperationType, PAMModifyRequest, ConfigurationAddRequest
+from keepercommander.proto.pam_pb2 import (
+    PAMConfigurationController, PAMDataOperation, PAMOperationType, PAMModifyRequest, ConfigurationAddRequest
+)
 from keepercommander.proto.router_pb2 import RouterRotationInfo
 
 
@@ -46,7 +48,7 @@ def pam_configuration_get_field_by_id(unencrypted_record_dict, field_id):
     return found_field
 
 
-def pam_configuration_create_record_v6(params, data, folder_uid_urlsafe):
+def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_urlsafe):
 
     data_json = json.dumps(data)
     record_key_unencrypted = os.urandom(32)
@@ -70,6 +72,11 @@ def pam_configuration_create_record_v6(params, data, folder_uid_urlsafe):
 
     params.revision = 0
     rs = communicate_rest(params, car, 'pam/add_configuration_record')
+
+    pcc = PAMConfigurationController()
+    pcc.configurationUid = config_v6_record_uid
+    pcc.controllerUid = CommonHelperMethods.url_safe_str_to_bytes(controller_uid)
+    rs = communicate_rest(params, pcc, 'pam/set_configuration_controller')
 
     # Moving v6 record into the folder
     sync_down(params)

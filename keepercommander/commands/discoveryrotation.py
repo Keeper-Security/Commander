@@ -719,7 +719,7 @@ class PAMConfigurationNewAWSCommand(Command):
             'pamConfig': True
         }
 
-        pam_configuration_create_record_v6(params, record_data, shared_folder_uid)
+        pam_configuration_create_record_v6(params, record_data, controller_uid, shared_folder_uid)
 
 
 
@@ -787,7 +787,7 @@ class PAMConfigurationNewAzureCommand(Command):
             'pamConfig': True
         }
 
-        pam_configuration_create_record_v6(params, record_data, shared_folder_uid)
+        pam_configuration_create_record_v6(params, record_data, found_gateway_uid, shared_folder_uid)
 
 
 
@@ -840,7 +840,9 @@ class PAMConfigurationNewNetworkCommand(Command):
             'pamConfig': True
         }
 
-        pam_configuration_create_record_v6(params=params, data=record_data, folder_uid_urlsafe=shared_folder_uid)
+        pam_configuration_create_record_v6(
+            params=params, data=record_data, controller_uid=found_gateway_uid, folder_uid_urlsafe=shared_folder_uid
+        )
 
         # if len(found_gateways) == 0:
         #     logging.warning(
@@ -914,7 +916,9 @@ class PAMConfigurationNewLocalCommand(Command):
             'pamConfig': True
         }
 
-        pam_configuration_create_record_v6(params=params, data=record_data, folder_uid_urlsafe=shared_folder_uid)
+        pam_configuration_create_record_v6(
+            params=params, data=record_data, controller_uid=found_gateway_uid, folder_uid_urlsafe=shared_folder_uid
+        )
 
 
 
