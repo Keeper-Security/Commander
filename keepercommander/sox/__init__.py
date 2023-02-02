@@ -282,14 +282,14 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 return rp_links
 
             links = []
-            for ur in user_records:
-                links.extend(to_rec_perm_links(ur.enterpriseUserId, ur.recordPermissions))
             for folder in sf_records:
                 rec_perms = folder.recordPermissions
                 for sar in folder.shareAdminRecords:
                     rec_perm_idxs = sar.recordPermissionIndexes
                     sar_perms = [rp for idx, rp in enumerate(rec_perms) if idx in rec_perm_idxs]
                     links.extend(to_rec_perm_links(sar.enterpriseUserId, sar_perms))
+            for ur in user_records:
+                links.extend(to_rec_perm_links(ur.enterpriseUserId, ur.recordPermissions))
             sdata.storage.get_record_permissions().put_links(links)
 
         def save_shared_folder_users(sf_users):
