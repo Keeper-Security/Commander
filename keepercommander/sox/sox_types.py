@@ -107,8 +107,8 @@ class Team:
 
 
 class SharedFolder:
-    def __init__(self):
-        self.folder_uid = ''
+    def __init__(self, folder_uid):
+        self.folder_uid = folder_uid
         self.record_permissions = []    # type: List[RecordPermissions]
         self.users = set()              # type: Set[int]
         self.teams = set()              # type: Set[str]
