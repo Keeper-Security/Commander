@@ -145,27 +145,30 @@ class SoxData:
             return sf_lookup
 
         def link_sf_records(store, folder_lookup):
-            links = store.get_sf_record_links().get_all_links()
-            for link in links:
-                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup else SharedFolder()
+            sf_record_links = store.get_sf_record_links().get_all_links()
+            for link in sf_record_links:
+                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup \
+                    else SharedFolder(link.folder_uid)
                 folder.update_record_permissions(RecordPermissions(link.record_uid, link.permissions))
                 folder_lookup[link.folder_uid] = folder
 
             return folder_lookup
 
         def link_sf_users(store, folder_lookup):
-            links = store.get_sf_user_links().get_all_links()
-            for link in links:
-                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup else SharedFolder()
+            sf_user_links = store.get_sf_user_links().get_all_links()
+            for link in sf_user_links:
+                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup \
+                    else SharedFolder(link.folder_uid)
                 folder.users.add(link.user_uid)
                 folder_lookup[link.folder_uid] = folder
 
             return folder_lookup
 
         def link_sf_teams(store, folder_lookup):
-            links = store.get_sf_team_links().get_all_links()
-            for link in links:
-                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup else SharedFolder()
+            sf_team_links = store.get_sf_team_links().get_all_links()
+            for link in sf_team_links:
+                folder = folder_lookup[link.folder_uid] if link.folder_uid in folder_lookup \
+                    else SharedFolder(link.folder_uid)
                 folder.teams.add(link.team_uid)
                 folder_lookup[link.folder_uid] = folder
 
