@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2023 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -16,7 +16,7 @@ from typing import List
 
 from .. import imp_exp
 from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission,
-                        Team, BaseDownloadMembership)
+                        Team, BaseDownloadMembership, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ... import api, utils, record_types
 from ...proto import enterprise_pb2
 
@@ -395,3 +395,30 @@ class KeeperMembershipDownload(BaseDownloadMembership):
                 rs = api.communicate_rest(params, rq, 'vault/get_team_members', rs_type=enterprise_pb2.GetTeamMemberResponse)
                 t.members = [x.email for x in rs.enterpriseUser]
                 yield t
+
+
+class KeeperRecordTypeDownload(BaseDownloadRecordType):
+    def download_record_type(self, params):
+        if params.record_type_cache:
+            for rt_id, rts in params.record_type_cache.items():
+                if rt_id <= 1000:
+                    continue
+                try:
+                    rto = json.loads(rts)
+                    if '$id' in rto and 'fields' in rto:
+                        rt = RecordType()
+                        rt.name = rto['$id']
+                        rt.description = rto.get('description') or ''
+                        for field in rto['fields']:
+                            rtf = RecordTypeField()
+                            rtf.type = field['$ref']
+                            if 'label' in field:
+                                rtf.label = field['label']
+                            if 'required' in field:
+                                req = field['required']
+                                if req:
+                                    rtf.required = True
+                            rt.fields.append(rtf)
+                        yield rt
+                except:
+                    pass

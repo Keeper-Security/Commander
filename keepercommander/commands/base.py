@@ -105,6 +105,8 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import enterprise_create_user
     enterprise_create_user.register_commands(commands)
     enterprise_create_user.register_command_info(aliases, command_info)
+    from .. import importer
+    importer.register_enterprise_commands(commands)
 
 
 def register_msp_commands(commands, aliases, command_info):

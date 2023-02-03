@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .thycotic import ThycoticImporter as Importer, ThycoticMembershipDownload as MembershipDownload
+from .thycotic import (ThycoticImporter as Importer, ThycoticMembershipDownload as MembershipDownload,
+                       ThycoticRecordTypeDownload as RecordTypeDownload)
 
-__all__ = ['Importer', 'MembershipDownload']
+__all__ = ['Importer', 'MembershipDownload', 'RecordTypeDownload']

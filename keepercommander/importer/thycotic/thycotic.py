@@ -21,18 +21,46 @@ import warnings
 from contextlib import contextmanager
 from urllib3.exceptions import InsecureRequestWarning
 
+import xml.etree.ElementTree as ET
+
 import requests
 
 from urllib.parse import urlparse, urlunparse
 from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
-                        RecordField, BytesAttachment, Team)
+                        RecordField, BytesAttachment, Team, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ...params import KeeperParams
 from ... import record_types, vault
 
 
 class ThycoticMixin:
+    @staticmethod
+    def connect_to_server(url=None):  # type: (Optional[str]) -> ThycoticAuth
+        if not url:
+            url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
+            if not url:
+                logging.warning('Thycotic Host or URL is required')
+                return
+
+        if not url.startswith('https://'):
+            url = f'https://{url}'
+        username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
+        if not username:
+            logging.warning('Thycotic username is required')
+            return
+        password = getpass.getpass(prompt='...' + 'Thycotic Password'.rjust(30) + ': ', stream=None)
+        if not password:
+            logging.warning('Thycotic password is required')
+            return
+
+        def request_totp():
+            return input('...' + 'Enter TOTP Code'.rjust(30) + ': ')
+
+        auth = ThycoticAuth(url)
+        auth.authenticate(username, password, on_totp=request_totp)
+        return auth
+
     @staticmethod
     def get_user_lookup(auth):  # type: (ThycoticAuth) -> Optional[Dict[int, Dict]]
         try:
@@ -72,8 +100,7 @@ class ThycoticMixin:
             pass
 
     @staticmethod
-    def get_folders(auth, on_progress=None):
-        # type: (ThycoticAuth, Optional[Callable[[int, int], None]]) -> Optional[Dict[int, Dict]]
+    def get_folders(auth, skip_permissions=False):       # type: (ThycoticAuth, bool) -> Optional[Dict[int, Dict]]
         logging.debug('Enter get_folders')
         folder_rs = auth.thycotic_search('/v1/folders')
         folders = {x['id']: {
@@ -85,28 +112,36 @@ class ThycoticMixin:
         } for x in folder_rs}   # type: Dict[int, Dict[str, Any]]
         logging.debug('Loaded %d folders', len(folders))
 
-        # load permissions for shared folders
-        test_folders = [x['id'] for x in folders.values() if (x.get('parentFolderId') or 0) <= 1 and x['id'] != 1]
-        pos = 0
-        while pos < len(test_folders):
-            folder_id = test_folders[pos]
-            pos += 1
-            folder = folders.get(folder_id)
-            if not folders:
-                continue
-            inherited = folder.get('inheritPermissions', False)
-            if not inherited:
-                permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
-                if isinstance(permissions, list):
-                    if len(permissions) == 1:
-                        permission = permissions[0]
-                        user_id = permission.get('userId') or 0
-                        if user_id > 0:
-                            permissions = []
-                    if len(permissions) > 0:
-                        folder['permissions'] = permissions
-                        continue
-                test_folders.extend((x['id'] for x in folders.values() if (x.get('parentFolderId') or 0) == folder_id))
+        if not skip_permissions:        # load permissions for shared folders
+            test_folders = [x['id'] for x in folders.values() if (x.get('parentFolderId') or 0) <= 1 and x['id'] != 1]
+            logging.debug('Checking permissions for %d root folders', len(test_folders))
+            pos = 0
+            while pos < len(test_folders):
+                folder_id = test_folders[pos]
+                pos += 1
+                if pos % 10 == 0:
+                    logging.debug('Permission check progress: %d of %d', pos, len(test_folders))
+
+                folder = folders.get(folder_id)
+                if not folder:
+                    continue
+                inherited = folder.get('inheritPermissions', False)
+                if not inherited:
+                    permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+                    if isinstance(permissions, list):
+                        if len(permissions) == 1:
+                            permission = permissions[0]
+                            user_id = permission.get('userId') or 0
+                            if user_id > 0:
+                                permissions = []
+                        if len(permissions) > 0:
+                            folder['permissions'] = permissions
+                            continue
+
+                sub_folders = [x['id'] for x in folders.values() if (x.get('parentFolderId') or 0) == folder_id]
+                if len(sub_folders) > 0:
+                    logging.debug('"%s" folder is personal. Adding %d subfolder(s).', folder.get('folderPath') or '', len(sub_folders))
+                    test_folders.extend(sub_folders)
 
         # build folder path
         for folder in folders.values():
@@ -150,7 +185,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
     def do_import(self, filename, **kwargs):
         # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder]]
-        loaderd_record_types = {}
+        loaded_record_types = {}
         params = kwargs.get('params')
         if isinstance(params, KeeperParams):
             if params.record_type_cache:
@@ -158,7 +193,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     try:
                         rto = json.loads(rts)
                         if '$id' in rto and 'fields' in rto:
-                            loaderd_record_types[rto['$id']] = rto['fields']
+                            loaded_record_types[rto['$id']] = rto['fields']
                     except:
                         pass
 
@@ -220,8 +255,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 pass
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
-        # users = ThycoticImporter.get_user_lookup(auth)
-        folders = ThycoticImporter.get_folders(auth)
+        folders = ThycoticImporter.get_folders(auth, skip_permissions=True)
         filter_folder = kwargs.get('filter_folder')
         if filter_folder:
             if filter_folder == 'Personal Folders':
@@ -238,13 +272,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 folder_ids.extend((x['id'] for x in folders.values() if x['parentFolderId'] == folder_id))
             folder_ids = set(folder_ids)
             folders = {i: x for i, x in folders.items() if i in folder_ids}
-
-        for folder in (x for x in folders.values() if x['folderName'] == x['folderPath']):
-            if folder.get('parentFolderId') == 1:
-                continue
-            shared_folder = SharedFolder()
-            shared_folder.path = folder['folderPath']
-            yield shared_folder
 
         if filter_folder:
             if filter_folder == 'Personal Folders':
@@ -322,7 +349,10 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     del items[slug]
 
             template_name = secret.get('secretTemplateName', '')
-            if template_name in ('Pin', 'Security Alarm Code'):
+            template_name = template_name[:30]
+            if template_name in loaded_record_types:
+                record.type = template_name
+            elif template_name in ('Pin', 'Security Alarm Code'):
                 record.type = 'encryptedNotes'
             elif template_name == 'Contact':
                 record.type = 'address'
@@ -342,7 +372,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 record.type = 'encryptedNotes'
             elif 'healthcare-provider-name' in items:
                 record.type = 'healthInsurance'
-            elif any(True for x in ('host', 'server', 'machine', 'ip-address---host-name') if x in items):
+            elif any(True for x in ('host', 'server', 'ip-address---host-name') if x in items):
                 if 'database' in items:
                     record.type = 'databaseCredentials'
                 else:
@@ -350,7 +380,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             else:
                 record.type = 'login'
 
-            rt = loaderd_record_types.get(record.type, [])
+            rt = loaded_record_types.get(record.type, [])
 
             record.notes = ThycoticImporter.pop_field_value(items, 'notes')
 
@@ -369,14 +399,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     else:
                         record.password = passphrase
 
-            if record.type == 'bankAccount':
+            if 'account-number' in items and 'routing-number' in items:
                 bank_account = record_types.FieldTypes['bankAccount'].value.copy()
                 bank_account['accountType'] = ''
                 bank_account['accountNumber'] = ThycoticImporter.pop_field_value(items, 'account-number')
                 bank_account['routingNumber'] = ThycoticImporter.pop_field_value(items, 'routing-number')
-                record.fields.append(RecordField(type='bankAccount', label='', value=bank_account))
+                field_label = ThycoticImporter.adjust_field_label(record, 'bankAccount', '', rt)
+                record.fields.append(RecordField(type='bankAccount', label=field_label, value=bank_account))
 
-            if record.type == 'bankCard':
+            if 'card-number' in items:
                 bank_card = record_types.FieldTypes['paymentCard'].value.copy()
                 bank_card['cardNumber'] = ThycoticImporter.pop_field_value(items, 'card-number')
                 _ = ThycoticImporter.pop_field_value(items, 'card-type')
@@ -400,7 +431,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                         year = ''
                     if month and year:
                         bank_card['cardExpirationDate'] = f'{month}/{year}'
-                record.fields.append(RecordField(type='paymentCard', label='', value=bank_card))
+                field_label = ThycoticImporter.adjust_field_label(record, 'paymentCard', '', rt)
+                record.fields.append(RecordField(type='paymentCard', label=field_label, value=bank_card))
                 name_on_card = ThycoticImporter.pop_field_value(items, 'full-name')
                 if name_on_card:
                     record.fields.append(RecordField(type='text', label='cardholderName', value=name_on_card))
@@ -470,7 +502,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     field_label = ThycoticImporter.adjust_field_label(record, 'name', '', rt)
                     record.fields.append(RecordField(type='name', label=field_label, value=name))
 
-            for full_name_field in ('name'):
+            for full_name_field in ('name', 'contact-person'):
                 if full_name_field in items:
                     full_name, field = ThycoticImporter.pop_field(items, full_name_field)
                     if full_name:
@@ -485,12 +517,20 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 if number:
                     record.fields.append(RecordField(type='accountNumber', label='identityNumber', value=number))
 
+            for pin_slug in ('pin', 'pin-code'):
+                if pin_slug in items:
+                    pin_code, field = ThycoticImporter.pop_field(items, pin_slug)
+                    if pin_code:
+                        field_label = field.get('fieldName') or ''
+                        field_label = ThycoticImporter.adjust_field_label(record, 'pinCode', field_label, rt)
+                        record.fields.append(RecordField(type='pinCode', label=field_label, value=pin_code))
+
             if 'combination' in items and record.type == 'encryptedNotes':
                 combination = ThycoticImporter.pop_field_value(items, 'combination')
                 if combination:
                     record.fields.append(RecordField(type='note', label='', value=combination))
 
-            for phone_slug in ('contact-number', 'work-phone', 'home-phone', 'mobile-phone', 'fax'):
+            for phone_slug in ('contact-number', 'contact-phone', 'work-phone', 'home-phone', 'mobile-phone', 'fax'):
                 phone_number, field = ThycoticImporter.pop_field(items, phone_slug)
                 if phone_number:
                     phone = vault.TypedField.import_phone_field(phone_number)
@@ -508,13 +548,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             for url_slug in ('website', 'blog', 'resource', 'url', 'tenant'):
                 url, field = ThycoticImporter.pop_field(items, url_slug)
                 if url:
-                    if record.login_url:
-                        field_label = field.get('fieldName') or ''
+                    field_label = field.get('fieldName') or ''
+                    field_label = ThycoticImporter.adjust_field_label(record, 'url', field_label, rt)
+                    if not record.login_url and field_label == '':
+                        record.login_url = url
+                    else:
                         field_label = ThycoticImporter.adjust_field_label(record, 'url', field_label, rt)
                         record.fields.append(RecordField(type='url', label=field_label, value=url))
-                    else:
-                        record.login_url = url
-            for host_slug in ('server', 'host', 'machine', 'ip-address---host-name'):
+            for host_slug in ('server', 'host', 'ip-address---host-name'):
                 host_address, field = ThycoticImporter.pop_field(items, host_slug)
                 port = ThycoticImporter.pop_field_value(items, host_slug)
                 if host_address:
@@ -533,7 +574,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                         field_label = ThycoticImporter.adjust_field_label(record, 'accountNumber', field_label, rt)
                         record.fields.append(RecordField(type='accountNumber', label=field_label, value=number))
 
-            for email_slug in ('email'):
+            for email_slug in ('email', 'email-address'):
                 if email_slug in items:
                     email, field = ThycoticImporter.pop_field(items, email_slug)
                     if email:
@@ -548,10 +589,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 is_password = field.get('isPassword') or False
                 is_url = field.get('isUrl') or False
                 is_note = field.get('isNote') or False
-
-                if is_password and not record.password:
-                    record.password = field_value
-                    continue
 
                 field_type = 'secret' if is_password else 'url' if is_url else 'note' if is_note else 'text'
                 field_label = field.get('fieldName') or ''
@@ -745,33 +782,13 @@ class ThycoticAttachment(Attachment):
 
 
 class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
-    @staticmethod
-    def request_totp():
-        return input('...' + 'Enter TOTP Code'.rjust(30) + ': ')
-
     def download_membership(self, params):
-        url = input('...' + 'Thycotic Host or URL'.rjust(30) + ': ')
-        if not url:
-            logging.warning('Thycotic Host or URL is required')
-            return
-        if not url.startswith('https://'):
-            url = f'https://{url}'
-        username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
-        if not username:
-            logging.warning('Thycotic username is required')
-            return
-        password = getpass.getpass(prompt='...' + 'Thycotic Password'.rjust(30) + ': ', stream=None)
-        if not password:
-            logging.warning('Thycotic password is required')
-            return
-
-        auth = ThycoticAuth(url)
-        auth.authenticate(username, password, on_totp=ThycoticMembershipDownload.request_totp)
+        auth = ThycoticMixin.connect_to_server()
 
         users = ThycoticMembershipDownload.get_user_lookup(auth)
 
         sf_groups = set()
-        folders = ThycoticMembershipDownload.get_folders(auth)
+        folders = ThycoticMembershipDownload.get_folders(auth, skip_permissions=False)
         for folder in folders.values():
             if folder.get('inheritPermissions', True):
                 continue
@@ -844,3 +861,242 @@ class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
                     team.members = list(emails)
 
                     yield team
+
+
+class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
+    def download_record_type(self, params):
+        auth = ThycoticMixin.connect_to_server()
+        templates = auth.thycotic_search('/v1/secret-templates?filter.includeInactive=false&filter.includeSecretCount=true')
+        logging.debug('Loaded %d secret templates', len(templates))
+        for template in templates:
+            secret_count = template['secretCount']
+            if isinstance(secret_count, int) and secret_count == 0:
+                continue
+
+            template_id = template['id']
+            if not isinstance(template_id, int):
+                continue
+
+            xml = auth.thycotic_entity(f'/v1/secret-templates/{template_id}/export')
+            tree = ET.ElementTree(ET.fromstring(xml['exportFileText']))
+            root = tree.getroot()
+            e_fields = next(root.iter('fields'))
+            template['fields'] = {}
+            for e_field in e_fields.iter('field'):
+                tf = {}
+                slug_name = ''
+                for el in e_field.iter():
+                    if el.tag == 'displayname':
+                        tf['name'] = el.text
+                    elif el.tag == 'fieldslugname':
+                        slug_name = el.text
+                        tf['slugName'] = slug_name
+                    elif el.tag == 'description':
+                        tf['description'] = el.text
+                    elif el.tag == 'isurl' and el.text == 'true':
+                        tf['type'] = 'URL'
+                    elif el.tag == 'ispassword' and el.text == 'true':
+                        tf['type'] = 'Password'
+                    elif el.tag == 'isnotes' and el.text == 'true':
+                        tf['type'] = 'Notes'
+                    elif el.tag == 'isfile' and el.text == 'true':
+                        tf['type'] = 'File'
+                    elif el.tag == 'required' and el.text == 'true':
+                        tf['required'] = True
+                if 'type' not in tf:
+                    tf['type'] = 'Text'
+
+                template['fields'][slug_name] = tf
+
+        for template in templates:
+            fields = template.get('fields')    # type: Dict[str, Dict[str, Any]]
+            if not isinstance(fields, dict):
+                continue
+
+            rt = RecordType()
+            rt.name = template['name']
+            fields.pop('notes', None)
+
+            for login_field in ('username', 'client-id'):
+                if login_field in fields:
+                    field = fields.pop(login_field)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('login', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            for password_field in ('password', 'client-secret'):
+                if password_field in fields:
+                    field = fields.pop(password_field)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('password', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            for host_slug in ('server', 'host', 'ip-address---host-name'):
+                if host_slug in fields:
+                    field = fields.pop(host_slug)
+                    _ = fields.pop('port', None)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('host', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            if 'account-number' in fields and 'routing-number' in fields:
+                field = fields.pop('account-number', None)
+                f2 = fields.pop('routing-number', None)
+                rf = RecordTypeField.create('bankAccount', '')
+                if field.get('required') is True and f2.get('required') is True:
+                    rf.required = True
+                rt.fields.append(rf)
+
+            if 'card-number' in fields:
+                field = fields.pop('card-number', None)
+                _ = fields.pop('card-type', None)
+                _ = fields.pop('expiration-date', None)
+                rf = RecordTypeField.create('paymentCard', '')
+                if field.get('required') is True:
+                    rf.required = True
+                rt.fields.append(rf)
+
+            if 'address-1' in fields:
+                _ = fields.pop('address-1')
+                _ = fields.pop('address-2')
+                _ = fields.pop('address-3')
+                rf = RecordTypeField.create('address', '')
+                rt.fields.append(rf)
+
+            if 'address1' in fields:
+                _ = fields.pop('address1')
+                _ = fields.pop('address2')
+                _ = fields.pop('address3')
+                _ = fields.pop('city')
+                _ = fields.pop('state')
+                _ = fields.pop('zip')
+                _ = fields.pop('country')
+                rf = RecordTypeField.create('address', '')
+                rt.fields.append(rf)
+
+            if 'last-name' in fields:
+                _ = fields.pop('first-name')
+                _ = fields.pop('last-name')
+                rf = RecordTypeField.create('name', '')
+                rt.fields.append(rf)
+
+            for full_name_field in ('name', 'contact-person'):
+                if full_name_field in fields:
+                    field = fields.pop(full_name_field)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('name', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            for ssn in ('social-security-number', 'ssn'):
+                if ssn in fields:
+                    _ = fields.pop(ssn)
+                    rf = RecordTypeField.create('accountNumber', 'identityNumber')
+                    rt.fields.append(rf)
+
+            for pin_slug in ('pin', 'pin-code'):
+                if pin_slug in fields:
+                    field = fields.pop(pin_slug)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('pinCode', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            if 'private-key' in fields or 'public-key' in fields:
+                private_field = fields.pop('private-key', None)
+                public_field = fields.pop('public-key', None)
+                field_name = private_field['name'] if private_field else public_field['name'] if public_field else ''
+                rt.fields.append(RecordTypeField.create('keyPair', field_name))
+
+            if 'private-key-passphrase' in fields:
+                field = fields.pop('private-key-passphrase')
+                rf = RecordTypeField.create('password', 'passphrase')
+                if field.get('required') is True:
+                    rf.required = True
+                rt.fields.append(rf)
+
+            if 'combination' in fields:
+                field = fields.pop('combination')
+                field_name = field['name']
+                rf = RecordTypeField.create('secret', field_name)
+                if field.get('required') is True:
+                    rf.required = True
+                rt.fields.append(rf)
+
+            for num_slug in ('policy-number', 'group-number'):
+                if num_slug in fields:
+                    field = fields.pop(num_slug)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('accountNumber', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            if 'license-key' in fields:
+                field = fields.pop('license-key')
+                field_name = field['name']
+                rf = RecordTypeField.create('licenseNumber', field_name)
+                if field.get('required') is True:
+                    rf.required = True
+                rt.fields.append(rf)
+
+            for email_slug in ('email', 'email-address'):
+                if email_slug in fields:
+                    field = fields.pop(email_slug)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('email', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            for url_slug in ('website', 'blog', 'resource', 'url', 'tenant'):
+                if url_slug in fields:
+                    field = fields.pop(url_slug)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('url', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            for phone_slug in ('contact-number', 'contact-phone', 'work-phone', 'home-phone', 'mobile-phone', 'fax'):
+                if phone_slug in fields:
+                    field = fields.pop(phone_slug)
+                    field_name = field['name']
+                    rf = RecordTypeField.create('phone', field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+
+            has_files = False
+            for field in fields.values():
+                field_name = field.get('name')
+                field_type = field.get('type')
+                if field_type == 'File':
+                    has_files = True
+                else:
+                    ft = 'text'
+                    if field_type == 'Notes':
+                        ft = 'multiline'
+                    elif field_type == 'Password':
+                        ft = 'secret'
+                    elif field_type == 'URL':
+                        ft = 'url'
+                    elif field_type in ('List', 'URL List'):
+                        continue
+                    rf = RecordTypeField.create(ft, field_name)
+                    if field.get('required') is True:
+                        rf.required = True
+                    rt.fields.append(rf)
+            if has_files:
+                rf = RecordTypeField.create('fileRef', '')
+                rt.fields.append(rf)
+
+            yield rt
