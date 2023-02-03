@@ -65,7 +65,7 @@ def register_command_info(aliases, command_info):
 
 
 get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID')
-get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field context')
+get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')

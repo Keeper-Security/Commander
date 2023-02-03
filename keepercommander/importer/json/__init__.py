@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from .json import KeeperJsonImporter as Importer, KeeperJsonExporter as Exporter, KeeperMembershipDownload as MembershipDownload
+from .json import (KeeperJsonImporter as Importer, KeeperJsonExporter as Exporter,
+                   KeeperMembershipDownload as MembershipDownload, KeeperRecordTypeDownload as RecordTypeDownload)
 
-__all__ = ['Importer', 'Exporter', 'MembershipDownload']
+__all__ = ['Importer', 'Exporter', 'MembershipDownload', 'RecordTypeDownload']
