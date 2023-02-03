@@ -944,12 +944,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     with open(email_template, 'rt') as t:
                         lines = t.readlines()
 
-                    lines = [x.strip() for x in lines if x and x[0] != '#']
+                    lines = [x.strip() for x in lines if x[0:2] != '//']
                     template = {}
                     section = ''
                     for line in lines:
-                        if not line:
-                            continue
                         if line.startswith('[') and line.endswith(']'):
                             section = line[1:-1].strip()
                         else:
@@ -958,6 +956,9 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                                 current += '\n'
                             current += line
                             template[section] = current
+
+                    for section in template:
+                        template[section] = template[section].strip()
 
                     subject = template.get(subject_section) or ''
                     heading = template.get(heading_section) or ''
@@ -1006,16 +1007,17 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         message = rs.get('body') or ''
                         button_text = rs.get('button_label') or ''
                     except:
-                        description = '# A line started with hash sign (#) is a comment'
-                        subject = '# The email subject line.\n#e.g. Keeper Invitation'
-                        heading = '# The header or title that is in bold and above the rest of the email content\n#e.g Invite to Join Keeper Company '
-                        message = '# The main body of text in the email. Any HTML present will be escaped such that it will show as plain text.\n' \
-                                  '# Newlines will be converted to <br> tags to allow text to move to a new line.\n' \
-                                  '#e.g Your organization has purchased Keeper, the world\'s leading password manager and digital vault.\n' \
-                                  '# Your Keeper admin has invited you to join your organization\'s account.'
-                        button_text = '# The label for the button at the bottom of the email.\n' \
-                                      '# This button/link will take the user to the vault to either join the enterprise, or sign up with Keeper then join the enterprise.\n' \
-                                      '#e.g Setup Account'
+                        description = '// A line started with <//> is a comment\n' \
+                                      '// https://docs.keeper.io/enterprise-guide/user-and-team-provisioning/custom-invite-and-logo'
+                        subject = '// The email subject line.\n//e.g. Keeper Invitation'
+                        heading = '// The header or title that is in bold and above the rest of the email content\n//e.g Invite to Join Keeper Company '
+                        message = '// The main body of text in the email. Any HTML present will be escaped such that it will show as plain text.\n' \
+                                  '// Newlines will be converted to <br> tags to allow text to move to a new line.\n' \
+                                  '//e.g Your organization has purchased Keeper, the world\'s leading password manager and digital vault.\n' \
+                                  '// Your Keeper admin has invited you to join your organization\'s account.'
+                        button_text = '// The label for the button at the bottom of the email.\n' \
+                                      '// This button/link will take the user to the vault to either join the enterprise, or sign up with Keeper then join the enterprise.\n' \
+                                      '//e.g Setup Account'
                     lines = []
                     if description:
                         lines.append(description)
