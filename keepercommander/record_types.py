@@ -35,7 +35,7 @@ FieldTypes = {x[0]: x for x in (
     FieldType('paymentCard', {'cardNumber': '', 'cardExpirationDate': '', 'cardSecurityCode': ''},
               'Field consisting of validated card number, expiration date and security code.'),
     FieldType('date', 0, 'calendar date with validation, stored as unix milliseconds'),
-    FieldType('bankAccount', {'accountType': '', 'routingNumber': '', 'accountNumber': ''},
+    FieldType('bankAccount', {'accountType': '', 'routingNumber': '', 'accountNumber': '', 'otherType': ''},
               'bank account information'),
     FieldType('privateKey', {'publicKey': '', 'privateKey': ''}, 'private and/or public keys in ASN.1 format')
 )}   # type: Dict[str, FieldType]

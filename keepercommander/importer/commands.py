@@ -18,11 +18,13 @@ import os
 from typing import Optional, List, Dict
 
 from . import imp_exp
-from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_email_domain, BaseDownloadMembership
+from .. import api, record_types
+from .importer import SharedFolder, Team, Permission, PathDelimiter, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import raise_parse_exception, suppress_exit, user_choice, Command
+from ..commands.enterprise_common import EnterpriseCommand
 from ..params import KeeperParams
-
+from ..proto import record_pb2
 
 def register_commands(commands):
     commands['import'] = RecordImportCommand()
@@ -31,8 +33,13 @@ def register_commands(commands):
     commands['apply-membership'] = ApplyMembershipCommand()
 
 
+def register_enterprise_commands(commands):
+    commands['download-record-types'] = DownloadRecordTypeCommand()
+    commands['load-record-types'] = LoadRecordTypeCommand()
+
+
 def register_command_info(aliases, command_info):
-    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser]:
+    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser, download_record_type_parser]:
         command_info[p.prog] = p.description
 
 
@@ -102,6 +109,19 @@ apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', descr
 apply_membership_parser.add_argument('name', type=str, nargs='?', help='Input file name. "shared_folder_membership.json" if omitted.')
 apply_membership_parser.error = raise_parse_exception
 apply_membership_parser.exit = suppress_exit
+
+download_record_type_parser = argparse.ArgumentParser(
+    prog='download-record-types', description='Unload custom record types to JSON file.')
+download_record_type_parser.add_argument(
+    '--source', dest='source', choices=['keeper', 'thycotic'], required=True, help='Record type source')
+download_record_type_parser.add_argument(
+    'name', type=str, nargs='?', help='Output file name. "record_types.json" if omitted.')
+
+
+load_record_type_parser = argparse.ArgumentParser(
+    prog='load_record_types', description='Loads custom record types from JSON file into Keeper.')
+load_record_type_parser.add_argument(
+    'name', type=str, nargs='?', help='Input file name. "record_types.json" if omitted.')
 
 csv_instructions = '''CSV Import Instructions
 
@@ -390,21 +410,149 @@ class ApplyMembershipCommand(Command):
             logging.warning('Shared folder membership file "%s" not found', file_name)
             return
 
-        file_name = kwargs.get('name') or 'shared_folder_membership.json'
-
         shared_folders = []  # type: List[SharedFolder]
         teams = []     # type: List[Team]
 
-        if os.path.exists(file_name):
-            json_importer = KeeperJsonImporter()
-            for obj in json_importer.do_import(file_name, users_only=True):
-                if isinstance(obj, SharedFolder):
-                    shared_folders.append(obj)
-                if isinstance(obj, Team):
-                    teams.append(obj)
+        json_importer = KeeperJsonImporter()
+        for obj in json_importer.do_import(file_name, users_only=True):
+            if isinstance(obj, SharedFolder):
+                shared_folders.append(obj)
+            if isinstance(obj, Team):
+                teams.append(obj)
 
         if len(shared_folders) > 0:
             imp_exp.import_user_permissions(params, shared_folders)
 
         if len(teams) > 0:
             imp_exp.import_teams(params, teams)
+
+
+class DownloadRecordTypeCommand(EnterpriseCommand):
+    def get_parser(self):
+        return download_record_type_parser
+
+    def execute(self, params, **kwargs):
+        source = kwargs.get('source') or 'keeper'
+        file_name = kwargs.get('name') or 'record_types.json'
+        try:
+            full_name = f'keepercommander.importer.{"json" if source == "keeper" else source}'
+            module = importlib.import_module(full_name)
+            if hasattr(module, 'RecordTypeDownload'):
+                plugin = module.RecordTypeDownload()   # type:   Optional[BaseDownloadRecordType]
+            else:
+                logging.warning('Record Template plugin is missing: %s', source)
+                return
+        except:
+            logging.warning('Error loading record template plugin: %s', source)
+            return
+
+        record_types = []
+        for rt in plugin.download_record_type(params):
+            if not isinstance(rt, RecordType):
+                continue
+            rto = {
+                'record_type_name': rt.name,
+                'fields': []
+            }
+            if rt.description:
+                rto['description'] = rt.description
+
+            for f in rt.fields:
+                fo = {'$type': f.type}
+                if f.label:
+                    fo['label'] = f.label
+                if f.required is True:
+                    fo['required'] = True
+                rto['fields'].append(fo)
+            record_types.append(rto)
+
+        if len(record_types) > 0:
+            o = {
+                'record_types': record_types
+            }
+            with open(file_name, 'wt') as f:
+                json.dump(o, f, indent=2)
+            logging.info('Downloaded %d record types to "%s"', len(record_types), os.path.abspath(file_name))
+        else:
+            logging.info('No record types are downloaded')
+
+
+class LoadRecordTypeCommand(EnterpriseCommand):
+    def get_parser(self):
+        return load_record_type_parser
+
+    def execute(self, params, **kwargs):
+        file_name = kwargs.get('name') or 'record_types.json'
+        if not os.path.exists(file_name):
+            logging.warning('Custom record types file "%s" not found', file_name)
+            return
+
+        with open(file_name, 'rt') as f:
+            j_obj = json.load(f)
+
+        if not isinstance(j_obj, dict):
+            logging.warning('Invalid custom record types file "%s"', file_name)
+            return
+        r_types = j_obj.get('record_types')
+        if not isinstance(r_types, list):
+            logging.warning('Invalid custom record types file "%s"', file_name)
+            return
+
+        loaded_record_types = set()
+        if params.record_type_cache:
+            for rts in params.record_type_cache.values():
+                try:
+                    rto = json.loads(rts)
+                    if '$id' in rto:
+                        loaded_record_types.add(rto['$id'].lower())
+                except:
+                    pass
+
+        counter = 0
+        for r_type in r_types:
+            record_type_name = r_type.get('record_type_name')
+            if not record_type_name:
+                continue
+            record_type_name = record_type_name[:30]
+            if record_type_name.lower() in loaded_record_types:
+                logging.warning('Custom record type "%s" already exists. Skipping.', record_type_name)
+                continue
+            fields = r_type.get('fields')
+            if not isinstance(fields, list):
+                continue
+
+            is_valid = True
+            for field in fields:
+                field_type = field.get('$type')
+                if field_type not in record_types.RecordFields:
+                    logging.warning('Custom record type "%s": Invalid field \"%s\". Skipping.', record_type_name, field_type)
+                    is_valid = False
+                    break
+            if not is_valid:
+                continue
+
+            content = {
+                '$id': record_type_name,
+                'description': r_type.get('description') or '',
+                'fields': []
+            }
+
+            for field in fields:
+                fo = {'$ref': field.get('$type')}
+                field_label = field.get('label')
+                if field_label:
+                    fo['label'] = field_label
+                if field.get('required') is True:
+                    fo['required'] = True
+                content['fields'].append(fo)
+
+            rq = record_pb2.RecordType()
+            rq.content = json.dumps(content)
+            rq.scope = record_pb2.RT_ENTERPRISE
+            rs = api.communicate_rest(params, rq, 'vault/record_type_add')
+
+            counter += 1
+
+        if counter > 0:
+            logging.info('Added %d custom record types', counter)
+            api.sync_down(params, record_types=True)

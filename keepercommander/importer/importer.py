@@ -252,6 +252,7 @@ class RecordSchemaField:
     def __init__(self):
         self.ref = ''
         self.label = ''
+        self.required = None   # type: Optional[bool]
 
 
 class File:
@@ -268,6 +269,27 @@ class File:
 
     def validate(self):
         pass
+
+
+class RecordTypeField:
+    def __init__(self):
+        self.type = ''
+        self.label = ''
+        self.required = None   # type Optional[bool]
+
+    @classmethod
+    def create(cls, field_type, field_label):  # type: (str, str) -> 'RecordTypeField'
+        f = cls()
+        f.type = field_type
+        f.label = field_label
+        return f
+
+
+class RecordType:
+    def __init__(self):
+        self.name = ''
+        self.description = ''
+        self.fields = []  # type: List[RecordTypeField]
 
 
 class BaseImporter(abc.ABC):
@@ -468,4 +490,10 @@ class BytesAttachment(Attachment):
 class BaseDownloadMembership(abc.ABC):
     @abc.abstractmethod
     def download_membership(self, params):   # type: (KeeperParams) -> Iterable[Union[SharedFolder, Team]]
+        pass
+
+
+class BaseDownloadRecordType(abc.ABC):
+    @abc.abstractmethod
+    def download_record_type(self, params):   # type: (KeeperParams) -> Iterable[RecordType]
         pass

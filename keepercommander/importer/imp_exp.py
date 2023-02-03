@@ -1643,6 +1643,8 @@ def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
     }
     if schema.label:
         field['label'] = schema.label
+    if schema.required is True:
+        field['required'] = True
     return field
 
 
@@ -1658,13 +1660,13 @@ def _construct_record_v3_data(rec_to_import, orig_data=None, map_data_custom_to_
     record_refs = [x for x in rec_to_import.references or []]
     data['fields'] = []
     for field in rec_to_import.schema or []:
-        if field.ref == 'login':
+        if field.ref == 'login' and rec_to_import.login:
             data['fields'].append(_create_field_v3(field, rec_to_import.login))
             rec_to_import.login = ''
-        elif field.ref == 'password':
+        elif field.ref == 'password' and rec_to_import.password:
             data['fields'].append(_create_field_v3(field, rec_to_import.password))
             rec_to_import.password = ''
-        elif field.ref == 'url':
+        elif field.ref == 'url' and rec_to_import.login_url:
             data['fields'].append(_create_field_v3(field, rec_to_import.login_url))
             rec_to_import.login_url = ''
         else:
@@ -1830,6 +1832,9 @@ def prepare_record_add_or_update(update_flag, params, records):
                     f = RecordSchemaField()
                     f.ref = field['$ref']
                     f.label = field.get('label') or ''
+                    if 'required' in field:
+                        if field['required']:
+                            f.required = True
                     import_record.schema.append(f)
 
     for import_record in record_to_import:
