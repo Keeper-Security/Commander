@@ -970,6 +970,7 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
         return
 
     if params.enterprise:
+        logging.debug('Resolve team keys shared with enterprise')
         tree_key = params.enterprise['unencrypted_tree_key']
         for t in params.enterprise.get('teams', []):
             team_uid = t.get('team_uid')
@@ -980,11 +981,13 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                         team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(encrypted_team_key), tree_key)
                         params.key_cache[team_uid] = PublicKeys(aes=team_key)
                         s.remove(team_uid)
-                except:
-                    pass
+                except Exception as e:
+                    logging.debug('Team UID \"%s\": Decrypt key error: %s', team_uid, str(e))
 
     if not s:
         return
+
+    logging.debug('Loading %d team keys', len(s))
     uids_to_load = list(s)
 
     while len(uids_to_load) > 0:
