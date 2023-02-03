@@ -1927,13 +1927,18 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
     for fol in folders:
         shared_folder_uid = shared_folder_lookup.get(fol.path)
         if not shared_folder_uid:
+            logging.debug('Cannot resolve shared folder UID by path: %s', fol.path)
             continue
         shared_folder = params.shared_folder_cache.get(shared_folder_uid)
         if not shared_folder:
+            logging.debug('Cannot resolve shared folder by UID: %s', shared_folder_uid)
             continue
         shared_folder_key = shared_folder.get('shared_folder_key_unencrypted')
         if not shared_folder_key:
+            logging.debug('Shared folder \"%s\" does not have a key', shared_folder_uid)
             continue
+
+        logging.debug('Verify permissions for shared folder \"%s\"', fol.path)
 
         if fol.permissions:
             for perm in fol.permissions:
@@ -1964,9 +1969,11 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                         teams.add(perm.name)
 
     if len(emails) > 0:
+        logging.debug('Loading public keys for %d user(s)', len(emails))
         api.load_user_public_keys(params, list(emails))
 
     if len(teams) > 0:
+        logging.debug('Resolving team UIDs for %d team(s)', len(teams))
         team_uids = set()
         for t in teams:
             team_uid = next((
@@ -1974,7 +1981,10 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                 ), None)
             if team_uid:
                 team_uids.add(team_uid)
+            else:
+                logging.debug('\"%s\" cannot be resolved as team', t)
         if len(team_uids) > 0:
+            logging.debug('Loading keys for %d team(s)', len(team_uids))
             api.load_team_keys(params, list(team_uids))
 
     folder_permissions = []
