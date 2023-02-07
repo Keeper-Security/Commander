@@ -941,7 +941,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 node = matched_nodes[0]
                 if email_template and os.path.isfile(email_template):
                     logging.info('Loading email template from a file \"%s\"', email_template)
-                    with open(email_template, 'rt') as t:
+                    with open(email_template, 'rt', encoding='utf-8') as t:
                         lines = t.readlines()
 
                     lines = [x.strip() for x in lines if x[0:2] != '//']
