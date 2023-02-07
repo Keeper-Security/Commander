@@ -33,7 +33,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from . import aram, base  # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
 from . import compliance
-from .aram import ActionReportCommand
+from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
 from .enterprise_common import EnterpriseCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
@@ -42,7 +42,7 @@ from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from .. import api, rest_api, crypto, utils, constants
 from ..display import bcolors
-from ..error import CommandError, KeeperApiError
+from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ..sox.sox_types import RecordPermissions
@@ -3175,36 +3175,45 @@ class UserReportCommand(EnterpriseCommand):
                 if tu['team_uid'] in self.teams:
                     self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
+        limit = API_EVENT_SUMMARY_ROW_LIMIT
         look_back_days = kwargs.get('days') or 365
-        report_filter = {'audit_event_type': ['login', 'login_console']}
+        to_ts = int(datetime.datetime.now().timestamp())
+        report_filter = {'audit_event_type': ['login', 'login_console', 'chat_login', 'accept_invitation']}
         if isinstance(look_back_days, int) and look_back_days > 0:
             logging.info(f'Querying latest login for the last {look_back_days} days')
             from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
-            report_filter['created'] = {'min': int(from_date.timestamp())}
+            from_ts = int(from_date.timestamp())
+            period = {'min': from_ts, 'max': to_ts}
+            report_filter['created'] = period
+        else:
+            raise CommandError('user-report', f'argument --days: invalid value: {look_back_days}')
+
+        last_login = {}
+        active = (x['username'].lower() for x in self.users.values() if x['status'] == 'active')
         rq = {
-            "command": "get_enterprise_audit_event_reports",
+            "command": "get_audit_event_reports",
             "report_type": "span",
+            'scope': 'enterprise',
             "aggregate": ["last_created"],
             "columns": ["username"],
             "filter": report_filter,
-            "timezone": "UTC"
+            'limit': limit
         }
 
-        last_login = {}
-        rs = api.communicate(params, rq)
-        for row in rs['audit_event_overview_report_rows']:
-            username = row['username']
-            last_login[username.lower()] = row['last_created']
-        if len(rs['audit_event_overview_report_rows']) >= 1000:
-            active = (x['username'].lower() for x in self.users.values() if x['status'] == 'active')
+        get_login_events = True
+        while get_login_events:
             missing = [x for x in active if x not in last_login]
-            while len(missing) > 0:
-                report_filter['username'] = missing[:999]
-                missing = missing[999:]
-                rs = api.communicate(params, rq)
-                for row in rs['audit_event_overview_report_rows']:
-                    username = row['username']
-                    last_login[username.lower()] = row['last_created']
+            missing = missing[:limit]
+            report_filter['username'] = missing
+            rs = api.communicate(params, rq)
+            report_rows = rs['audit_event_overview_report_rows']
+            last_row = report_rows[-1]
+            to_ts = int(last_row['last_created'])
+            period['max'] = to_ts
+            for row in report_rows:
+                username = row.get('username', '').lower()
+                last_login[username] = row['last_created']
+            get_login_events = len(report_rows) >= limit
 
         for user in self.users.values():
             key = user['username'].lower()
@@ -3270,6 +3279,7 @@ class UserReportCommand(EnterpriseCommand):
 
 class ExternalSharesReportCommand(EnterpriseCommand):
     def __init__(self):
+        super(ExternalSharesReportCommand, self).__init__()
         self.sox_data = None
 
     def get_sox_data(self, params, refresh_data):
