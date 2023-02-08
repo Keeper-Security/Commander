@@ -31,7 +31,7 @@ class RestApiContext:
     def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US', device_id=None):
         self.server_base = server
         self.transmission_key = None
-        self.__server_key_id = 1
+        self.__server_key_id = 7
         self.locale = locale
         self.__device_id = device_id
         self.__store_server_key = False
