@@ -128,7 +128,7 @@ def execute_rest(context, endpoint, payload):
         context.transmission_key = os.urandom(32)
 
     if not context.server_key_id:
-        context.server_key_id = 1
+        context.server_key_id = 7
 
     run_request = True
     while run_request:
