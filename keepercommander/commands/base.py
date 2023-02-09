@@ -37,6 +37,13 @@ msp_commands = {}   # type: {str, Command}
 command_info = OrderedDict()
 
 
+report_output_parser = argparse.ArgumentParser(add_help=False)
+report_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+                                  default='table', help='format of output')
+report_output_parser.add_argument('--output', dest='output', action='store',
+                                  help='path to resulting output file (ignored for "table" format)')
+
+
 class ParseError(Exception):
     pass
 
