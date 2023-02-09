@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2021 Keeper Security Inc.
+# Copyright 2023 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -25,6 +25,7 @@ from ..commands.base import raise_parse_exception, suppress_exit, user_choice, C
 from ..commands.enterprise_common import EnterpriseCommand
 from ..params import KeeperParams
 from ..proto import record_pb2
+
 
 def register_commands(commands):
     commands['import'] = RecordImportCommand()
@@ -114,6 +115,9 @@ download_record_type_parser = argparse.ArgumentParser(
     prog='download-record-types', description='Unload custom record types to JSON file.')
 download_record_type_parser.add_argument(
     '--source', dest='source', choices=['keeper', 'thycotic'], required=True, help='Record type source')
+download_record_type_parser.add_argument(
+    '--ssh-key-as-file', dest='ssh_key_as_file', action="store_true", help='Prefer store SSH keys as file attachments rather than fields on a record')
+
 download_record_type_parser.add_argument(
     'name', type=str, nargs='?', help='Output file name. "record_types.json" if omitted.')
 
@@ -447,9 +451,11 @@ class DownloadRecordTypeCommand(EnterpriseCommand):
             return
 
         record_types = []
+        ssh_key_as_file = kwargs.get('ssh_key_as_file')
         for rt in plugin.download_record_type(params):
             if not isinstance(rt, RecordType):
                 continue
+            need_file_ref = False
             rto = {
                 'record_type_name': rt.name,
                 'fields': []
@@ -458,12 +464,20 @@ class DownloadRecordTypeCommand(EnterpriseCommand):
                 rto['description'] = rt.description
 
             for f in rt.fields:
+                if ssh_key_as_file is True and f.type == 'keyPair':
+                    need_file_ref = True
+                    continue
                 fo = {'$type': f.type}
                 if f.label:
                     fo['label'] = f.label
                 if f.required is True:
                     fo['required'] = True
                 rto['fields'].append(fo)
+
+            if need_file_ref:
+                has_ref = next((True for x in rto['fields'] if x['$type'] == 'fileRef'), False)
+                if not has_ref:
+                    rto['fields'].append({'$type': 'fileRef'})
             record_types.append(rto)
 
         if len(record_types) > 0:

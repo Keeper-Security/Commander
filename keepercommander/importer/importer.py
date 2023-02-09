@@ -495,5 +495,5 @@ class BaseDownloadMembership(abc.ABC):
 
 class BaseDownloadRecordType(abc.ABC):
     @abc.abstractmethod
-    def download_record_type(self, params):   # type: (KeeperParams) -> Iterable[RecordType]
+    def download_record_type(self, params, **kwargs):   # type: (KeeperParams, ...) -> Iterable[RecordType]
         pass

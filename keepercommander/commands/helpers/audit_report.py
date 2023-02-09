@@ -11,7 +11,7 @@
 RAW_FIELDS = ('created', 'audit_event_type', 'username', 'ip_address', 'keeper_version', 'geo_location')
 MISC_FIELDS = (
     'to_username', 'from_username', 'record_uid', 'shared_folder_uid',
-    'node', 'role_id', 'team_uid', 'channel', 'status'
+    'node', 'role_id', 'team_uid', 'channel', 'status', 'value'
 )
 
 
