@@ -1061,7 +1061,6 @@ def search_records(params, searchstring):
     """Search for string in record contents 
        and return array of Record objects """
 
-    logging.debug('Searching for %s', searchstring)
     p = re.compile(searchstring.lower())
     search_results = []
 
@@ -1086,7 +1085,6 @@ def search_records(params, searchstring):
 def search_shared_folders(params, searchstring):
     """Search shared folders """
 
-    logging.debug('Searching for %s', searchstring)
     p = re.compile(searchstring.lower())
 
     search_results = [] 
@@ -1107,14 +1105,11 @@ def search_shared_folders(params, searchstring):
 def search_teams(params, searchstring):
     """Search teams """
 
-    logging.debug('Searching for %s', searchstring)
     p = re.compile(searchstring.lower())
 
     search_results = [] 
 
     for team_uid in params.team_cache:
-
-        logging.debug('Getting Team UID: %s', team_uid)
         team = get_team(params, team_uid)
 
         target = team.to_lowerstring()
