@@ -8,7 +8,7 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
+import copy
 import csv
 import datetime
 import io
@@ -309,45 +309,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     record_folder.path = path
                     record.folders.append(record_folder)
 
-            secret_id = secret['id']
-            file_items = [x for x in items.values() if x.get('isFile') is True]
-            for item in file_items:
-                slug = item['slug']
-                item['itemValue'] = ''
-                attachment_id = item.get('fileAttachmentId')
-                if not attachment_id:
-                    continue
-                file_name = item.get('filename')
-                if not file_name:
-                    continue
-
-                endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
-                if slug in ('private-key', 'public-key'):
-                    with auth.thycotic_get(endpoint) as rs:
-                        if rs.status_code == 200:
-                            try:
-                                key_text = rs.content.decode()
-                            except:
-                                key_text = ''
-                            is_key = 30 < len(key_text) < 5000
-                            if is_key:
-                                item['itemValue'] = key_text
-                            else:
-                                if not isinstance(record.attachments, list):
-                                    record.attachments = []
-                                attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
-                                if not isinstance(record.attachments, list):
-                                    record.attachments = []
-                                record.attachments.append(attachment)
-                else:
-                    if not isinstance(record.attachments, list):
-                        record.attachments = []
-                    attachment = ThycoticAttachment(auth, endpoint, file_name)
-                    if not isinstance(record.attachments, list):
-                        record.attachments = []
-                    record.attachments.append(attachment)
-                    del items[slug]
-
             template_name = secret.get('secretTemplateName', '')
             template_name = template_name[:30]
             if template_name in loaded_record_types:
@@ -384,6 +345,50 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
             record.notes = ThycoticImporter.pop_field_value(items, 'notes')
 
+            skip_ssh_key = True
+            if record.type in loaded_record_types:
+                if any((1 for x in loaded_record_types[record.type] if x['$ref'] == 'keyPair')):
+                    skip_ssh_key = False
+
+            secret_id = secret['id']
+            file_items = [x for x in items.values() if x.get('isFile') is True]
+            for item in file_items:
+                slug = item['slug']
+                item['itemValue'] = ''
+                attachment_id = item.get('fileAttachmentId')
+                if not attachment_id:
+                    continue
+                file_name = item.get('filename')
+                if not file_name:
+                    continue
+
+                endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
+                if slug in ('private-key', 'public-key') and skip_ssh_key is not True:
+                    with auth.thycotic_get(endpoint) as rs:
+                        if rs.status_code == 200:
+                            try:
+                                key_text = rs.content.decode()
+                            except:
+                                key_text = ''
+                            is_key = 30 < len(key_text) < 5000
+                            if is_key:
+                                item['itemValue'] = key_text
+                            else:
+                                if not isinstance(record.attachments, list):
+                                    record.attachments = []
+                                attachment = BytesAttachment(file_name, key_text.encode('utf-8'))
+                                if not isinstance(record.attachments, list):
+                                    record.attachments = []
+                                record.attachments.append(attachment)
+                else:
+                    if not isinstance(record.attachments, list):
+                        record.attachments = []
+                    attachment = ThycoticAttachment(auth, endpoint, file_name)
+                    if not isinstance(record.attachments, list):
+                        record.attachments = []
+                    record.attachments.append(attachment)
+                    del items[slug]
+
             if 'private-key' in items:
                 key_pair_value = record_types.FieldTypes['privateKey'].value.copy()
                 key_pair_value['privateKey'], pk_field = ThycoticImporter.pop_field(items, 'private-key')
@@ -392,12 +397,16 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     field_label = pk_field.get('fieldName') or ''
                     field_label = ThycoticImporter.adjust_field_label(record, 'keyPair', field_label, rt)
                     record.fields.append(RecordField('keyPair', field_label, key_pair_value))
-                passphrase = ThycoticImporter.pop_field_value(items, 'private-key-passphrase')
+
+            if 'private-key-passphrase' in items:
+                passphrase, field = ThycoticImporter.pop_field(items, 'private-key-passphrase')
                 if passphrase:
-                    if record.password:
-                        record.fields.append(RecordField('password', 'passphrase', passphrase))
-                    else:
+                    if record.type == 'sshKeys' and not record.password:
                         record.password = passphrase
+                    else:
+                        field_label = field.get('fieldName') or ''
+                        field_label = ThycoticImporter.adjust_field_label(record, 'secret', field_label, rt)
+                        record.fields.append(RecordField('secret', field_label, passphrase))
 
             if 'account-number' in items and 'routing-number' in items:
                 bank_account = record_types.FieldTypes['bankAccount'].value.copy()
@@ -782,7 +791,7 @@ class ThycoticAttachment(Attachment):
 
 
 class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
-    def download_membership(self, params):
+    def download_membership(self, params, **kwargs):
         auth = ThycoticMixin.connect_to_server()
 
         users = ThycoticMembershipDownload.get_user_lookup(auth)
@@ -864,7 +873,7 @@ class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
 
 
 class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
-    def download_record_type(self, params):
+    def download_record_type(self, params, **kwargs):
         auth = ThycoticMixin.connect_to_server()
         templates = auth.thycotic_search('/v1/secret-templates?filter.includeInactive=false&filter.includeSecretCount=true')
         logging.debug('Loaded %d secret templates', len(templates))
@@ -909,10 +918,11 @@ class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
                 template['fields'][slug_name] = tf
 
         for template in templates:
-            fields = template.get('fields')    # type: Dict[str, Dict[str, Any]]
-            if not isinstance(fields, dict):
+            template_fields = template.get('fields')    # type: Dict[str, Dict[str, Any]]
+            if not isinstance(template_fields, dict):
                 continue
 
+            fields = copy.copy(template_fields)
             rt = RecordType()
             rt.name = template['name']
             fields.pop('notes', None)
@@ -1018,7 +1028,8 @@ class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
 
             if 'private-key-passphrase' in fields:
                 field = fields.pop('private-key-passphrase')
-                rf = RecordTypeField.create('password', 'passphrase')
+                field_name = field['name']
+                rf = RecordTypeField.create('secret', field_name)
                 if field.get('required') is True:
                     rf.required = True
                 rt.fields.append(rf)

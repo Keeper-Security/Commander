@@ -2,7 +2,7 @@ wheel
 asciitree
 bcrypt
 colorama
-cryptography>=38.0.3
+cryptography>=39.0.1
 paramiko
 paramiko_expect
 prompt_toolkit
