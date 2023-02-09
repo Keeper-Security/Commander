@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from . import aram, base  # audit_report_parser, audit_log_parser, AuditLogCommand, AuditReportCommand
+from . import aram, base, audit_alerts
 from . import compliance
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
@@ -68,12 +68,15 @@ def register_commands(commands):
     commands['user-report'] = UserReportCommand()
     commands['action-report'] = ActionReportCommand()
     commands['external-shares-report'] = ExternalSharesReportCommand()
+    commands['audit-alert'] = audit_alerts.AuditAlerts()
 
     compliance.register_commands(commands)
 
 
 def register_command_info(aliases, command_info):
+    aliases['aa'] = 'audit-alert'
     aliases['al'] = 'audit-log'
+    aliases['ar'] = 'audit-report'
     aliases['ed'] = 'enterprise-down'
     aliases['ei'] = 'enterprise-info'
     aliases['en'] = 'enterprise-node'

@@ -1229,6 +1229,23 @@ class AuditReportCommand(Command):
             if len(version_filter) == 0:
                 raise CommandError('audit-report', "'device_type' filter: no events")
             audit_filter['keeper_version'] = list(version_filter)
+        if 'alert_uid' in kwargs:
+            parent_id = None   # type: Union[int, List[int], None]
+            alert_uid = kwargs.get('alert_uid')
+            if isinstance(alert_uid, int):
+                parent_id = alert_uid
+            elif isinstance(alert_uid, str):
+                if alert_uid.isnumeric():
+                    parent_id = int(alert_uid)
+            elif isinstance(alert_uid, list):
+                parent_id = []
+                for a in alert_uid:
+                    if isinstance(a, int):
+                        parent_id.append(a)
+                    elif isinstance(a, str):
+                        parent_id.append(int(a))
+            if parent_id:
+                audit_filter['parent_id'] = parent_id
 
         if audit_filter:
             rq['filter'] = audit_filter
