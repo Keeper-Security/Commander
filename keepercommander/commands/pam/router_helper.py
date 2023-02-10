@@ -88,7 +88,12 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
 
     transmission_key = utils.generate_aes_key()
     server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
-    encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+
+    if params.rest_context.server_key_id < 7:
+        encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+    else:
+        encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+
 
     encrypted_payload = b''
 
