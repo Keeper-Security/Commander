@@ -3176,20 +3176,16 @@ class UserReportCommand(EnterpriseCommand):
                     self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
         limit = API_EVENT_SUMMARY_ROW_LIMIT
-        look_back_days = kwargs.get('days') or 365
-        to_ts = int(datetime.datetime.now().timestamp())
+        look_back_days = kwargs.get('days', 365)
         report_filter = {'audit_event_type': ['login', 'login_console', 'chat_login', 'accept_invitation']}
         if isinstance(look_back_days, int) and look_back_days > 0:
             logging.info(f'Querying latest login for the last {look_back_days} days')
             from_date = datetime.datetime.utcnow() - datetime.timedelta(days=look_back_days)
             from_ts = int(from_date.timestamp())
-            period = {'min': from_ts, 'max': to_ts}
-            report_filter['created'] = period
-        else:
-            raise CommandError('user-report', f'argument --days: invalid value: {look_back_days}')
+            report_filter['created'] = {'min': from_ts}
 
         last_login = {}
-        active = (x['username'].lower() for x in self.users.values() if x['status'] == 'active')
+        active = [x['username'].lower() for x in self.users.values() if x['status'] == 'active']
         rq = {
             "command": "get_audit_event_reports",
             "report_type": "span",
@@ -3203,13 +3199,11 @@ class UserReportCommand(EnterpriseCommand):
         get_login_events = True
         while get_login_events:
             missing = [x for x in active if x not in last_login]
-            missing = missing[:limit]
-            report_filter['username'] = missing
+            if not missing:
+                break
+            report_filter['username'] = missing[:limit]
             rs = api.communicate(params, rq)
             report_rows = rs['audit_event_overview_report_rows']
-            last_row = report_rows[-1]
-            to_ts = int(last_row['last_created'])
-            period['max'] = to_ts
             for row in report_rows:
                 username = row.get('username', '').lower()
                 last_login[username] = row['last_created']
