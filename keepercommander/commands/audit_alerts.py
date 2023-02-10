@@ -190,10 +190,12 @@ class AuditSettingMixin:
                 num = 0
             else:
                 num = 1
-        return {
-            'period': occ,
-            'count': num if num > 0 else None
+        freq = {
+            'period': occ
         }
+        if num > 0:
+            freq['count'] = num
+        return freq
 
     @staticmethod
     def get_alert_context(alert_id):   # type: (int) -> Optional[dict]
@@ -658,7 +660,9 @@ class AuditAlertAdd(EnterpriseCommand, AuditSettingMixin):
             'id': alert_id,
             'alertUid': secrets.randbelow(2**31),
             'name': name,
-            'frequency': 'event',
+            'frequency': {
+                'period': 'event'
+            },
             'filter': {}
         }
 
