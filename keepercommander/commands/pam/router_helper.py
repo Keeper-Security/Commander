@@ -402,12 +402,20 @@ def print_router_response(router_response, response_type, original_conversation_
     elif response_type == 'gateway_info':
 
         gateway_info = router_response_response_payload_dict.get('data')
-        print(f'{bcolors.OKBLUE}KSM Application Details{bcolors.ENDC}')
+
+        print(f'{bcolors.OKBLUE}Gateway Details{bcolors.ENDC}')
+        gateway_config = gateway_info.get('gateway-config')
+        print(f'\t{bcolors.OKGREEN}Started Time      : {gateway_config.get("connection_info").get("started")}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}Logs File         : {gateway_config.get("ws_log_file")}{bcolors.ENDC}')
+
+        print(f'\n{bcolors.OKBLUE}KSM Application Details{bcolors.ENDC}')
         ksm_app = gateway_info.get('ksm').get('app')
-        print(f'\t{bcolors.OKGREEN}Title             : {ksm_app.get("title")}{bcolors.ENDC}')
+        warnings_row_color = bcolors.WARNING if ksm_app.get("warnings") else bcolors.OKGREEN
+
+        print(f'\t{bcolors.OKGREEN}Application Title : {ksm_app.get("title")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Number of Records : {ksm_app.get("records-count")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Number of Folders : {ksm_app.get("folders-count")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Warnings          : {ksm_app.get("warnings")}{bcolors.ENDC}')
+        print(f'\t{warnings_row_color}Warnings          : {ksm_app.get("warnings")}{bcolors.ENDC}')
 
         print(f'\n{bcolors.OKBLUE}Host Details{bcolors.ENDC}')
         host_details = gateway_info.get('machine')
