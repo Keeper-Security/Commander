@@ -15,16 +15,22 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x08\x42I.proto\x12\x02\x42I\"f\n\x1bValidateSessionTokenRequest\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\x12\x1c\n\x14returnMcEnterpiseIds\x18\x02 \x01(\x08\x12\n\n\x02ip\x18\x03 \x01(\t\"\xda\x02\n\x1cValidateSessionTokenResponse\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x0e\n\x06userId\x18\x02 \x01(\x05\x12\x18\n\x10\x65nterpriseUserId\x18\x03 \x01(\x03\x12\x37\n\x06status\x18\x04 \x01(\x0e\x32\'.BI.ValidateSessionTokenResponse.Status\x12\x15\n\rstatusMessage\x18\x05 \x01(\t\x12\x17\n\x0fmcEnterpriseIds\x18\x06 \x03(\x05\x12\x18\n\x10hasMSPPermission\x18\x07 \x01(\x08\x12\x1e\n\x16\x64\x65letedMcEnterpriseIds\x18\x08 \x03(\x05\"[\n\x06Status\x12\t\n\x05VALID\x10\x00\x12\r\n\tNOT_VALID\x10\x01\x12\x0b\n\x07\x45XPIRED\x10\x02\x12\x0e\n\nIP_BLOCKED\x10\x03\x12\x1a\n\x16INVALID_CLIENT_VERSION\x10\x04\"\x1b\n\x19SubscriptionStatusRequest\"\xf8\x01\n\x1aSubscriptionStatusResponse\x12$\n\x0b\x61utoRenewal\x18\x01 \x01(\x0b\x32\x0f.BI.AutoRenewal\x12/\n\x14\x63urrentPaymentMethod\x18\x02 \x01(\x0b\x32\x11.BI.PaymentMethod\x12\x14\n\x0c\x63heckoutLink\x18\x03 \x01(\t\x12\x19\n\x11licenseCreateDate\x18\x04 \x01(\x03\x12\x15\n\risDistributor\x18\x05 \x01(\x08\x12\x13\n\x0bisLegacyMsp\x18\x06 \x01(\x08\x12&\n\x0clicenseStats\x18\x08 \x03(\x0b\x32\x10.BI.LicenseStats\"\xd7\x01\n\x0cLicenseStats\x12#\n\x04type\x18\x01 \x01(\x0e\x32\x15.BI.LicenseStats.Type\x12\x11\n\tavailable\x18\x02 \x01(\x05\x12\x0c\n\x04used\x18\x03 \x01(\x05\"\x80\x01\n\x04Type\x12\x18\n\x14LICENSE_STAT_UNKNOWN\x10\x00\x12\x0c\n\x08MSP_BASE\x10\x01\x12\x0f\n\x0bMC_BUSINESS\x10\x02\x12\x14\n\x10MC_BUSINESS_PLUS\x10\x03\x12\x11\n\rMC_ENTERPRISE\x10\x04\x12\x16\n\x12MC_ENTERPRISE_PLUS\x10\x05\"@\n\x0b\x41utoRenewal\x12\x0e\n\x06nextOn\x18\x01 \x01(\x03\x12\x10\n\x08\x64\x61ysLeft\x18\x02 \x01(\x05\x12\x0f\n\x07isTrial\x18\x03 \x01(\x08\"\x84\x04\n\rPaymentMethod\x12$\n\x04type\x18\x01 \x01(\x0e\x32\x16.BI.PaymentMethod.Type\x12$\n\x04\x63\x61rd\x18\x02 \x01(\x0b\x32\x16.BI.PaymentMethod.Card\x12$\n\x04sepa\x18\x03 \x01(\x0b\x32\x16.BI.PaymentMethod.Sepa\x12(\n\x06paypal\x18\x04 \x01(\x0b\x32\x18.BI.PaymentMethod.Paypal\x12\x15\n\rfailedBilling\x18\x05 \x01(\x08\x12(\n\x06vendor\x18\x06 \x01(\x0b\x32\x18.BI.PaymentMethod.Vendor\x12\x36\n\rpurchaseOrder\x18\x07 \x01(\x0b\x32\x1f.BI.PaymentMethod.PurchaseOrder\x1a$\n\x04\x43\x61rd\x12\r\n\x05last4\x18\x01 \x01(\t\x12\r\n\x05\x62rand\x18\x02 \x01(\t\x1a&\n\x04Sepa\x12\r\n\x05last4\x18\x01 \x01(\t\x12\x0f\n\x07\x63ountry\x18\x02 \x01(\t\x1a\x08\n\x06Paypal\x1a\x16\n\x06Vendor\x12\x0c\n\x04name\x18\x01 \x01(\t\x1a\x1d\n\rPurchaseOrder\x12\x0c\n\x04name\x18\x01 \x01(\t\"O\n\x04Type\x12\x08\n\x04\x43\x41RD\x10\x00\x12\x08\n\x04SEPA\x10\x01\x12\n\n\x06PAYPAL\x10\x02\x12\x08\n\x04NONE\x10\x03\x12\n\n\x06VENDOR\x10\x04\x12\x11\n\rPURCHASEORDER\x10\x05\"\x1f\n\x1dSubscriptionMspPricingRequest\"\\\n\x1eSubscriptionMspPricingResponse\x12\x19\n\x06\x61\x64\x64ons\x18\x02 \x03(\x0b\x32\t.BI.Addon\x12\x1f\n\tfilePlans\x18\x03 \x03(\x0b\x32\x0c.BI.FilePlan\"\x1e\n\x1cSubscriptionMcPricingRequest\"|\n\x1dSubscriptionMcPricingResponse\x12\x1f\n\tbasePlans\x18\x01 \x03(\x0b\x32\x0c.BI.BasePlan\x12\x19\n\x06\x61\x64\x64ons\x18\x02 \x03(\x0b\x32\t.BI.Addon\x12\x1f\n\tfilePlans\x18\x03 \x03(\x0b\x32\x0c.BI.FilePlan\".\n\x08\x42\x61sePlan\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x16\n\x04\x63ost\x18\x02 \x01(\x0b\x32\x08.BI.Cost\"C\n\x05\x41\x64\x64on\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x16\n\x04\x63ost\x18\x02 \x01(\x0b\x32\x08.BI.Cost\x12\x16\n\x0e\x61mountConsumed\x18\x03 \x01(\x03\".\n\x08\x46ilePlan\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x16\n\x04\x63ost\x18\x02 \x01(\x0b\x32\x08.BI.Cost\"\xab\x01\n\x04\x43ost\x12\x0e\n\x06\x61mount\x18\x03 \x01(\x01\x12%\n\tamountPer\x18\x04 \x01(\x0e\x32\x12.BI.Cost.AmountPer\x12\x1e\n\x08\x63urrency\x18\x05 \x01(\x0e\x32\x0c.BI.Currency\"L\n\tAmountPer\x12\x0b\n\x07UNKNOWN\x10\x00\x12\t\n\x05MONTH\x10\x01\x12\x0e\n\nUSER_MONTH\x10\x02\x12\x17\n\x13USER_CONSUMED_MONTH\x10\x03\"=\n\x14InvoiceSearchRequest\x12\x0c\n\x04size\x18\x01 \x01(\x05\x12\x17\n\x0fstartingAfterId\x18\x02 \x01(\x05\"6\n\x15InvoiceSearchResponse\x12\x1d\n\x08invoices\x18\x01 \x03(\x0b\x32\x0b.BI.Invoice\"\xbe\x02\n\x07Invoice\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x15\n\rinvoiceNumber\x18\x02 \x01(\t\x12\x13\n\x0binvoiceDate\x18\x03 \x01(\x03\x12\x14\n\x0clicenseCount\x18\x04 \x01(\x05\x12#\n\ttotalCost\x18\x05 \x01(\x0b\x32\x10.BI.Invoice.Cost\x12%\n\x0binvoiceType\x18\x06 \x01(\x0e\x32\x10.BI.Invoice.Type\x1a\x36\n\x04\x43ost\x12\x0e\n\x06\x61mount\x18\x01 \x01(\x01\x12\x1e\n\x08\x63urrency\x18\x02 \x01(\x0e\x32\x0c.BI.Currency\"a\n\x04Type\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x07\n\x03NEW\x10\x01\x12\x0b\n\x07RENEWAL\x10\x02\x12\x0b\n\x07UPGRADE\x10\x03\x12\x0b\n\x07RESTORE\x10\x04\x12\x0f\n\x0b\x41SSOCIATION\x10\x05\x12\x0b\n\x07OVERAGE\x10\x06\"/\n\x16InvoiceDownloadRequest\x12\x15\n\rinvoiceNumber\x18\x01 \x01(\t\"9\n\x17InvoiceDownloadResponse\x12\x0c\n\x04link\x18\x01 \x01(\t\x12\x10\n\x08\x66ileName\x18\x02 \x01(\t\"<\n\x1dReportingDailySnapshotRequest\x12\r\n\x05month\x18\x01 \x01(\x05\x12\x0c\n\x04year\x18\x02 \x01(\x05\"v\n\x1eReportingDailySnapshotResponse\x12#\n\x07records\x18\x01 \x03(\x0b\x32\x12.BI.SnapshotRecord\x12/\n\rmcEnterprises\x18\x02 \x03(\x0b\x32\x18.BI.SnapshotMcEnterprise\"\xd7\x01\n\x0eSnapshotRecord\x12\x0c\n\x04\x64\x61te\x18\x01 \x01(\x03\x12\x16\n\x0emcEnterpriseId\x18\x02 \x01(\x05\x12\x17\n\x0fmaxLicenseCount\x18\x04 \x01(\x05\x12\x19\n\x11maxFilePlanTypeId\x18\x05 \x01(\x05\x12\x15\n\rmaxBasePlanId\x18\x06 \x01(\x05\x12(\n\x06\x61\x64\x64ons\x18\x07 \x03(\x0b\x32\x18.BI.SnapshotRecord.Addon\x1a*\n\x05\x41\x64\x64on\x12\x12\n\nmaxAddonId\x18\x01 \x01(\x05\x12\r\n\x05units\x18\x02 \x01(\x03\"0\n\x14SnapshotMcEnterprise\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\"\x16\n\x14MappingAddonsRequest\"\\\n\x15MappingAddonsResponse\x12\x1f\n\x06\x61\x64\x64ons\x18\x01 \x03(\x0b\x32\x0f.BI.MappingItem\x12\"\n\tfilePlans\x18\x02 \x03(\x0b\x32\x0f.BI.MappingItem\"\'\n\x0bMappingItem\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\"1\n\x1aGradientValidateKeyRequest\x12\x13\n\x0bgradientKey\x18\x01 \x01(\t\"?\n\x1bGradientValidateKeyResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"E\n\x19GradientAddServiceRequest\x12\x13\n\x0bserviceName\x18\x01 \x01(\t\x12\x13\n\x0bserviceDesc\x18\x02 \x01(\t\">\n\x1aGradientAddServiceResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"J\n\x19GradientAddAccountRequest\x12\x13\n\x0bgradientKey\x18\x01 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\">\n\x1aGradientAddAccountResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"B\n\x1bGradientUpdateStatusRequest\x12\x13\n\x0bgradientKey\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\"@\n\x1cGradientUpdateStatusResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"H\n\x17GradientSetUnitsRequest\x12\x13\n\x0bgradientKey\x18\x01 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\"<\n\x18GradientSetUnitsResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t*D\n\x08\x43urrency\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x07\n\x03USD\x10\x01\x12\x07\n\x03GBP\x10\x02\x12\x07\n\x03JPY\x10\x03\x12\x07\n\x03\x45UR\x10\x04\x12\x07\n\x03\x41UD\x10\x05\x42\x1e\n\x18\x63om.keepersecurity.protoB\x02\x42Ib\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x08\x42I.proto\x12\x02\x42I\"f\n\x1bValidateSessionTokenRequest\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\x12\x1c\n\x14returnMcEnterpiseIds\x18\x02 \x01(\x08\x12\n\n\x02ip\x18\x03 \x01(\t\"\xda\x02\n\x1cValidateSessionTokenResponse\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x0e\n\x06userId\x18\x02 \x01(\x05\x12\x18\n\x10\x65nterpriseUserId\x18\x03 \x01(\x03\x12\x37\n\x06status\x18\x04 \x01(\x0e\x32\'.BI.ValidateSessionTokenResponse.Status\x12\x15\n\rstatusMessage\x18\x05 \x01(\t\x12\x17\n\x0fmcEnterpriseIds\x18\x06 \x03(\x05\x12\x18\n\x10hasMSPPermission\x18\x07 \x01(\x08\x12\x1e\n\x16\x64\x65letedMcEnterpriseIds\x18\x08 \x03(\x05\"[\n\x06Status\x12\t\n\x05VALID\x10\x00\x12\r\n\tNOT_VALID\x10\x01\x12\x0b\n\x07\x45XPIRED\x10\x02\x12\x0e\n\nIP_BLOCKED\x10\x03\x12\x1a\n\x16INVALID_CLIENT_VERSION\x10\x04\"\x1b\n\x19SubscriptionStatusRequest\"\xaf\x02\n\x1aSubscriptionStatusResponse\x12$\n\x0b\x61utoRenewal\x18\x01 \x01(\x0b\x32\x0f.BI.AutoRenewal\x12/\n\x14\x63urrentPaymentMethod\x18\x02 \x01(\x0b\x32\x11.BI.PaymentMethod\x12\x14\n\x0c\x63heckoutLink\x18\x03 \x01(\t\x12\x19\n\x11licenseCreateDate\x18\x04 \x01(\x03\x12\x15\n\risDistributor\x18\x05 \x01(\x08\x12\x13\n\x0bisLegacyMsp\x18\x06 \x01(\x08\x12&\n\x0clicenseStats\x18\x08 \x03(\x0b\x32\x10.BI.LicenseStats\x12\x35\n\x0egradientStatus\x18\t \x01(\x0e\x32\x1d.BI.GradientIntegrationStatus\"\xd7\x01\n\x0cLicenseStats\x12#\n\x04type\x18\x01 \x01(\x0e\x32\x15.BI.LicenseStats.Type\x12\x11\n\tavailable\x18\x02 \x01(\x05\x12\x0c\n\x04used\x18\x03 \x01(\x05\"\x80\x01\n\x04Type\x12\x18\n\x14LICENSE_STAT_UNKNOWN\x10\x00\x12\x0c\n\x08MSP_BASE\x10\x01\x12\x0f\n\x0bMC_BUSINESS\x10\x02\x12\x14\n\x10MC_BUSINESS_PLUS\x10\x03\x12\x11\n\rMC_ENTERPRISE\x10\x04\x12\x16\n\x12MC_ENTERPRISE_PLUS\x10\x05\"@\n\x0b\x41utoRenewal\x12\x0e\n\x06nextOn\x18\x01 \x01(\x03\x12\x10\n\x08\x64\x61ysLeft\x18\x02 \x01(\x05\x12\x0f\n\x07isTrial\x18\x03 \x01(\x08\"\x84\x04\n\rPaymentMethod\x12$\n\x04type\x18\x01 \x01(\x0e\x32\x16.BI.PaymentMethod.Type\x12$\n\x04\x63\x61rd\x18\x02 \x01(\x0b\x32\x16.BI.PaymentMethod.Card\x12$\n\x04sepa\x18\x03 \x01(\x0b\x32\x16.BI.PaymentMethod.Sepa\x12(\n\x06paypal\x18\x04 \x01(\x0b\x32\x18.BI.PaymentMethod.Paypal\x12\x15\n\rfailedBilling\x18\x05 \x01(\x08\x12(\n\x06vendor\x18\x06 \x01(\x0b\x32\x18.BI.PaymentMethod.Vendor\x12\x36\n\rpurchaseOrder\x18\x07 \x01(\x0b\x32\x1f.BI.PaymentMethod.PurchaseOrder\x1a$\n\x04\x43\x61rd\x12\r\n\x05last4\x18\x01 \x01(\t\x12\r\n\x05\x62rand\x18\x02 \x01(\t\x1a&\n\x04Sepa\x12\r\n\x05last4\x18\x01 \x01(\t\x12\x0f\n\x07\x63ountry\x18\x02 \x01(\t\x1a\x08\n\x06Paypal\x1a\x16\n\x06Vendor\x12\x0c\n\x04name\x18\x01 \x01(\t\x1a\x1d\n\rPurchaseOrder\x12\x0c\n\x04name\x18\x01 \x01(\t\"O\n\x04Type\x12\x08\n\x04\x43\x41RD\x10\x00\x12\x08\n\x04SEPA\x10\x01\x12\n\n\x06PAYPAL\x10\x02\x12\x08\n\x04NONE\x10\x03\x12\n\n\x06VENDOR\x10\x04\x12\x11\n\rPURCHASEORDER\x10\x05\"\x1f\n\x1dSubscriptionMspPricingRequest\"\\\n\x1eSubscriptionMspPricingResponse\x12\x19\n\x06\x61\x64\x64ons\x18\x02 \x03(\x0b\x32\t.BI.Addon\x12\x1f\n\tfilePlans\x18\x03 \x03(\x0b\x32\x0c.BI.FilePlan\"\x1e\n\x1cSubscriptionMcPricingRequest\"|\n\x1dSubscriptionMcPricingResponse\x12\x1f\n\tbasePlans\x18\x01 \x03(\x0b\x32\x0c.BI.BasePlan\x12\x19\n\x06\x61\x64\x64ons\x18\x02 \x03(\x0b\x32\t.BI.Addon\x12\x1f\n\tfilePlans\x18\x03 \x03(\x0b\x32\x0c.BI.FilePlan\".\n\x08\x42\x61sePlan\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x16\n\x04\x63ost\x18\x02 \x01(\x0b\x32\x08.BI.Cost\"C\n\x05\x41\x64\x64on\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x16\n\x04\x63ost\x18\x02 \x01(\x0b\x32\x08.BI.Cost\x12\x16\n\x0e\x61mountConsumed\x18\x03 \x01(\x03\".\n\x08\x46ilePlan\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x16\n\x04\x63ost\x18\x02 \x01(\x0b\x32\x08.BI.Cost\"\xab\x01\n\x04\x43ost\x12\x0e\n\x06\x61mount\x18\x03 \x01(\x01\x12%\n\tamountPer\x18\x04 \x01(\x0e\x32\x12.BI.Cost.AmountPer\x12\x1e\n\x08\x63urrency\x18\x05 \x01(\x0e\x32\x0c.BI.Currency\"L\n\tAmountPer\x12\x0b\n\x07UNKNOWN\x10\x00\x12\t\n\x05MONTH\x10\x01\x12\x0e\n\nUSER_MONTH\x10\x02\x12\x17\n\x13USER_CONSUMED_MONTH\x10\x03\"=\n\x14InvoiceSearchRequest\x12\x0c\n\x04size\x18\x01 \x01(\x05\x12\x17\n\x0fstartingAfterId\x18\x02 \x01(\x05\"6\n\x15InvoiceSearchResponse\x12\x1d\n\x08invoices\x18\x01 \x03(\x0b\x32\x0b.BI.Invoice\"\xbe\x02\n\x07Invoice\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x15\n\rinvoiceNumber\x18\x02 \x01(\t\x12\x13\n\x0binvoiceDate\x18\x03 \x01(\x03\x12\x14\n\x0clicenseCount\x18\x04 \x01(\x05\x12#\n\ttotalCost\x18\x05 \x01(\x0b\x32\x10.BI.Invoice.Cost\x12%\n\x0binvoiceType\x18\x06 \x01(\x0e\x32\x10.BI.Invoice.Type\x1a\x36\n\x04\x43ost\x12\x0e\n\x06\x61mount\x18\x01 \x01(\x01\x12\x1e\n\x08\x63urrency\x18\x02 \x01(\x0e\x32\x0c.BI.Currency\"a\n\x04Type\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x07\n\x03NEW\x10\x01\x12\x0b\n\x07RENEWAL\x10\x02\x12\x0b\n\x07UPGRADE\x10\x03\x12\x0b\n\x07RESTORE\x10\x04\x12\x0f\n\x0b\x41SSOCIATION\x10\x05\x12\x0b\n\x07OVERAGE\x10\x06\"/\n\x16InvoiceDownloadRequest\x12\x15\n\rinvoiceNumber\x18\x01 \x01(\t\"9\n\x17InvoiceDownloadResponse\x12\x0c\n\x04link\x18\x01 \x01(\t\x12\x10\n\x08\x66ileName\x18\x02 \x01(\t\"<\n\x1dReportingDailySnapshotRequest\x12\r\n\x05month\x18\x01 \x01(\x05\x12\x0c\n\x04year\x18\x02 \x01(\x05\"v\n\x1eReportingDailySnapshotResponse\x12#\n\x07records\x18\x01 \x03(\x0b\x32\x12.BI.SnapshotRecord\x12/\n\rmcEnterprises\x18\x02 \x03(\x0b\x32\x18.BI.SnapshotMcEnterprise\"\xd7\x01\n\x0eSnapshotRecord\x12\x0c\n\x04\x64\x61te\x18\x01 \x01(\x03\x12\x16\n\x0emcEnterpriseId\x18\x02 \x01(\x05\x12\x17\n\x0fmaxLicenseCount\x18\x04 \x01(\x05\x12\x19\n\x11maxFilePlanTypeId\x18\x05 \x01(\x05\x12\x15\n\rmaxBasePlanId\x18\x06 \x01(\x05\x12(\n\x06\x61\x64\x64ons\x18\x07 \x03(\x0b\x32\x18.BI.SnapshotRecord.Addon\x1a*\n\x05\x41\x64\x64on\x12\x12\n\nmaxAddonId\x18\x01 \x01(\x05\x12\r\n\x05units\x18\x02 \x01(\x03\"0\n\x14SnapshotMcEnterprise\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\"\x16\n\x14MappingAddonsRequest\"\\\n\x15MappingAddonsResponse\x12\x1f\n\x06\x61\x64\x64ons\x18\x01 \x03(\x0b\x32\x0f.BI.MappingItem\x12\"\n\tfilePlans\x18\x02 \x03(\x0b\x32\x0f.BI.MappingItem\"\'\n\x0bMappingItem\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\"1\n\x1aGradientValidateKeyRequest\x12\x13\n\x0bgradientKey\x18\x01 \x01(\t\"?\n\x1bGradientValidateKeyResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"E\n\x19GradientAddServiceRequest\x12\x13\n\x0bserviceName\x18\x01 \x01(\t\x12\x13\n\x0bserviceDesc\x18\x02 \x01(\t\">\n\x1aGradientAddServiceResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"D\n\x13GradientSaveRequest\x12\x13\n\x0bgradientKey\x18\x01 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\"g\n\x14GradientSaveResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12-\n\x06status\x18\x02 \x01(\x0e\x32\x1d.BI.GradientIntegrationStatus\x12\x0f\n\x07message\x18\x03 \x01(\t\"1\n\x15GradientRemoveRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\":\n\x16GradientRemoveResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"/\n\x13GradientSyncRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\"g\n\x14GradientSyncResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12-\n\x06status\x18\x02 \x01(\x0e\x32\x1d.BI.GradientIntegrationStatus\x12\x0f\n\x07message\x18\x03 \x01(\t*D\n\x08\x43urrency\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x07\n\x03USD\x10\x01\x12\x07\n\x03GBP\x10\x02\x12\x07\n\x03JPY\x10\x03\x12\x07\n\x03\x45UR\x10\x04\x12\x07\n\x03\x41UD\x10\x05*S\n\x19GradientIntegrationStatus\x12\x10\n\x0cNOTCONNECTED\x10\x00\x12\x0b\n\x07PENDING\x10\x01\x12\r\n\tCONNECTED\x10\x02\x12\x08\n\x04NONE\x10\x03\x42\x1e\n\x18\x63om.keepersecurity.protoB\x02\x42Ib\x06proto3')
 
 _CURRENCY = DESCRIPTOR.enum_types_by_name['Currency']
 Currency = enum_type_wrapper.EnumTypeWrapper(_CURRENCY)
+_GRADIENTINTEGRATIONSTATUS = DESCRIPTOR.enum_types_by_name['GradientIntegrationStatus']
+GradientIntegrationStatus = enum_type_wrapper.EnumTypeWrapper(_GRADIENTINTEGRATIONSTATUS)
 UNKNOWN = 0
 USD = 1
 GBP = 2
 JPY = 3
 EUR = 4
 AUD = 5
+NOTCONNECTED = 0
+PENDING = 1
+CONNECTED = 2
+NONE = 3
 
 
 _VALIDATESESSIONTOKENREQUEST = DESCRIPTOR.message_types_by_name['ValidateSessionTokenRequest']
@@ -65,12 +71,12 @@ _GRADIENTVALIDATEKEYREQUEST = DESCRIPTOR.message_types_by_name['GradientValidate
 _GRADIENTVALIDATEKEYRESPONSE = DESCRIPTOR.message_types_by_name['GradientValidateKeyResponse']
 _GRADIENTADDSERVICEREQUEST = DESCRIPTOR.message_types_by_name['GradientAddServiceRequest']
 _GRADIENTADDSERVICERESPONSE = DESCRIPTOR.message_types_by_name['GradientAddServiceResponse']
-_GRADIENTADDACCOUNTREQUEST = DESCRIPTOR.message_types_by_name['GradientAddAccountRequest']
-_GRADIENTADDACCOUNTRESPONSE = DESCRIPTOR.message_types_by_name['GradientAddAccountResponse']
-_GRADIENTUPDATESTATUSREQUEST = DESCRIPTOR.message_types_by_name['GradientUpdateStatusRequest']
-_GRADIENTUPDATESTATUSRESPONSE = DESCRIPTOR.message_types_by_name['GradientUpdateStatusResponse']
-_GRADIENTSETUNITSREQUEST = DESCRIPTOR.message_types_by_name['GradientSetUnitsRequest']
-_GRADIENTSETUNITSRESPONSE = DESCRIPTOR.message_types_by_name['GradientSetUnitsResponse']
+_GRADIENTSAVEREQUEST = DESCRIPTOR.message_types_by_name['GradientSaveRequest']
+_GRADIENTSAVERESPONSE = DESCRIPTOR.message_types_by_name['GradientSaveResponse']
+_GRADIENTREMOVEREQUEST = DESCRIPTOR.message_types_by_name['GradientRemoveRequest']
+_GRADIENTREMOVERESPONSE = DESCRIPTOR.message_types_by_name['GradientRemoveResponse']
+_GRADIENTSYNCREQUEST = DESCRIPTOR.message_types_by_name['GradientSyncRequest']
+_GRADIENTSYNCRESPONSE = DESCRIPTOR.message_types_by_name['GradientSyncResponse']
 _VALIDATESESSIONTOKENRESPONSE_STATUS = _VALIDATESESSIONTOKENRESPONSE.enum_types_by_name['Status']
 _LICENSESTATS_TYPE = _LICENSESTATS.enum_types_by_name['Type']
 _PAYMENTMETHOD_TYPE = _PAYMENTMETHOD.enum_types_by_name['Type']
@@ -349,54 +355,56 @@ GradientAddServiceResponse = _reflection.GeneratedProtocolMessageType('GradientA
   })
 _sym_db.RegisterMessage(GradientAddServiceResponse)
 
-GradientAddAccountRequest = _reflection.GeneratedProtocolMessageType('GradientAddAccountRequest', (_message.Message,), {
-  'DESCRIPTOR' : _GRADIENTADDACCOUNTREQUEST,
+GradientSaveRequest = _reflection.GeneratedProtocolMessageType('GradientSaveRequest', (_message.Message,), {
+  'DESCRIPTOR' : _GRADIENTSAVEREQUEST,
   '__module__' : 'BI_pb2'
-  # @@protoc_insertion_point(class_scope:BI.GradientAddAccountRequest)
+  # @@protoc_insertion_point(class_scope:BI.GradientSaveRequest)
   })
-_sym_db.RegisterMessage(GradientAddAccountRequest)
+_sym_db.RegisterMessage(GradientSaveRequest)
 
-GradientAddAccountResponse = _reflection.GeneratedProtocolMessageType('GradientAddAccountResponse', (_message.Message,), {
-  'DESCRIPTOR' : _GRADIENTADDACCOUNTRESPONSE,
+GradientSaveResponse = _reflection.GeneratedProtocolMessageType('GradientSaveResponse', (_message.Message,), {
+  'DESCRIPTOR' : _GRADIENTSAVERESPONSE,
   '__module__' : 'BI_pb2'
-  # @@protoc_insertion_point(class_scope:BI.GradientAddAccountResponse)
+  # @@protoc_insertion_point(class_scope:BI.GradientSaveResponse)
   })
-_sym_db.RegisterMessage(GradientAddAccountResponse)
+_sym_db.RegisterMessage(GradientSaveResponse)
 
-GradientUpdateStatusRequest = _reflection.GeneratedProtocolMessageType('GradientUpdateStatusRequest', (_message.Message,), {
-  'DESCRIPTOR' : _GRADIENTUPDATESTATUSREQUEST,
+GradientRemoveRequest = _reflection.GeneratedProtocolMessageType('GradientRemoveRequest', (_message.Message,), {
+  'DESCRIPTOR' : _GRADIENTREMOVEREQUEST,
   '__module__' : 'BI_pb2'
-  # @@protoc_insertion_point(class_scope:BI.GradientUpdateStatusRequest)
+  # @@protoc_insertion_point(class_scope:BI.GradientRemoveRequest)
   })
-_sym_db.RegisterMessage(GradientUpdateStatusRequest)
+_sym_db.RegisterMessage(GradientRemoveRequest)
 
-GradientUpdateStatusResponse = _reflection.GeneratedProtocolMessageType('GradientUpdateStatusResponse', (_message.Message,), {
-  'DESCRIPTOR' : _GRADIENTUPDATESTATUSRESPONSE,
+GradientRemoveResponse = _reflection.GeneratedProtocolMessageType('GradientRemoveResponse', (_message.Message,), {
+  'DESCRIPTOR' : _GRADIENTREMOVERESPONSE,
   '__module__' : 'BI_pb2'
-  # @@protoc_insertion_point(class_scope:BI.GradientUpdateStatusResponse)
+  # @@protoc_insertion_point(class_scope:BI.GradientRemoveResponse)
   })
-_sym_db.RegisterMessage(GradientUpdateStatusResponse)
+_sym_db.RegisterMessage(GradientRemoveResponse)
 
-GradientSetUnitsRequest = _reflection.GeneratedProtocolMessageType('GradientSetUnitsRequest', (_message.Message,), {
-  'DESCRIPTOR' : _GRADIENTSETUNITSREQUEST,
+GradientSyncRequest = _reflection.GeneratedProtocolMessageType('GradientSyncRequest', (_message.Message,), {
+  'DESCRIPTOR' : _GRADIENTSYNCREQUEST,
   '__module__' : 'BI_pb2'
-  # @@protoc_insertion_point(class_scope:BI.GradientSetUnitsRequest)
+  # @@protoc_insertion_point(class_scope:BI.GradientSyncRequest)
   })
-_sym_db.RegisterMessage(GradientSetUnitsRequest)
+_sym_db.RegisterMessage(GradientSyncRequest)
 
-GradientSetUnitsResponse = _reflection.GeneratedProtocolMessageType('GradientSetUnitsResponse', (_message.Message,), {
-  'DESCRIPTOR' : _GRADIENTSETUNITSRESPONSE,
+GradientSyncResponse = _reflection.GeneratedProtocolMessageType('GradientSyncResponse', (_message.Message,), {
+  'DESCRIPTOR' : _GRADIENTSYNCRESPONSE,
   '__module__' : 'BI_pb2'
-  # @@protoc_insertion_point(class_scope:BI.GradientSetUnitsResponse)
+  # @@protoc_insertion_point(class_scope:BI.GradientSyncResponse)
   })
-_sym_db.RegisterMessage(GradientSetUnitsResponse)
+_sym_db.RegisterMessage(GradientSyncResponse)
 
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\002BI'
-  _CURRENCY._serialized_start=3994
-  _CURRENCY._serialized_end=4062
+  _CURRENCY._serialized_start=4079
+  _CURRENCY._serialized_end=4147
+  _GRADIENTINTEGRATIONSTATUS._serialized_start=4149
+  _GRADIENTINTEGRATIONSTATUS._serialized_end=4232
   _VALIDATESESSIONTOKENREQUEST._serialized_start=16
   _VALIDATESESSIONTOKENREQUEST._serialized_end=118
   _VALIDATESESSIONTOKENRESPONSE._serialized_start=121
@@ -406,93 +414,93 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _SUBSCRIPTIONSTATUSREQUEST._serialized_start=469
   _SUBSCRIPTIONSTATUSREQUEST._serialized_end=496
   _SUBSCRIPTIONSTATUSRESPONSE._serialized_start=499
-  _SUBSCRIPTIONSTATUSRESPONSE._serialized_end=747
-  _LICENSESTATS._serialized_start=750
-  _LICENSESTATS._serialized_end=965
-  _LICENSESTATS_TYPE._serialized_start=837
-  _LICENSESTATS_TYPE._serialized_end=965
-  _AUTORENEWAL._serialized_start=967
-  _AUTORENEWAL._serialized_end=1031
-  _PAYMENTMETHOD._serialized_start=1034
-  _PAYMENTMETHOD._serialized_end=1550
-  _PAYMENTMETHOD_CARD._serialized_start=1328
-  _PAYMENTMETHOD_CARD._serialized_end=1364
-  _PAYMENTMETHOD_SEPA._serialized_start=1366
-  _PAYMENTMETHOD_SEPA._serialized_end=1404
-  _PAYMENTMETHOD_PAYPAL._serialized_start=1406
-  _PAYMENTMETHOD_PAYPAL._serialized_end=1414
-  _PAYMENTMETHOD_VENDOR._serialized_start=1416
-  _PAYMENTMETHOD_VENDOR._serialized_end=1438
-  _PAYMENTMETHOD_PURCHASEORDER._serialized_start=1440
-  _PAYMENTMETHOD_PURCHASEORDER._serialized_end=1469
-  _PAYMENTMETHOD_TYPE._serialized_start=1471
-  _PAYMENTMETHOD_TYPE._serialized_end=1550
-  _SUBSCRIPTIONMSPPRICINGREQUEST._serialized_start=1552
-  _SUBSCRIPTIONMSPPRICINGREQUEST._serialized_end=1583
-  _SUBSCRIPTIONMSPPRICINGRESPONSE._serialized_start=1585
-  _SUBSCRIPTIONMSPPRICINGRESPONSE._serialized_end=1677
-  _SUBSCRIPTIONMCPRICINGREQUEST._serialized_start=1679
-  _SUBSCRIPTIONMCPRICINGREQUEST._serialized_end=1709
-  _SUBSCRIPTIONMCPRICINGRESPONSE._serialized_start=1711
-  _SUBSCRIPTIONMCPRICINGRESPONSE._serialized_end=1835
-  _BASEPLAN._serialized_start=1837
-  _BASEPLAN._serialized_end=1883
-  _ADDON._serialized_start=1885
-  _ADDON._serialized_end=1952
-  _FILEPLAN._serialized_start=1954
-  _FILEPLAN._serialized_end=2000
-  _COST._serialized_start=2003
-  _COST._serialized_end=2174
-  _COST_AMOUNTPER._serialized_start=2098
-  _COST_AMOUNTPER._serialized_end=2174
-  _INVOICESEARCHREQUEST._serialized_start=2176
-  _INVOICESEARCHREQUEST._serialized_end=2237
-  _INVOICESEARCHRESPONSE._serialized_start=2239
-  _INVOICESEARCHRESPONSE._serialized_end=2293
-  _INVOICE._serialized_start=2296
-  _INVOICE._serialized_end=2614
-  _INVOICE_COST._serialized_start=2461
-  _INVOICE_COST._serialized_end=2515
-  _INVOICE_TYPE._serialized_start=2517
-  _INVOICE_TYPE._serialized_end=2614
-  _INVOICEDOWNLOADREQUEST._serialized_start=2616
-  _INVOICEDOWNLOADREQUEST._serialized_end=2663
-  _INVOICEDOWNLOADRESPONSE._serialized_start=2665
-  _INVOICEDOWNLOADRESPONSE._serialized_end=2722
-  _REPORTINGDAILYSNAPSHOTREQUEST._serialized_start=2724
-  _REPORTINGDAILYSNAPSHOTREQUEST._serialized_end=2784
-  _REPORTINGDAILYSNAPSHOTRESPONSE._serialized_start=2786
-  _REPORTINGDAILYSNAPSHOTRESPONSE._serialized_end=2904
-  _SNAPSHOTRECORD._serialized_start=2907
-  _SNAPSHOTRECORD._serialized_end=3122
-  _SNAPSHOTRECORD_ADDON._serialized_start=3080
-  _SNAPSHOTRECORD_ADDON._serialized_end=3122
-  _SNAPSHOTMCENTERPRISE._serialized_start=3124
-  _SNAPSHOTMCENTERPRISE._serialized_end=3172
-  _MAPPINGADDONSREQUEST._serialized_start=3174
-  _MAPPINGADDONSREQUEST._serialized_end=3196
-  _MAPPINGADDONSRESPONSE._serialized_start=3198
-  _MAPPINGADDONSRESPONSE._serialized_end=3290
-  _MAPPINGITEM._serialized_start=3292
-  _MAPPINGITEM._serialized_end=3331
-  _GRADIENTVALIDATEKEYREQUEST._serialized_start=3333
-  _GRADIENTVALIDATEKEYREQUEST._serialized_end=3382
-  _GRADIENTVALIDATEKEYRESPONSE._serialized_start=3384
-  _GRADIENTVALIDATEKEYRESPONSE._serialized_end=3447
-  _GRADIENTADDSERVICEREQUEST._serialized_start=3449
-  _GRADIENTADDSERVICEREQUEST._serialized_end=3518
-  _GRADIENTADDSERVICERESPONSE._serialized_start=3520
-  _GRADIENTADDSERVICERESPONSE._serialized_end=3582
-  _GRADIENTADDACCOUNTREQUEST._serialized_start=3584
-  _GRADIENTADDACCOUNTREQUEST._serialized_end=3658
-  _GRADIENTADDACCOUNTRESPONSE._serialized_start=3660
-  _GRADIENTADDACCOUNTRESPONSE._serialized_end=3722
-  _GRADIENTUPDATESTATUSREQUEST._serialized_start=3724
-  _GRADIENTUPDATESTATUSREQUEST._serialized_end=3790
-  _GRADIENTUPDATESTATUSRESPONSE._serialized_start=3792
-  _GRADIENTUPDATESTATUSRESPONSE._serialized_end=3856
-  _GRADIENTSETUNITSREQUEST._serialized_start=3858
-  _GRADIENTSETUNITSREQUEST._serialized_end=3930
-  _GRADIENTSETUNITSRESPONSE._serialized_start=3932
-  _GRADIENTSETUNITSRESPONSE._serialized_end=3992
+  _SUBSCRIPTIONSTATUSRESPONSE._serialized_end=802
+  _LICENSESTATS._serialized_start=805
+  _LICENSESTATS._serialized_end=1020
+  _LICENSESTATS_TYPE._serialized_start=892
+  _LICENSESTATS_TYPE._serialized_end=1020
+  _AUTORENEWAL._serialized_start=1022
+  _AUTORENEWAL._serialized_end=1086
+  _PAYMENTMETHOD._serialized_start=1089
+  _PAYMENTMETHOD._serialized_end=1605
+  _PAYMENTMETHOD_CARD._serialized_start=1383
+  _PAYMENTMETHOD_CARD._serialized_end=1419
+  _PAYMENTMETHOD_SEPA._serialized_start=1421
+  _PAYMENTMETHOD_SEPA._serialized_end=1459
+  _PAYMENTMETHOD_PAYPAL._serialized_start=1461
+  _PAYMENTMETHOD_PAYPAL._serialized_end=1469
+  _PAYMENTMETHOD_VENDOR._serialized_start=1471
+  _PAYMENTMETHOD_VENDOR._serialized_end=1493
+  _PAYMENTMETHOD_PURCHASEORDER._serialized_start=1495
+  _PAYMENTMETHOD_PURCHASEORDER._serialized_end=1524
+  _PAYMENTMETHOD_TYPE._serialized_start=1526
+  _PAYMENTMETHOD_TYPE._serialized_end=1605
+  _SUBSCRIPTIONMSPPRICINGREQUEST._serialized_start=1607
+  _SUBSCRIPTIONMSPPRICINGREQUEST._serialized_end=1638
+  _SUBSCRIPTIONMSPPRICINGRESPONSE._serialized_start=1640
+  _SUBSCRIPTIONMSPPRICINGRESPONSE._serialized_end=1732
+  _SUBSCRIPTIONMCPRICINGREQUEST._serialized_start=1734
+  _SUBSCRIPTIONMCPRICINGREQUEST._serialized_end=1764
+  _SUBSCRIPTIONMCPRICINGRESPONSE._serialized_start=1766
+  _SUBSCRIPTIONMCPRICINGRESPONSE._serialized_end=1890
+  _BASEPLAN._serialized_start=1892
+  _BASEPLAN._serialized_end=1938
+  _ADDON._serialized_start=1940
+  _ADDON._serialized_end=2007
+  _FILEPLAN._serialized_start=2009
+  _FILEPLAN._serialized_end=2055
+  _COST._serialized_start=2058
+  _COST._serialized_end=2229
+  _COST_AMOUNTPER._serialized_start=2153
+  _COST_AMOUNTPER._serialized_end=2229
+  _INVOICESEARCHREQUEST._serialized_start=2231
+  _INVOICESEARCHREQUEST._serialized_end=2292
+  _INVOICESEARCHRESPONSE._serialized_start=2294
+  _INVOICESEARCHRESPONSE._serialized_end=2348
+  _INVOICE._serialized_start=2351
+  _INVOICE._serialized_end=2669
+  _INVOICE_COST._serialized_start=2516
+  _INVOICE_COST._serialized_end=2570
+  _INVOICE_TYPE._serialized_start=2572
+  _INVOICE_TYPE._serialized_end=2669
+  _INVOICEDOWNLOADREQUEST._serialized_start=2671
+  _INVOICEDOWNLOADREQUEST._serialized_end=2718
+  _INVOICEDOWNLOADRESPONSE._serialized_start=2720
+  _INVOICEDOWNLOADRESPONSE._serialized_end=2777
+  _REPORTINGDAILYSNAPSHOTREQUEST._serialized_start=2779
+  _REPORTINGDAILYSNAPSHOTREQUEST._serialized_end=2839
+  _REPORTINGDAILYSNAPSHOTRESPONSE._serialized_start=2841
+  _REPORTINGDAILYSNAPSHOTRESPONSE._serialized_end=2959
+  _SNAPSHOTRECORD._serialized_start=2962
+  _SNAPSHOTRECORD._serialized_end=3177
+  _SNAPSHOTRECORD_ADDON._serialized_start=3135
+  _SNAPSHOTRECORD_ADDON._serialized_end=3177
+  _SNAPSHOTMCENTERPRISE._serialized_start=3179
+  _SNAPSHOTMCENTERPRISE._serialized_end=3227
+  _MAPPINGADDONSREQUEST._serialized_start=3229
+  _MAPPINGADDONSREQUEST._serialized_end=3251
+  _MAPPINGADDONSRESPONSE._serialized_start=3253
+  _MAPPINGADDONSRESPONSE._serialized_end=3345
+  _MAPPINGITEM._serialized_start=3347
+  _MAPPINGITEM._serialized_end=3386
+  _GRADIENTVALIDATEKEYREQUEST._serialized_start=3388
+  _GRADIENTVALIDATEKEYREQUEST._serialized_end=3437
+  _GRADIENTVALIDATEKEYRESPONSE._serialized_start=3439
+  _GRADIENTVALIDATEKEYRESPONSE._serialized_end=3502
+  _GRADIENTADDSERVICEREQUEST._serialized_start=3504
+  _GRADIENTADDSERVICEREQUEST._serialized_end=3573
+  _GRADIENTADDSERVICERESPONSE._serialized_start=3575
+  _GRADIENTADDSERVICERESPONSE._serialized_end=3637
+  _GRADIENTSAVEREQUEST._serialized_start=3639
+  _GRADIENTSAVEREQUEST._serialized_end=3707
+  _GRADIENTSAVERESPONSE._serialized_start=3709
+  _GRADIENTSAVERESPONSE._serialized_end=3812
+  _GRADIENTREMOVEREQUEST._serialized_start=3814
+  _GRADIENTREMOVEREQUEST._serialized_end=3863
+  _GRADIENTREMOVERESPONSE._serialized_start=3865
+  _GRADIENTREMOVERESPONSE._serialized_end=3923
+  _GRADIENTSYNCREQUEST._serialized_start=3925
+  _GRADIENTSYNCREQUEST._serialized_end=3972
+  _GRADIENTSYNCRESPONSE._serialized_start=3974
+  _GRADIENTSYNCRESPONSE._serialized_end=4077
 # @@protoc_insertion_point(module_scope)
