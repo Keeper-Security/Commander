@@ -32,6 +32,9 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
     HIGHINTENSITYRED = '\033[1;91m'
+    WHITE = '\033[0;37m'
+    HIGHINTENSITYWHITE = '\033[97m'
+
 
 
 def welcome():
