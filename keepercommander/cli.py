@@ -40,7 +40,6 @@ from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
 
 stack = []
-command_info = OrderedDict()
 register_commands(commands, aliases, command_info)
 enterprise_command_info = OrderedDict()
 msp_command_info = OrderedDict()

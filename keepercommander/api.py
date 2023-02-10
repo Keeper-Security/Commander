@@ -643,7 +643,7 @@ def sync_down(params, record_types=False):
         record_key = record.get('record_key_unencrypted')
         if record_key and 'data_unencrypted' not in record:
             try:
-                if 'version' in record and record['version'] in (3, 4, 5):
+                if 'version' in record and record['version'] >= 3:
                     record['data_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['data']), record_key) if 'data' in record else b'{}'
                 else:
                     record['data_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(record['data']), record_key) if 'data' in record else b'{}'
@@ -768,7 +768,7 @@ def sync_down(params, record_types=False):
         rq.standard = True
         rq.user = True
         rq.enterprise = True
-        # rq.pam = True
+        rq.pam = True
         record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
 
         if len(record_types_rs.recordTypes) > 0:
