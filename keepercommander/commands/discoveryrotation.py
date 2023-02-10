@@ -179,20 +179,12 @@ class PAMCmdListJobs(Command):
 
 class PAMCreateRecordRotationCommand(Command):
     pam_scheduler_new_parser = argparse.ArgumentParser(prog='pam-create-record-rotation-scheduler')
-    pam_scheduler_new_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
-                                          help='Record UID that will be rotated manually or via schedule')
-    pam_scheduler_new_parser.add_argument('--config', '-c', required=True, dest='config_uid', action='store',
-                                          help='UID of the resource rotation setting.')
-    pam_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
-                                          action='append',
-                                          help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": '
-                                               '"15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
-    pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
-                                          action='append', help='Cron tab string of the scheduler. Example: to run job '
-                                                                'daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
-    pam_scheduler_new_parser.add_argument('--complexity', '-x', required=False, dest='pwd_complexity', action='store',
-                                          help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,'
-                                               '5,5')
+    pam_scheduler_new_parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
+    pam_scheduler_new_parser.add_argument('--config',       '-c',  required=True, dest='config_uid', action='store', help='UID of the PAM Configuration.')
+    pam_scheduler_new_parser.add_argument('--resource',     '-s',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
+    pam_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
+    pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
+    pam_scheduler_new_parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
 
     pam_scheduler_new_parser.error = raise_parse_exception
     pam_scheduler_new_parser.exit = suppress_exit
@@ -204,6 +196,7 @@ class PAMCreateRecordRotationCommand(Command):
 
         record_uid = kwargs.get('record_uid')
         config_uid = kwargs.get('config_uid')
+        resource_uid = kwargs.get('resource_uid')
         pwd_complexity = kwargs.get("pwd_complexity")
 
         schedule_json_data = kwargs.get('schedule_json_data')
@@ -249,6 +242,7 @@ class PAMCreateRecordRotationCommand(Command):
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
+        rq.resourceUid = url_safe_str_to_bytes(resource_uid) broken!
         rq.schedule = json.dumps(schedule_data) if schedule_data else ''
         rq.pwdComplexity = pwd_complexity_rule_list_encrypted
         rs = router_set_record_rotation_information(params, rq)
