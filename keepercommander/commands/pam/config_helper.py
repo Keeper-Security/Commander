@@ -57,7 +57,7 @@ def pam_configuration_get_field_by_id(decrypted_record_dict, field_id):
     if not fields:
         return None
 
-    found_field = next((item for item in fields if item['id'] == field_id), None)
+    found_field = next((item for item in fields if 'id' in item and item['id'] == field_id), None)
 
     return found_field
 
