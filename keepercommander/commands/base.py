@@ -114,6 +114,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_create_user.register_command_info(aliases, command_info)
     from .. import importer
     importer.register_enterprise_commands(commands)
+    from . import discoveryrotation
+    discoveryrotation.register_commands(commands)
+    discoveryrotation.register_command_info(aliases, command_info)
 
 
 def register_msp_commands(commands, aliases, command_info):
@@ -518,7 +521,7 @@ class Command(CliCommand):
 
 class GroupCommand(CliCommand):
     def __init__(self):
-        self._commands = collections.OrderedDict()     # type: dict[str, Command]
+        self._commands = collections.OrderedDict()     # type: dict[str, CliCommand]
         self._command_info = {}    # type: dict[str, str]
         self._aliases = {}         # type: dict[str, str]
         self.default_verb = ''
@@ -527,9 +530,10 @@ class GroupCommand(CliCommand):
         verb = verb.lower()
         self._commands[verb] = command
         if not description:
-            parser = command.get_parser()
-            if parser:
-                description = parser.description
+            if isinstance(command, Command):
+                parser = command.get_parser()
+                if parser:
+                    description = parser.description
         if description:
             self._command_info[verb] = description
         if alias:
