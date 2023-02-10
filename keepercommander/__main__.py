@@ -196,7 +196,7 @@ def main(from_package=False):
     if opts.server:
         params.server = opts.server
 
-    if opts.user:
+    if opts.user is not None:
         params.user = opts.user
 
     if opts.unmask_all:

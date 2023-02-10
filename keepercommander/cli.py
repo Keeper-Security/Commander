@@ -472,9 +472,10 @@ def loop(params):  # type: (KeeperParams) -> int
     else:
         if params.server:
             logging.info('Current Keeper region: %s', params.server)
-        logging.info('Use "server" command to change Keeper region > "server US"')
-        for region in KEEPER_PUBLIC_HOSTS:
-            logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
+        else:
+            logging.info('Use "server" command to change Keeper region > "server US"')
+            for region in KEEPER_PUBLIC_HOSTS:
+                logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
 
     while True:
         if params.session_token:

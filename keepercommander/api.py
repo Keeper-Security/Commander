@@ -444,12 +444,15 @@ def sync_down(params, record_types=False):
 
     if 'teams' in response_json:
         for team in response_json['teams']:
-            if team['team_key_type'] == 2:
-                team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
-            else:
-                team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
-            team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
-
+            try:
+                if team['team_key_type'] == 2:
+                    team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
+                else:
+                    team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
+                team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
+            except:
+                logging.warning('Could not decrypt team key: %s', team.get('name'))
+                continue
             if 'removed_shared_folders' in team:
                 for sf_uid in team['removed_shared_folders']:
                     delete_shared_folder_key(sf_uid)
