@@ -242,7 +242,7 @@ class PAMCreateRecordRotationCommand(Command):
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
-        rq.resourceUid = url_safe_str_to_bytes(resource_uid) broken!
+        rq.resourceUid = url_safe_str_to_bytes(resource_uid)
         rq.schedule = json.dumps(schedule_data) if schedule_data else ''
         rq.pwdComplexity = pwd_complexity_rule_list_encrypted
         rs = router_set_record_rotation_information(params, rq)
@@ -627,9 +627,6 @@ class PAMConfigurationListCommand(Command):
 
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
-# stopped here, was able to generate table of the new records v6. and can create.
-# now, time to create new rotation setting associated with this new record v6 and then send that request to the gateway and rotate stuff
-# see how record v6 looks like and report back to John so that he can modify it. Also  check if KSM can parse records w/ fields IDs inside.
 
 class PAMConfigurationRemoveCommand(Command):
     pam_configuration_rem_command_parser = argparse.ArgumentParser(prog='dr-remove_config-command')
@@ -684,17 +681,17 @@ class PAMConfigurationEditCommand(Command):
 
 
 PAMConfigurationNewAWSCommand_parser = argparse.ArgumentParser(prog='dr-create_pam_configuration_aws_command')
-PAMConfigurationNewAWSCommand_parser.add_argument('--shared-folder', '-s', required=True, dest='shared_folder', action='store', help='Share Folder where this PAM Configuration is stored')
-PAMConfigurationNewAWSCommand_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store', help='Gateway UID')
-PAMConfigurationNewAWSCommand_parser.add_argument('--title', '-t', required=True, dest='title', action='store', help='Title of the PAM Configuration')
-PAMConfigurationNewAWSCommand_parser.add_argument('--resource-record', '-rr', required=True, dest='resource_records_uid', action='store', help='Resource Record UID')
-PAMConfigurationNewAWSCommand_parser.add_argument('--port-mapping', '-pm', required=False, dest='port_mapping', action='store', help='Port Mapping')
+PAMConfigurationNewAWSCommand_parser.add_argument('--shared-folder', '-s',      required=True,  dest='shared_folder',       action='store',             help='Share Folder where this PAM Configuration is stored')
+PAMConfigurationNewAWSCommand_parser.add_argument('--gateway', '-g',            required=True,  dest='gateway',             action='store',             help='Gateway UID')
+PAMConfigurationNewAWSCommand_parser.add_argument('--title', '-t',              required=True,  dest='title',               action='store',             help='Title of the PAM Configuration')
+PAMConfigurationNewAWSCommand_parser.add_argument('--resource-record', '-rr',   required=True,  dest='resource_records_uid',action='append',            help='Resource Record UID')
+PAMConfigurationNewAWSCommand_parser.add_argument('--port-mapping', '-pm',      required=False, dest='port_mapping',        action='append',            help='Port Mapping')
 
-PAMConfigurationNewAWSCommand_parser.add_argument('--aws-id', '-i', required=True, dest='aws_id', action='store', help='AWS ID')
-PAMConfigurationNewAWSCommand_parser.add_argument('--access-key-id', '-ak', required=True, dest='access_key_id', action='store', help='Access Key Id')
-PAMConfigurationNewAWSCommand_parser.add_argument('--access-secret-key', '-as', required=True, dest='access_secret_key', action='store', help='Access Secret Key')
-PAMConfigurationNewAWSCommand_parser.add_argument('--region-names', '-rn', required=True, dest='region_names', action='store', help='Region Names')
-PAMConfigurationNewAWSCommand_parser.add_argument('--schedule', '-sc', required=False, dest='default_schedule', action='store', help='Default Schedule')
+PAMConfigurationNewAWSCommand_parser.add_argument('--aws-id', '-i',             required=True,  dest='aws_id',              action='store',             help='AWS ID')
+PAMConfigurationNewAWSCommand_parser.add_argument('--access-key-id', '-ak',     required=True,  dest='access_key_id',       action='store',             help='Access Key Id')
+PAMConfigurationNewAWSCommand_parser.add_argument('--access-secret-key', '-as', required=True,  dest='access_secret_key',   action='store',             help='Access Secret Key')
+PAMConfigurationNewAWSCommand_parser.add_argument('--region-names', '-rn',      required=True,  dest='region_names',        action='store',             help='Region Names')
+PAMConfigurationNewAWSCommand_parser.add_argument('--schedule', '-sc',          required=False, dest='default_schedule',    action='store',             help='Default Schedule')
 
 
 
@@ -713,7 +710,7 @@ class PAMConfigurationNewAWSCommand(Command):
         access_key_id = kwargs.get('access_key_id')
         access_secret_key = kwargs.get('access_secret_key')
         region_names = kwargs.get('region_names')
-        port_mapping = kwargs.get('port_mapping')
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
 
         resource_records_uid = kwargs.get('resource_records_uid')
 
@@ -724,18 +721,19 @@ class PAMConfigurationNewAWSCommand(Command):
             'title': pam_configuration_title,
             'type': 'pamAwsConfiguration',  # this is the record type name in the database
             'fields': [
-                {'id': 'pamawsid', 'type': 'text', 'label': 'Aws Id', 'value': [aws_id]},
-                {'id': 'pamawsaccesskeyid', 'type': 'text', 'label': 'Access Key Id', 'value': [access_key_id]},
-                {'id': 'pamawsaccesssecretkey', 'type': 'text', 'label': 'Access Secret Key', 'value': [access_secret_key], 'privacyScreen': True},
-                {'id': 'pamawsregionname', 'type': 'multiline', 'label': 'Region Names', 'value': [region_names]},
+                {'id': 'pamawsid',              'type': 'text',         'label': 'Aws Id',              'value': [aws_id]},
+                {'id': 'pamawsaccesskeyid',     'type': 'text',         'label': 'Access Key Id',       'value': [access_key_id]},
+                {'id': 'pamawsaccesssecretkey', 'type': 'text',         'label': 'Access Secret Key',   'value': [access_secret_key], 'privacyScreen': True},
+                {'id': 'pamawsregionname',      'type': 'multiline',    'label': 'Region Names',        'value': [region_names]},
 
-                {'id': 'pamportmapping', 'type': 'multiline', 'label': 'Port Mapping', 'value': [port_mapping]},
-                {'id': 'pamresources', 'type': 'pamResources', 'value': [{
-                    'controllerUid': found_gateway_uid,
-                    'resourceRef': [resource_records_uid]}],
-                 },
-                {'id': 'pamschedule', 'type': 'schedule', 'value': default_schedule},
-                {'id': 'fileref', 'type': 'fileRef', 'value': []}
+                {'id': 'pamportmapping',        'type': 'multiline',    'label': 'Port Mapping',        'value': [port_mapping]},
+                {'id': 'pamresources',          'type': 'pamResources',                                 'value': [{
+                                                                                                                'controllerUid': found_gateway_uid,
+                                                                                                                'resourceRef': resource_records_uid
+                                                                                                                 }],
+                },
+                {'id': 'pamschedule',           'type': 'schedule',                                     'value': default_schedule},
+                {'id': 'fileref',               'type': 'fileRef',                                      'value': []}
             ],
             'pamConfig': True
         }
@@ -748,19 +746,19 @@ class PAMConfigurationNewAWSCommand(Command):
 
 
 PAMConfigurationNewAzureCommand_parser = argparse.ArgumentParser(prog='dr-create_pam_configuration_network_command')
-PAMConfigurationNewAzureCommand_parser.add_argument('--shared-folder', '-s', required=True, dest='shared_folder', action='store', help='Share Folder where this PAM Configuration is stored')
-PAMConfigurationNewAzureCommand_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store', help='Gateway Name or UID')
-PAMConfigurationNewAzureCommand_parser.add_argument('--title', '-t', required=True, dest='title', action='store', help='Title of the PAM Configuration')
-PAMConfigurationNewAzureCommand_parser.add_argument('--resource-record', '-rr', required=True, dest='resource_records_uid', action='store', help='Resource Record UID')
-PAMConfigurationNewAzureCommand_parser.add_argument('--port-mapping', '-pm', required=False, dest='port_mapping', action='store', help='Port Mapping')
+PAMConfigurationNewAzureCommand_parser.add_argument('--shared-folder', '-s',    required=True,  dest='shared_folder',       action='store',             help='Share Folder where this PAM Configuration is stored')
+PAMConfigurationNewAzureCommand_parser.add_argument('--gateway', '-g',          required=True,  dest='gateway',             action='store',             help='Gateway Name or UID')
+PAMConfigurationNewAzureCommand_parser.add_argument('--title', '-t',            required=True,  dest='title',               action='store',             help='Title of the PAM Configuration')
+PAMConfigurationNewAzureCommand_parser.add_argument('--resource-record', '-rr', required=True,  dest='resource_records_uid',action='append',            help='Resource Record UID')
+PAMConfigurationNewAzureCommand_parser.add_argument('--port-mapping', '-pm',    required=False, dest='port_mapping',        action='append',            help='Port Mapping')
 
-PAMConfigurationNewAzureCommand_parser.add_argument('--azure-id', '-ai', required=True, dest='azure_id', action='store', help='Azure Id')
-PAMConfigurationNewAzureCommand_parser.add_argument('--client-id', '-ci', required=True, dest='client_id', action='store', help='Client Id')
-PAMConfigurationNewAzureCommand_parser.add_argument('--client-secret', '-cs', required=True, dest='client_secret', action='store', help='Client Secret')
-PAMConfigurationNewAzureCommand_parser.add_argument('--subscription_id', '-si', required=True, dest='subscription_id', action='store', help='Subscription Id')
-PAMConfigurationNewAzureCommand_parser.add_argument('--tenant-id', '-ti', required=True, dest='tenant_id', action='store', help='Tenant Id')
-PAMConfigurationNewAzureCommand_parser.add_argument('--resource-groups', '-rg', required=True, dest='resource_groups', action='store', help='Resource Groups')
-PAMConfigurationNewAzureCommand_parser.add_argument('--schedule', '-sc', required=False, dest='default_schedule', action='store', help='Default Schedule')
+PAMConfigurationNewAzureCommand_parser.add_argument('--azure-id', '-ai',        required=True,  dest='azure_id',            action='store',             help='Azure Id')
+PAMConfigurationNewAzureCommand_parser.add_argument('--client-id', '-ci',       required=True,  dest='client_id',           action='store',             help='Client Id')
+PAMConfigurationNewAzureCommand_parser.add_argument('--client-secret', '-cs',   required=True,  dest='client_secret',       action='store',             help='Client Secret')
+PAMConfigurationNewAzureCommand_parser.add_argument('--subscription_id', '-si', required=True,  dest='subscription_id',     action='store',             help='Subscription Id')
+PAMConfigurationNewAzureCommand_parser.add_argument('--tenant-id', '-ti',       required=True,  dest='tenant_id',           action='store',             help='Tenant Id')
+PAMConfigurationNewAzureCommand_parser.add_argument('--resource-groups', '-rg', required=True,  dest='resource_groups',     action='store',             help='Resource Groups')
+PAMConfigurationNewAzureCommand_parser.add_argument('--schedule', '-sc',        required=False, dest='default_schedule',    action='store',             help='Default Schedule')
 
 
 
@@ -783,7 +781,7 @@ class PAMConfigurationNewAzureCommand(Command):
         subscription_id = kwargs.get('subscription_id')
         tenant_id = kwargs.get('tenant_id')
         resource_groups = kwargs.get('resource_groups')
-        port_mapping = kwargs.get('port_mapping')
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
         controller_uid = gateway_str
 
         default_schedule = kwargs.get('default_schedule')
@@ -803,7 +801,7 @@ class PAMConfigurationNewAzureCommand(Command):
                 {'id': 'pamportmapping',        'type': 'multiline',   'label': 'Port Mapping',          'value': [port_mapping]},
                 {'id': 'pamresources',          'type': 'pamResources',                                  'value': [{
                                                                                                                         'controllerUid': controller_uid,
-                                                                                                                        'resourceRef': [resource_records_uid]
+                                                                                                                        'resourceRef': resource_records_uid
                                                                                                                   }],
                 },
                 {'id': 'pamschedule',           'type': 'schedule',                                     'value': default_schedule},
@@ -818,15 +816,15 @@ class PAMConfigurationNewAzureCommand(Command):
 
 
 PAMConfigurationNewNetworkCommand_parser = argparse.ArgumentParser(prog='dr-create_pam_configuration_network_command')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--shared-folder', '-s', required=True, dest='shared_folder', action='store', help='Share Folder where this PAM Configuration is stored')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store', help='Gateway Name or UID')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--title',   '-t', required=True, dest='title',   action='store', help='Title of the PAM Configuration')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--resource-record', '-rr', required=True, dest='resource_records_uid', action='store', help='Resource Record UID')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--port-mapping', '-pm', required=False, dest='port_mapping', action='store', help='Port Mapping')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--shared-folder',    '-s',   required=True,  dest='shared_folder',       action='store',             help='Share Folder where this PAM Configuration is stored')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--gateway',          '-g',   required=True,  dest='gateway',             action='store',             help='Gateway Name or UID')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--title',            '-t',   required=True,  dest='title',               action='store',             help='Title of the PAM Configuration')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--resource-record',  '-rr',  required=True,  dest='resource_records_uid',action='append',            help='Resource Record UID')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--port-mapping',     '-pm',  required=False, dest='port_mapping',        action='append',            help='Port Mapping')
 
-PAMConfigurationNewNetworkCommand_parser.add_argument('--network-id', '-i', required=True, dest='network_id', action='store', help='Network ID')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--network-cidr', '-nc', required=True, dest='network_cidr', action='store', help='Network CIDR')
-PAMConfigurationNewNetworkCommand_parser.add_argument('--schedule', '-sc', required=False, dest='default_schedule', action='store', help='Default Schedule')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--network-id',       '-i',   required=True,  dest='network_id',          action='store',             help='Network ID')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--network-cidr',     '-nc',  required=True,  dest='network_cidr',        action='store',             help='Network CIDR')
+PAMConfigurationNewNetworkCommand_parser.add_argument('--schedule',         '-sc',  required=False, dest='default_schedule',    action='store',             help='Default Schedule')
 
 
 class PAMConfigurationNewNetworkCommand(Command):
@@ -847,7 +845,7 @@ class PAMConfigurationNewNetworkCommand(Command):
 
         network_id = kwargs.get('network_id')
         network_cidr = kwargs.get('network_cidr')
-        port_mapping = kwargs.get('port_mapping')
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
 
         record_data = {
             'title': title,
@@ -859,7 +857,7 @@ class PAMConfigurationNewNetworkCommand(Command):
                 {'id': 'pamcontroller',     'type': 'controller',                               'value': [found_gateway_uid]},
                 {'id': 'pamresources',      'type': 'pamResources',                             'value': [{
                                                                                                             'controllerUid': found_gateway_uid,
-                                                                                                            'resourceRef': [resource_records_uid]
+                                                                                                            'resourceRef': resource_records_uid
                                                                                                          }],
                 },
                 {'id': 'pamschedule',       'type': 'schedule',                                 'value': default_schedule},
@@ -872,41 +870,17 @@ class PAMConfigurationNewNetworkCommand(Command):
             params=params, data=record_data, controller_uid=found_gateway_uid, folder_uid_urlsafe=shared_folder_uid
         )
 
-        # if len(found_gateways) == 0:
-        #     logging.warning(
-        #         f'Gateway name or uid [{bcolors.OKBLUE}{gateway_str}{bcolors.ENDC}] you enter does not exist.')
-        #     return
-        # elif len(found_gateways) > 1:
-        #     found_gateway_uids_str = ', '.join(
-        #         [f'{bcolors.OKBLUE}{CommonHelperMethods.bytes_to_url_safe_str(d.controllerUid)}{bcolors.ENDC}' for d in
-        #          found_gateways])
-        #     logging.warning(
-        #         f'Following Gateway UIDs are already associated with [{bcolors.OKGREEN}{gateway_str}{bcolors.ENDC}] name: {found_gateway_uids_str}. Please use UID instead to identify the exact Gateway.')
-        #     return
-        #
-        # if not title:
-        #     logging.warning(f'PAM Configuration name (--title, -t) is required')
-        #     return
-        #
-        # if not pam_configuration_provider_record_uid:
-        #     logging.warning(f'Provider record (--provider-record-uid, -p) is required')
-        #     return
-        #
-        # if not pam_configuration_ksm_shared_folder_uid:
-        #     logging.warning(f'Shared Folder UID (--shared-folder, -s) is required.')
-        #     return
-
 
 
 PAMConfigurationNewLocalCommand_parser = argparse.ArgumentParser(prog='dr-create_pam_configuration_local_command')
-PAMConfigurationNewLocalCommand_parser.add_argument('--shared-folder', '-s', required=True, dest='shared_folder', action='store', help='Share Folder where this PAM Configuration is stored')
-PAMConfigurationNewLocalCommand_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store', help='Gateway UID')
-PAMConfigurationNewLocalCommand_parser.add_argument('--title', '-t', required=True, dest='title', action='store', help='Title of the PAM Configuration')
-PAMConfigurationNewLocalCommand_parser.add_argument('--resource-records', '-r', required=True, dest='resource_records_uid', action='append', help='', default=[])
-PAMConfigurationNewLocalCommand_parser.add_argument('--schedule', '-sc', required=True, dest='default_schedule', action='store', help='Default Schedule')
-PAMConfigurationNewLocalCommand_parser.add_argument('--port-mapping', '-pm', required=False, dest='port_mapping', action='store', help='Port Mapping')
+PAMConfigurationNewLocalCommand_parser.add_argument('--shared-folder', '-s',    required=True,  dest='shared_folder',           action='store',             help='Share Folder where this PAM Configuration is stored')
+PAMConfigurationNewLocalCommand_parser.add_argument('--gateway', '-g',          required=True,  dest='gateway',                 action='store',             help='Gateway UID')
+PAMConfigurationNewLocalCommand_parser.add_argument('--title', '-t',            required=True,  dest='title',                   action='store',             help='Title of the PAM Configuration')
+PAMConfigurationNewLocalCommand_parser.add_argument('--resource-record', '-rr', required=True,  dest='resource_records_uid',    action='append',            help='Resource Record UID')
+PAMConfigurationNewLocalCommand_parser.add_argument('--port-mapping', '-pm',    required=False, dest='port_mapping',            action='append',            help='Port Mapping')
+PAMConfigurationNewLocalCommand_parser.add_argument('--schedule', '-sc',        required=True,  dest='default_schedule',        action='store',             help='Default Schedule')
 
-PAMConfigurationNewLocalCommand_parser.add_argument('--local-id', '-l', required=True, dest='local_id', action='store', help='Local Id')
+PAMConfigurationNewLocalCommand_parser.add_argument('--local-id', '-l',         required=True,  dest='local_id',                action='store',             help='Local Id')
 
 
 class PAMConfigurationNewLocalCommand(Command):
@@ -924,7 +898,7 @@ class PAMConfigurationNewLocalCommand(Command):
         default_schedule = kwargs.get('default_schedule')
         default_schedule = [{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}, {"type": "WEEKLY", "utcTime": "15:44", "weekday": "MONDAY", "intervalCount": 1}]
 
-        port_mapping = kwargs.get('port_mapping')
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
 
         local_id = kwargs.get('local_id')
 
@@ -938,7 +912,7 @@ class PAMConfigurationNewLocalCommand(Command):
                 {'id': 'pamcontroller',     'type': 'controller',                                   'value': [found_gateway_uid]},
                 {'id': 'pamresources',      'type': 'pamResources',                                 'value': [{
                                                                                                                 'controllerUid': found_gateway_uid,
-                                                                                                                'resourceRef': [resource_records_uid]
+                                                                                                                'resourceRef': resource_records_uid
                                                                                                              }],
                  },
                 {'id': 'pamschedule',       'type': 'schedule',                                     'value': default_schedule},
