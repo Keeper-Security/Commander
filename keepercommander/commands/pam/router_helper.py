@@ -293,7 +293,11 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
     krouter_host = get_router_url(params)
 
     server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
-    encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+
+    if params.rest_context.server_key_id < 7:
+        encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+    else:
+        encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
 
     encrypted_payload = b''
 
