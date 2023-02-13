@@ -181,7 +181,7 @@ class PAMCreateRecordRotationCommand(Command):
     pam_scheduler_new_parser = argparse.ArgumentParser(prog='pam-create-record-rotation-scheduler')
     pam_scheduler_new_parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
     pam_scheduler_new_parser.add_argument('--config',       '-c',  required=True, dest='config_uid', action='store', help='UID of the PAM Configuration.')
-    pam_scheduler_new_parser.add_argument('--resource',     '-s',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
+    pam_scheduler_new_parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
     pam_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
     pam_scheduler_new_parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
@@ -238,7 +238,32 @@ class PAMCreateRecordRotationCommand(Command):
 
             pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(rule_list_dict, record_to_rotate.get('record_key_unencrypted'))
 
-        # 3. Construct Request object
+
+        # 3. Resource record check
+
+        pam_config = pam_configuration_get_one(params, config_uid)
+        pamResourcesField = pam_configuration_get_single_value_from_field_by_id(pam_config.get('data_decrypted'), 'pamresources')
+        resources = pamResourcesField.get('resourceRef')
+
+        if len(resources) > 1 and resource_uid is None:
+            print(f"{bcolors.WARNING}There are more than 1 resource associated with this configuration. "
+                  f"Please provide UID of the resource to be associated with this rotation by supplying UID using "
+                  f"'--resource' or '-rs' flag{bcolors.ENDC}")
+            return
+        elif len(resources) > 1 and resource_uid:
+            found_resource = next((r for r in resources if r == resource_uid), None)
+
+            if not found_resource:
+                print(f"{bcolors.WARNING}The resource UID provided does not mach any of theresources associated to "
+                      f"this configuration. Following resources are part of this configuration: "
+                      f"{','.join(resources)}{bcolors.ENDC}")
+                return
+        else:
+            # Means that there is only one resource
+            resource_uid = resources[0]
+
+
+        # 4. Construct Request object
         rq = RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
