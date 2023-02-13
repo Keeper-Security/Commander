@@ -1008,15 +1008,15 @@ class PAMRouterGetRotationInfo(Command):
         if rri_status_name == 'RRS_ONLINE':
 
             print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
-            print(f"Rotation Setting Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.configurationUid) if rri.configurationUid else '-') }{bcolors.ENDC}")
-            print(f'PAM Config UID: {bcolors.OKBLUE}{rri.configurationUid}{bcolors.ENDC}')
+            print(f'PAM Config UID: {bcolors.OKBLUE}{CommonHelperMethods.bytes_to_url_safe_str(rri.configurationUid)}{bcolors.ENDC}')
             print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
+
             print(f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
             print(f"Gateway Uid: {bcolors.OKBLUE}{(base64_url_encode(rri.controllerUid) if rri.controllerUid else '-') } {bcolors.ENDC}")
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
-            print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity}{bcolors.ENDC}")
-            print(f"Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
+            print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity if rri.pwdComplexity else '[not set]'}{bcolors.ENDC}")
+            print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
