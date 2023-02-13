@@ -759,8 +759,9 @@ class PAMConfigurationNewAWSCommand(Command):
                 {'id': 'pamportmapping',        'type': 'multiline',    'label': 'Port Mapping',        'value': [port_mapping]},
                 {'id': 'pamresources',          'type': 'pamResources',                                 'value': [{
                                                                                                                 'controllerUid': found_gateway_uid,
-                                                                                                                'resourceRef': resource_records_uid
-                                                                                                                 }],
+                                                                                                                'resourceRef': resource_records_uid,
+                                                                                                                'folderUid': shared_folder_uid
+                }],
                 },
                 {'id': 'pamschedule',           'type': 'schedule',                                     'value': default_schedule},
                 {'id': 'fileref',               'type': 'fileRef',                                      'value': []}
@@ -831,8 +832,9 @@ class PAMConfigurationNewAzureCommand(Command):
                 {'id': 'pamportmapping',        'type': 'multiline',   'label': 'Port Mapping',          'value': [port_mapping]},
                 {'id': 'pamresources',          'type': 'pamResources',                                  'value': [{
                                                                                                                         'controllerUid': controller_uid,
-                                                                                                                        'resourceRef': resource_records_uid
-                                                                                                                  }],
+                                                                                                                        'resourceRef': resource_records_uid,
+                                                                                                                        'folderUid': shared_folder_uid
+                }],
                 },
                 {'id': 'pamschedule',           'type': 'schedule',                                     'value': default_schedule},
                 {'id': 'fileref',               'type': 'fileRef',                                      'value': []}
@@ -887,8 +889,9 @@ class PAMConfigurationNewNetworkCommand(Command):
                 {'id': 'pamcontroller',     'type': 'controller',                               'value': [found_gateway_uid]},
                 {'id': 'pamresources',      'type': 'pamResources',                             'value': [{
                                                                                                             'controllerUid': found_gateway_uid,
-                                                                                                            'resourceRef': resource_records_uid
-                                                                                                         }],
+                                                                                                            'resourceRef': resource_records_uid,
+                                                                                                            'folderUid': shared_folder_uid
+                }],
                 },
                 {'id': 'pamschedule',       'type': 'schedule',                                 'value': default_schedule},
                 {'id': 'fileref',           'type': 'fileRef',                                  'value': []}
@@ -942,7 +945,8 @@ class PAMConfigurationNewLocalCommand(Command):
                 {'id': 'pamcontroller',     'type': 'controller',                                   'value': [found_gateway_uid]},
                 {'id': 'pamresources',      'type': 'pamResources',                                 'value': [{
                                                                                                                 'controllerUid': found_gateway_uid,
-                                                                                                                'resourceRef': resource_records_uid
+                                                                                                                'resourceRef': resource_records_uid,
+                                                                                                                'folderUid': shared_folder_uid
                                                                                                              }],
                  },
                 {'id': 'pamschedule',       'type': 'schedule',                                     'value': default_schedule},
