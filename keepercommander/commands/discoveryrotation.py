@@ -608,20 +608,25 @@ class PAMConfigurationListCommand(Command):
             controller_uid = pam_configuration_get_single_value_from_field_by_id(data_unencrypted_dict, 'pamcontroller')
             resource_records = pam_configuration_get_all_values_from_field_by_id(data_unencrypted_dict, 'pamresourceref')
 
-            first_shared_folder_location = find_parent_top_folder(params, c['record_uid'])[0]
-            row = [
-                c['record_uid'],
-                data_unencrypted_dict.get('title'),
-                data_unencrypted_dict.get('type'),
-                f'{first_shared_folder_location.name} ({first_shared_folder_location.uid})',
-                controller_uid,
-                ', '.join(resource_records) if resource_records else "-",
-            ]
-            if is_verbose:
-                fields_details = [f'id={f.get("id")}, type={f.get("type")}, label={f.get("label")}, value={(f.get("value"))}' for f in data_unencrypted_dict.get('fields') ]
-                row.append(fields_details)
+            shared_folder_parents = find_parent_top_folder(params, c['record_uid'])
 
-            table.append(row)
+            if shared_folder_parents:
+                first_shared_folder_location = shared_folder_parents[0]
+                row = [
+                    c['record_uid'],
+                    data_unencrypted_dict.get('title'),
+                    data_unencrypted_dict.get('type'),
+                    f'{first_shared_folder_location.name} ({first_shared_folder_location.uid})',
+                    controller_uid,
+                    ', '.join(resource_records) if resource_records else "-",
+                ]
+                if is_verbose:
+                    fields_details = [f'id={f.get("id")}, type={f.get("type")}, label={f.get("label")}, value={(f.get("value"))}' for f in data_unencrypted_dict.get('fields') ]
+                    row.append(fields_details)
+
+                table.append(row)
+            else:
+                logging.warning(f"Following configuration is not in the shared folder: {c['record_uid']}")
 
         table.sort(key=lambda x: (x[1] or ''))
 
@@ -710,7 +715,7 @@ class PAMConfigurationNewAWSCommand(Command):
         access_key_id = kwargs.get('access_key_id')
         access_secret_key = kwargs.get('access_secret_key')
         region_names = kwargs.get('region_names')
-        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if kwargs.get('port_mapping') is not None else ''
 
         resource_records_uid = kwargs.get('resource_records_uid')
 
@@ -781,7 +786,7 @@ class PAMConfigurationNewAzureCommand(Command):
         subscription_id = kwargs.get('subscription_id')
         tenant_id = kwargs.get('tenant_id')
         resource_groups = kwargs.get('resource_groups')
-        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if kwargs.get('port_mapping') is not None else ''
         controller_uid = gateway_str
 
         default_schedule = kwargs.get('default_schedule')
@@ -845,7 +850,7 @@ class PAMConfigurationNewNetworkCommand(Command):
 
         network_id = kwargs.get('network_id')
         network_cidr = kwargs.get('network_cidr')
-        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if kwargs.get('port_mapping') is not None else ''
 
         record_data = {
             'title': title,
@@ -898,7 +903,7 @@ class PAMConfigurationNewLocalCommand(Command):
         default_schedule = kwargs.get('default_schedule')
         default_schedule = [{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}, {"type": "WEEKLY", "utcTime": "15:44", "weekday": "MONDAY", "intervalCount": 1}]
 
-        port_mapping = '\n'.join(kwargs.get('port_mapping')) if 'port_mapping' in kwargs else ''
+        port_mapping = '\n'.join(kwargs.get('port_mapping')) if kwargs.get('port_mapping') is not None else ''
 
         local_id = kwargs.get('local_id')
 
