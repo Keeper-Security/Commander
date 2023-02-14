@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from .base import Command, RecordMixin
-from .. import api, vault, record_types, generator, crypto, attachment, record_management, record_facades
+from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management
 from ..commands import recordv3
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -51,6 +51,26 @@ record_update_parser.add_argument('-r', '--record', dest='record', action='store
                                   help='record path or UID')
 record_update_parser.add_argument('fields', nargs='*', type=str,
                                   help='load record type data from strings with dot notation')
+
+
+append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record')
+append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
+append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+
+
+delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record.', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
+delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
+delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
+
+
+download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
+download_parser.add_argument('record', action='store', help='record path or UID')
+
+
+upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
+upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload')
+upload_parser.add_argument('record', action='store', help='record path or UID')
+
 
 record_fields_description = '''
 Commander supports two types of records:
@@ -835,3 +855,184 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
             record.custom.extend((x for x in custom if x.value))
 
         return should_rebuild
+
+
+class RecordAppendNotesCommand(Command):
+    def get_parser(self):
+        return append_parser
+
+    def execute(self, params, **kwargs):
+        notes = kwargs['notes'] if 'notes' in kwargs else None
+        while not notes:
+            notes = input("... Notes to append: ")
+
+        edit_command = RecordUpdateCommand()
+        kwargs['notes'] = '+' + notes
+        edit_command.execute(params, **kwargs)
+
+
+class RecordDeleteAttachmentCommand(Command):
+    def get_parser(self):
+        return delete_attachment_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+
+        if record_uid is None:
+            raise CommandError('delete-attachment', 'Enter name or uid of existing record')
+
+        names = kwargs['name'] if 'name' in kwargs else None
+        if names is None:
+            raise CommandError('delete-attachment', 'No file names')
+
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not record:
+            logging.warning('Record UID \"%s\" not found.', record_uid)
+
+        deleted_files = set()
+        if isinstance(record, vault.PasswordRecord):
+            if record.attachments:
+                for name in names:
+                    for atta in record.attachments:
+                        if atta.id == name:
+                            deleted_files.add(atta.id)
+                        elif atta.title and atta.title.lower() == name.lower():
+                            deleted_files.add(atta.id)
+                        elif atta.name and atta.name.lower() == name.lower():
+                            deleted_files.add(atta.id)
+                if len(deleted_files) > 0:
+                    record.attachments = [x for x in record.attachments if x.id not in deleted_files]
+        elif isinstance(record, vault.TypedRecord):
+            typed_field = record.get_typed_field('fileRef')
+            if typed_field and isinstance(typed_field.value, list):
+                for name in names:
+                    for file_uid in typed_field.value:
+                        if file_uid == name:
+                            deleted_files.add(file_uid)
+                        else:
+                            file_record = vault.KeeperRecord.load(params, file_uid)
+                            if isinstance(file_record, vault.FileRecord):
+                                if file_record.title.lower() == name.lower():
+                                    deleted_files.add(file_uid)
+                                elif file_record.name.lower() == name.lower():
+                                    deleted_files.add(file_uid)
+                if len(deleted_files) > 0:
+                    typed_field.value = [x for x in typed_field.value if x not in deleted_files]
+
+        if len(deleted_files) == 0:
+            logging.info('Attachment not found')
+            return
+
+        record_management.update_record(params, record)
+        if params.enterprise_ec_key:
+            for file_uid in deleted_files:
+                params.queue_audit_event('file_attachment_deleted', record_uid=record_uid, attachment_id=file_uid)
+        params.sync_data = True
+
+
+class RecordDownloadAttachmentCommand(Command):
+    def get_parser(self):
+        return download_parser
+
+    def execute(self, params, **kwargs):
+        name = kwargs['record'] if 'record' in kwargs else None
+        if not name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+        else:
+            rs = try_resolve_path(params, name)
+            if rs is not None:
+                folder, name = rs
+                if folder is not None and name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
+
+        if not record_uid:
+            logging.error('Record UID not found for record name "%s"', str(name))
+            return
+
+        attachments = list(attachment.prepare_attachment_download(params, record_uid))
+        if len(attachments) == 0:
+            raise CommandError('download-attachment', 'No attachments associated with the record')
+
+        for atta in attachments:
+            atta.download_to_file(params, atta.title)
+
+
+class RecordUploadAttachmentCommand(Command):
+    def get_parser(self):
+        return upload_parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs['record'] if 'record' in kwargs else None
+        if not record_name:
+            self.get_parser().print_help()
+            return
+
+        record_uid = None
+        if record_name in params.record_cache:
+            record_uid = record_name
+        else:
+            rs = try_resolve_path(params, record_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder is not None and record_name is not None:
+                    folder_uid = folder.uid or ''
+                    if folder_uid in params.subfolder_record_cache:
+                        for uid in params.subfolder_record_cache[folder_uid]:
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == record_name.lower():
+                                record_uid = uid
+                                break
+
+        if not record_uid:
+            logging.error('Record UID not found for record "%s"', str(record_name))
+            return
+
+        upload_tasks = []
+        files = kwargs.get('file')
+        if isinstance(files, list):
+            for name in files:
+                file_name = os.path.abspath(os.path.expanduser(name))
+                if os.path.isfile(file_name):
+                    upload_tasks.append(attachment.FileUploadTask(file_name))
+                else:
+                    raise CommandError('upload-attachment', f'File "{name}" does not exists')
+
+        if len(upload_tasks) == 0:
+            raise CommandError('upload-attachment', 'No files to upload')
+
+        record = vault.KeeperRecord.load(params, record_uid)
+        if isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
+            attachment.upload_attachments(params, record, upload_tasks)
+            record_management.update_record(params, record)
+            params.sync_data = True

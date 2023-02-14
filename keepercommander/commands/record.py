@@ -19,20 +19,21 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 
-from .base import dump_report_data, user_choice, field_to_title, Command, GroupCommand, RecordMixin
+from .base import Command, GroupCommand, RecordMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
 from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
-from ..subfolder import try_resolve_path, get_folder_path, find_folders
+from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode
 from ..team import Team
-from . import record_edit
+from . import record_edit, base
 
 
 def register_commands(commands):
     commands['search'] = SearchCommand()
     commands['get'] = RecordGetUidCommand()
+    commands['rm'] = RecordRemoveCommand()
     commands['trash'] = TrashCommand()
     commands['list'] = RecordListCommand()
     commands['list-sf'] = RecordListSfCommand()
@@ -41,6 +42,10 @@ def register_commands(commands):
     commands['shared-records-report'] = SharedRecordsReport()
     commands['record-add'] = record_edit.RecordAddCommand()
     commands['record-update'] = record_edit.RecordUpdateCommand()
+    commands['append-notes'] = record_edit.RecordAppendNotesCommand()
+    commands['delete-attachment'] = record_edit.RecordDeleteAttachmentCommand()
+    commands['download-attachment'] = record_edit.RecordDownloadAttachmentCommand()
+    commands['upload-attachment'] = record_edit.RecordUploadAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
 
 
@@ -56,10 +61,14 @@ def register_command_info(aliases, command_info):
     aliases['ru'] = 'record-update'
     aliases['cc'] = 'clipboard-copy'
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
+    aliases['an'] = 'append-notes'
+    aliases['da'] = 'download-attachment'
+    aliases['ua'] = 'upload-attachment'
 
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
-              record_edit.record_update_parser, clipboard_copy_parser]:
+              record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
+              record_edit.delete_attachment_parser, clipboard_copy_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
 
@@ -145,6 +154,13 @@ clipboard_copy_parser.add_argument(
     '-r', '--revision', dest='revision', type=int, action='store',
     help='use a specific record revision')
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+
+
+rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record')
+rm_parser.add_argument('--all', dest='purge', action='store_true',
+                       help='remove the record from all folders')
+rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
+rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
 def find_record(params, record_name, types=None):
@@ -581,7 +597,7 @@ class SearchCommand(Command):
                     table.append(row)
                 table.sort(key=lambda x: (x[2] or '').lower())
 
-                dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
+                base.dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
                 if len(records) < 5:
                     get_command = RecordGetUidCommand()
                     for record in records:
@@ -635,7 +651,7 @@ class RecordListCommand(Command):
         if any(records):
             headers = ['record_uid', 'type', 'title', 'description', 'shared']
             if fmt == 'table':
-                headers = [field_to_title(x) for x in headers]
+                headers = [base.field_to_title(x) for x in headers]
             table = []
             for record in records:
                 row = [record.record_uid, record.record_type, record.title,
@@ -643,7 +659,7 @@ class RecordListCommand(Command):
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
 
-            return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
+            return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True, column_width=None if verbose else 40)
         else:
             logging.info('No records are found')
@@ -665,7 +681,7 @@ class RecordListSfCommand(Command):
                 table.append(row)
             table.sort(key=lambda x: (x[1] or '').lower())
 
-            return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
+            return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
             logging.info('No shared folders are found')
@@ -691,7 +707,7 @@ class RecordListTeamCommand(Command):
                 table.append(row)
             table.sort(key=lambda x: (x[1] or '').lower())
 
-            return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
+            return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
             logging.info('No teams are found')
@@ -826,7 +842,7 @@ class TrashListCommand(Command, TrashMixin):
 
         table.sort(key=lambda x: x[1].casefold())
 
-        return dump_report_data(table, headers, fmt=kwargs.get('format'),
+        return base.dump_report_data(table, headers, fmt=kwargs.get('format'),
                                 filename=kwargs.get('output'), row_number=True)
 
 
@@ -899,7 +915,7 @@ class TrashRestoreCommand(Command, TrashMixin):
             return
 
         if not kwargs.get('force'):
-            answer = user_choice(f'Do you want to restore {len(to_restore)} record(s)?', 'yn', default='n')
+            answer = base.user_choice(f'Do you want to restore {len(to_restore)} record(s)?', 'yn', default='n')
             if answer.lower() == 'y':
                 answer = 'yes'
             if answer.lower() != 'yes':
@@ -927,13 +943,14 @@ class TrashRestoreCommand(Command, TrashMixin):
         params.sync_data = True
         params.breach_watch.save_reused_pw_count(params)
 
+
 class TrashPurgeCommand(Command, TrashMixin):
     def get_parser(self):
         return trash_purge_parser
 
     def execute(self, params, **kwargs):
         if not kwargs.get('force'):
-            answer = user_choice(f'Do you want empty your Trash Bin?', 'yn', default='n')
+            answer = base.user_choice(f'Do you want empty your Trash Bin?', 'yn', default='n')
             if answer.lower() == 'y':
                 answer = 'yes'
             if answer.lower() != 'yes':
@@ -993,7 +1010,7 @@ class RecordHistoryCommand(Command, RecordMixin):
                     if 'client_modified_time' in version:
                         dt = datetime.datetime.fromtimestamp(int(version['client_modified_time'] / 1000.0))
                     rows.append([f'V.{length-i}' if i > 0 else 'Current', version.get('user_name') or '', dt])
-                dump_report_data(rows, headers, title='Record History')
+                base.dump_report_data(rows, headers, title='Record History')
                 return
 
             revision = kwargs.get('revision') or 0
@@ -1016,7 +1033,7 @@ class RecordHistoryCommand(Command, RecordMixin):
                         rows.append([name, value])
                 modified = datetime.datetime.fromtimestamp(int(rev['client_modified_time'] / 1000.0))
                 rows.append(['Modified', modified])
-                dump_report_data(rows, headers=['Name', 'Value'],
+                base.dump_report_data(rows, headers=['Name', 'Value'],
                                  title=f'Record Revision V.{revision}', no_header=True, right_align=(0,))
 
             elif action == 'diff':
@@ -1074,7 +1091,7 @@ class RecordHistoryCommand(Command, RecordMixin):
                                 lines.append('...')
                             row[index] = '\n'.join(lines)
 
-                dump_report_data(rows, headers)
+                base.dump_report_data(rows, headers)
 
             elif action == 'restore':
                 if revision == 0:
@@ -1194,8 +1211,8 @@ class SharedRecordsReport(Command):
             table.append(row)
 
         if export_format == 'table':
-            fields = [field_to_title(x) for x in fields]
-        return dump_report_data(table, fields, fmt=export_format, filename=export_name, row_number=True)
+            fields = [base.field_to_title(x) for x in fields]
+        return base.dump_report_data(table, fields, fmt=export_format, filename=export_name, row_number=True)
 
 
 class ClipboardCommand(Command, RecordMixin):
@@ -1343,3 +1360,98 @@ class ClipboardCommand(Command, RecordMixin):
                 logging.info(f'{copy_item} copied to clipboard')
             else:
                 print(txt)
+
+
+class RecordRemoveCommand(Command):
+    def get_parser(self):
+        return rm_parser
+
+    def execute(self, params, **kwargs):
+        folder = None
+        name = None
+        record_path = kwargs['record'] if 'record' in kwargs else None
+        if record_path:
+            rs = try_resolve_path(params, record_path)
+            if rs is not None:
+                folder, name = rs
+
+        if folder is None or name is None:
+            logging.warning('Enter name of existing record')
+            return
+
+        record_uid = None
+        if name in params.record_cache:
+            record_uid = name
+            folders = list(find_folders(params, record_uid))
+            if len(folders) > 0:
+                folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
+        else:
+            folder_uid = folder.uid or ''
+            if folder_uid in params.subfolder_record_cache:
+                for uid in params.subfolder_record_cache[folder_uid]:
+                    r = api.get_record(params, uid)
+                    if r.title.lower() == name.lower():
+                        record_uid = uid
+                        break
+
+        if record_uid is None:
+            raise CommandError('rm', 'Enter name of existing record')
+
+        if kwargs.get('purge'):
+            rq = {
+                'command': 'record_update',
+                'pt': 'Commander',
+                'device_id': 'Commander',
+                'client_time': api.current_milli_time(),
+                'delete_records': [record_uid]
+            }
+            if not kwargs.get('force'):
+                answer = base.user_choice('Do you want to proceed with record removal?', 'yn', default='n')
+                if answer.lower() != 'y':
+                    return
+            rs = api.communicate(params, rq)
+            if 'delete_records' in rs:
+                for status in rs['delete_records']:
+                    if status['status'] != 'success':
+                        logging.warning('Record remove error: %s', status.get('status'))
+        else:
+            del_obj = {
+                'delete_resolution': 'unlink',
+                'object_uid': record_uid,
+                'object_type': 'record'
+            }
+            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                del_obj['from_type'] = 'user_folder'
+                if folder.type == BaseFolderNode.UserFolderType:
+                    del_obj['from_uid'] = folder.uid
+            else:
+                del_obj['from_type'] = 'shared_folder_folder'
+                del_obj['from_uid'] = folder.uid
+
+            rq = {
+                'command': 'pre_delete',
+                'objects': [del_obj]
+            }
+
+            rs = api.communicate(params, rq)
+            if rs['result'] == 'success':
+                pdr = rs['pre_delete_response']
+
+                force = kwargs['force'] if 'force' in kwargs else None
+                np = 'y'
+                if not force:
+                    summary = pdr['would_delete']['deletion_summary']
+                    for x in summary:
+                        print(x)
+                    np = base.user_choice('Do you want to proceed with deletion?', 'yn', default='n')
+                if np.lower() == 'y':
+                    rq = {
+                        'command': 'delete',
+                        'pre_delete_token': pdr['pre_delete_token']
+                    }
+                    api.communicate(params, rq)
+
+        if params.breach_watch:
+            params.breach_watch.save_reused_pw_count(params)
+        params.sync_data = True
+

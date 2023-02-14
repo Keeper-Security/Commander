@@ -299,7 +299,7 @@ def update_record(params, record, skip_extra=False):
                 link.record_key = crypto.encrypt_aes_v2(ref_record_key, record.record_key)
                 ru.record_links_add.append(link)
         for ref in existing_refs.difference(refs):
-            ru.record_links_remove(utils.base64_url_decode(ref))
+            ru.record_links_remove.append(utils.base64_url_decode(ref))
 
         if params.enterprise_ec_key:
             audit_data = vault_extensions.extract_audit_data(record)
