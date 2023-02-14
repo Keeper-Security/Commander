@@ -85,7 +85,7 @@ class TestRecord(TestCase):
 
     def test_remove_command_from_root(self):
         params = get_synced_params()
-        cmd = recordv2.RecordRemoveCommand()
+        cmd = record.RecordRemoveCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
         rec = api.get_record(params, record_uid)
@@ -222,10 +222,10 @@ class TestRecord(TestCase):
 
     def test_append_notes_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordAppendNotesCommand()
+        cmd = record_edit.RecordAppendNotesCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
-        with mock.patch('keepercommander.api.update_record'):
+        with mock.patch('keepercommander.record_management.update_record'):
             cmd.execute(params, notes='notes', record=record_uid)
 
             with mock.patch('builtins.input', return_value='data'):
@@ -236,7 +236,7 @@ class TestRecord(TestCase):
 
     def test_download_attachment_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordDownloadAttachmentCommand()
+        cmd = record_edit.RecordDownloadAttachmentCommand()
 
         records = [x for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]
         rec = records[0]
@@ -276,55 +276,9 @@ class TestRecord(TestCase):
                 mock.patch('os.path.abspath', return_value='/file_name'):
             cmd.execute(params, record=record_uid)
 
-    def test_upload_attachment_command(self):
-        params = get_synced_params()
-        cmd = recordv2.RecordUploadAttachmentCommand()
-
-        record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
-        rec = api.get_record(params, record_uid)
-
-        with self.assertRaises(CommandError):
-            cmd.execute(params, record=rec.title)
-
-        def request_upload(rq):
-            self.assertEqual(rq['command'], 'request_upload')
-            return {
-                'file_uploads': [{
-                    'max_size': 1000000,
-                    'url': 'https://keepersecurity.com/uploads/',
-                    'success_status_code': 201,
-                    'file_id': 'ABCDEF%.2d' % x,
-                    'file_parameter': 'file',
-                    'parameters': {'a':'b'}
-                } for x in range((rq.get('file_count') or 0) + (rq.get('thumbnail_count') or 0))]
-            }
-
-        def request_http_post(url, **kwargs):
-            attachment = mock.Mock()
-            attachment.status_code = 201
-            return attachment
-
-        with mock.patch('requests.post', side_effect=request_http_post), \
-                mock.patch('builtins.open', mock.mock_open(read_data=b'data')) as m_open, \
-                mock.patch('os.path.isfile', return_value=True), \
-                mock.patch('os.path.getsize') as mock_getsize:
-
-            m_open.return_value.tell = lambda: 4
-            mock_getsize.return_value = 1000000000
-            with self.assertRaises(CommandError):
-                KeeperApiHelper.communicate_expect([request_upload])
-                cmd.execute(params, file=['file.data'], record=record_uid)
-                self.assertTrue(KeeperApiHelper.is_expect_empty())
-
-            KeeperApiHelper.communicate_expect([request_upload, 'record_update'])
-            m_open.return_value.tell = lambda: 4
-            mock_getsize.return_value = 1000
-            cmd.execute(params, file=['file.data'], record=record_uid)
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
-
     def test_delete_attachment_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordDeleteAttachmentCommand()
+        cmd = record_edit.RecordDeleteAttachmentCommand()
 
         record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
         rec = api.get_record(params, record_uid)

@@ -28,13 +28,12 @@ from typing import Optional
 from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
-from . import aliases, commands, enterprise_commands, msp_commands
+from . import aliases, commands, enterprise_commands, msp_commands, record
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data, as_boolean
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
 from .helpers.whoami import get_hostname, get_environment, get_data_center
-from .recordv3 import RecordRemoveCommand
 from .. import __version__
 from .. import api, rest_api, loginv3, crypto, utils, vault, constants
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
@@ -1327,7 +1326,7 @@ class KSMCommand(Command):
 
         logging.info("Removed Application uid: %s" % app_uid)
 
-        cmd = RecordRemoveCommand()
+        cmd = record.RecordRemoveCommand()
         cmd.execute(params, purge=purge, force=True, record=app_uid)
 
     @staticmethod
