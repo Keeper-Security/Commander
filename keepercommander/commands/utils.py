@@ -43,7 +43,7 @@ from ..error import CommandError, KeeperApiError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
-from ..proto import ssocloud_pb2 as ssocloud
+from ..proto import ssocloud_pb2 as ssocloud, enterprise_pb2, APIRequest_pb2
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, \
@@ -2048,18 +2048,18 @@ class ResetPasswordCommand(Command):
                 return
             new_password = password1
 
-        rules = params.settings['rules']
+        rules_rq = enterprise_pb2.DomainPasswordRulesRequest()
+        rules_rq.username = params.user
+        rules_rs = api.communicate_rest(params, rules_rq, 'authentication/get_domain_password_rules',
+                                        rs_type=APIRequest_pb2.NewUserMinimumParams)
         failed_rules = []
-        for rule in rules:
-            is_match = re.match(rule['pattern'], new_password)
-            if not rule.get('match', True):
-                is_match = not is_match
+        for i in range(len(rules_rs.passwordMatchRegex)):
+            rule = rules_rs.passwordMatchRegex[i]
+            is_match = re.match(rule, new_password)
             if not is_match:
-                failed_rules.append(rule['description'])
+                failed_rules.append(rules_rs.passwordMatchDescription[i])
         if failed_rules:
-            logging.warning('\n%s\n%s',
-                            params.settings.get('password_rules_intro', 'Password rules:'),
-                            '\n'.join((f'  {x}' for x in failed_rules)))
+            logging.warning('Password rules:\n%s', '\n'.join((f'  {x}' for x in failed_rules)))
             return
 
         if params.breach_watch:
