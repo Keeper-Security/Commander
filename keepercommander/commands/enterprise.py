@@ -42,7 +42,7 @@ from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from .. import api, rest_api, crypto, utils, constants
 from ..display import bcolors
-from ..error import CommandError
+from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ..sox.sox_types import RecordPermissions
@@ -166,6 +166,10 @@ enterprise_user_parser.add_argument('--add-team', dest='add_team', action='appen
 enterprise_user_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-team only')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
+# enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL",
+#                                     help='new email alias for a user')
+# enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL",
+#                                     help='delete email alias')
 enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
@@ -1336,7 +1340,52 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         }
                         request_batch.append(rq)
             else:
-                if kwargs.get('lock') or kwargs.get('unlock'):
+                if kwargs.get('add_alias'):
+                    new_alias = kwargs['add_alias'].lower()
+                    if len(matched_users) == 1:
+                        user = matched_users[0]
+                        enterprise_user_id = user['enterprise_user_id']
+                        aliases = {x['username'].lower() for x in params.enterprise.get('user_aliases', []) if x['enterprise_user_id'] == enterprise_user_id}
+                        existing_alias = new_alias in aliases
+                        if existing_alias:
+                            endpoint = 'enterprise/enterprise_user_set_primary_alias'
+                            rq = APIRequest_pb2.EnterpriseUserAliasRequest()
+                            rq.enterpriseUserId = enterprise_user_id
+                            rq.alias = new_alias
+                        else:
+                            endpoint = 'enterprise/enterprise_user_add_alias'
+                            rq = APIRequest_pb2.EnterpriseUserAddAliasRequest()
+                            rq.enterpriseUserId = enterprise_user_id
+                            rq.alias = new_alias
+                            rq.primary = True
+                        try:
+                            api.communicate_rest(params, rq, endpoint)
+                            logging.info('Added alias \"%s\" for user \"%s\"', new_alias, user['username'])
+                            api.query_enterprise(params)
+                        except KeeperApiError as kae:
+                            logging.warning('Failed to add alias for user \"%s\": %s', user['username'], kae.message)
+                    else:
+                        logging.warning('Alias can be added to a single user only: Skipping')
+                    return
+
+                elif kwargs.get('delete_alias'):
+                    alias = kwargs['delete_alias']
+                    if len(matched_users) == 1:
+                        user = matched_users[0]
+                        rq = APIRequest_pb2.EnterpriseUserAddAliasRequest()
+                        rq.enterpriseUserId = user['enterprise_user_id']
+                        rq.alias = alias
+                        try:
+                            api.communicate_rest(params, rq, 'enterprise/enterprise_user_delete_alias')
+                            logging.info('Alias \"%s\" deleted from user \"%s\"', alias, user['username'])
+                            api.query_enterprise(params)
+                        except KeeperApiError as kae:
+                            logging.warning('Failed to delete alias \"%s\" from user \"%s\": %s', alias, user['username'], kae.message)
+                    else:
+                        logging.warning('Alias can be deleted from a single user only: Skipping')
+                    return
+
+                elif kwargs.get('lock') or kwargs.get('unlock'):
                     for user in matched_users:
                         if user['status'] == 'active':
                             to_lock = kwargs.get('lock')
