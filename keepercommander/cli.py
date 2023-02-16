@@ -321,10 +321,9 @@ def do_command(params, command_line):
             orig_cmd = cmd
             if cmd in aliases and cmd not in commands and cmd not in enterprise_commands and cmd not in msp_commands:
                 ali = aliases[cmd]
-                if type(ali) == tuple:
+                if isinstance(ali, (tuple, list)):
                     cmd = ali[0]
-                    for i in range(1, len(ali)):
-                        args = ali[i] + ' ' + args
+                    args = ' '.join(ali[1:]) + ' ' + args
                 else:
                     cmd = ali
 

@@ -545,8 +545,6 @@ class _EnterpriseRoleEntity(_EnterpriseEntity):
 
 class _EnterpriseLicenseEntity(_EnterpriseEntity):
     def to_keeper_entity(self, proto_entity, keeper_entity):  # type: (proto.License, dict) -> None
-        _set_or_remove(keeper_entity, 'enterprise_license_id', proto_entity.enterpriseLicenseId)
-        _set_or_remove(keeper_entity, 'name', proto_entity.name)
         _set_or_remove(keeper_entity, 'paid', proto_entity.paid)
         _set_or_remove(keeper_entity, 'number_of_seats', proto_entity.numberOfSeats)
         _set_or_remove(keeper_entity, 'expiration', proto_entity.expiration)
@@ -554,6 +552,8 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
                        proto_entity.licenseKeyId if proto_entity.licenseKeyId > 0 else None)
         _set_or_remove(keeper_entity, 'product_type_id',
                        proto_entity.productTypeId if proto_entity.productTypeId > 0 else None)
+        _set_or_remove(keeper_entity, 'name', proto_entity.name)
+        _set_or_remove(keeper_entity, 'enterprise_license_id', proto_entity.enterpriseLicenseId)
         _set_or_remove(keeper_entity, 'seats_allocated', proto_entity.seatsAllocated)
         _set_or_remove(keeper_entity, 'seats_pending', proto_entity.seatsPending)
         _set_or_remove(keeper_entity, 'tier', proto_entity.tier)
