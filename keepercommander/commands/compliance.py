@@ -21,7 +21,7 @@ compliance_parser.add_argument('--format', dest='format', action='store', choice
 compliance_parser.add_argument('--output', dest='output', action='store',
                                help='path to resulting output file (ignored for "table" format)')
 
-default_report_parser = argparse.ArgumentParser(prog='compliance-report', description='Run a SOX compliance report.',
+default_report_parser = argparse.ArgumentParser(prog='compliance report', description='Run a SOX compliance report.',
                                                 parents=[compliance_parser])
 username_opt_help = 'user(s) whose records are to be included in report (set option once per user)'
 default_report_parser.add_argument('--username', '-u', action='append', help=username_opt_help)
@@ -39,11 +39,11 @@ default_report_parser.add_argument('--shared', action='store_true',
                                    help='flag for excluding non-shared records from report')
 
 team_report_desc = 'Run a report showing which shared folders enterprise teams have access to'
-team_report_parser = argparse.ArgumentParser(prog='compliance-team-report', description=team_report_desc,
+team_report_parser = argparse.ArgumentParser(prog='compliance team-report', description=team_report_desc,
                                              parents=[compliance_parser])
 
 access_report_desc = 'Run a report showing all records a user has accessed'
-access_report_parser = argparse.ArgumentParser(prog='compliance-team-report', description=access_report_desc,
+access_report_parser = argparse.ArgumentParser(prog='compliance record-access-report', description=access_report_desc,
                                                parents=[compliance_parser])
 access_report_parser.add_argument('user', metavar='USER', type=str, help='username or ID')
 
@@ -53,24 +53,18 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    aliases['cr'] = 'compliance-report'
-    command_info['compliance-report'] = 'SOX Compliance Reporting'
+    aliases['cr'] = ('compliance', 'report')
+    aliases['compliance-report'] = ('compliance', 'report')
+    command_info['compliance'] = 'SOX Compliance Reporting'
 
 
 class ComplianceCommand(GroupCommand):
     def __init__(self):
         super(ComplianceCommand, self).__init__()
         self.register_command('report', ComplianceReportCommand(), 'Run default SOX compliance report')
-        self.register_command('team-report', ComplianceTeamReportCommand())
-        self.register_command('record-access-report', ComplianceRecordAccessReportCommand())
+        self.register_command('team-report', ComplianceTeamReportCommand(), team_report_desc, 'tr')
+        self.register_command('record-access-report', ComplianceRecordAccessReportCommand(), access_report_desc, 'rar')
         self.default_verb = 'report'
-
-    def execute_args(self, params, args, **kwargs):  # type: (KeeperParams, str, dict) -> any
-        if kwargs.get('command') in ('compliance-report', 'cr'):
-            kwargs['command'] = 'compliance'
-            args = ' '.join([self.default_verb, args])
-
-        return super().execute_args(params, args, **kwargs)
 
     def validate(self, params):  # type: (KeeperParams) -> None
         sox.validate_data_access(params, cmd='compliance')
