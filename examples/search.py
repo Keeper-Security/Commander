@@ -26,6 +26,8 @@ while not my_params.user:
 while not my_params.password:
     my_params.password = getpass.getpass(prompt='Master Password: ', stream=None)
 
+api.login(my_params)
+
 searchstring = getpass.getpass(prompt='Search String: ', stream=None)
 api.sync_down(my_params)
 
