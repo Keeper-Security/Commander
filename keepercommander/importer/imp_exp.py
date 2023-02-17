@@ -1136,6 +1136,9 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
         else:  # for i, parent_record in enumerate(records_with_attachments)
             records_with_attachments = []
 
+        if len(rq.files) == 0:
+            return
+
         rq.client_time = api.current_milli_time()
         rs = api.communicate_rest(params, rq, 'vault/files_add')
         files_add_rs = record_pb2.FilesAddResponse()
