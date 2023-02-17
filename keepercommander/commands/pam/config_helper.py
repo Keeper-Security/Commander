@@ -4,17 +4,15 @@ import os
 
 from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string
 
-from keepercommander import api, crypto, utils
-from keepercommander.api import encrypt_aes_plain, pad_aes_gcm, communicate_rest, sync_down
-from keepercommander.commands.folder import FolderMoveCommand
-from keepercommander.commands.recordv3 import RecordRemoveCommand
-from keepercommander.display import bcolors
-from keepercommander.loginv3 import CommonHelperMethods
-from keepercommander.proto import pam_pb2
-from keepercommander.proto.pam_pb2 import (
+from ..folder import FolderMoveCommand
+from ..record import RecordRemoveCommand
+from ...display import bcolors
+from ...proto import pam_pb2
+from ...proto.pam_pb2 import (
     PAMConfigurationController, PAMDataOperation, PAMOperationType, PAMModifyRequest, ConfigurationAddRequest
 )
-from keepercommander.proto.router_pb2 import RouterRotationInfo
+from ...proto.router_pb2 import RouterRotationInfo
+from ... import api, crypto, utils
 
 
 def pam_decrypt_configuration_data(pam_config_v6_record):
@@ -66,18 +64,18 @@ def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_
 
     data_json = json.dumps(data)
     record_key_unencrypted = os.urandom(32)
-    record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
+    record_key_encrypted = api.encrypt_aes_plain(record_key_unencrypted, params.data_key)
 
     config_v6_record_uid_str = api.generate_record_uid()
-    config_v6_record_uid = CommonHelperMethods.url_safe_str_to_bytes(config_v6_record_uid_str)
+    config_v6_record_uid = utils.base64_url_decode(config_v6_record_uid_str)
 
     data = data_json.decode('utf-8') if isinstance(data_json, bytes) else data_json
-    data = pad_aes_gcm(data)
+    data = api.pad_aes_gcm(data)
 
     rdata = bytes(data, 'utf-8')
-    rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
+    rdata = api.encrypt_aes_plain(rdata, record_key_unencrypted)
     rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
-    rdata = CommonHelperMethods.url_safe_str_to_bytes(rdata)
+    rdata = utils.base64_url_decode(rdata)
 
     car = ConfigurationAddRequest()
     car.configurationUid = config_v6_record_uid
@@ -85,15 +83,15 @@ def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_
     car.data = rdata
 
     params.revision = 0
-    rs = communicate_rest(params, car, 'pam/add_configuration_record')
+    rs = api.communicate_rest(params, car, 'pam/add_configuration_record')
 
     pcc = PAMConfigurationController()
     pcc.configurationUid = config_v6_record_uid
-    pcc.controllerUid = CommonHelperMethods.url_safe_str_to_bytes(controller_uid)
-    rs = communicate_rest(params, pcc, 'pam/set_configuration_controller')
+    pcc.controllerUid = utils.base64_url_decode(controller_uid)
+    rs = api.communicate_rest(params, pcc, 'pam/set_configuration_controller')
 
     # Moving v6 record into the folder
-    sync_down(params)
+    api.sync_down(params)
 
     FolderMoveCommand().execute(params, src=config_v6_record_uid_str, dst=folder_uid_urlsafe)
 
