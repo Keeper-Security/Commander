@@ -151,7 +151,11 @@ def parse_ATTA(chunk, accounts):
     parent_id = read_item(io).decode('utf-8')
     mimetype = read_item(io).decode('utf-8')
     storagekey = read_item(io).decode('utf-8')
-    lastpass_size = int(read_item(io))
+    size = read_item(io)
+    try:
+        lastpass_size = int(size)
+    except ValueError:
+        return None
     filename_encrypted = read_item(io)
 
     parents = [a for a in accounts if a.id == parent_id]
