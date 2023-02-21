@@ -731,6 +731,12 @@ trash_restore_parser.add_argument('-f', '--force', dest='force', action='store_t
 trash_restore_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern')
 
+trash_unshare_parser = argparse.ArgumentParser(prog='trash unshare', description='Remove shares from deleted records.')
+trash_unshare_parser.add_argument('-f', '--force', dest='force', action='store_true',
+                                  help='do not prompt for confirmation')
+trash_unshare_parser.add_argument('records', nargs='+', type=str, action='store',
+                                  help='Record UID or search pattern. \"*\" ')
+
 trash_purge_parser = argparse.ArgumentParser(prog='trash purge',
                                              description='Removes all deleted record from the trash bin.')
 trash_purge_parser.add_argument('-f', '--force', dest='force', action='store_true',
@@ -740,54 +746,66 @@ trash_purge_parser.add_argument('-f', '--force', dest='force', action='store_tru
 class TrashMixin:
     last_revision = 0
     deleted_record_cache = {}
+    orphaned_record_cache = {}
 
     @staticmethod
-    def get_deleted_records(params, reload=False):    # type: (KeeperParams, bool) -> Dict[str, Any]
+    def _ensure_deleted_records_loaded(params, reload=False):   # type: (KeeperParams, bool) -> None
         if params.revision != TrashMixin.last_revision or reload:
-            deleted_uids = set()
             rq = {
                 'command': 'get_deleted_records',
                 'client_time': utils.current_milli_time()
             }
             rs = api.communicate(params, rq)
-            if 'records' in rs:
-                for record in rs['records']:
-                    record_uid = record['record_uid']
-                    deleted_uids.add(record_uid)
-                    if record_uid in TrashMixin.deleted_record_cache:
-                        continue
-                    try:
-                        key_type = record['record_key_type']
-                        record_key = utils.base64_url_decode(record['record_key'])
-                        if key_type == 1:
-                            record_key = crypto.decrypt_aes_v1(record_key, params.data_key)
-                        elif key_type == 2:
-                            record_key = api.decrypt_rsa(record_key, params.rsa_key)
-                        elif key_type == 3:
-                            record_key = crypto.decrypt_aes_v2(record_key, params.data_key)
-                        elif key_type == 4:
-                            record_key = crypto.decrypt_ec(record_key, params.ecc_key)
-                        else:
-                            logging.debug('Cannot decrypt record key %s', record_uid)
+            for prop in ['records', 'non_access_records']:
+                if prop in rs:
+                    deleted_uids = set()
+                    cache = TrashMixin.deleted_record_cache if prop == 'records' else TrashMixin.orphaned_record_cache
+                    for record in rs[prop]:
+                        record_uid = record['record_uid']
+                        deleted_uids.add(record_uid)
+                        if record_uid in cache:
                             continue
-                        record['record_key_unencrypted'] = record_key
+                        try:
+                            key_type = record['record_key_type']
+                            record_key = utils.base64_url_decode(record['record_key'])
+                            if key_type == 1:
+                                record_key = crypto.decrypt_aes_v1(record_key, params.data_key)
+                            elif key_type == 2:
+                                record_key = api.decrypt_rsa(record_key, params.rsa_key)
+                            elif key_type == 3:
+                                record_key = crypto.decrypt_aes_v2(record_key, params.data_key)
+                            elif key_type == 4:
+                                record_key = crypto.decrypt_ec(record_key, params.ecc_key)
+                            else:
+                                logging.debug('Cannot decrypt record key %s', record_uid)
+                                continue
+                            record['record_key_unencrypted'] = record_key
 
-                        data = utils.base64_url_decode(record['data'])
-                        version = record['version']
-                        record['data_unencrypted'] = \
-                            crypto.decrypt_aes_v2(data, record_key) if version >= 3 else \
-                                crypto.decrypt_aes_v1(data, record_key)
+                            data = utils.base64_url_decode(record['data'])
+                            version = record['version']
+                            record['data_unencrypted'] = \
+                                crypto.decrypt_aes_v2(data, record_key) if version >= 3 else \
+                                    crypto.decrypt_aes_v1(data, record_key)
 
-                        TrashMixin.deleted_record_cache[record_uid] = record
-                    except Exception as e:
-                        logging.debug('Cannot decrypt deleted record %s: %s', record_uid, e)
+                            cache[record_uid] = record
+                        except Exception as e:
+                            logging.debug('Cannot decrypt deleted record %s: %s', record_uid, e)
 
-            for record_uid in list(TrashMixin.deleted_record_cache.keys()):
-                if record_uid not in deleted_uids:
-                    del TrashMixin.deleted_record_cache[record_uid]
+                    for record_uid in list(cache.keys()):
+                        if record_uid not in deleted_uids:
+                            del cache[record_uid]
 
-        TrashMixin.last_revision = params.revision
+            TrashMixin.last_revision = params.revision
+
+    @staticmethod
+    def get_deleted_records(params, reload=False):    # type: (KeeperParams, bool) -> Dict[str, Any]
+        TrashMixin._ensure_deleted_records_loaded(params, reload)
         return TrashMixin.deleted_record_cache
+
+    @staticmethod
+    def get_orphaned_records(params, reload=False):    # type: (KeeperParams, bool) -> Dict[str, Any]
+        TrashMixin._ensure_deleted_records_loaded(params, reload)
+        return TrashMixin.orphaned_record_cache
 
 
 class TrashCommand(GroupCommand):
@@ -796,6 +814,7 @@ class TrashCommand(GroupCommand):
         self.register_command('list', TrashListCommand())
         self.register_command('get', TrashGetCommand())
         self.register_command('restore', TrashRestoreCommand())
+        self.register_command('unshare', TrashUnshareCommand())
         self.register_command('purge', TrashPurgeCommand())
         self.default_verb = 'list'
 
@@ -806,7 +825,8 @@ class TrashListCommand(Command, TrashMixin):
 
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params, kwargs.get('reload', False))
-        if len(deleted_records) == 0:
+        orphaned_records = self.get_orphaned_records(params)
+        if len(deleted_records) == 0 and len(orphaned_records) == 0:
             logging.info('Trash is empty')
             return
 
@@ -820,25 +840,29 @@ class TrashListCommand(Command, TrashMixin):
             title_pattern = re.compile(fnmatch.translate(pattern), re.IGNORECASE)
 
         table = []
-        headers = ['Record UID', 'Title', 'Type', 'Deleted']
+        headers = ['Record UID', 'Title', 'Type', 'Status']
 
-        for rec in deleted_records.values():
-            record = vault.KeeperRecord.load(params, rec)
+        for shared in (False, True):
+            for rec in (orphaned_records if shared else deleted_records).values():
+                record = vault.KeeperRecord.load(params, rec)
 
-            if pattern:
-                if pattern == record.record_uid:
-                    pass
-                elif title_pattern and title_pattern.match(record.title):
-                    pass
+                if pattern:
+                    if pattern == record.record_uid:
+                        pass
+                    elif title_pattern and title_pattern.match(record.title):
+                        pass
+                    else:
+                        continue
+
+                if shared:
+                    status = 'Shared'
                 else:
-                    continue
-
-            deleted = rec.get('date_deleted', 0)
-            if deleted:
-                deleted = datetime.datetime.fromtimestamp(int(deleted / 1000))
-            else:
-                deleted = None
-            table.append([record.record_uid, record.title, record.record_type, deleted])
+                    date_deleted = rec.get('date_deleted', 0)
+                    if date_deleted:
+                        status = f'Deleted at {datetime.datetime.fromtimestamp(int(date_deleted / 1000))}'
+                    else:
+                        status = 'Deleted'
+                table.append([record.record_uid, record.title, record.record_type, status])
 
         table.sort(key=lambda x: x[1].casefold())
 
@@ -852,7 +876,8 @@ class TrashGetCommand(Command, TrashMixin):
 
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params)
-        if len(deleted_records) == 0:
+        orphaned_records = self.get_orphaned_records(params)
+        if len(deleted_records) == 0 and len(orphaned_records) == 0:
             logging.info('Trash is empty')
             return
 
@@ -861,7 +886,11 @@ class TrashGetCommand(Command, TrashMixin):
             logging.info('Record UID parameter is required')
             return
 
+        is_shared = False
         rec = deleted_records.get(record_uid)
+        if not rec:
+            rec = orphaned_records.get(record_uid)
+            is_shared = True
         if not rec:
             logging.info('%s is not a valid deleted record UID', record_uid)
             return
@@ -877,7 +906,56 @@ class TrashGetCommand(Command, TrashMixin):
                     value = '\n'.join(value)
                 if len(value) > 100:
                     value = value[:99] + '...'
-                print('{0:>20s}: {1}'.format(name, value))
+                print('{0:>21s}: {1}'.format(name, value))
+        if is_shared:
+            if 'shares' not in rec:
+                rec['shares'] = {}
+                rq = {
+                    'command': 'get_records',
+                    'include': ['shares'],
+                    'records': [{
+                        'record_uid': record_uid
+                    }],
+                    'client_time': api.current_milli_time()
+                }
+                try:
+                    rs = api.communicate(params, rq)
+                    if 'records' in rs:
+                        for r in rs['records']:
+                            if record_uid == r['record_uid']:
+                                if 'user_permissions' in r:
+                                    rec['shares']['user_permissions'] = r['user_permissions']
+                                if 'shared_folder_permissions' in r:
+                                    rec['shares']['shared_folder_permissions'] = r['shared_folder_permissions']
+                except:
+                    pass
+
+            if 'shares' in rec:
+                if 'user_permissions' in rec['shares']:
+                    perm = rec['shares']['user_permissions'].copy()
+                    perm.sort(key=lambda r: (' 1' if r.get('owner') else
+                                             ' 2' if r.get('editable') else
+                                             ' 3' if r.get('sharable') else
+                                             '') + r.get('username'))
+                    no = 0
+                    for uo in perm:
+                        flags = ''
+                        if uo.get('owner'):
+                            continue
+                        if uo.get('editable'):
+                            flags = 'Can Edit'
+                        if uo.get('sharable'):
+                            if flags:
+                                flags = flags + ' & '
+                            else:
+                                flags = 'Can '
+                            flags = flags + 'Share'
+                        if not flags:
+                            flags = 'Read Only'
+                        print('{0:>21s}: {1:<26s} ({2}) {3}'.format(
+                            'Shared Users' if no == 0 else '', uo['username'], flags,
+                            'self' if uo['username'] == params.user else ''))
+                        no += 1
 
 
 class TrashRestoreCommand(Command, TrashMixin):
@@ -886,7 +964,8 @@ class TrashRestoreCommand(Command, TrashMixin):
 
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params)
-        if len(deleted_records) == 0:
+        orphaned_records = self.get_orphaned_records(params)
+        if len(deleted_records) == 0 and len(orphaned_records) == 0:
             logging.info('Trash is empty')
             return
 
@@ -901,9 +980,11 @@ class TrashRestoreCommand(Command, TrashMixin):
         for rec in records:
             if rec in deleted_records:
                 to_restore.add(rec)
+            elif rec in orphaned_records:
+                to_restore.add(rec)
             else:
                 title_pattern = re.compile(fnmatch.translate(rec), re.IGNORECASE)
-                for record_uid, del_rec in deleted_records.items():
+                for record_uid, del_rec in itertools.chain(deleted_records.items(), orphaned_records.items()):
                     if record_uid in to_restore:
                         continue
                     record = vault.KeeperRecord.load(params, del_rec)
@@ -923,12 +1004,14 @@ class TrashRestoreCommand(Command, TrashMixin):
 
         batch = []
         for record_uid in to_restore:
-            rec = deleted_records[record_uid]
-            batch.append({
+            rec = deleted_records[record_uid] if record_uid in deleted_records else orphaned_records[record_uid]
+            rq = {
                 'command': 'undelete_record',
                 'record_uid': record_uid,
-                'revision': rec['revision']
-            })
+            }
+            if 'revision' in rec:
+                rq['revision'] = rec['revision']
+            batch.append(rq)
 
         api.execute_batch(params, batch)
         api.sync_down(params)
@@ -942,6 +1025,77 @@ class TrashRestoreCommand(Command, TrashMixin):
 
         params.sync_data = True
         params.breach_watch.save_reused_pw_count(params)
+
+
+class TrashUnshareCommand(Command, TrashMixin):
+    def get_parser(self):
+        return trash_unshare_parser
+
+    def execute(self, params, **kwargs):
+        orphaned_records = self.get_orphaned_records(params)
+        if len(orphaned_records) == 0:
+            logging.info('Trash is empty')
+            return
+
+        records = kwargs.get('records')
+        if not isinstance(records, (tuple, list)):
+            records = None
+        if not records:
+            logging.info('records parameter is empty.')
+            return
+
+        to_restore = set()
+        for rec in records:
+            if rec in orphaned_records:
+                to_restore.add(rec)
+            else:
+                title_pattern = re.compile(fnmatch.translate(rec), re.IGNORECASE)
+                for record_uid, del_rec in orphaned_records.items():
+                    if record_uid in to_restore:
+                        continue
+                    record = vault.KeeperRecord.load(params, del_rec)
+                    if title_pattern.match(record.title):
+                        to_restore.add(record_uid)
+
+        if len(to_restore) == 0:
+            logging.info('There are no records to unshare')
+            return
+
+        if not kwargs.get('force'):
+            answer = base.user_choice(f'Do you want to remove shares from {len(to_restore)} record(s)?', 'yn', default='n')
+            if answer.lower() == 'y':
+                answer = 'yes'
+            if answer.lower() != 'yes':
+                return
+
+        record_shares = api.get_record_shares(params, to_restore, is_share_admin=True)
+        if record_shares:
+            remove_shares = []
+            for record_share in record_shares:
+                if 'shares' in record_share:
+                    shares = record_share['shares']
+                    if 'user_permissions' in shares:
+                        for user_permission in shares['user_permissions']:
+                            if user_permission.get('owner') is False:
+                                remove_shares.append({
+                                    'to_username': user_permission['username'],
+                                    'record_uid': record_share['record_uid'],
+                                })
+            while len(remove_shares) > 0:
+                chunk = remove_shares[:95]
+                remove_shares = remove_shares[95:]
+                rq = {
+                    'command': 'record_share_update',
+                    'remove_shares': chunk,
+                }
+                rs = api.communicate(params, rq)
+                if 'remove_statuses' in rs:
+                    for rm_status in rs['remove_statuses']:
+                        if rm_status.get('status') != 'success':
+                            logging.info('Remove share \"%s\" from record UID \"\%s" error: %s',
+                                         rm_status['username'], rm_status['record_uid'], rm_status['message'])
+
+            TrashMixin.last_revision = 0
 
 
 class TrashPurgeCommand(Command, TrashMixin):
