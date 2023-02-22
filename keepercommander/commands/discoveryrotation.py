@@ -1460,6 +1460,10 @@ class PAMCreateGatewayCommand(Command):
     dr_create_controller_parser.add_argument('--application', '-a', required=True, dest='ksm_app',
                                              help='KSM Application name or UID. Use command `sm app list` to view '
                                                   'available KSM Applications.', action='store')
+    dr_create_controller_parser.add_argument('--token-expires-in-min', '-e', type=int, dest='token_expire_in_min',
+                                             action='store',
+                                             help='Time for the one time token to expire. Maximum 1440 minutes (24 hrs). Default: 60',
+                                             default=60)
     dr_create_controller_parser.add_argument('--return_value', '-r', dest='return_value', action='store_true',
                                              help='Return value from the command for automation purposes')
     dr_create_controller_parser.add_argument('--config-init', '-c', type=str, dest='config_init', action='store',
@@ -1477,11 +1481,13 @@ class PAMCreateGatewayCommand(Command):
         ksm_app = kwargs.get('ksm_app')
         is_return_value = kwargs.get('return_value')
         config_init = kwargs.get('config_init')
+        token_expire_in_min = kwargs.get('token_expire_in_min')
 
-        ott_expire_in_min = 30
+        ott_expire_in_min = token_expire_in_min
 
-        logging.debug(f'gateway_name   =[{gateway_name}]')
-        logging.debug(f'ksm_app        =[{ksm_app}]')
+        logging.debug(f'gateway_name =[{gateway_name}]')
+        logging.debug(f'ksm_app =[{ksm_app}]')
+        logging.debug(f'ott_expire_in_min =[{ott_expire_in_min}]')
 
         one_time_token = create_gateway(params, gateway_name, ksm_app, config_init, ott_expire_in_min)
 
