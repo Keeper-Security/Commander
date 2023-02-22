@@ -212,7 +212,8 @@ def merge_lists_on_value(list1, list2, field_name):
 
 
 FOLDER_SCOPE = ['shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
-RECORD_SCOPE = ['folders', 'record', 'typed_record', 'app_record', 'sharing_changes', 'pam_configuration']
+RECORD_SCOPE = ['folders', 'record', 'typed_record', 'app_record', 'sharing_changes']
+PAM_CONFIGURATION = ['pam_configuration']
 NON_SHARED_DATA_SCOPE = ['non_shared_data']
 EXPLICIT = ['explicit']
 
@@ -228,7 +229,7 @@ def sync_down(params, record_types=False):
     includes = FOLDER_SCOPE + ['user_auth']
     skip_records = params.config and 'skip_records' in params.config and params.config['skip_records'] is True
     if not skip_records:
-        includes += RECORD_SCOPE
+        includes += RECORD_SCOPE # + PAM_CONFIGURATION
 
     rq = {
         'command': 'sync_down',
