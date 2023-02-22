@@ -212,7 +212,7 @@ def merge_lists_on_value(list1, list2, field_name):
 
 
 FOLDER_SCOPE = ['shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
-RECORD_SCOPE = ['folders', 'record', 'typed_record', 'app_record', 'sharing_changes']
+RECORD_SCOPE = ['folders', 'record', 'typed_record', 'app_record', 'sharing_changes', 'pam_configuration']
 NON_SHARED_DATA_SCOPE = ['non_shared_data']
 EXPLICIT = ['explicit']
 
