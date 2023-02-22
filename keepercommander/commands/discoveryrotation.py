@@ -736,6 +736,10 @@ class PAMConfigurationNewAWSCommand(Command):
         gateway_str = kwargs.get('gateway')
         found_gateway_uid = find_one_gateway_by_uid_or_name(params, gateway_str)
 
+        if not found_gateway_uid:
+            print(f'{bcolors.WARNING}Gateway {gateway_str} not found.{bcolors.ENDC}')
+            return
+
         aws_id = kwargs.get('aws_id')
         access_key_id = kwargs.get('access_key_id')
         access_secret_key = kwargs.get('access_secret_key')
@@ -804,6 +808,10 @@ class PAMConfigurationNewAzureCommand(Command):
         gateway_str = kwargs.get('gateway')
         found_gateway_uid = find_one_gateway_by_uid_or_name(params, gateway_str)
 
+        if not found_gateway_uid:
+            print(f'{bcolors.WARNING}Gateway {gateway_str} not found.{bcolors.ENDC}')
+            return
+
         resource_records_uid = kwargs.get('resource_records_uid')
 
         azure_id = kwargs.get('azure_id')
@@ -870,6 +878,11 @@ class PAMConfigurationNewNetworkCommand(Command):
         title = kwargs.get('title')
         gateway_str = kwargs.get('gateway')
         found_gateway_uid = find_one_gateway_by_uid_or_name(params, gateway_str)
+
+        if not found_gateway_uid:
+            print(f'{bcolors.WARNING}Gateway {gateway_str} not found.{bcolors.ENDC}')
+            return
+
         resource_records_uid = kwargs.get('resource_records_uid')
 
         default_schedule = kwargs.get('default_schedule')
@@ -926,6 +939,11 @@ class PAMConfigurationNewLocalCommand(Command):
         title = kwargs.get('title')
         gateway_str = kwargs.get('gateway')
         found_gateway_uid = find_one_gateway_by_uid_or_name(params, gateway_str)
+
+        if not found_gateway_uid:
+            print(f'{bcolors.WARNING}Gateway {gateway_str} not found.{bcolors.ENDC}')
+            return
+
         resource_records_uid = kwargs.get('resource_records_uid')
 
         default_schedule = kwargs.get('default_schedule')
@@ -1177,6 +1195,7 @@ class PAMGatewayActionServerInfoCommand(Command):
     pam_cmd_discover_command_parser = argparse.ArgumentParser(prog='dr-info-command')
     pam_cmd_discover_command_parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid',
                                                  action='store', help='Gateway UID')
+    pam_cmd_discover_command_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true', help='Verbose Output')
     pam_cmd_discover_command_parser.error = raise_parse_exception
     pam_cmd_discover_command_parser.exit = suppress_exit
 
@@ -1185,6 +1204,7 @@ class PAMGatewayActionServerInfoCommand(Command):
 
     def execute(self, params, **kwargs):
         destination_gateway_uid_str = kwargs.get('gateway_uid')
+        is_verbose = kwargs.get('verbose')
         router_response = router_send_action_to_gateway(
             params=params,
             gateway_action=GatewayActionGatewayInfo(is_scheduled=False),
@@ -1193,7 +1213,7 @@ class PAMGatewayActionServerInfoCommand(Command):
             destination_gateway_uid_str=destination_gateway_uid_str
         )
 
-        print_router_response(router_response, response_type='gateway_info')
+        print_router_response(router_response, response_type='gateway_info', is_verbose=is_verbose)
 
 
 class PAMGatewayActionDiscoverCommand(Command):
@@ -1458,7 +1478,7 @@ class PAMCreateGatewayCommand(Command):
         is_return_value = kwargs.get('return_value')
         config_init = kwargs.get('config_init')
 
-        ott_expire_in_min = 5
+        ott_expire_in_min = 30
 
         logging.debug(f'gateway_name   =[{gateway_name}]')
         logging.debug(f'ksm_app        =[{ksm_app}]')

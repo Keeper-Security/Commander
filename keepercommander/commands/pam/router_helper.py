@@ -329,7 +329,7 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
     return rs
 
 
-def print_router_response(router_response, response_type, original_conversation_id=None):
+def print_router_response(router_response, response_type, original_conversation_id=None, is_verbose=False):
     if not router_response:
         return
 
@@ -431,7 +431,9 @@ def print_router_response(router_response, response_type, original_conversation_
         print(f'\t{bcolors.OKGREEN}Executable        : {host_details.get("executable")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Package Directory : {host_details.get("package-dir")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Working Directory : {host_details.get("working-dir")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Installed Packages: {installed_packages_str}{bcolors.ENDC}')
+
+        if is_verbose:
+            print(f'\t{bcolors.OKGREEN}Installed Packages: {installed_packages_str}{bcolors.ENDC}')
 
         print(f'\n{bcolors.OKBLUE}Router Details{bcolors.ENDC}')
         router_details = gateway_info.get('router').get('connection')
