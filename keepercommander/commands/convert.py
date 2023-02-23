@@ -36,7 +36,7 @@ def register_command_info(aliases, command_info):
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
 convert_parser.add_argument(
-    '-t', '--record_type', dest='record_type', action='store', help='Convert to record type'
+    '-t', '--record-type', '--record_type', dest='record_type', action='store', help='Convert to record type'
 )
 convert_parser.add_argument(
     '-q', '--quiet', dest='quiet', action='store_true', help="Don't display info about records matched and converted"
