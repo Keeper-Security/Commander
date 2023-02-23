@@ -157,6 +157,8 @@ transform_parser.add_argument('-c', '--children', action='store_true', help=chil
 dry_run_help = 'Preview the folder transformation without updating'
 transform_parser.add_argument('-n', '--dry-run', action='store_true', help=dry_run_help)
 transform_parser.add_argument('-f', '--force', action='store_true', help='Skip confirmation prompt and minimize output')
+transform_parser.error = raise_parse_exception
+transform_parser.exit = suppress_exit
 
 
 class FolderListCommand(Command, RecordMixin):
