@@ -187,8 +187,68 @@ def formatted_folders(folders):
         print('')
 
 
-def formatted_tree(params, folder, verbose=False):
+def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
+    if show_records:
+        from .recordv3 import RecordV3
+
+    def print_share_permissions_key():
+        perms_key = 'Share Permissions Key:\n' \
+               '======================\n' \
+               'RO = Read-Only\n' \
+               'MU = Can Manage Users\n' \
+               'MR = Can Manage Records\n' \
+               'CE = Can Edit\n' \
+               'CS = Can Share\n' \
+               '======================\n'
+        print(perms_key)
+
+    def get_share_info(node):
+        MU_KEY = 'manage_users'
+        MR_KEY = 'manage_records'
+        DMR_KEY = 'default_manage_records'
+        DMU_KEY = 'default_manage_user'
+        DCE_KEY = 'default_can_edit'
+        DCS_KEY = 'default_can_share'
+        perm_abbrev_lookup = {MU_KEY: 'MU', MR_KEY: 'MR', DMR_KEY: 'MU', DMU_KEY: 'MU', DCE_KEY: 'CE', DCS_KEY: 'CS'}
+
+        def get_users_info(users):
+            info = []
+            for u in users:
+                email = u.get('username')
+                if email == params.user:
+                    continue
+                privs = [v for k, v in perm_abbrev_lookup.items() if u.get(k)] or ['RO']
+                info.append(f'[{email}:{",".join(privs)}]')
+            return 'users:' + ','.join(info) if info else ''
+
+        def get_teams_info(teams):
+            info = []
+            for t in teams:
+                name = t.get('name')
+                privs = [v for k, v in perm_abbrev_lookup.items() if t.get(k)] or ['RO']
+                info.append(f'[{name}:{",".join(privs)}]')
+            return 'teams:' + ','.join(info) if info else ''
+
+        if isinstance(node, SharedFolderNode):
+            sf = params.shared_folder_cache.get(node.uid)
+            teams_info = get_teams_info(sf.get('teams', []))
+            users_info = get_users_info(sf.get('users', []))
+            default_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
+            default_perms = 'default:' + ','.join(default_perms)
+            user_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
+            user_perms = 'user:' + ','.join(user_perms)
+            perms = [default_perms, user_perms, teams_info, users_info]
+            perms = [p for p in perms if p]
+            return f'({"; ".join(perms)})'
+
     def tree_node(node):
+        if isinstance(node, dict) and show_records:
+            name = RecordV3.get_title(node)
+            if verbose:
+                name += f' ({node.get("record_uid")})'
+            name += Style.BRIGHT + ' [Record]' + Style.NORMAL
+            return name, {}
+
         if verbose and node.uid:
             name = f'{node.name} ({node.uid})'
         else:
@@ -196,13 +256,19 @@ def formatted_tree(params, folder, verbose=False):
 
         if isinstance(node, SharedFolderNode):
             name += ' ' + Style.BRIGHT + '[Shared]' + Style.NORMAL
+            if shares:
+                name += ' ' + get_share_info(node)
 
         sfs = [params.folder_cache[sfuid] for sfuid in node.subfolders]
+        if show_records:
+            recs = [params.record_cache.get(ruid) for ruid in params.subfolder_record_cache.get(node.uid, [])]
+            sfs.extend(recs)
 
         if len(sfs) == 0:
             return name, {}
 
-        sfs.sort(key=lambda f: f.name.lower(), reverse=False)
+        sort_fn = lambda f: f.name.lower() if isinstance(f, BaseFolderNode) else RecordV3.get_title(f).lower()
+        sfs.sort(key=sort_fn, reverse=False)
         tns = [tree_node(sf) for sf in sfs]
         return name, OD(tns)
 
@@ -211,6 +277,10 @@ def formatted_tree(params, folder, verbose=False):
         t[0]: t[1]
     }
     tr = LeftAligned()
+    if shares and not hide_shares_key:
+        print_share_permissions_key()
+    if title:
+        print(title)
     print(tr(tree))
     print('')
 
