@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from collections import Counter
+from typing import Dict, Any
 
 from .display import bcolors
 from .params import KeeperParams
@@ -1802,6 +1803,14 @@ class RecordV3:
                                 'value': value
                             })
         return custom
+
+    @staticmethod
+    def get_title(cached_record):   # type: (Dict[str, Any]) -> str
+        if isinstance(cached_record, dict):
+            return json.loads(cached_record.get('data_unencrypted', b'{}')).get('title', '')
+        else:
+            raise TypeError('Record data must be of type dict')
+
 
 
 class HumanBytes:
