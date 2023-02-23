@@ -50,6 +50,7 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'Company. \nIf you are an MSP administrator then try to run `switch-to-msp` ' \
                           'command before executing this command.'
 
+command_info['server'] = 'Sets or displays current Keeper region'
 
 def display_command_help(show_enterprise=False, show_shell=False):
     headers = ['', 'Command', 'Alias', '', 'Description']
@@ -469,12 +470,13 @@ def loop(params):  # type: (KeeperParams) -> int
         # determined by the response from the server
         init_recordv3_commands(params)
     else:
-        if params.server:
+        if isinstance(params.config, dict) and 'server' in params.config:
             logging.info('Current Keeper region: %s', params.server)
         else:
             logging.info('Use "server" command to change Keeper region > "server US"')
             for region in KEEPER_PUBLIC_HOSTS:
                 logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
+        logging.info('To login type: login <email>')
 
     while True:
         if params.session_token:
