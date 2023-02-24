@@ -17,6 +17,7 @@ from typing import Optional
 
 from .. import api, crypto, utils
 from .base import GroupCommand, Command, dump_report_data
+from ..breachwatch import BreachWatch
 from ..params import KeeperParams
 from ..error import CommandError
 from ..proto import client_pb2 as client_proto, breachwatch_pb2 as breachwatch_proto
@@ -162,7 +163,7 @@ class BreachWatchResetCommand(Command):
 
         api.sync_down(params)
         params.sync_data = True
-        params.breach_watch.save_reused_pw_count(params)
+        BreachWatch.save_reused_pw_count(params)
 
 
 class BreachWatchScanCommand(Command):
