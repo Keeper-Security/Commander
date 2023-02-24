@@ -1543,11 +1543,11 @@ class FolderTransformCommand(Command):
             return root_copy
 
         def preview_transform(xform_pairs):
+            logging.info('\nORIGINAL vs. TRANSFORMED folder structures:')
+            logging.info('===========================================\n')
             hide_key = False
             for root, xformed in xform_pairs:
                 params.current_folder = root.parent_uid or ''
-                logging.info('\nORIGINAL vs. TRANSFORMED folder structures:')
-                logging.info('===========================================\n')
                 tree_cmd = FolderTreeCommand()
                 tree_cmd.execute(params, folder=root.name, records=True, shares=True, hide_shares_key=hide_key,
                                  title='ORIGINAL:\n=========')
