@@ -21,6 +21,7 @@ from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 
 from .base import Command, GroupCommand, RecordMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
+from ..breachwatch import BreachWatch
 from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
@@ -1024,7 +1025,7 @@ class TrashRestoreCommand(Command, TrashMixin):
             params.queue_audit_event('record_restored', record_uid=record_uid)
 
         params.sync_data = True
-        params.breach_watch.save_reused_pw_count(params)
+        BreachWatch.save_reused_pw_count(params)
 
 
 class TrashUnshareCommand(Command, TrashMixin):
@@ -1605,7 +1606,6 @@ class RecordRemoveCommand(Command):
                     }
                     api.communicate(params, rq)
 
-        if params.breach_watch:
-            params.breach_watch.save_reused_pw_count(params)
+        BreachWatch.save_reused_pw_count(params)
         params.sync_data = True
 
