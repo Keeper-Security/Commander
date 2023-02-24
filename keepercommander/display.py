@@ -242,11 +242,11 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             return f'({"; ".join(perms)})'
 
     def tree_node(node):
-        if isinstance(node, dict) and show_records:
-            name = RecordV3.get_title(node)
+        if isinstance(node, dict):
+            name = Style.DIM + RecordV3.get_title(node)
             if verbose:
                 name += f' ({node.get("record_uid")})'
-            name += Style.BRIGHT + ' [Record]' + Style.NORMAL
+            name += ' [Record]' + Style.NORMAL
             return name, {}
 
         if verbose and node.uid:
@@ -260,16 +260,20 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                 name += ' ' + get_share_info(node)
 
         sfs = [params.folder_cache[sfuid] for sfuid in node.subfolders]
+        rns = []
         if show_records:
-            recs = [params.record_cache.get(ruid) for ruid in params.subfolder_record_cache.get(node.uid, [])]
-            sfs.extend(recs)
+            node_uid = '' if node.type == '/' else node.uid
+            recs = [params.record_cache.get(ruid) for ruid in params.subfolder_record_cache.get(node_uid, [])]
+            rns.extend(recs)
 
-        if len(sfs) == 0:
+        if len(sfs) + len(rns) == 0:
             return name, {}
 
-        sort_fn = lambda f: f.name.lower() if isinstance(f, BaseFolderNode) else RecordV3.get_title(f).lower()
-        sfs.sort(key=sort_fn, reverse=False)
-        tns = [tree_node(sf) for sf in sfs]
+        sfs.sort(key=lambda f: f.name.lower(), reverse=False)
+        rns.sort(key=lambda r: RecordV3.get_title(r).lower(), reverse=False)
+        nodes = sfs + rns
+
+        tns = [tree_node(n) for n in nodes]
         return name, OD(tns)
 
     t = tree_node(folder)
