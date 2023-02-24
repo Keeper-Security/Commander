@@ -1414,17 +1414,13 @@ class FolderTransformCommand(Command):
             # Create copy folder of appropriate type
             mkdir_cmd = FolderMakeCommand()
             copy_name = get_copy_name(folder, dest)
-            cmd_args = []
-            if transform and dest.type in (BaseFolderNode.UserFolderType, BaseFolderNode.RootFolderType):
-                if folder.type in (BaseFolderNode.SharedFolderFolderType, BaseFolderNode.UserFolderType):
-                    cmd_args.append('-sf')
-                else:
-                    cmd_args.append('-uf')
-            else:
-                cmd_args.append('-uf')
-            cmd_args.append(copy_name)
-            cmd_args = ' '.join(cmd_args)
-            mkdir_cmd.execute_args(params, cmd_args)
+            cmd_kwargs = {'folder': copy_name}
+            is_folder_sf = folder.type == BaseFolderNode.SharedFolderType
+            is_dest_uf = dest.type in (BaseFolderNode.UserFolderType, BaseFolderNode.RootFolderType)
+            is_copy_sf = transform and is_dest_uf and not is_folder_sf
+            copy_folder_type = 'shared_folder' if is_copy_sf else 'user_folder'
+            cmd_kwargs[copy_folder_type] = True
+            mkdir_cmd.execute(params, **cmd_kwargs)
             api.sync_down(params)
             copy_uid = get_folder_uid(copy_name)
             folder_copies[folder.uid] = copy_uid
