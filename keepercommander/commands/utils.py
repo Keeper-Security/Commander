@@ -23,7 +23,7 @@ import sys
 import urllib.parse
 from datetime import datetime, timedelta
 from time import time
-from typing import Optional
+from typing import Optional, Dict, List
 
 from google.protobuf.json_format import MessageToDict
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -38,19 +38,21 @@ from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .. import __version__
 from .. import api, rest_api, loginv3, crypto, utils, vault, constants
 from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
+from ..breachwatch import BreachWatch
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
-from ..proto import ssocloud_pb2 as ssocloud, enterprise_pb2, APIRequest_pb2
+from ..proto import ssocloud_pb2 as ssocloud, enterprise_pb2, APIRequest_pb2, client_pb2
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationShareType, AddAppClientRequest, \
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
-    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, Device,\
-    GetApplicationsSummaryResponse
+    RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, Device, \
+    GetApplicationsSummaryResponse, SecurityData, SecurityDataRequest
 from ..proto.enterprise_pb2 import DISCOVERY_AND_ROTATION_CONTROLLER
 from ..proto.record_pb2 import ApplicationAddRequest
+from ..record import Record
 from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
 from ..utils import json_to_base64, password_score
@@ -81,6 +83,7 @@ def register_commands(commands):
     commands['keep-alive'] = KeepAliveCommand()
     commands['generate'] = GenerateCommand()
     commands['reset-password'] = ResetPasswordCommand()
+    commands['sync-security-data'] = SyncSecurityData()
 
 
 def register_command_info(aliases, command_info):
@@ -90,9 +93,10 @@ def register_command_info(aliases, command_info):
     aliases['v'] = 'version'
     aliases['sm'] = 'secrets-manager'
     aliases['secrets'] = 'secrets-manager'
+    aliases['ssd'] = 'sync-security-data'
     for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
-              version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser
-              ]:
+              version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
+              sync_security_data_parser]:
         command_info[p.prog] = p.description
 
 
@@ -329,6 +333,12 @@ reset_password_parser.add_argument('--delete-sso', dest='delete_alternate', acti
                                    help='deletes SSO master password')
 reset_password_parser.add_argument('--current', '-c', dest='current_password', action='store', help='current password')
 reset_password_parser.add_argument('--new', '-n', dest='new_password', action='store', help='new password')
+
+sync_security_data_parser = argparse.ArgumentParser(prog='sync-security-data', description='Sync security data.')
+hard_sync_help = 'perform a hard-sync of security data (forces a reset and recalculation of summary security scores)'
+sync_security_data_parser.add_argument('--hard', '-hs', action='store_true', help=hard_sync_help)
+sync_security_data_parser.error = raise_parse_exception
+sync_security_data_parser.exit = suppress_exit
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
@@ -2160,4 +2170,44 @@ class ResetPasswordCommand(Command):
             api.communicate(params, mp_rq)
             logging.info('Master Password has been changed')
 
+
+class SyncSecurityData(Command):
+    def get_parser(self):
+        return sync_security_data_parser
+
+    def execute(self, params, **kwargs):
+        def get_security_data(record, pw_obj, reset=False):     # type: (Record, Dict or None, bool) -> SecurityData
+            sd = SecurityData()
+            status = pw_obj and pw_obj.get('status')
+            strength = utils.password_score(record.password)
+            sd_data = {'strength': strength}
+            domain = urllib.parse.urlparse(record.login_url).hostname
+            if pw_obj:
+                sd_data['bw_result'] = client_pb2.BWStatus.Value(status) if status else client_pb2.BWStatus.GOOD
+            if reset:
+                sd_data['reset'] = True
+            if domain:
+                # truncate domain string if needed to avoid reaching RSA encryption data size limitation
+                sd_data['domain'] = domain[:200]
+            sd.uid = utils.base64_url_decode(record.record_uid)
+            sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
+            return sd
+
+        def update_security_data(record_sds):   # type: (List[SecurityData]) -> None
+            update_rq = SecurityDataRequest()
+            for rsd in record_sds:
+                update_rq.recordSecurityData.append(rsd)
+            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
+
+        if not params.enterprise_ec_key:
+            msg = 'Command not allowed -- This command is limited to enterprise users only.'
+            raise CommandError('sync-security-data', msg)
+
+        api.sync_down(params)
+        hard_sync = bool(kwargs.get('hard'))
+        pw_recs = BreachWatch.get_records(params, lambda r, s: True, owned=True)
+        sds = [get_security_data(r, s, hard_sync) for r, s in pw_recs]
+        update_security_data(sds)
+        BreachWatch.save_reused_pw_count(params)
+        logging.info(f'Finished ({"hard" if hard_sync else "soft"}) sync of security data for {len(sds)} records')
 
