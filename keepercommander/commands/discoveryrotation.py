@@ -317,9 +317,9 @@ class PAMListRecordRotationCommand(Command):
         if is_verbose:
             headers.append('Gateway UID')
 
-        headers.append('Rotation Settings (Type)')
+        headers.append('PAM Configuration (Type)')
         if is_verbose:
-            headers.append('Rotation Settings UID')
+            headers.append('PAM Configuration UID')
 
         for s in schedules:
             row = []
@@ -651,7 +651,7 @@ class PAMConfigurationListCommand(Command):
 
                 table.append(row)
             else:
-                logging.warning(f"Following configuration is not in the shared folder: {c['record_uid']}")
+                print(f"{bcolors.WARNING}Following configuration is not in the shared folder: {c['record_uid']}{bcolors.ENDC}")
 
         table.sort(key=lambda x: (x[1] or ''))
 
