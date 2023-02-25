@@ -79,7 +79,7 @@ tree_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true',
 tree_parser.add_argument('-r', '--records', action='store_true', help='show records within each folder')
 show_shares_help = 'show share permissions info (shown in parentheses) for each shared folder'
 tree_parser.add_argument('-s', '--shares', action='store_true', help=show_shares_help)
-perms_key_help = 'hide share permissions key (valid only when used with --show-shares flag, which shows key by default)'
+perms_key_help = 'hide share permissions key (valid only when used with --shares flag, which shows key by default)'
 tree_parser.add_argument('-hk', '--hide-shares-key', action='store_true', help=perms_key_help)
 tree_parser.add_argument('-t', '--title', action='store', help='show optional title for folder structure')
 tree_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
