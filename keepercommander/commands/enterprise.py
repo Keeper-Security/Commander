@@ -2966,74 +2966,83 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         save_report = kwargs.get('save')
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
-        rq = APIRequest_pb2.SecurityReportRequest()
-        security_report_data_rs = api.communicate_rest(
-            params, rq, 'enterprise/get_security_report_data', rs_type=APIRequest_pb2.SecurityReportResponse)
-        rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+        tree_key = params.enterprise.get('unencrypted_tree_key')
+        from_page = 0
+        complete = False
         rows = []
-        for sr in security_report_data_rs.securityReport:
-            user_info = self.resolve_user_info(params, sr.enterpriseUserId)
-            user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
-            email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
-            node_id = user_info.get('node_id', 0)
-            node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
-            twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
-            row = {
-                'username': user,
-                'email': email,
-                'node_path': node_path,
-                'total': 0,
-                'weak': 0,
-                'medium': 0,
-                'strong': 0,
-                'reused': sr.numberOfReusedPassword,
-                'unique': 0,
-                'passed': 0,
-                'at_risk': 0,
-                'ignored': 0,
-                'securityScore': 25,
-                'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
-            }
-            master_pw_strength = 1
+        while not complete:
+            rq = APIRequest_pb2.SecurityReportRequest()
+            rq.fromPage = from_page
+            security_report_data_rs = api.communicate_rest(
+                params, rq, 'enterprise/get_security_report_data', rs_type=APIRequest_pb2.SecurityReportResponse)
+            to_page = security_report_data_rs.toPage
+            complete = security_report_data_rs.complete
+            from_page = to_page + 1
+            rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+            for sr in security_report_data_rs.securityReport:
+                user_info = self.resolve_user_info(params, sr.enterpriseUserId)
+                user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
+                email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
+                node_id = user_info.get('node_id', 0)
+                node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
+                twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
+                row = {
+                    'username': user,
+                    'email': email,
+                    'node_path': node_path,
+                    'total': 0,
+                    'weak': 0,
+                    'medium': 0,
+                    'strong': 0,
+                    'reused': sr.numberOfReusedPassword,
+                    'unique': 0,
+                    'passed': 0,
+                    'at_risk': 0,
+                    'ignored': 0,
+                    'securityScore': 25,
+                    'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
+                }
+                master_pw_strength = 1
 
-            if sr.encryptedReportData:
-                sri = rest_api.decrypt_aes(sr.encryptedReportData, params.enterprise['unencrypted_tree_key'])
-                data = json.loads(sri)
-            else:
-                data = {dk: 0 for dk in self.score_data_keys}
+                if sr.encryptedReportData:
+                    sri = rest_api.decrypt_aes(sr.encryptedReportData, tree_key)
+                    data = json.loads(sri)
+                else:
+                    data = {dk: 0 for dk in self.score_data_keys}
 
-            if show_updated:
-                data = self.get_updated_security_report_row(sr, rsa_key, data)
+                if show_updated:
+                    data = self.get_updated_security_report_row(sr, rsa_key, data)
 
-            if save_report:
-                updated_sr = APIRequest_pb2.SecurityReport()
-                updated_sr.revision = security_report_data_rs.asOfRevision
-                updated_sr.enterpriseUserId = sr.enterpriseUserId
-                report = json.dumps(data).encode('utf-8')
-                updated_sr.encryptedReportData = rest_api.encrypt_aes(report, params.enterprise['unencrypted_tree_key'])
-                updated_security_reports.append(updated_sr)
+                if save_report:
+                    updated_sr = APIRequest_pb2.SecurityReport()
+                    updated_sr.revision = security_report_data_rs.asOfRevision
+                    updated_sr.enterpriseUserId = sr.enterpriseUserId
+                    report = json.dumps(data).encode('utf-8')
+                    updated_sr.encryptedReportData = rest_api.encrypt_aes(report, tree_key)
+                    updated_security_reports.append(updated_sr)
 
-            if 'weak_record_passwords' in data:
-                row['weak'] = data['weak_record_passwords']
-            if 'strong_record_passwords' in data:
-                row['strong'] = data['strong_record_passwords']
-            if 'total_record_passwords' in data:
-                row['total'] = data['total_record_passwords']
-            if 'passed_records' in data:
-                row['passed'] = data['passed_records']
-            if 'at_risk_records' in data:
-                row['at_risk'] = data['at_risk_records']
-            if 'ignored_records' in data:
-                row['ignored'] = data['ignored_records']
+                if 'weak_record_passwords' in data:
+                    row['weak'] = data['weak_record_passwords']
+                if 'strong_record_passwords' in data:
+                    row['strong'] = data['strong_record_passwords']
+                if 'total_record_passwords' in data:
+                    row['total'] = data['total_record_passwords']
+                if 'passed_records' in data:
+                    row['passed'] = data['passed_records']
+                if 'at_risk_records' in data:
+                    row['at_risk'] = data['at_risk_records']
+                if 'ignored_records' in data:
+                    row['ignored'] = data['ignored_records']
 
-            row['medium'] = row['total'] - row['weak'] - row['strong']
-            row['unique'] = row['total'] - row['reused']
+                row['medium'] = row['total'] - row['weak'] - row['strong']
+                row['unique'] = row['total'] - row['reused']
 
-            score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_pw_strength)
-            score = int(100 * round(score, 2))
-            row['securityScore'] = score
+                score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on,
+                                                master_pw_strength)
+                score = int(100 * round(score, 2))
+                row['securityScore'] = score
 
-            rows.append(row)
+                rows.append(row)
 
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
