@@ -106,7 +106,8 @@ def request_iteration_count(username, web_client=http):
     try:
         count = int(response.content)
     except:
-        raise InvalidResponseError('Key iteration count is invalid')
+        count = 100100
+        logging.debug('Assume default iterations')
 
     if count > 0:
         return count
@@ -143,6 +144,23 @@ def request_login(username, password, key_iteration_count, multifactor_password=
 
     if parsed_response is None:
         raise InvalidResponseError()
+
+    if parsed_response.tag == 'response':
+        error = parsed_response.find('error')
+        if isinstance(error.attrib, dict) and 'iterations' in error.attrib:
+            iterations = error.attrib['iterations']
+            try:
+                key_iteration_count = int(iterations)
+                body['iterations'] = key_iteration_count
+                body['hash'] = make_hash(username, password, key_iteration_count),
+
+                response = web_client.post(
+                    'https://lastpass.com/login.php', data=body, headers=headers)
+                parsed_response = etree.fromstring(response.content)
+                if parsed_response is None:
+                    raise InvalidResponseError()
+            except ValueError:
+                pass
 
     session = create_session(parsed_response, key_iteration_count)
     if not session:
