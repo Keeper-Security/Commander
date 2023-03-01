@@ -50,10 +50,8 @@ from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationSha
     GetAppInfoRequest, GetAppInfoResponse, AppShareAdd, AddAppSharesRequest, RemoveAppClientsRequest, \
     RemoveAppSharesRequest, Salt, MasterPasswordReentryRequest, UNMASK, UserAuthRequest, ALTERNATE, UidRequest, Device, \
     GetApplicationsSummaryResponse, SecurityData, SecurityDataRequest
-from ..proto.enterprise_pb2 import DISCOVERY_AND_ROTATION_CONTROLLER
 from ..proto.record_pb2 import ApplicationAddRequest
 from ..record import Record
-from ..recordv3 import init_recordv3_commands
 from ..rest_api import execute_rest
 from ..utils import json_to_base64, password_score
 from ..versioning import is_binary_app, is_up_to_date_version
@@ -767,7 +765,6 @@ class LoginCommand(Command):
 
         try:
             api.login(params, new_login=True)
-            init_recordv3_commands(params)
         except Exception as exc:
             logging.warning(str(exc))
 

@@ -36,7 +36,6 @@ from .commands.msp import get_mc_by_name_or_id
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
 from .params import KeeperParams
-from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
 
 stack = []
@@ -465,10 +464,6 @@ def loop(params):  # type: (KeeperParams) -> int
             return 0
         except Exception as e:
             logging.error(e)
-
-        # add ability to manipulate w/ legacy or v3 records
-        # determined by the response from the server
-        init_recordv3_commands(params)
     else:
         if isinstance(params.config, dict) and 'server' in params.config:
             logging.info('Current Keeper region: %s', params.server)

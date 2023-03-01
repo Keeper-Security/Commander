@@ -28,7 +28,7 @@ from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
 from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode
 from ..team import Team
-from . import record_edit, base
+from . import record_edit, base, record_totp
 
 
 def register_commands(commands):
@@ -48,6 +48,7 @@ def register_commands(commands):
     commands['download-attachment'] = record_edit.RecordDownloadAttachmentCommand()
     commands['upload-attachment'] = record_edit.RecordUploadAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
+    commands['totp'] = record_totp.TotpCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -69,7 +70,7 @@ def register_command_info(aliases, command_info):
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
-              record_edit.delete_attachment_parser, clipboard_copy_parser]:
+              record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items'
 
