@@ -2194,10 +2194,11 @@ class SyncSecurityData(Command):
             return sd
 
         def update_security_data(record_sds):   # type: (List[SecurityData]) -> None
-            update_rq = SecurityDataRequest()
-            for rsd in record_sds:
-                update_rq.recordSecurityData.append(rsd)
-            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
+            if record_sds:
+                update_rq = SecurityDataRequest()
+                for rsd in record_sds:
+                    update_rq.recordSecurityData.append(rsd)
+                api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
 
         if not params.enterprise_ec_key:
             msg = 'Command not allowed -- This command is limited to enterprise users only.'
@@ -2205,8 +2206,8 @@ class SyncSecurityData(Command):
 
         api.sync_down(params)
         hard_sync = bool(kwargs.get('hard'))
-        pw_recs = BreachWatch.get_records(params, lambda r, s: True, owned=True)
-        sds = [get_security_data(r, s, hard_sync) for r, s in pw_recs]
+        pw_recs = list(BreachWatch.get_records(params, lambda r, s: True, owned=True))
+        sds = [get_security_data(r, s, hard_sync) for r, s in pw_recs] if pw_recs else []
         update_security_data(sds)
         BreachWatch.save_reused_pw_count(params)
         logging.info(f'Finished ({"hard" if hard_sync else "soft"}) sync of security data for {len(sds)} records')
