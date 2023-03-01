@@ -77,7 +77,11 @@ class Vault(object):
 
         for i in chunks:
             if i.id == b'ACCT':
-                account = parser.parse_ACCT(i, key, shared_folder)
+                try:
+                    account = parser.parse_ACCT(i, key, shared_folder)
+                except Exception as e:
+                    logging.debug('Account parse error: %s', e)
+                    account = None
                 if account:
                     accounts.append(account)
             elif i.id == b'PRIK':
