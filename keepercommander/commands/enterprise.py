@@ -3257,18 +3257,13 @@ class UserReportCommand(EnterpriseCommand):
             'limit': limit
         }
 
-        get_login_events = True
-        while get_login_events:
-            missing = [x for x in active if x not in last_login]
-            if not missing:
-                break
+        missing = [*active]
+        while missing:
             report_filter['username'] = missing[:limit]
+            missing = missing[limit:]
             rs = api.communicate(params, rq)
             report_rows = rs['audit_event_overview_report_rows']
-            for row in report_rows:
-                username = row.get('username', '').lower()
-                last_login[username] = row['last_created']
-            get_login_events = len(report_rows) >= limit
+            last_login.update({row.get('username', '').lower(): row.get('last_created') for row in report_rows})
 
         for user in self.users.values():
             key = user['username'].lower()
