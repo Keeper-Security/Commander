@@ -59,8 +59,16 @@ class KeeperRecord(abc.ABC):
             record = FileRecord()
         else:
             record = TypedRecord()
-            meta_data = next((x for x in params.record_type_cache.values()
-                              if x.get('$id', '') == record_type.lower()), None)
+            meta_data = None
+            if params.record_type_cache:
+                for rts in params.record_type_cache.values():
+                    try:
+                        rto = json.loads(rts)
+                        if '$id' in rto and rto['$id'].lower() == record_type.lower():
+                            meta_data = rto
+                            break
+                    except:
+                        pass
             if meta_data and 'fields' in meta_data:
                 for field in meta_data['fields']:
                     typed_field = TypedField()

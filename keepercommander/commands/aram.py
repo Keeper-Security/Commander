@@ -738,7 +738,7 @@ class AuditLogCommand(EnterpriseCommand):
             answer = user_choice('Do you want to create a Keeper record to store audit log settings?', 'yn', 'n')
             if answer.lower() == 'y':
                 record_title = input('Choose the title for audit log record [Default: {0}]: '.format(record_name)) or log_export.default_record_title()
-                record = vault.PasswordRecord()
+                record = vault.KeeperRecord.create(params, 'login')
                 record.title = record_title
                 record_management.add_record_to_folder(params, record)
                 record_uid = record.record_uid
