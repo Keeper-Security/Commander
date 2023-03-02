@@ -244,6 +244,17 @@ class PasswordRecord(KeeperRecord):
         if field:
             return field.value
 
+    def set_custom_value(self, name, value):   # type: (str, Optional[str]) -> None
+        field = next((x for x in self.custom if x.name == name), None)
+        if value:
+            if field:
+                field.value = value
+            else:
+                self.custom.append(CustomField.new_field(name, value))
+        else:
+            if field:
+                self.custom.remove(field)
+
 
 class TypedField(object):
     def __init__(self, typed_field=None):

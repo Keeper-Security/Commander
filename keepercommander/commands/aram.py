@@ -35,12 +35,10 @@ from urllib.parse import urlparse
 
 from .transfer_account import EnterpriseTransferUserCommand
 from ..display import bcolors
-from ..record import Record
-from .recordv2 import RecordAddCommand
 from .helpers import audit_report
 from .enterprise_common import EnterpriseCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
-from .. import api
+from .. import api, vault, record_management
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
@@ -181,7 +179,7 @@ class AuditLogBaseExport(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_properties(self, record, props):  # type: (Record, dict) -> None
+    def get_properties(self, record, props):  # type: (Union[vault.PasswordRecord, vault.TypedRecord], dict) -> None
         pass
 
     @abc.abstractmethod
@@ -212,6 +210,89 @@ class AuditLogBaseExport(abc.ABC):
             message = info
         return message
 
+    @staticmethod
+    def get_record_url(record):  # type: (Union[vault.PasswordRecord, vault.TypedRecord]) -> str
+        if isinstance(record, vault.PasswordRecord):
+            return record.link
+        if isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('url')
+            if field:
+                return field.get_default_value(str)
+        return ''
+
+    @staticmethod
+    def set_record_url(record, url):  # type: (Union[vault.PasswordRecord, vault.TypedRecord], str) -> None
+        if isinstance(record, vault.PasswordRecord):
+            record.link = url
+        elif isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('url')
+            if field:
+                field.value = [url]
+            else:
+                record.custom.append(vault.TypedField.new_field('url', url, 'URL'))
+
+    @staticmethod
+    def get_record_password(record):  # type: (Union[vault.PasswordRecord, vault.TypedRecord]) -> str
+        if isinstance(record, vault.PasswordRecord):
+            return record.password
+        if isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('password')
+            if field:
+                return field.get_default_value(str)
+        return ''
+
+    @staticmethod
+    def set_record_password(record, password):  # type: (Union[vault.PasswordRecord, vault.TypedRecord], str) -> None
+        if isinstance(record, vault.PasswordRecord):
+            record.password = password
+        elif isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('password')
+            if field:
+                field.value = [password]
+            else:
+                record.custom.append(vault.TypedField.new_field('password', password))
+
+    @staticmethod
+    def get_record_login(record):  # type: (Union[vault.PasswordRecord, vault.TypedRecord]) -> str
+        if isinstance(record, vault.PasswordRecord):
+            return record.login
+        if isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('login')
+            if field:
+                return field.get_default_value(str)
+        return ''
+
+    @staticmethod
+    def set_record_login(record, login):  # type: (Union[vault.PasswordRecord, vault.TypedRecord], str) -> None
+        if isinstance(record, vault.PasswordRecord):
+            record.login = login
+        elif isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('login')
+            if field:
+                field.value = [login]
+            else:
+                record.custom.append(vault.TypedField.new_field('login', login))
+
+    @staticmethod
+    def get_record_custom(record, name):  # type: (Union[vault.PasswordRecord, vault.TypedRecord], str) -> str
+        if isinstance(record, vault.PasswordRecord):
+            return record.get_custom_value(name)
+        if isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('text', name)
+            if field:
+                return field.get_default_value(str)
+        return ''
+
+    @staticmethod
+    def set_record_custom(record, name, value):  # type: (Union[vault.PasswordRecord, vault.TypedRecord], str, str) -> None
+        if isinstance(record, vault.PasswordRecord):
+            record.set_custom_value(name, value)
+        elif isinstance(record, vault.TypedRecord):
+            field = record.get_typed_field('text', name)
+            if field:
+                field.value = [value]
+            else:
+                record.custom.append(vault.TypedField.new_field('text', value, name))
 
 class AuditLogSplunkExport(AuditLogBaseExport):
     def __init__(self):
@@ -223,7 +304,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
     def get_properties(self, record, props):
         try:
             logging.captureWarnings(True)
-            url = record.login_url
+            url = AuditLogBaseExport.get_record_url(record)
             if not url:
                 print('Enter HTTP Event Collector (HEC) endpoint in format [host:port].\nExample: splunk.company.com:8088')
                 while not url:
@@ -246,11 +327,11 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                             break
                         else:
                             print('Failed.')
-                record.login_url = url
+                AuditLogBaseExport.set_record_url(record, url)
                 self.store_record = True
             props['hec_url'] = url
 
-            token = record.password
+            token = AuditLogBaseExport.get_record_password(record)
             if not token:
                 while not token:
                     test_token = input('...' + 'Splunk Token: '.rjust(32))
@@ -268,7 +349,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                                     logging.error('HEC\'s Indexer Acknowledgement parameter is not supported yet')
                     except:
                         pass
-                record.password = token
+                AuditLogBaseExport.set_record_password(record, token)
                 self.store_record = True
             props['token'] = token
             props['host'] = platform.node()
@@ -335,7 +416,7 @@ class AuditLogSyslogFileExport(AuditLogSyslogBaseExport):
         return 'Audit Log: Syslog'
 
     def get_properties(self, record, props):
-        filename = record.login
+        filename = AuditLogBaseExport.get_record_login(record)
         if not filename:
             print('Enter filename for syslog messages.')
             filename = input('...' + 'Syslog file name: '.rjust(32))
@@ -345,9 +426,9 @@ class AuditLogSyslogFileExport(AuditLogSyslogBaseExport):
                 gz = input('...' + 'Gzip messages? (y/N): '.rjust(32))
                 if gz.lower() == 'y':
                     filename = filename + '.gz'
-            record.login = filename
+            AuditLogBaseExport.set_record_login(record, filename)
             self.store_record = True
-        props['filename'] = record.login
+        props['filename'] = filename
 
     def export_events(self, props, events):
         is_gzipped = props['filename'].endswith('.gz')
@@ -376,7 +457,7 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
         is_ssl = False
         is_udp = False
         is_octet_counting = False
-        url = record.login_url
+        url = AuditLogBaseExport.get_record_url(record)
         if url:
             p = urlparse(url)
             if p.scheme in ['syslog', 'syslogs', 'syslogu']:
@@ -387,7 +468,7 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
                 host = p.hostname
                 port = p.port
 
-            val = record.get('is_octet_counting')
+            val = AuditLogBaseExport.get_record_custom(record, 'is_octet_counting')
             if val:
                 try:
                     oc = int(val)
@@ -426,8 +507,8 @@ class AuditLogSyslogPortExport(AuditLogSyslogBaseExport):
                 else:
                     s = sock
                 s.connect((host, port))
-            record.login_url = 'syslog{0}://{1}:{2}'.format('u' if is_udp else 's' if is_ssl else '', host, port)
-            record.set_field('is_octet_counting', '1' if is_octet_counting else '0')
+            AuditLogBaseExport.set_record_url(record, 'syslog{0}://{1}:{2}'.format('u' if is_udp else 's' if is_ssl else '', host, port))
+            AuditLogBaseExport.set_record_custom(record, 'is_octet_counting', '1' if is_octet_counting else '0')
             self.store_record = True
 
         props['is_udp'] = is_udp
@@ -466,15 +547,15 @@ class AuditLogSumologicExport(AuditLogBaseExport):
         return 'Audit Log: Sumologic'
 
     def get_properties(self, record, props):
-        url = record.login_url
+        url = AuditLogBaseExport.get_record_url(record)
         if not url:
             print('Enter HTTP Logs Collector URL.')
             url = input('...' + 'HTTP Collector URL: '.rjust(32))
             if not url:
                 raise Exception('HTTP Collector URL is required.')
-            record.login_url = url
+            AuditLogBaseExport.set_record_url(record, url)
             self.store_record = True
-        props['url'] = record.login_url
+        props['url'] = url
 
     def convert_event(self, props, event):
         evt = event.copy()
@@ -506,14 +587,14 @@ class AuditLogJsonExport(AuditLogBaseExport):
         return 'Audit Log: JSON'
 
     def get_properties(self, record, props):
-        filename = record.login
+        filename = AuditLogBaseExport.get_record_login(record)
         if not filename:
             filename = input('JSON File name: ')
             if not filename:
                 return
-            record.login = filename
+            AuditLogBaseExport.set_record_login(record, filename)
             self.store_record = True
-        props['filename'] = record.login
+        props['filename'] = filename
 
         with open(filename, mode='w') as logf:
             json.dump([], logf)
@@ -549,25 +630,25 @@ class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
         return 'Audit Log: Azure Log Analytics'
 
     def get_properties(self, record, props):
-        wsid = record.login
+        wsid = AuditLogBaseExport.get_record_login(record)
         if not wsid:
             print('Enter Azure Log Analytics workspace ID.')
             wsid = input('Workspace ID: ')
             if not wsid:
                 raise Exception('Workspace ID is required.')
-            record.login = wsid
+            AuditLogBaseExport.set_record_login(record, wsid)
             self.store_record = True
-        props['wsid'] = record.login
+        props['wsid'] = wsid
 
-        wskey = record.password
+        wskey = AuditLogBaseExport.get_record_password(record)
         if not wskey:
             print('Enter Azure Log Analytics primary or secondary key.')
             wskey = input('Key: ')
             if not wskey:
                 raise Exception('Key is required.')
-            record.password = wskey
+            AuditLogBaseExport.set_record_password(record, wskey)
             self.store_record = True
-        props['wskey'] = record.password
+        props['wskey'] = wskey
 
     def convert_event(self, props, event):
         evt = event.copy()
@@ -646,24 +727,24 @@ class AuditLogCommand(EnterpriseCommand):
         else:
             raise CommandError('audit-log', 'Audit log export: unsupported target')
 
-        record = None
+        record = None   # type: Union[vault.PasswordRecord, vault.TypedRecord, None]
         record_name = kwargs.get('record') or log_export.default_record_title()
+
         for r_uid in params.record_cache:
-            rec = api.get_record(params, r_uid)
+            rec = vault.KeeperRecord.load(params, r_uid)
             if record_name in [rec.record_uid, rec.title]:
                 record = rec
         if record is None:
             answer = user_choice('Do you want to create a Keeper record to store audit log settings?', 'yn', 'n')
             if answer.lower() == 'y':
                 record_title = input('Choose the title for audit log record [Default: {0}]: '.format(record_name)) or log_export.default_record_title()
-                cmd = RecordAddCommand()
-                record_uid = cmd.execute(params, **{
-                    'title': record_title,
-                    'force': True
-                })
+                record = vault.PasswordRecord()
+                record.title = record_title
+                record_management.add_record_to_folder(params, record)
+                record_uid = record.record_uid
                 if record_uid:
                     api.sync_down(params)
-                    record = api.get_record(params, record_uid)
+                    record = vault.KeeperRecord.load(params, record_uid)
         if record is None:
             raise CommandError('audit-log', 'Record not found')
 
@@ -674,14 +755,14 @@ class AuditLogCommand(EnterpriseCommand):
         log_export.get_properties(record, props)
         if log_export.store_record:
             record_uid = record.record_uid
-            api.update_record(params, record, silent=True)
+            record_management.update_record(params, record)
             api.sync_down(params)
-            record = api.get_record(params, record_uid)
+            record = vault.KeeperRecord.load(params, record_uid)
             log_export.store_record = False
 
         # query data
         last_event_time = 0
-        val = record.get('last_event_time')
+        val = AuditLogBaseExport.get_record_custom(record, 'last_event_time')
         if val:
             try:
                 last_event_time = int(val)
@@ -766,9 +847,9 @@ class AuditLogCommand(EnterpriseCommand):
             logging.info('')
             logging.info('Exported %d audit event(s)', count)
             if count > 0:
-                record.set_field('last_event_time', str(last_event_time))
+                AuditLogBaseExport.set_record_custom(record, 'last_event_time', str(last_event_time))
+                record_management.update_record(params, record)
                 params.sync_data = True
-                api.update_record(params, record, silent=True)
 
 
 audit_report_description = '''
