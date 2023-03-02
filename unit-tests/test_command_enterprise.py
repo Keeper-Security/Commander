@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 from unittest import TestCase, mock
 
 from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
-from keepercommander import api, crypto, utils
-from keepercommander.record import Record
+from keepercommander import api, crypto, utils, vault
 from keepercommander.params import KeeperParams
 from keepercommander.error import CommandError
 from data_vault import VaultEnvironment, get_connected_params
@@ -201,7 +200,7 @@ class TestEnterprise(TestCase):
     def test_audit_log_splunk_properties_success(self):
         splunk = aram.AuditLogSplunkExport()
         props = {}
-        record = Record()
+        record = vault.PasswordRecord()
 
         with mock.patch('builtins.print'), mock.patch('builtins.input') as mock_input, mock.patch('requests.post') as mock_post:
             resp1 = mock.Mock()
@@ -215,14 +214,14 @@ class TestEnterprise(TestCase):
             splunk.get_properties(record, props)
             self.assertIn('hec_url', props)
             self.assertIn('token', props)
-            self.assertEqual(props['hec_url'], record.login_url)
+            self.assertEqual(props['hec_url'], record.link)
             self.assertEqual(props['token'], record.password)
             self.assertTrue(splunk.store_record)
 
     def test_audit_log_splunk_properties_cancel(self):
         splunk = aram.AuditLogSplunkExport()
         props = {}
-        record = Record()
+        record = vault.PasswordRecord()
         with mock.patch('builtins.print'), mock.patch('builtins.input') as mock_input, mock.patch('requests.post') as mock_post:
             resp1 = mock.Mock()
             resp1.status_code = 404

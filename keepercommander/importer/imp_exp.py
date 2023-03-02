@@ -46,9 +46,9 @@ from ..constants import EMAIL_PATTERN
 
 IV_LEN = 12
 GCM_TAG_LEN = 16
-RECORD_MAX_DATA_LEN = 32000
+RECORD_MAX_DATA_LEN = 2000000
 RECORD_MAX_DATA_WARN = 'Skipping record "{}": Data size of {} exceeds limit of {}'
-LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 32k record limit'
+LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 2Mb record limit'
 FILE_ATTACHMENT_CHUNK = 100
 
 
