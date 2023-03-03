@@ -17,7 +17,7 @@ from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
 from keepercommander import __version__
-from .subfolder import BaseFolderNode, SharedFolderNode
+from .subfolder import BaseFolderNode, SharedFolderNode, get_contained_records
 
 init()
 
@@ -260,16 +260,17 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                 name += ' ' + get_share_info(node)
 
         sfs = [params.folder_cache[sfuid] for sfuid in node.subfolders]
-        rns = []
+        rns = set()
         if show_records:
             node_uid = '' if node.type == '/' else node.uid
-            recs = [params.record_cache.get(ruid) for ruid in params.subfolder_record_cache.get(node_uid, [])]
-            rns.extend(recs)
+            recs = get_contained_records(params, node_uid).get(node_uid)
+            rns.update(recs)
 
         if len(sfs) + len(rns) == 0:
             return name, {}
 
         sfs.sort(key=lambda f: f.name.lower(), reverse=False)
+        rns = [params.record_cache.get(r) for r in rns]
         rns.sort(key=lambda r: RecordV3.get_title(r).lower(), reverse=False)
         nodes = sfs + rns
 

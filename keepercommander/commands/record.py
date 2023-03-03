@@ -19,14 +19,15 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
 
-from .base import Command, GroupCommand, RecordMixin
+from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
 from ..breachwatch import BreachWatch
 from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
-from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode
+from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode, get_folder_uid, \
+    find_parent_top_folder
 from ..team import Team
 from . import record_edit, base, record_totp
 
@@ -134,11 +135,13 @@ shared_records_report_parser = argparse.ArgumentParser(
     prog='shared-records-report', description='Report shared records for a logged-in user.')
 shared_records_report_parser.add_argument(
     '--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
+shared_records_report_parser.add_argument('-o', '--output', action='store',
+                                          help='output file name (ignored for table format)')
 shared_records_report_parser.add_argument(
     '-tu', '--show-team-users', action='store_true',
     help='show members of team for records shared via share team folders')
-shared_records_report_parser.add_argument('name', type=str, nargs='?', help='file name')
-
+shared_folder_help = 'Optional (w/ multiple values allowed). Path or UID of folder containing the records to be shown'
+shared_records_report_parser.add_argument('folder', type=str, nargs='*', help=shared_folder_help)
 
 clipboard_copy_parser = argparse.ArgumentParser(
     prog='clipboard-copy', description='Retrieve the password for a specific record.')
@@ -1281,9 +1284,15 @@ class SharedRecordsReport(Command):
         return shared_records_report_parser
 
     def execute(self, params, **kwargs):
-
         export_format = kwargs['format'] if 'format' in kwargs else None
-        export_name = kwargs['name'] if 'name' in kwargs else None
+        export_name = kwargs.get('output')
+        containers = kwargs.get('folder')
+        f_uids = set()
+        for name in containers:
+            uid = get_folder_uid(params, name)
+            log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
+            on_folder_fn = lambda f: f_uids.add(f.uid)
+            FolderMixin.traverse_folder_tree(params, uid, on_folder_fn) if uid else log_folder_fn(name)
 
         shared_records_data_rs = api.communicate_rest(
             params, None, 'report/get_shared_record_report', rs_type=enterprise_pb2.SharedRecordResponse)
@@ -1295,19 +1304,20 @@ class SharedRecordsReport(Command):
         }
 
         def get_share_teams(rec_uid):
-            sf_cache = params.shared_folder_cache
-            teams = []
-            for folder in find_folders(params, rec_uid):
-                shared_folder = sf_cache.get(folder)
-                sf_teams = shared_folder.get('teams', []) if shared_folder else []
-                teams += sf_teams
-            return teams
+            shared_folders = find_parent_top_folder(params, rec_uid)
+            cached_sfs = [params.shared_folder_cache.get(sf.uid) for sf in shared_folders]
+            return [team for sf in cached_sfs for team in sf.get('teams', [])]
 
         show_team_users = kwargs.get('show_team_users')
         team_records = set()    # type: Set[Tuple[Union[str, None], str]]
         rows = []
         for e in shared_records_data_rs.events:
             record_uid = api.decode_uid_to_str(e.recordUid)
+            r_parents = set(find_folders(params, record_uid) or ())
+
+            # Ignore non-contained records if container filter is set
+            if containers and not f_uids.intersection(r_parents):
+                continue
 
             cached_record = None
 
@@ -1328,7 +1338,7 @@ class SharedRecordsReport(Command):
                 permissions = "Read Only"
             elif not e.canEdit and e.canReshare:
                 permissions = "Can Share"
-            elif e.canEdit and e.canReshare:
+            elif e.canEdit and not e.canReshare:
                 permissions = "Can Edit"
             else:
                 permissions = "Can Edit & Share"
@@ -1357,6 +1367,7 @@ class SharedRecordsReport(Command):
             else:
                 rows.append(user_row)
 
+        rows.sort(key=lambda x: x.get('folder_path'), reverse=True)
         fields = ['record_uid', 'title', 'share_to', 'shared_from', 'permissions', 'folder_path']
 
         table = []
