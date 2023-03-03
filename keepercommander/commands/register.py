@@ -800,7 +800,7 @@ class ShareRecordCommand(Command):
             dump_report_data(table, headers, row_number=True, group_by=0)
             return
 
-        if transfer_ruids:
+        if transfer_ruids and params.enterprise_ec_key:
             from .utils import SyncSecurityDataCommand
             ssd_cmd = SyncSecurityDataCommand()
             ssd_cmd.execute(params, record=transfer_ruids, quiet=True)
