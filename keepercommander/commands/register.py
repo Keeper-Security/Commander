@@ -687,6 +687,7 @@ class ShareRecordCommand(Command):
         rq = record_pb2.RecordShareUpdateRequest()
         existing_shares = {}
         record_titles = {}
+        transfer_ruids = set()
         for record_uid in record_uids:
             if record_uid in params.record_cache:
                 rec = params.record_cache[record_uid]
@@ -749,6 +750,7 @@ class ShareRecordCommand(Command):
                             ro.useEccKey = False
                         if action == 'owner':
                             ro.transfer = True
+                            transfer_ruids.add(record_uid)
                         else:
                             ro.editable = can_edit
                             ro.shareable = can_share
@@ -757,6 +759,7 @@ class ShareRecordCommand(Command):
                         current = existing_shares[email]
                         if action == 'owner':
                             ro.transfer = True
+                            transfer_ruids.add(record_uid)
                         else:
                             ro.editable = True if can_edit else current['editable']
                             ro.shareable = True if can_share else current['sharable']
@@ -797,6 +800,11 @@ class ShareRecordCommand(Command):
             dump_report_data(table, headers, row_number=True, group_by=0)
             return
 
+        if transfer_ruids:
+            from .utils import SyncSecurityDataCommand
+            ssd_cmd = SyncSecurityDataCommand()
+            ssd_cmd.execute(params, record=transfer_ruids, quiet=True)
+
         while len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0:
             rq1 = record_pb2.RecordShareUpdateRequest()
             left = 990
@@ -830,6 +838,9 @@ class ShareRecordCommand(Command):
                         else:
                             verb = 'grant' if attr == 'addSharedRecordStatus' else 'change' if attr == 'updateSharedRecordStatus' else 'revoke'
                             logging.info('Failed to %s record \"%s\" access permissions for user \'%s\': %s', record_uid, verb, email, status_rs.message)
+        if transfer_ruids:
+            from keepercommander.breachwatch import BreachWatch
+            BreachWatch.save_reused_pw_count(params)
 
 
 class ShareReportCommand(Command):
