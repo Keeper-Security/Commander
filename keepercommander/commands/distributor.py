@@ -58,7 +58,7 @@ distributor_license_parser.add_argument('--remove-addon', dest='remove_addon', a
 distributor_license_parser.add_argument('--max-file-plan', dest='max_file_plan', action='store',
                                         choices=[x[2] for x in constants.MSP_FILE_PLANS],
                                         help='Maximum available file plan.')
-distributor_license_parser.add_argument('--allocate-unlimited ', dest='allocate_unlimited', action='store', choices=['on', 'off'],
+distributor_license_parser.add_argument('--allocate-unlimited', dest='allocate_unlimited', action='store', choices=['on', 'off'],
                                         help='Allow MSPs to allocate unlimited licenses.')
 distributor_license_parser.add_argument('msp', action='store', metavar='MSP_NAME', nargs='*',
                                         help='Managed Company Provider (name, ID, or name pattern).')

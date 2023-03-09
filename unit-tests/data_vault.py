@@ -87,7 +87,7 @@ def get_synced_params():
         mock_rest.return_value = record_pb2.RecordTypesResponse()
         api.sync_down(p)
 
-    p.record_type_cache[1] = {
+    p.record_type_cache[1] = json.dumps({
         "$id": "login",
         "categories": ["login"],
         "description": "Login template",
@@ -98,7 +98,7 @@ def get_synced_params():
             {"$ref": "fileRef"},
             {"$ref": "oneTimeCode"}
         ]
-    }
+    })
     return p
 
 
