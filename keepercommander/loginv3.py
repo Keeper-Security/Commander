@@ -620,6 +620,10 @@ class LoginV3Flow:
                 except:
                     token = ''
                     logging.info('Failed to paste from clipboard')
+            else:
+                if len(token) < 10:
+                    print(f'Unsupported menu option: {token}')
+                    token = None
             if token:
                 try:
                     if is_cloud:
