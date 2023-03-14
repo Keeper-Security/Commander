@@ -96,7 +96,7 @@ def register_command_info(aliases, command_info):
 
     compliance.register_command_info(aliases, command_info)
 
-SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles']
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles', 'provisioning']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
@@ -619,7 +619,40 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     if len(wc) > 0:
                         logging.warning('\n\nSupported node columns: %s\n', ', '.join(supported_columns))
 
+                has_provisioning = 'provisioning' in columns
+                if has_provisioning:
+                    columns.remove('provisioning')
+                email_provisioning = None    # type: Optional[Dict[int, str]]
+                scim_provisioning = None     # type: Optional[Dict[int, str]]
+                bridge_provisioning = None   # type: Optional[Dict[int, str]]
+                sso_provisioning = None      # type: Optional[Dict[int, str]]
                 displayed_columns = [x for x in supported_columns if x in columns]
+                if has_provisioning:
+                    if 'email_provision' in params.enterprise:
+                        email_provisioning = {x['node_id']: x['domain'] for x in params.enterprise['email_provision']}
+                        if len(email_provisioning) > 0:
+                            displayed_columns.append('email_provisioning')
+                        else:
+                            email_provisioning = None
+                    if 'bridges' in params.enterprise:
+                        bridge_provisioning = {x['node_id']: x['status'] for x in params.enterprise['bridges']}
+                        if len(bridge_provisioning) > 0:
+                            displayed_columns.append('bridge_provisioning')
+                        else:
+                            bridge_provisioning = None
+                    if 'scims' in params.enterprise:
+                        scim_provisioning = {x['node_id']: x['status'] for x in params.enterprise['scims']}
+                        if len(scim_provisioning) > 0:
+                            displayed_columns.append('scim_provisioning')
+                        else:
+                            scim_provisioning = None
+                    if 'sso_services' in params.enterprise:
+                        sso_provisioning = {x['node_id']: x['name'] for x in params.enterprise['sso_services']}
+                        if len(sso_provisioning) > 0:
+                            displayed_columns.append('sso_provisioning')
+                        else:
+                            sso_provisioning = None
+
                 rows = []
                 for n in nodes.values():
                     node_id = n['node_id']
@@ -649,6 +682,20 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             rs = n.get('roles', [])
                             role_names = [roles[x]['name'] for x in rs if x in roles]
                             row.append(role_names)
+                        elif column == 'email_provisioning':
+                            status = email_provisioning.get(node_id) if email_provisioning else None
+                            row.append(status)
+                        elif column == 'bridge_provisioning':
+                            status = bridge_provisioning.get(node_id) if bridge_provisioning else None
+                            row.append(status)
+                        elif column == 'scim_provisioning':
+                            status = scim_provisioning.get(node_id) if scim_provisioning else None
+                            row.append(status)
+                        elif column == 'sso_provisioning':
+                            status = sso_provisioning.get(node_id) if sso_provisioning else None
+                            row.append(status)
+                        else:
+                            row.append(None)
 
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
