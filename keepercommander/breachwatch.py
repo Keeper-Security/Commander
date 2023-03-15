@@ -156,8 +156,6 @@ class BreachWatch(object):
             if params.enterprise_rsa_key and record.version in (2, 3):
                 bw_res = bw_data.passwords[0].status
                 save_security_data(record_uid, record, bw_res, is_reset)
-            else:
-                logging.info(f'Cannot update security data for rec_uid = {record_uid}')
 
             if set_reused_pws is None:
                 BreachWatch.save_reused_pw_count(params)
