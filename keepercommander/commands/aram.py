@@ -929,8 +929,15 @@ between_pattern = re.compile(r"\s*between\s+(\S*)\s+and\s+(.*)", re.IGNORECASE)
 
 class AuditReportCommand(Command):
     def __init__(self):
+        super(AuditReportCommand, self).__init__()
         self.sox_data = None    # type: Union[None, sox_data.SoxData]
+        self.restrict_sox_data_refresh = False
         self.lookup = {}
+
+    def get_sox_data(self, params):
+        if not self.sox_data and is_compliance_reporting_enabled(params):
+            self.sox_data = get_prelim_data(params, 0, False, min_updated=0, cache_only=self.restrict_sox_data_refresh)
+        return self.sox_data
 
     def get_value(self, params, field, event):
         if field == 'message':
@@ -980,8 +987,9 @@ class AuditReportCommand(Command):
                 for fld, attr in lookup_type.field_attrs():
                     self.lookup[record_uid][fld] = getattr(r, attr, '')
         else:
-            if self.sox_data:
-                r = self.sox_data.get_records().get(record_uid)
+            s_data = self.get_sox_data(params)
+            if s_data:
+                r = s_data.get_records().get(record_uid)
                 if r:
                     for fld, attr in lookup_type.field_attrs():
                         attr = re.sub(r'^login_', '', attr)
@@ -1335,6 +1343,7 @@ class AuditReportCommand(Command):
         fields = []
         table = []
 
+        self.restrict_sox_data_refresh = kwargs.get('minimal', False)
         details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(audit_report.RAW_FIELDS)
@@ -1401,8 +1410,6 @@ class AuditReportCommand(Command):
                 fields.append('created')
             if columns:
                 fields.extend(columns)
-            if not self.sox_data and is_compliance_reporting_enabled(params):
-                self.sox_data = get_prelim_data(params, 0, False, min_updated=0, cache_only=kwargs.get('minimal'))
             for event in rs['audit_event_overview_report_rows']:
                 row = []
                 for f in fields:
