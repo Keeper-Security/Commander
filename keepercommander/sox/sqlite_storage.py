@@ -100,18 +100,18 @@ class SqliteSoxStorage:
     def records_dated(self):
         return self._get_history().records_dated
 
-    def set_records_dated(self):
+    def set_records_dated(self, ts):   # type: (int) -> None
         history = self._get_history()
-        history.records_dated = int(datetime.datetime.now().timestamp())
+        history.records_dated = int(ts)
         self._metadata.store(history)
 
     @property
     def last_pw_audit(self):
         return self._get_history().last_pw_audit
 
-    def set_last_pw_audit(self):
+    def set_last_pw_audit(self, ts):    # type: (int) -> None
         history = self._get_history()
-        history.last_pw_audit = int(datetime.datetime.now().timestamp())
+        history.last_pw_audit = int(ts)
         self._metadata.store(history)
 
     def get_users(self):

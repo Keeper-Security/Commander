@@ -163,7 +163,7 @@ def compare_records(record1, record2):
         if r_login or e_login:
             if r_login and e_login:
                 if r_login.get_external_value() or '' != e_login.get_external_value() or '':
-                    status = status | RecordChangeStatus.Password
+                    status = status | RecordChangeStatus.Username
             else:
                 status = status | RecordChangeStatus.Username
 

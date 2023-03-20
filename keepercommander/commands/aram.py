@@ -1525,7 +1525,7 @@ class AgingReportCommand(Command):
 
         from ..sox import get_prelim_data
         sd = get_prelim_data(params, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=period_min_ts)
-        sd = self.update_aging_data(params, sd, period_start_ts=period_min_ts)
+        AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts)
 
         def clean_up():
             if kwargs.get('no_cache') and sd:
@@ -1584,78 +1584,75 @@ class AgingReportCommand(Command):
     def get_database_path(params):
         pass
 
-    def update_aging_data(self, params, sox, period_start_ts):
-        # type: (KeeperParams, sox_data.SoxData, int) -> sox_data.SoxData
-        def get_record_event_dates(params, record_uids, event_type, ts_floor):
-            # type: (KeeperParams, List[Union[str, int]], str, int) -> Dict[str, int]
-            rq = {
-                'command':      'get_audit_event_reports',
-                'scope':        'enterprise',
-                'report_type':  'span',
-                'event_type':   event_type,
-                'columns':      ['record_uid'],
-                'aggregate':    ['last_created'],
-                'limit':        API_EVENT_SUMMARY_ROW_LIMIT
-            }
-            ts_lookup = dict()
-            while record_uids:
-                chunk = record_uids[:API_EVENT_SUMMARY_ROW_LIMIT]
-                record_uids = record_uids[API_EVENT_SUMMARY_ROW_LIMIT:]
-                rq_filter = {'record_uid': chunk, 'created': {'min': ts_floor}}
-                rq['filter'] = rq_filter
-                rs = api.communicate(params, rq)
-                events = rs['audit_event_overview_report_rows']
-                chunk_ts_lookup = {event['record_uid']: int(event['last_created']) for event in events}
-                ts_lookup.update(chunk_ts_lookup)
-            return ts_lookup
+    @staticmethod
+    def update_aging_data(params, sox, period_start_ts):   # type: (KeeperParams, sox_data.SoxData, int) -> None
+        from_date = min(sox.storage.records_dated, sox.storage.last_pw_audit)
+        if from_date > period_start_ts:
+            return
+        if from_date == 0:
+            min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
+            from_date = int(min_dt.timestamp())
 
-        def update_record_aging(params, sd, r_uids, event_type, set_ent_field_fn, on_updated, msg, ts_floor=0):
-            # type: (KeeperParams, sox_data.SoxData, List[int], str, Callable, Callable, str, int) -> None
-            logging.info(msg)
-            ts_lookup = get_record_event_dates(params, r_uids, event_type, ts_floor)
-            updated_entities = []
-            for rec_uid in ts_lookup:
-                entity = sd.storage.record_aging.get_entity(rec_uid) or StorageRecordAging(rec_uid)
-                entity = set_ent_field_fn(entity, ts_lookup.get(rec_uid))
-                updated_entities.append(entity)
+        audit_filter = {
+            'audit_event_type': ['record_add', 'record_password_change'],
+            'created': {'min': 0}
+        }
+        rq = {
+            'command':      'get_audit_event_reports',
+            'scope':        'enterprise',
+            'report_type':  'span',
+            'columns':      ['record_uid', 'audit_event_type'],
+            'aggregate':    ['last_created'],
+            'filter':       audit_filter,
+            'order':        'ascending',
+            'limit':        API_EVENT_SUMMARY_ROW_LIMIT
+        }
+        changed_records = {}    # type: Dict[str, StorageRecordAging]
+        last_added = 0
+        last_password_change = 0
+        done = False
+        logging.info('Loading record password change information...')
+        while not done:
+            audit_filter['created']['min'] = from_date
+            rs = api.communicate(params, rq)
+            events = rs['audit_event_overview_report_rows']
+            done = len(events) < API_EVENT_SUMMARY_ROW_LIMIT - 100
+            if not done:
+                from_date = events[-1]['last_created']
+                if events[0]['last_created'] == from_date:
+                    from_date += 1
+            for event in events:
+                record_uid = event['record_uid']
+                ra = None    # type: Optional[StorageRecordAging]
+                if record_uid not in changed_records:
+                    if record_uid in sox.get_records():
+                        ra = sox.storage.record_aging.get_entity(record_uid)
+                        if ra is None:
+                            ra = StorageRecordAging(record_uid=record_uid)
+                            changed_records[record_uid] = ra
+                else:
+                    ra = changed_records[record_uid]
+                event_type = event['audit_event_type']
+                created = event['last_created']
+                if event_type == 'record_add':
+                    if ra:
+                        ra.created = created
+                    last_added = created
+                elif event_type == 'record_password_change':
+                    if ra:
+                        ra.last_pw_change = created
+                    last_password_change = created
+        if len(changed_records) > 0:
+            sox.storage.record_aging.put_entities(changed_records.values())
             rebuild_task = RebuildTask(False)
-            rebuild_task.update_records(ts_lookup.keys())
-            sd.storage.record_aging.put_entities(updated_entities)
-            sd.rebuild_data(rebuild_task)
-            on_updated()
+            rebuild_task.update_records(changed_records.keys())
+            sox.rebuild_data(rebuild_task)
 
-        def update_record_created_times(params, sd, ts_floor=0):   # type: (KeeperParams, sox_data.SoxData, int) -> None
-            def update_ent(ent, val):   # type: (StorageRecordAging, int) -> StorageRecordAging
-                ent.created = val
-                return ent
+        if last_added > 0:
+            sox.storage.set_records_dated(last_added)
 
-            on_update_fn = sd.storage.set_records_dated
-            r_uids = [uid for uid, record in sd.get_records().items() if not record.created]
-            event_type = 'record_add'
-            msg = 'Loading record creation time...'
-            update_record_aging(params, sd, r_uids, event_type, update_ent, on_update_fn, msg, ts_floor)
-
-        def update_pw_change_times(params, sd, ts_floor=0):
-            def update_ent(ent, val):   # type: (StorageRecordAging, int) -> StorageRecordAging
-                ent.last_pw_change = val
-                return ent
-
-            on_update_fn = sd.storage.set_last_pw_audit
-            event_type = 'record_password_change'
-            msg = 'Loading record password change information...'
-            records = {id: rec for id, rec in sd.get_records().items() if rec.created and rec.last_pw_change < ts_floor}
-            rec_uids = list(records.keys())
-            created_timestamps = {record.created for record in records.values()}
-            ts_floor = min(*created_timestamps, ts_floor) if created_timestamps else ts_floor
-            update_record_aging(params, sd, rec_uids, event_type, update_ent, on_update_fn, msg, ts_floor)
-
-        min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
-        min_ts = int(min_dt.timestamp())
-        if sox.storage.records_dated < period_start_ts:
-            update_record_created_times(params, sox, min_ts)
-        if sox.storage.last_pw_audit < period_start_ts:
-            update_pw_change_times(params, sox, ts_floor=period_start_ts)
-        return sox
+        if last_password_change > 0:
+            sox.storage.set_last_pw_audit(last_password_change)
 
 
 class ActionReportCommand(EnterpriseCommand):

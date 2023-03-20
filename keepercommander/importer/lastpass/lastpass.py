@@ -311,7 +311,7 @@ class LastPassImporter(BaseImporter):
                 if account.shared_folder:
                     fol.domain = account.shared_folder.name
                 if account.group:
-                    fol.path = account.group.decode('utf-8')
+                    fol.path = account.group.decode('utf-8', 'ignore')
                 record.folders = [fol]
 
             yield record

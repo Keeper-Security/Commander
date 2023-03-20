@@ -511,24 +511,6 @@ def get_folder_path(params, uid):
     return path
 
 
-def get_shared_folder_delete_rq(params, sf_requests, uid):
-    """Adds a delete request to given dictionary for specified shared folder uid"""
-    if uid in params.shared_folder_cache and uid not in sf_requests:
-        sf = params.shared_folder_cache[uid]
-
-        rq = {
-            'command': 'shared_folder_update',
-            'operation': 'delete',
-            'shared_folder_uid': sf['shared_folder_uid']
-        }
-        if 'shared_folder_key' not in sf:
-            if 'teams' in sf:
-                for team in sf['teams']:
-                    rq['from_team_uid'] = team['team_uid']
-                    break
-        sf_requests[uid] = rq
-
-
 def get_shared_subfolder_delete_rq(params, user_folder, user_folder_ids):
     """Recursively searches a user folder for shared folders to delete"""
     delete_rq_added = False

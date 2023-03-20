@@ -236,9 +236,9 @@ def password_score(password):  # type: (str) -> int
     count = 0
     for consec in [str.isupper, str.islower, str.isdecimal]:
         for chunk in chunk_text(password, consec):
-            l = len(chunk)
-            if l >= 2:
-                count += l - 1
+            length = len(chunk)
+            if length >= 2:
+                count += length - 1
     if count > 0:
         score -= 2 * count
 
@@ -257,7 +257,6 @@ def password_score(password):  # type: (str) -> int
                         op = oc
 
     symbols = {x[1]: x[0] for x in enumerate('!@#$%^&*()_+[]\\{}|;\':\",./<>?')}
-    cnt = len(symbols)
     cnt = 0
     for chunk in chunk_text(password, symbols.__contains__):
         if len(chunk) >= 3:

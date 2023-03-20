@@ -147,7 +147,10 @@ class LoginV3Flow:
                 resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
-
+                if len(resp.salt) == 0:
+                    raise KeeperApiError('account-recovery-required',
+                                         'Your account requires account recovery in order to use a Master Password login method.\n' +
+                                         'Account recovery (Forgot Password) is available in the Web Vault or Enterprise Console.')
                 salt = api.get_correct_salt(resp.salt)
 
                 salt_bytes = salt.salt
@@ -617,6 +620,10 @@ class LoginV3Flow:
                 except:
                     token = ''
                     logging.info('Failed to paste from clipboard')
+            else:
+                if len(token) < 10:
+                    print(f'Unsupported menu option: {token}')
+                    token = None
             if token:
                 try:
                     if is_cloud:

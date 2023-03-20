@@ -2,9 +2,8 @@ from unittest import TestCase, mock
 
 from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
-from keepercommander.importer import importer, commands
-from keepercommander.recordv3 import RecordV3
 from keepercommander import vault
+from keepercommander.importer import importer, commands
 
 
 class TestImporterUtils(TestCase):
