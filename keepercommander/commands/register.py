@@ -32,6 +32,7 @@ from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
+from ..shared_record import SharePermissions
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
 from ..loginv3 import LoginV3API
 
@@ -905,18 +906,16 @@ class ShareReportCommand(Command):
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose') or False
         output_format = kwargs.get('format', 'table')
+        show_team_users = kwargs.get('show_team_users')
         user_filter = set()
         record_filter = set()
-        user_lookup = None   # type: Optional[Dict[int, str]]
-        if isinstance(params.enterprise, dict) and 'users' in params.enterprise:
-            user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
 
         if kwargs.get('folders'):
             report = ShareReportCommand.sf_report(
                 params,
                 out=kwargs.get('output'),
                 fmt=kwargs.get('format'),
-                show_team_users=kwargs.get('show_team_users')
+                show_team_users=show_team_users
             )
             return report
 
@@ -954,97 +953,43 @@ class ShareReportCommand(Command):
 
         api.get_record_shares(params, record_uids)
 
+        from keepercommander.shared_record import get_shared_records
+        shared_records = get_shared_records(params, record_uids)
+
+        def get_record_shares():
+            # Group shared-record uids by share target
+            rec_shares = {}
+            for sr in shared_records.values():
+                for p in sr.permissions.values():
+                    if user_filter and p.to_name in user_filter or not user_filter:
+                        user_rec_shares = rec_shares.get(p.to_name, set())
+                        user_rec_shares.add(sr.uid)
+                        rec_shares[p.to_name] = user_rec_shares
+            return rec_shares
+
+        def get_sf_shares():
+            # Group shared-folder uids by share target
+            shared_folder_shares = {}
+            for sr in shared_records.values():
+                for sf_uid, share_targets in sr.sf_shares.items():
+                    for target in share_targets:
+                        if user_filter and target in user_filter or not user_filter:
+                            user_sf_uids = shared_folder_shares.get(target, set())
+                            user_sf_uids.add(sf_uid)
+                            shared_folder_shares[target] = user_sf_uids
+            return shared_folder_shares
+
         if not kwargs.get('owner'):
-            record_shares = {}
-            sf_shares = {}
-            record_owners = {}
-            for uid in record_uids:
-                record = params.record_cache[uid]
-                if 'shares' in record:
-                    if 'user_permissions' in record['shares']:
-                        for up in record['shares']['user_permissions']:
-                            user_name = up['username']
-                            if up.get('owner'):
-                                record_owners[uid] = user_name
-                            if user_filter:
-                                if user_name not in user_filter:
-                                    continue
-                            if user_name not in record_shares:
-                                record_shares[user_name] = set()
-                            if uid not in record_shares[user_name]:
-                                record_shares[user_name].add(uid)
-                    if 'shared_folder_permissions' in record['shares']:
-                        names = set()
-                        for sfp in record['shares']['shared_folder_permissions']:
-                            shared_folder_uid = sfp['shared_folder_uid']
-                            if shared_folder_uid in params.shared_folder_cache:
-                                shared_folder = params.shared_folder_cache[sfp['shared_folder_uid']]
-                                names.clear()
-                                if 'users' in shared_folder:
-                                    for u in shared_folder['users']:
-                                        user_name = u['username']
-                                        matches = user_name in user_filter if user_filter else True
-                                        if matches:
-                                            names.add(user_name)
-                                if 'teams' in shared_folder:
-                                    for t in shared_folder['teams']:
-                                        user_name = t['name']
-                                        matches = user_name in user_filter if user_filter else True
-                                        if matches:
-                                            names.add(user_name)
-                                        if user_lookup:
-                                            team_uid = t['team_uid']
-                                            if 'team_users' in params.enterprise:
-                                                for tu in params.enterprise['team_users']:
-                                                    if tu.get('team_uid') != team_uid:
-                                                        continue
-                                                    if tu.get('user_type') == 2:
-                                                        continue
-                                                    user_name = user_lookup.get(tu.get('enterprise_user_id'))
-                                                    if not user_name:
-                                                        continue
-                                                    matches = user_name in user_filter if user_filter else True
-                                                    if matches:
-                                                        names.add(user_name)
-
-                                for user_name in names:
-                                    if user_name not in sf_shares:
-                                        sf_shares[user_name] = set()
-                                    if shared_folder_uid not in sf_shares[user_name]:
-                                        sf_shares[user_name].add(shared_folder_uid)
-
-                                if 'records' in shared_folder:
-                                    for sfr in shared_folder['records']:
-                                        uid = sfr['record_uid']
-                                        if record_filter:
-                                            if uid not in record_filter:
-                                                continue
-                                        for user_name in names:
-                                            if user_filter:
-                                                if user_name not in user_filter:
-                                                    continue
-                                            if user_name not in record_shares:
-                                                record_shares[user_name] = set()
-                                            if uid not in record_shares[user_name]:
-                                                record_shares[user_name].add(uid)
-
+            sf_shares = get_sf_shares()
+            record_shares = get_record_shares()
             if kwargs.get('record'):
-                if len(record_shares) > 0:
-                    users_shares = {}
-                    for user in record_shares:
-                        for uid in record_shares[user]:
-                            if uid not in users_shares:
-                                users_shares[uid] = set()
-                            users_shares[uid].add(user)
-                    for record_uid in users_shares:
-                        record = api.get_record(params, record_uid)
-                        print('')
-                        print('{0:>20s}   {1}'.format('Record UID:', record.record_uid))
-                        print('{0:>20s}   {1}'.format('Title:', record.title))
-                        for i, user in enumerate(users_shares[record_uid]):
-                            print('{0:>20s}   {1}'.format('Shared with:' if i == 0 else '', user))
-                        print('')
-
+                for shared_record in shared_records.values():
+                    print('')
+                    print('{0:>20s}   {1}'.format('Record UID:', shared_record.uid))
+                    print('{0:>20s}   {1}'.format('Title:', shared_record.name))
+                    for i, p in enumerate(shared_record.permissions.values()):
+                        print('{0:>20s}   {1}'.format('Shared with:' if i == 0 else '', p.get_target(show_team_users)))
+                    print('')
             elif kwargs.get('user'):
                 if kwargs.get('shared_folders'):
                     headers = ['username', 'shared_folder_uid', 'name']
@@ -1066,8 +1011,8 @@ class ShareReportCommand(Command):
                     table = []
                     for user in record_shares:
                         for record_uid in record_shares[user]:
-                            rec = api.get_record(params, record_uid)
-                            table.append([user, record_owners.get(rec.record_uid, ''), record_uid, rec.title if rec else ''])
+                            shared_record = shared_records.get(record_uid)
+                            table.append([user, shared_record.owner, record_uid, shared_record.name])
 
                     if output_format == 'table':
                         headers = [field_to_title(x) for x in headers]
@@ -1095,93 +1040,32 @@ class ShareReportCommand(Command):
                     group_by=0, row_number=True)
         else:
             include_share_date = kwargs.get('share_date')
-            record_owners = {}
-            record_shared_with = {}
-            # To track if use is part of an enterprise. If not then call backend only once.
-            is_an_enterprise_user_by_ref = [True]
-            total_record = len(record_uids)
-            count = 0
-            for uid in record_uids:
-
-                if include_share_date:
-
-                    rem_count = total_record - count
-                    percent = int(((rem_count/total_record)*100))
-                    percent_indicator_left = int(50 - (percent/2))
-                    percent_indicator_right = int(50 - percent_indicator_left)
-
-                    print(
-                          (bcolors.OKBLUE + 'Generating report: |' + bcolors.ENDC) +
-                          ((bcolors.OKBLUE + '█' + bcolors.ENDC) * percent_indicator_left) +
-                          ((bcolors.OKBLUE + '_' + bcolors.ENDC) * percent_indicator_right) +
-                          (bcolors.OKBLUE + '|' + bcolors.ENDC),
-                          (bcolors.OKBLUE + str(100-percent) + "%" + bcolors.ENDC), end='\x1b[1K\r')
-
-                count = count + 1
-
-                record = params.record_cache[uid]
-                if 'shares' in record:
-                    record_shared_with[uid] = []
-                    record_share_details = self.get_record_share_activities(params, uid, is_an_enterprise_user_by_ref) if include_share_date else None
-                    if 'user_permissions' in record['shares']:
-                        for up in record['shares']['user_permissions']:
-                            user_name = up['username']
-                            if up.get('owner'):
-                                record_owners[uid] = user_name
-                            else:
-                                can_edit = up.get('editable') or False
-                                can_share = up.get('shareable') or False
-                                permission = self.get_permission_text(can_edit, can_share)
-                                date_shared = self.get_date_for_share(record_share_details, user_name)
-                                record_shared_with[uid].append('{0} -> {1}{2}'.format(user_name, permission, date_shared))
-                    if 'shared_folder_permissions' in record['shares']:
-                        for sfp in record['shares']['shared_folder_permissions']:
-                            shared_folder_uid = sfp['shared_folder_uid']
-                            if shared_folder_uid in params.shared_folder_cache:
-                                shared_folder = params.shared_folder_cache[sfp['shared_folder_uid']]
-                                rp = None
-                                if 'records' in shared_folder:
-                                    for record in shared_folder['records']:
-                                        if record.get('record_uid') == uid:
-                                            rp = record
-                                            break
-                                if rp:
-                                    can_edit = rp.get('can_edit')
-                                    can_share = rp.get('can_share')
-                                    permission = self.get_permission_text(can_edit, can_share)
-                                    if 'users' in shared_folder:
-                                        for u in shared_folder['users']:
-                                            date_shared = self.get_date_for_share_folder_record(record_share_details, shared_folder_uid)
-                                            user_name = u['username']
-                                            record_shared_with[uid].append('{0} => {1}{2}'.format(user_name, permission, date_shared))
-                                    if 'teams' in shared_folder:
-                                        for t in shared_folder['teams']:
-                                            date_shared = self.get_date_for_share_folder_record(record_share_details, shared_folder_uid)
-                                            team_name = t['name']
-                                            record_shared_with[uid].append('{0} => {1}{2}'.format(team_name, permission, date_shared))
-
-            if len(record_owners) > 0:
+            aram_enabled = True
+            if shared_records:
                 headers = ['record_owner', 'record_uid', 'record_title', 'shared_with', 'folder_path']
                 table = []
-                for uid, user_name in record_owners.items():
-                    folder_paths = []
-                    folders = list(find_folders(params, uid))
-                    if len(folders) > 0:
-                        for folder_uid in folders:
-                            folder_paths.append(get_folder_path(params, folder_uid))
-                    folder_paths = '\n'.join(folder_paths)
+                for uid, shared_record in shared_records.items():
+                    share_events = include_share_date and aram_enabled and self.get_record_share_activities(params, uid)
+                    aram_enabled = share_events is not False
+                    folder_paths = '\n'.join(shared_record.folder_paths)
+                    permissions = shared_record.get_ordered_permissions() if verbose \
+                        else shared_record.user_permissions.values()
+                    permissions = [p for p in permissions if shared_record.owner != p.to_name]
+                    if not show_team_users and verbose:
+                        permissions = [p for p in permissions if SharePermissions.SharePermissionsType.TEAM_USER not in p.types or len(p.types) > 1]
 
-                    record = api.get_record(params, uid)
-                    row = [user_name, uid, record.title[0:32] if record else '']
-                    share_to = record_shared_with.get(uid)
-                    if verbose:
-                        share_to.sort()
-                        row.append(share_to)
+                    if not verbose:
+                        share_info = len(permissions)
                     else:
-                        row.append(len(share_to) if share_to else 0)
-                    row.append(folder_paths)
-                    table.append(row)
+                        share_info = []
+                        for p in permissions:
+                            is_direct_share = SharePermissions.SharePermissionsType.USER in p.types
+                            share_date = self.get_date_for_share(share_events, p.to_name) if is_direct_share \
+                                else self.get_date_for_share_folder_record(share_events, next(iter(shared_record.sf_shares.keys())))
+                            share_info.append(f'{p.get_target(show_team_users)} => {p.get_permissions_text()}{share_date}')
+                        share_info = '\n'.join(share_info)
 
+                    table.append([shared_record.owner, shared_record.uid, shared_record.name, share_info, folder_paths])
                 if output_format == 'table':
                     headers = [field_to_title(x) for x in headers]
                 return dump_report_data(
@@ -1189,23 +1073,7 @@ class ShareReportCommand(Command):
                     sort_by=0, row_number=True)
 
     @staticmethod
-    def get_permission_text(can_edit, can_share, can_view=True):
-        if can_edit or can_share:
-            if can_edit and can_view:
-                return 'Can Share & Edit'
-            if can_share:
-                return 'Can Share'
-            return 'Can Edit'
-        else:
-            return 'Read Only' if can_view else 'Launch Only'
-
-    @staticmethod
-    def get_record_share_activities(params: KeeperParams, record_uid: str, is_an_enterprise_user_by_ref):
-
-        if not is_an_enterprise_user_by_ref[0]:
-            # no need to execute the query to get analytics data because we know that user is not part of the enterprise
-            return None
-
+    def get_record_share_activities(params: KeeperParams, record_uid: str):
         rq = {
             'command': 'get_audit_event_reports',
             'report_type': 'raw',
@@ -1240,16 +1108,12 @@ class ShareReportCommand(Command):
 
             if e.result_code == 'not_an_enterprise_user':
                 # logging.warning("In order to see shared time details, user must be part of the Keeper account.")
-                is_an_enterprise_user_by_ref[0] = False
-                return None
+                return False
             elif e.result_code == 'access_denied':
                 logging.debug("You do not have permissions to access report for your organization. In order to "
                                 "allow user to access reports, ask administrator to grant permission \"Run Reports\" "
                                 "permission.")
-                is_an_enterprise_user_by_ref[0] = False
-                return None
-
-        is_an_enterprise_user_by_ref[0] = True
+                return False
 
         rs = api.communicate(params, rq)
 
