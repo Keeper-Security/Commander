@@ -156,13 +156,12 @@ class BreachWatch(object):
             if params.enterprise_rsa_key and record.version in (2, 3):
                 bw_res = bw_data.passwords[0].status
                 save_security_data(record_uid, record, bw_res, is_reset)
-            else:
-                logging.info(f'Cannot update security data for rec_uid = {record_uid}')
 
             if set_reused_pws is None:
-                self.save_reused_pw_count(params)
+                BreachWatch.save_reused_pw_count(params)
 
-    def save_reused_pw_count(self, params):
+    @staticmethod
+    def save_reused_pw_count(params):
         def get_reused_pw_count(recs):
             pw_counts = {}
             for rec in recs:
@@ -174,22 +173,16 @@ class BreachWatch(object):
             dupe_pw_counts = {k: v for k, v in pw_counts.items() if v > 1}
             return sum([count for count in dupe_pw_counts.values()])
 
-        api.sync_down(params)
-        rec_uids = params.record_cache.keys()
-        md_cache = params.meta_data_cache
-        owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
-        owned_recs = [api.get_record(params, ruid) for ruid in owned]
-        total_reused = get_reused_pw_count(owned_recs)
-        save_rq = ReusedPasswordsRequest()
-        save_rq.count = total_reused
-        api.communicate_rest(params, save_rq, 'enterprise/set_reused_passwords')
-
-    def calculate_record_pw_count(self, params):
-        rec_uids = params.record_cache.keys()
-        md_cache = params.meta_data_cache
-        owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
-        owned_recs = [api.get_record(params, ruid) for ruid in owned]
-        return len([rec for rec in owned_recs if rec.password or rec.password == 0])
+        if params.enterprise_ec_key:
+            api.sync_down(params)
+            rec_uids = params.record_cache.keys()
+            md_cache = params.meta_data_cache
+            owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
+            owned_recs = [api.get_record(params, ruid) for ruid in owned]
+            total_reused = get_reused_pw_count(owned_recs)
+            save_rq = ReusedPasswordsRequest()
+            save_rq.count = total_reused
+            api.communicate_rest(params, save_rq, 'enterprise/set_reused_passwords')
 
     def delete_euids(self, params, euids):
         self._ensure_init(params)

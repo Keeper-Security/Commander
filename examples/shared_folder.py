@@ -15,47 +15,18 @@
 # Usage:
 #    python shared_folder.py
 
-import os
-import json
-import base64
 import getpass
+import os
 
-from keepercommander.params import KeeperParams
 from keepercommander import api
+from keepercommander.__main__ import get_params_from_config
 from keepercommander.commands.register import ShareFolderCommand
 
-
-def read_config_file(params):
-    params.config_filename = os.path.join(os.path.dirname(__file__), 'config.json')
-    if os.path.isfile(params.config_filename):
-        with open(params.config_filename, 'r') as f:
-            params.config = json.load(f)
-            if 'user' in params.config:
-                params.user = params.config['user']
-
-            if 'password' in params.config:
-                params.password = params.config['password']
-
-            if 'mfa_token' in params.config:
-                params.mfa_token = params.config['mfa_token']
-
-            if 'server' in params.config:
-                params.server = params.config['server']
-
-            if 'device_id' in params.config:
-                device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
-                params.rest_context.device_id = device_id
-
-
-my_params = KeeperParams()
-read_config_file(my_params)
-
+my_params = get_params_from_config(os.path.join(os.path.dirname(__file__), 'config.json'))
 while not my_params.user:
     my_params.user = getpass.getpass(prompt='User(Email): ', stream=None)
 
-while not my_params.password:
-    my_params.password = getpass.getpass(prompt='Master Password: ', stream=None)
-
+api.login(my_params)
 api.sync_down(my_params)
 
 folders = ["Shared Folder 1", "Shared Folder 2"]

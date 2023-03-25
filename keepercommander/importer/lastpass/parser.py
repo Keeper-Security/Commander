@@ -133,10 +133,13 @@ def parse_SHAR(chunk, encryption_key, rsa_key):
     # where it's only AES encrypted with the regular encryption key.
     # When the key is blank, then there's a RSA encrypted key, which has to
     # be decrypted first before use.
+    if key:
+        try:
+            key = decode_hex(decode_aes256_plain_auto(key, encryption_key))
+        except:
+            key = ''
     if not key:
         key = decode_hex(PKCS1_OAEP.new(rsa_key).decrypt(encrypted_key))
-    else:
-        key = decode_hex(decode_aes256_plain_auto(key, encryption_key))
 
     name = decode_aes256_base64_auto(encrypted_name, key)
 
@@ -151,7 +154,11 @@ def parse_ATTA(chunk, accounts):
     parent_id = read_item(io).decode('utf-8')
     mimetype = read_item(io).decode('utf-8')
     storagekey = read_item(io).decode('utf-8')
-    lastpass_size = int(read_item(io))
+    size = read_item(io)
+    try:
+        lastpass_size = int(size)
+    except ValueError:
+        return None
     filename_encrypted = read_item(io)
 
     parents = [a for a in accounts if a.id == parent_id]

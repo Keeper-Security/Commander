@@ -113,7 +113,7 @@ def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
     login = RecordMixin.get_record_field(record, 'login')
     if len(hosts) > 0 and old_pk and login:
         old_public_ssh_key = old_pk.public_key().public_bytes(
-            encoding=serialization.Encoding.OpenSSH, format=serialization.PublicFormat.OpenSSH)
+            encoding=serialization.Encoding.OpenSSH, format=serialization.PublicFormat.OpenSSH).decode()
 
         key_unencrypted = old_pk.private_bytes(
             encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.OpenSSH,
@@ -154,6 +154,7 @@ def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
 
                 except Exception as e:
                     logging.warning('Authorized Keys upload to host: %s: %s', host, str(e))
+                    return False
         finally:
             os.remove(key_file_name)
 

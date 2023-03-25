@@ -42,7 +42,7 @@ from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from .. import api, rest_api, crypto, utils, constants
 from ..display import bcolors
-from ..error import CommandError
+from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ..sox.sox_types import RecordPermissions
@@ -96,7 +96,7 @@ def register_command_info(aliases, command_info):
 
     compliance.register_command_info(aliases, command_info)
 
-SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles']
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles', 'provisioning']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
@@ -166,6 +166,10 @@ enterprise_user_parser.add_argument('--add-team', dest='add_team', action='appen
 enterprise_user_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-team only')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
+# enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL",
+#                                     help='new email alias for a user')
+# enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL",
+#                                     help='delete email alias')
 enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
@@ -615,7 +619,40 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     if len(wc) > 0:
                         logging.warning('\n\nSupported node columns: %s\n', ', '.join(supported_columns))
 
+                has_provisioning = 'provisioning' in columns
+                if has_provisioning:
+                    columns.remove('provisioning')
+                email_provisioning = None    # type: Optional[Dict[int, str]]
+                scim_provisioning = None     # type: Optional[Dict[int, str]]
+                bridge_provisioning = None   # type: Optional[Dict[int, str]]
+                sso_provisioning = None      # type: Optional[Dict[int, str]]
                 displayed_columns = [x for x in supported_columns if x in columns]
+                if has_provisioning:
+                    if 'email_provision' in params.enterprise:
+                        email_provisioning = {x['node_id']: x['domain'] for x in params.enterprise['email_provision']}
+                        if len(email_provisioning) > 0:
+                            displayed_columns.append('email_provisioning')
+                        else:
+                            email_provisioning = None
+                    if 'bridges' in params.enterprise:
+                        bridge_provisioning = {x['node_id']: x['status'] for x in params.enterprise['bridges']}
+                        if len(bridge_provisioning) > 0:
+                            displayed_columns.append('bridge_provisioning')
+                        else:
+                            bridge_provisioning = None
+                    if 'scims' in params.enterprise:
+                        scim_provisioning = {x['node_id']: x['status'] for x in params.enterprise['scims']}
+                        if len(scim_provisioning) > 0:
+                            displayed_columns.append('scim_provisioning')
+                        else:
+                            scim_provisioning = None
+                    if 'sso_services' in params.enterprise:
+                        sso_provisioning = {x['node_id']: x['name'] for x in params.enterprise['sso_services']}
+                        if len(sso_provisioning) > 0:
+                            displayed_columns.append('sso_provisioning')
+                        else:
+                            sso_provisioning = None
+
                 rows = []
                 for n in nodes.values():
                     node_id = n['node_id']
@@ -645,6 +682,20 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             rs = n.get('roles', [])
                             role_names = [roles[x]['name'] for x in rs if x in roles]
                             row.append(role_names)
+                        elif column == 'email_provisioning':
+                            status = email_provisioning.get(node_id) if email_provisioning else None
+                            row.append(status)
+                        elif column == 'bridge_provisioning':
+                            status = bridge_provisioning.get(node_id) if bridge_provisioning else None
+                            row.append(status)
+                        elif column == 'scim_provisioning':
+                            status = scim_provisioning.get(node_id) if scim_provisioning else None
+                            row.append(status)
+                        elif column == 'sso_provisioning':
+                            status = sso_provisioning.get(node_id) if sso_provisioning else None
+                            row.append(status)
+                        else:
+                            row.append(None)
 
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
@@ -1336,7 +1387,52 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         }
                         request_batch.append(rq)
             else:
-                if kwargs.get('lock') or kwargs.get('unlock'):
+                if kwargs.get('add_alias'):
+                    new_alias = kwargs['add_alias'].lower()
+                    if len(matched_users) == 1:
+                        user = matched_users[0]
+                        enterprise_user_id = user['enterprise_user_id']
+                        aliases = {x['username'].lower() for x in params.enterprise.get('user_aliases', []) if x['enterprise_user_id'] == enterprise_user_id}
+                        existing_alias = new_alias in aliases
+                        if existing_alias:
+                            endpoint = 'enterprise/enterprise_user_set_primary_alias'
+                            rq = APIRequest_pb2.EnterpriseUserAliasRequest()
+                            rq.enterpriseUserId = enterprise_user_id
+                            rq.alias = new_alias
+                        else:
+                            endpoint = 'enterprise/enterprise_user_add_alias'
+                            rq = APIRequest_pb2.EnterpriseUserAddAliasRequest()
+                            rq.enterpriseUserId = enterprise_user_id
+                            rq.alias = new_alias
+                            rq.primary = True
+                        try:
+                            api.communicate_rest(params, rq, endpoint)
+                            logging.info('Added alias \"%s\" for user \"%s\"', new_alias, user['username'])
+                            api.query_enterprise(params)
+                        except KeeperApiError as kae:
+                            logging.warning('Failed to add alias for user \"%s\": %s', user['username'], kae.message)
+                    else:
+                        logging.warning('Alias can be added to a single user only: Skipping')
+                    return
+
+                elif kwargs.get('delete_alias'):
+                    alias = kwargs['delete_alias']
+                    if len(matched_users) == 1:
+                        user = matched_users[0]
+                        rq = APIRequest_pb2.EnterpriseUserAddAliasRequest()
+                        rq.enterpriseUserId = user['enterprise_user_id']
+                        rq.alias = alias
+                        try:
+                            api.communicate_rest(params, rq, 'enterprise/enterprise_user_delete_alias')
+                            logging.info('Alias \"%s\" deleted from user \"%s\"', alias, user['username'])
+                            api.query_enterprise(params)
+                        except KeeperApiError as kae:
+                            logging.warning('Failed to delete alias \"%s\" from user \"%s\": %s', alias, user['username'], kae.message)
+                    else:
+                        logging.warning('Alias can be deleted from a single user only: Skipping')
+                    return
+
+                elif kwargs.get('lock') or kwargs.get('unlock'):
                     for user in matched_users:
                         if user['status'] == 'active':
                             to_lock = kwargs.get('lock')
@@ -2917,74 +3013,83 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         save_report = kwargs.get('save')
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
-        rq = APIRequest_pb2.SecurityReportRequest()
-        security_report_data_rs = api.communicate_rest(
-            params, rq, 'enterprise/get_security_report_data', rs_type=APIRequest_pb2.SecurityReportResponse)
-        rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+        tree_key = params.enterprise.get('unencrypted_tree_key')
+        from_page = 0
+        complete = False
         rows = []
-        for sr in security_report_data_rs.securityReport:
-            user_info = self.resolve_user_info(params, sr.enterpriseUserId)
-            user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
-            email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
-            node_id = user_info.get('node_id', 0)
-            node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
-            twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
-            row = {
-                'username': user,
-                'email': email,
-                'node_path': node_path,
-                'total': 0,
-                'weak': 0,
-                'medium': 0,
-                'strong': 0,
-                'reused': sr.numberOfReusedPassword,
-                'unique': 0,
-                'passed': 0,
-                'at_risk': 0,
-                'ignored': 0,
-                'securityScore': 25,
-                'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
-            }
-            master_pw_strength = 1
+        while not complete:
+            rq = APIRequest_pb2.SecurityReportRequest()
+            rq.fromPage = from_page
+            security_report_data_rs = api.communicate_rest(
+                params, rq, 'enterprise/get_security_report_data', rs_type=APIRequest_pb2.SecurityReportResponse)
+            to_page = security_report_data_rs.toPage
+            complete = security_report_data_rs.complete
+            from_page = to_page + 1
+            rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+            for sr in security_report_data_rs.securityReport:
+                user_info = self.resolve_user_info(params, sr.enterpriseUserId)
+                user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
+                email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
+                node_id = user_info.get('node_id', 0)
+                node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
+                twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
+                row = {
+                    'username': user,
+                    'email': email,
+                    'node_path': node_path,
+                    'total': 0,
+                    'weak': 0,
+                    'medium': 0,
+                    'strong': 0,
+                    'reused': sr.numberOfReusedPassword,
+                    'unique': 0,
+                    'passed': 0,
+                    'at_risk': 0,
+                    'ignored': 0,
+                    'securityScore': 25,
+                    'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
+                }
+                master_pw_strength = 1
 
-            if sr.encryptedReportData:
-                sri = rest_api.decrypt_aes(sr.encryptedReportData, params.enterprise['unencrypted_tree_key'])
-                data = json.loads(sri)
-            else:
-                data = {dk: 0 for dk in self.score_data_keys}
+                if sr.encryptedReportData:
+                    sri = rest_api.decrypt_aes(sr.encryptedReportData, tree_key)
+                    data = json.loads(sri)
+                else:
+                    data = {dk: 0 for dk in self.score_data_keys}
 
-            if show_updated:
-                data = self.get_updated_security_report_row(sr, rsa_key, data)
+                if show_updated:
+                    data = self.get_updated_security_report_row(sr, rsa_key, data)
 
-            if save_report:
-                updated_sr = APIRequest_pb2.SecurityReport()
-                updated_sr.revision = security_report_data_rs.asOfRevision
-                updated_sr.enterpriseUserId = sr.enterpriseUserId
-                report = json.dumps(data).encode('utf-8')
-                updated_sr.encryptedReportData = rest_api.encrypt_aes(report, params.enterprise['unencrypted_tree_key'])
-                updated_security_reports.append(updated_sr)
+                if save_report:
+                    updated_sr = APIRequest_pb2.SecurityReport()
+                    updated_sr.revision = security_report_data_rs.asOfRevision
+                    updated_sr.enterpriseUserId = sr.enterpriseUserId
+                    report = json.dumps(data).encode('utf-8')
+                    updated_sr.encryptedReportData = rest_api.encrypt_aes(report, tree_key)
+                    updated_security_reports.append(updated_sr)
 
-            if 'weak_record_passwords' in data:
-                row['weak'] = data['weak_record_passwords']
-            if 'strong_record_passwords' in data:
-                row['strong'] = data['strong_record_passwords']
-            if 'total_record_passwords' in data:
-                row['total'] = data['total_record_passwords']
-            if 'passed_records' in data:
-                row['passed'] = data['passed_records']
-            if 'at_risk_records' in data:
-                row['at_risk'] = data['at_risk_records']
-            if 'ignored_records' in data:
-                row['ignored'] = data['ignored_records']
+                if 'weak_record_passwords' in data:
+                    row['weak'] = data['weak_record_passwords']
+                if 'strong_record_passwords' in data:
+                    row['strong'] = data['strong_record_passwords']
+                if 'total_record_passwords' in data:
+                    row['total'] = data['total_record_passwords']
+                if 'passed_records' in data:
+                    row['passed'] = data['passed_records']
+                if 'at_risk_records' in data:
+                    row['at_risk'] = data['at_risk_records']
+                if 'ignored_records' in data:
+                    row['ignored'] = data['ignored_records']
 
-            row['medium'] = row['total'] - row['weak'] - row['strong']
-            row['unique'] = row['total'] - row['reused']
+                row['medium'] = row['total'] - row['weak'] - row['strong']
+                row['unique'] = row['total'] - row['reused']
 
-            score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on, master_pw_strength)
-            score = int(100 * round(score, 2))
-            row['securityScore'] = score
+                score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on,
+                                                master_pw_strength)
+                score = int(100 * round(score, 2))
+                row['securityScore'] = score
 
-            rows.append(row)
+                rows.append(row)
 
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
@@ -3199,18 +3304,13 @@ class UserReportCommand(EnterpriseCommand):
             'limit': limit
         }
 
-        get_login_events = True
-        while get_login_events:
-            missing = [x for x in active if x not in last_login]
-            if not missing:
-                break
+        missing = [*active]
+        while missing:
             report_filter['username'] = missing[:limit]
+            missing = missing[limit:]
             rs = api.communicate(params, rq)
             report_rows = rs['audit_event_overview_report_rows']
-            for row in report_rows:
-                username = row.get('username', '').lower()
-                last_login[username] = row['last_created']
-            get_login_events = len(report_rows) >= limit
+            last_login.update({row.get('username', '').lower(): row.get('last_created') for row in report_rows})
 
         for user in self.users.values():
             key = user['username'].lower()

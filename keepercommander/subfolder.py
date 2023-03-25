@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Iterable
 
 from .params import KeeperParams
 
@@ -154,6 +154,41 @@ def try_resolve_path(params, path):
     # The second is the final component of the path we're passed as an argument to this function. It could be a record, or
     # a not-yet-existent directory.
     return (folder, path)
+
+
+def get_folder_uid(params, name):   # type: (KeeperParams, str) -> str
+    uid = None
+    if name in params.folder_cache or name == '':
+        uid = name
+    else:
+        rs = try_resolve_path(params, name)
+        if rs is not None:
+            folder, pattern = rs
+            if len(pattern) == 0:
+                uid = folder.uid
+    return uid
+
+
+def get_contained_records(params, name, children_only=True):
+    # type: (KeeperParams, str, bool) -> Dict[str, Iterable[str]]
+    uid = get_folder_uid(params, name)
+
+    recs_by_folder = dict()
+
+    def add_child_recs(f_uid):
+        child_recs = params.subfolder_record_cache.get(f_uid, set())
+        recs_by_folder.update({f_uid: child_recs})
+
+    def on_folder(f):  # type: (BaseFolderNode) -> None
+        if f.uid in params. subfolder_record_cache:
+            add_child_recs(f.uid)
+
+    if children_only:
+        add_child_recs(uid)
+    else:
+        from keepercommander.commands import base
+        base.FolderMixin.traverse_folder_tree(params, uid, on_folder)
+    return recs_by_folder
 
 
 class BaseFolderNode:

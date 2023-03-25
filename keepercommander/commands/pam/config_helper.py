@@ -4,17 +4,17 @@ import os
 
 from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string
 
-from keepercommander import api, crypto, utils
-from keepercommander.api import encrypt_aes_plain, pad_aes_gcm, communicate_rest, sync_down
-from keepercommander.commands.folder import FolderMoveCommand
-from keepercommander.commands.recordv3 import RecordRemoveCommand
-from keepercommander.display import bcolors
-from keepercommander.loginv3 import CommonHelperMethods
-from keepercommander.proto import pam_pb2
-from keepercommander.proto.pam_pb2 import (
+from ..folder import FolderMoveCommand
+from ..record import RecordRemoveCommand
+from ...api import encrypt_aes_plain, pad_aes_gcm, communicate_rest, sync_down
+from ...display import bcolors
+from ...loginv3 import CommonHelperMethods
+from ...proto import pam_pb2
+from ...proto.pam_pb2 import (
     PAMConfigurationController, PAMDataOperation, PAMOperationType, PAMModifyRequest, ConfigurationAddRequest
 )
-from keepercommander.proto.router_pb2 import RouterRotationInfo
+from ...proto.router_pb2 import RouterRotationInfo
+from ... import api, crypto, utils
 
 
 def pam_decrypt_configuration_data(pam_config_v6_record):
@@ -31,8 +31,8 @@ def pam_decrypt_configuration_data(pam_config_v6_record):
     return data_unencrypted_dict
 
 
-def pam_configuration_get_single_value_from_field_by_id(decrypted_record_dict, field_id):
-    values = pam_configuration_get_all_values_from_field_by_id(decrypted_record_dict, field_id)
+def pam_configuration_get_single_value_from_field(decrypted_record_dict, field_id):
+    values = pam_configuration_get_all_values_from_field(decrypted_record_dict, field_id)
     if not values:
         return None
 
@@ -42,24 +42,33 @@ def pam_configuration_get_single_value_from_field_by_id(decrypted_record_dict, f
     return None
 
 
-def pam_configuration_get_all_values_from_field_by_id(decrypted_record_dict, field_id):
-    field = pam_configuration_get_field_by_id(decrypted_record_dict, field_id)
+def pam_configuration_get_all_values_from_field(decrypted_record_dict, field_id):
+    field = pam_configuration_get_field(decrypted_record_dict, field_id)
     if not field:
         return None
 
     return field.get('value')
 
 
-def pam_configuration_get_field_by_id(decrypted_record_dict, field_id):
+def pam_configuration_get_field(unencrypted_record, field_identifier):
 
-    fields = decrypted_record_dict.get('fields')
+    if unencrypted_record is str:
+        unencrypted_record = json.loads(unencrypted_record)
+
+    fields = unencrypted_record.get('fields')
 
     if not fields:
         return None
 
-    found_field = next((item for item in fields if 'id' in item and item['id'] == field_id), None)
+    for field in fields:
+        if field.get('id') == field_identifier:
+            return field
 
-    return found_field
+        if field.get('type') == field_identifier:
+            return field
+
+        if field.get('label') == field_identifier:
+            return field
 
 
 def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_urlsafe):

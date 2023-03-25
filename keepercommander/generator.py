@@ -103,9 +103,12 @@ class KeeperPasswordGenerator(PasswordGenerator):
 
 class DicewarePasswordGenerator(PasswordGenerator):
     def __init__(self, number_of_rolls, word_list_file=None):   # type: (int, Optional[str]) -> None
-        self._number_of_rolls = number_of_rolls if number_of_rolls> 0 else 5
+        self._number_of_rolls = number_of_rolls if number_of_rolls > 0 else 5
+
         if word_list_file:
-            dice_path = os.path.expanduser(word_list_file)
+            dice_path = os.path.join(os.path.dirname(__file__), 'resources', word_list_file)
+            if not os.path.isfile(dice_path):
+                dice_path = os.path.expanduser(word_list_file)
         else:
             dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'diceware.wordlist.asc.txt')
         self._vocabulary = None    # type: Optional[List[str]]
@@ -124,8 +127,8 @@ class DicewarePasswordGenerator(PasswordGenerator):
                     word = words[1] if len(words) >= 2 else words[0]
                     self._vocabulary.append(word)
                     unique_words.add(word.lower())
-                if line_count < 7776 or len(unique_words) < 7776:
-                    raise Exception(f'Word list file \"{dice_path}\" is not correct. Expected at least 7776 unique words.')
+                if line_count != len(unique_words):
+                    raise Exception(f'Word list file \"{dice_path}\" contains non-unique words.')
         else:
             raise Exception(f'Word list file \"{dice_path}\" not found.')
 

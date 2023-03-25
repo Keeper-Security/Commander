@@ -30,7 +30,7 @@ from .params import KeeperParams
 from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto import breachwatch_pb2 as breachwatch_proto
 from .proto import ssocloud_pb2 as ssocloud
-from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse
+from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse, DomainPasswordRulesRequest
 
 install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
                                'Install fido2 package ' + bcolors.OKGREEN + \
@@ -147,7 +147,10 @@ class LoginV3Flow:
                 resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
-
+                if len(resp.salt) == 0:
+                    raise KeeperApiError('account-recovery-required',
+                                         'Your account requires account recovery in order to use a Master Password login method.\n' +
+                                         'Account recovery (Forgot Password) is available in the Web Vault or Enterprise Console.')
                 salt = api.get_correct_salt(resp.salt)
 
                 salt_bytes = salt.salt
@@ -305,6 +308,11 @@ class LoginV3Flow:
 
         Return True if the master password is successfully changed and False otherwise.
         """
+
+        rules_rq = DomainPasswordRulesRequest()
+        rules_rq.username = params.user
+        rules_rs = api.communicate_rest(params, rules_rq, 'authentication/get_domain_password_rules',
+                                        rs_type=proto.NewUserMinimumParams)
         try:
             print('Your Master Password has expired, you are required to change it before you can login.')
             print('')
@@ -319,10 +327,11 @@ class LoginV3Flow:
 
                 if password == password2:
                     failed_rules = []
-                    for rule in params.settings['rules']:
-                        pattern = re.compile(rule['pattern'])
+                    for i in range(len(rules_rs.passwordMatchRegex)):
+                        rule = rules_rs.passwordMatchRegex[i]
+                        pattern = re.compile(rule)
                         if not re.match(pattern, password):
-                            failed_rules.append(rule['description'])
+                            failed_rules.append(rules_rs.passwordMatchDescription[i])
                     if len(failed_rules) == 0:
                         LoginV3API.change_master_password(params, password)
                         logging.info('Password changed')
@@ -330,7 +339,7 @@ class LoginV3Flow:
                         return True
                     else:
                         for description in failed_rules:
-                            logging.warning(description)
+                            logging.warning(f'    {description}')
                 else:
                     logging.warning('Passwords do not match.')
         except KeyboardInterrupt:
@@ -611,6 +620,10 @@ class LoginV3Flow:
                 except:
                     token = ''
                     logging.info('Failed to paste from clipboard')
+            else:
+                if len(token) < 10:
+                    print(f'Unsupported menu option: {token}')
+                    token = None
             if token:
                 try:
                     if is_cloud:

@@ -56,13 +56,13 @@ alert_recipient_parser = argparse.ArgumentParser(prog='audit-alert recipient', p
 subparsers = alert_recipient_parser.add_subparsers(title='recipient actions', dest='action')
 alert_recipient_enable_parser = subparsers.add_parser('enable', help='enables recipient')
 alert_recipient_enable_parser.add_argument(
-    'recipient', metavar='RECIPIENT', help='Recipient ID or Name. Use "self" for "User who generated event"')
+    'recipient', metavar='RECIPIENT', help='Recipient ID or Name. Use "*" for "User who generated event"')
 alert_recipient_enable_parser.error = raise_parse_exception
 alert_recipient_enable_parser.exit = suppress_exit
 
 alert_recipient_disable_parser = subparsers.add_parser('disable', help='disables recipient')
 alert_recipient_disable_parser.add_argument(
-    'recipient', metavar='RECIPIENT', help='Recipient ID or Name. Use "self" for "User who generated event"')
+    'recipient', metavar='RECIPIENT', help='Recipient ID or Name. Use "*" for "User who generated event"')
 alert_recipient_disable_parser.error = raise_parse_exception
 alert_recipient_disable_parser.exit = suppress_exit
 
@@ -651,7 +651,7 @@ class AuditAlertAdd(EnterpriseCommand, AuditSettingMixin):
         if exists:
             raise CommandError('alert add', f'Alert name \"{name}\" is not unique')
 
-        last_id = max((x['id'] for x in alert_filter))
+        last_id = max((x['id'] for x in alert_filter), default=0)
         if not last_id:
             last_id = 0
         alert_id = last_id + 1

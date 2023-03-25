@@ -12,18 +12,15 @@
 # for some custom processing.
 #
 
-import getpass
-
-from keepercommander.params import KeeperParams
 from keepercommander import api
+from keepercommander.__main__ import get_params_from_config
 
-my_params = KeeperParams()
-
+my_params = get_params_from_config('config.json')
 while not my_params.user:
     my_params.user = input('User(Email): ')
-
-while not my_params.password:
-    my_params.password = getpass.getpass(prompt='Master Password: ', stream=None)
+api.login(my_params)
+if not my_params.session_token:
+    exit(1)
 
 events = []
 finished = False

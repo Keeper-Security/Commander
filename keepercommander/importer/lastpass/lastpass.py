@@ -187,6 +187,7 @@ class LastPassImporter(BaseImporter):
                 elif record.login_url == 'http://group':
                     continue
 
+            record.type = 'login'
             if account.id:
                 record.uid = account.id
             if account.name:
@@ -251,8 +252,6 @@ class LastPassImporter(BaseImporter):
                             self.populate_ssh_key(record, typed_values)
                         elif note_type == 'Software License':
                             self.populate_software_license(record, typed_values)
-                        else:
-                            record.type = 'login'
 
                     username = typed_values.pop('Username', '')
                     if username:
@@ -312,7 +311,7 @@ class LastPassImporter(BaseImporter):
                 if account.shared_folder:
                     fol.domain = account.shared_folder.name
                 if account.group:
-                    fol.path = account.group.decode('utf-8')
+                    fol.path = account.group.decode('utf-8', 'ignore')
                 record.folders = [fol]
 
             yield record

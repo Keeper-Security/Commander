@@ -9,8 +9,7 @@ import pytest
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
 from keepercommander import cli, api, vault
-from keepercommander.subfolder import BaseFolderNode
-from keepercommander.commands import recordv3
+from keepercommander.commands import recordv3, folder
 
 @pytest.mark.integration
 class TestConnectedCommands(TestCase):
@@ -33,39 +32,35 @@ class TestConnectedCommands(TestCase):
 
         params.revision = 0
         api.sync_down(params)
-        request = {
-            'command': 'record_update',
-            'delete_records': [key for key in params.record_cache.keys()]
-        }
-        api.communicate(params, request)
 
-        for shared_folder_uid in params.shared_folder_cache:
-            request = {
-                'command': 'shared_folder_update',
-                'operation': 'delete',
-                'shared_folder_uid': shared_folder_uid
-            }
-            api.communicate(params, request)
-
-        folder_uids = [x for x in params.root_folder.subfolders if params.subfolder_cache[x]['type'] == BaseFolderNode.UserFolderType]
+        folder_uids = [x for x in params.root_folder.subfolders]
         if folder_uids:
+            rmdir_cmd = folder.FolderRemoveCommand()
+            rmdir_cmd.execute(params, pattern=[x for x in params.root_folder.subfolders], force=True)
+            params.revision = 0
+            api.sync_down(params)
+
+        record_uids = [x for x in params.record_cache.keys()]
+        if record_uids:
             request = {
                 'command': 'pre_delete',
                 'objects': [
                     {
                         'from_type': 'user_folder',
                         'object_uid': x,
-                        'object_type': 'user_folder',
+                        'object_type': 'record',
                         'delete_resolution': 'unlink'
-                    } for x in folder_uids
+                    } for x in record_uids
                 ]
             }
             rs = api.communicate(params, request)
-            request = {
+            rq = {
                 'command': 'delete',
                 'pre_delete_token': rs['pre_delete_response']['pre_delete_token']
             }
-            api.communicate(params, request)
+            api.communicate(params, rq)
+            params.revision = 0
+            api.sync_down(params)
 
         request = {
             'command': 'purge_deleted_records'
@@ -84,19 +79,22 @@ class TestConnectedCommands(TestCase):
     def test_commands(self):
         params = TestConnectedCommands.params   # type: KeeperParams
         with mock.patch('builtins.input', side_effect=KeyboardInterrupt()), mock.patch('builtins.print'):
-            record_uid = cli.do_command(params,
-                'record-add --title="Record 1" --record-type=legacy login=user@keepersecurity.com password=$GEN url=https://keepersecurity.com/ cmdr:plugin=noop')
-            cli.do_command(params, 'sync-down')
+            record1_uid = cli.do_command(params,
+                'record-add --title="Record 1" --record-type=legacy login=user@company.com password=$GEN url=https://company.com/ cmdr:plugin=noop')
 
-            rec = vault.KeeperRecord.load(params, record_uid)
+            rec = vault.KeeperRecord.load(params, record1_uid)
             self.assertIsInstance(rec, vault.PasswordRecord)
             self.assertEqual(rec.get_custom_value('cmdr:plugin'), 'noop')
             old_password = rec.password
             cli.do_command(params, 'rotate -- {0}'.format(rec.record_uid))
             cli.do_command(params, 'sync-down')
-            rec = vault.KeeperRecord.load(params, record_uid)
+            rec = vault.KeeperRecord.load(params, record1_uid)
             self.assertIsInstance(rec, vault.PasswordRecord)
             self.assertNotEqual(old_password, rec.password)
+
+            record2_uid = cli.do_command(
+                params, 'record-add --title="Record 2" --record-type=login login=user@company.com password=$GEN url=https://company.com/')
+            cli.do_command(params, 'sync-down')
 
             cli.do_command(params, 'ls -l')
             cli.do_command(params, 'mkdir --user-folder "User Folder 1"')
@@ -106,14 +104,15 @@ class TestConnectedCommands(TestCase):
             cli.do_command(params, 'mkdir --user-folder "User Folder 2"')
             cli.do_command(params, 'cd /')
             cli.do_command(params, 'ln "Record 1" "Shared Folder 1"')
-            cli.do_command(params, 'mv "Record 1" "User Folder 1"')
+            cli.do_command(params, 'mv "Record 2" "User Folder 1"')
             params.revision = 0
             cli.do_command(params, 'sync-down')
-            self.assertEqual(len(params.record_cache), 1)
+            self.assertEqual(len(params.record_cache), 2)
             self.assertEqual(len(params.shared_folder_cache), 1)
 
             cli.do_command(params, 'cd "Shared Folder 1"')
             cli.do_command(params, 'append-notes --notes="Additional info" "Record 1"')
+            cli.do_command(params, f'append-notes --notes="Additional info" -- {record2_uid}')
             cli.do_command(params, 'sync-down')
             cli.do_command(params, 'cd "../User Folder 1"')
             cli.do_command(params, 'rmdir --force "User Folder 2"')
@@ -127,11 +126,12 @@ class TestConnectedCommands(TestCase):
                 try:
                     f.write(b'data')
                     f.flush()
-                    cli.do_command(params, 'cd "User Folder 1"')
-                    cli.do_command(params, 'upload-attachment --file="{0}" "Record 1"'.format(f.name))
+                    cli.do_command(params, 'cd "Shared Folder 1"')
+                    cli.do_command(params, f'upload-attachment --file="{f.name}" "Record 1"')
                     f.close()
                 finally:
                     os.remove(f.name)
+            cli.do_command(params, f'record-update --record={record2_uid} password=$GEN')
             cli.do_command(params, 'sync-down')
 
             json_text = ''
@@ -149,13 +149,15 @@ class TestConnectedCommands(TestCase):
             if len(params.shared_folder_cache) > 0:
                 self.assertEqual(len(params.shared_folder_cache), len(exported['shared_folders']))
 
-            rec = vault.KeeperRecord.load(params, record_uid)
+            cli.do_command(params, 'sync-down --force')
+            rec = vault.KeeperRecord.load(params, record1_uid)
             self.assertIsInstance(rec, vault.PasswordRecord)
             self.assertIsNotNone(rec.attachments)
             self.assertEqual(len(rec.attachments), 1)
-            cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(rec.attachments[0].id, record_uid))
+            cli.do_command(params, 'delete-attachment --name={0} -- {1}'.format(rec.attachments[0].id, record1_uid))
             cli.do_command(params, 'sync-down')
-            rec = api.get_record(params, record_uid)
+            rec = vault.KeeperRecord.load(params, record1_uid)
+            self.assertIsInstance(rec, vault.PasswordRecord)
             self.assertEqual(len(rec.attachments), 0)
 
             script_path = os.path.dirname(__file__)

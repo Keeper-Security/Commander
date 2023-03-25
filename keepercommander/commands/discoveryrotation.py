@@ -25,8 +25,7 @@ from .folder import FolderMoveCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_helper import pam_configurations_get_all, pam_configuration_get_one, \
     pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
-    pam_configuration_get_single_value_from_field_by_id, pam_configuration_get_all_values_from_field_by_id, \
-    pam_decrypt_configuration_data
+    pam_decrypt_configuration_data, pam_configuration_get_single_value_from_field
 from .pam.gateway_helper import create_gateway, find_one_gateway_by_uid_or_name
 from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
     GatewayActionRotate, \
@@ -181,7 +180,7 @@ class PAMCreateRecordRotationCommand(Command):
     pam_scheduler_new_parser = argparse.ArgumentParser(prog='pam-create-record-rotation-scheduler')
     pam_scheduler_new_parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
     pam_scheduler_new_parser.add_argument('--config',       '-c',  required=True, dest='config_uid', action='store', help='UID of the PAM Configuration.')
-    pam_scheduler_new_parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
+    pam_scheduler_new_parser.add_argument('--resource',     '-rs', required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
     pam_scheduler_new_parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     pam_scheduler_new_parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
     pam_scheduler_new_parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
@@ -242,8 +241,10 @@ class PAMCreateRecordRotationCommand(Command):
         # 3. Resource record check
 
         pam_config = pam_configuration_get_one(params, config_uid)
-        pamResourcesField = pam_configuration_get_single_value_from_field_by_id(pam_config.get('data_decrypted'), 'pamresources')
-        resources = pamResourcesField.get('resourceRef')
+
+        pam_resources = pam_configuration_get_single_value_from_field(pam_config.get('data_decrypted'), 'pamResources')
+
+        resources = pam_resources.get('resourceRef')
 
         if len(resources) > 1 and resource_uid is None:
             print(f"{bcolors.WARNING}There are more than 1 resource associated with this configuration. "
@@ -259,7 +260,7 @@ class PAMCreateRecordRotationCommand(Command):
                       f"{','.join(resources)}{bcolors.ENDC}")
                 return
         else:
-            # Means that there is only one resource
+            # Means that there is only one resource and we will use it
             resource_uid = resources[0]
 
 
@@ -630,8 +631,7 @@ class PAMConfigurationListCommand(Command):
             data_unencrypted_json_str = bytes_to_string(data_unencrypted_bytes)
             data_unencrypted_dict = json.loads(data_unencrypted_json_str)
 
-            controller_uid = pam_configuration_get_single_value_from_field_by_id(data_unencrypted_dict, 'pamcontroller')
-            resource_records = pam_configuration_get_all_values_from_field_by_id(data_unencrypted_dict, 'pamresourceref')
+            pam_resource = pam_configuration_get_single_value_from_field(data_unencrypted_dict, 'pamResources')
 
             shared_folder_parents = find_parent_top_folder(params, c['record_uid'])
 
@@ -642,8 +642,8 @@ class PAMConfigurationListCommand(Command):
                     data_unencrypted_dict.get('title'),
                     data_unencrypted_dict.get('type'),
                     f'{first_shared_folder_location.name} ({first_shared_folder_location.uid})',
-                    controller_uid,
-                    ', '.join(resource_records) if resource_records else "-",
+                    pam_resource.get('controllerUid'),
+                    ', '.join(pam_resource.get('resourceRef')) if pam_resource.get('resourceRef') else "-",
                 ]
                 if is_verbose:
                     fields_details = [f'id={f.get("id")}, type={f.get("type")}, label={f.get("label")}, value={(f.get("value"))}' for f in data_unencrypted_dict.get('fields') ]
@@ -1038,6 +1038,7 @@ class PAMRouterGetRotationInfo(Command):
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
             print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity if rri.pwdComplexity else '[not set]'}{bcolors.ENDC}")
+            print(f"Resource UID: {bcolors.OKGREEN}{base64_url_encode(rri.resourceUid) if rri.resourceUid else '[not set]'}{bcolors.ENDC}")
             print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
@@ -1132,6 +1133,7 @@ class PAMGatewayActionRotateCommand(Command):
 
         ri_rotation_setting_uid = base64_url_encode(ri.configurationUid) # Configuration on the UI is "Rotation Setting"
         ri_controller_uid = base64_url_encode(ri.controllerUid)
+        ri_resource_uid = base64_url_encode(ri.resourceUid)
 
         pam_config = pam_configuration_get_one(params, ri_rotation_setting_uid)
         pam_config_data = pam_config.get('data_decrypted')
@@ -1146,7 +1148,10 @@ class PAMGatewayActionRotateCommand(Command):
             # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
             router_controllers = list(enterprise_controllers_connected.controllers)
 
-            controller_from_config = pam_configuration_get_single_value_from_field_by_id(pam_config_data, 'pamcontroller')
+            pam_resources = pam_configuration_get_single_value_from_field(pam_config_data, 'pamResources')
+            controller_from_config = pam_resources.get('controllerUid')
+
+            controller_from_config = controller_from_config
             controller_from_config_bytes = url_safe_str_to_bytes(controller_from_config)
             connected_controller = next((ent_con_cntr for ent_con_cntr in router_controllers if
                                          ent_con_cntr == controller_from_config_bytes), None)
@@ -1176,7 +1181,8 @@ class PAMGatewayActionRotateCommand(Command):
 
         action_inputs = GatewayActionRotateInputs(record_uid=record_uid,
                                                   configuration_uid=ri_rotation_setting_uid,
-                                                  pwd_complexity_encrypted=ri_pwd_complexity_encrypted)
+                                                  pwd_complexity_encrypted=ri_pwd_complexity_encrypted,
+                                                  resource_uid=ri_resource_uid)
 
         conversation_id = GatewayAction.generate_conversation_id()
 

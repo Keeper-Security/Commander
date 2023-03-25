@@ -31,6 +31,10 @@ def is_compliance_reporting_enabled(params):
     e_licenses = enterprise.get('licenses')
     if not isinstance(e_licenses, list):
         return False
+    if len(e_licenses) == 0:
+        return False
+    if e_licenses[0].get('lic_status') == 'business_trial':
+        return True
     addon = next((a for l in e_licenses for a in l.get('add_ons', [])
                   if a.get('name') == 'compliance_report' and (a.get('enabled') or a.get('included_in_product'))), None)
     if addon is None:

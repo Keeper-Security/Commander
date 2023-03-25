@@ -1,6 +1,7 @@
 import json
 import os
 import io
+from typing import Union
 
 from unittest import TestCase, mock
 
@@ -8,7 +9,7 @@ from data_vault import get_synced_params, VaultEnvironment
 from helper import KeeperApiHelper
 
 from keepercommander import api, utils, crypto, attachment, vault
-from keepercommander.commands import recordv2, record, record_edit
+from keepercommander.commands import record, record_edit
 from keepercommander.error import CommandError
 
 
@@ -44,48 +45,56 @@ class TestRecord(TestCase):
 
     def test_add_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordAddCommand()
+        cmd = record_edit.RecordAddCommand()
 
-        with mock.patch('keepercommander.api.sync_down'):
-            KeeperApiHelper.communicate_expect(['record_add'])
-            cmd.execute(params, force=True, title='New Record')
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.api.sync_down'), \
+                mock.patch('keepercommander.record_management.add_record_to_folder') as ar:
 
-            KeeperApiHelper.communicate_expect(['record_add'])
-            cmd.execute(params, login='login', password='password', url='url', custom='name1: value 1, name2: value 2', title='New Record')
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
+            added_record = None     # type: Union[vault.PasswordRecord, vault.TypedRecord, None]
+            def artf(p, r, f):
+                nonlocal added_record
+                added_record = r
+                added_record.record_uid = utils.generate_uid()
+            ar.side_effect = artf
 
-            KeeperApiHelper.communicate_expect(['record_add'])
-            cmd.execute(params, login='login', password='password', url='url', custom=[{'name1': 'value 1', 'name2': 'value 2'}], title='New Record')
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
-
-            with mock.patch('builtins.input', return_value='Input Data'):
-                KeeperApiHelper.communicate_expect(['record_add'])
+            with self.assertRaises(CommandError):
                 cmd.execute(params, force=True, title='New Record')
-                self.assertTrue(KeeperApiHelper.is_expect_empty())
 
-    def test_add_command_check_request(self):
-        params = get_synced_params()
-        cmd = recordv2.RecordAddCommand()
+            added_record = None
+            cmd.execute(params, force=True, title='New Record', record_type='legacy',
+                        fields=['login=user@company.com', 'password=password', 'url=https://google.com/', 'AAA=BBB'])
+            self.assertIsNotNone(added_record)
+            self.assertEqual('New Record', added_record.title)
+            self.assertIsInstance(added_record, vault.PasswordRecord)
+            self.assertEqual(added_record.login, 'user@company.com')
+            self.assertEqual(added_record.password, 'password')
+            self.assertEqual(added_record.link, 'https://google.com/')
+            self.assertEqual(len(added_record.custom), 1)
+            value = added_record.get_custom_value('AAA')
+            self.assertEqual(value, 'BBB')
 
-        def check_record(rq):
-            rq['command'] = 'record_add'
-            record_key = api.decrypt_data(rq['record_key'], self.vault_env.data_key)
-            data_bytes = api.decrypt_data(rq['data'], record_key)
-            data = json.loads(data_bytes.decode('utf-8'))
-            self.assertEqual(data['title'], 'data')
-            self.assertEqual(data['title'], data['link'])
-            self.assertEqual(data['secret1'], data['secret2'])
-            self.assertEqual(len(data['custom']), 2)
-
-        with mock.patch('builtins.input', return_value='data'), mock.patch('keepercommander.api.sync_down'):
-            KeeperApiHelper.communicate_expect([check_record])
-            cmd.execute(params, custom='name1: value 1, name2: value 2')
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
+            added_record = None
+            cmd.execute(params, force=True, title='New Record', record_type='login',
+                        fields=['login=user@company.com', 'password=password', 'url=https://google.com/', 'AAA=BBB'])
+            self.assertIsNotNone(added_record)
+            self.assertEqual('New Record', added_record.title)
+            self.assertIsInstance(added_record, vault.TypedRecord)
+            field = added_record.get_typed_field('login')
+            self.assertIsNotNone(field)
+            self.assertEqual(field.get_default_value(str), 'user@company.com')
+            field = added_record.get_typed_field('password')
+            self.assertIsNotNone(field)
+            self.assertEqual(field.get_default_value(str), 'password')
+            field = added_record.get_typed_field('url')
+            self.assertIsNotNone(field)
+            self.assertEqual(field.get_default_value(str), 'https://google.com/')
+            field = added_record.get_typed_field('text', 'AAA')
+            self.assertIsNotNone(field)
+            self.assertEqual(field.get_default_value(str), 'BBB')
 
     def test_remove_command_from_root(self):
         params = get_synced_params()
-        cmd = recordv2.RecordRemoveCommand()
+        cmd = record.RecordRemoveCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
         rec = api.get_record(params, record_uid)
@@ -222,10 +231,10 @@ class TestRecord(TestCase):
 
     def test_append_notes_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordAppendNotesCommand()
+        cmd = record_edit.RecordAppendNotesCommand()
 
         record_uid = next(iter(params.subfolder_record_cache['']))
-        with mock.patch('keepercommander.api.update_record'):
+        with mock.patch('keepercommander.record_management.update_record'):
             cmd.execute(params, notes='notes', record=record_uid)
 
             with mock.patch('builtins.input', return_value='data'):
@@ -236,7 +245,7 @@ class TestRecord(TestCase):
 
     def test_download_attachment_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordDownloadAttachmentCommand()
+        cmd = record_edit.RecordDownloadAttachmentCommand()
 
         records = [x for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]
         rec = records[0]
@@ -276,55 +285,9 @@ class TestRecord(TestCase):
                 mock.patch('os.path.abspath', return_value='/file_name'):
             cmd.execute(params, record=record_uid)
 
-    def test_upload_attachment_command(self):
-        params = get_synced_params()
-        cmd = recordv2.RecordUploadAttachmentCommand()
-
-        record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
-        rec = api.get_record(params, record_uid)
-
-        with self.assertRaises(CommandError):
-            cmd.execute(params, record=rec.title)
-
-        def request_upload(rq):
-            self.assertEqual(rq['command'], 'request_upload')
-            return {
-                'file_uploads': [{
-                    'max_size': 1000000,
-                    'url': 'https://keepersecurity.com/uploads/',
-                    'success_status_code': 201,
-                    'file_id': 'ABCDEF%.2d' % x,
-                    'file_parameter': 'file',
-                    'parameters': {'a':'b'}
-                } for x in range((rq.get('file_count') or 0) + (rq.get('thumbnail_count') or 0))]
-            }
-
-        def request_http_post(url, **kwargs):
-            attachment = mock.Mock()
-            attachment.status_code = 201
-            return attachment
-
-        with mock.patch('requests.post', side_effect=request_http_post), \
-                mock.patch('builtins.open', mock.mock_open(read_data=b'data')) as m_open, \
-                mock.patch('os.path.isfile', return_value=True), \
-                mock.patch('os.path.getsize') as mock_getsize:
-
-            m_open.return_value.tell = lambda: 4
-            mock_getsize.return_value = 1000000000
-            with self.assertRaises(CommandError):
-                KeeperApiHelper.communicate_expect([request_upload])
-                cmd.execute(params, file=['file.data'], record=record_uid)
-                self.assertTrue(KeeperApiHelper.is_expect_empty())
-
-            KeeperApiHelper.communicate_expect([request_upload, 'record_update'])
-            m_open.return_value.tell = lambda: 4
-            mock_getsize.return_value = 1000
-            cmd.execute(params, file=['file.data'], record=record_uid)
-            self.assertTrue(KeeperApiHelper.is_expect_empty())
-
     def test_delete_attachment_command(self):
         params = get_synced_params()
-        cmd = recordv2.RecordDeleteAttachmentCommand()
+        cmd = record_edit.RecordDeleteAttachmentCommand()
 
         record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
         rec = api.get_record(params, record_uid)

@@ -36,7 +36,6 @@ from .commands.msp import get_mc_by_name_or_id
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
 from .params import KeeperParams
-from .recordv3 import init_recordv3_commands
 from .subfolder import BaseFolderNode
 
 stack = []
@@ -50,6 +49,7 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'Company. \nIf you are an MSP administrator then try to run `switch-to-msp` ' \
                           'command before executing this command.'
 
+command_info['server'] = 'Sets or displays current Keeper region'
 
 def display_command_help(show_enterprise=False, show_shell=False):
     headers = ['', 'Command', 'Alias', '', 'Description']
@@ -321,10 +321,9 @@ def do_command(params, command_line):
             orig_cmd = cmd
             if cmd in aliases and cmd not in commands and cmd not in enterprise_commands and cmd not in msp_commands:
                 ali = aliases[cmd]
-                if type(ali) == tuple:
+                if isinstance(ali, (tuple, list)):
                     cmd = ali[0]
-                    for i in range(1, len(ali)):
-                        args = ali[i] + ' ' + args
+                    args = ' '.join(ali[1:]) + ' ' + args
                 else:
                     cmd = ali
 
@@ -451,7 +450,8 @@ def loop(params):  # type: (KeeperParams) -> int
         versioning.welcome_print_version(params)
 
     else:
-        logging.getLogger().setLevel(logging.WARNING)
+
+        logging.getLogger().setLevel(logging.DEBUG if params.debug else logging.WARNING)
 
     if params.user:
         try:
@@ -464,17 +464,14 @@ def loop(params):  # type: (KeeperParams) -> int
             return 0
         except Exception as e:
             logging.error(e)
-
-        # add ability to manipulate w/ legacy or v3 records
-        # determined by the response from the server
-        init_recordv3_commands(params)
     else:
-        if params.server:
+        if isinstance(params.config, dict) and 'server' in params.config:
             logging.info('Current Keeper region: %s', params.server)
         else:
             logging.info('Use "server" command to change Keeper region > "server US"')
             for region in KEEPER_PUBLIC_HOSTS:
                 logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
+        logging.info('To login type: login <email>')
 
     while True:
         if params.session_token:
