@@ -102,9 +102,9 @@ class _EnterpriseLoader(object):
 
         roles = self._data_types[proto.ROLES]
         if isinstance(roles, _EnterpriseEntity):
-            users.register_link('role_id', self._data_types[proto.ROLE_TEAMS])
-            users.register_link('role_id', self._data_types[proto.ROLE_USERS])
-            users.register_link('role_id', self._data_types[proto.MANAGED_NODES])
+            roles.register_link('role_id', self._data_types[proto.ROLE_TEAMS])
+            roles.register_link('role_id', self._data_types[proto.ROLE_USERS])
+            roles.register_link('role_id', self._data_types[proto.MANAGED_NODES])
 
     @property
     def enterprise(self):
@@ -231,7 +231,7 @@ class _EnterpriseLoader(object):
                 for rk1 in rs.roleKey:
                     params.enterprise['role_keys'].append({
                         'role_id': rk1.roleId,
-                        'encrypted_key': utils.base64_url_encode(rk1.encryptedKey),
+                        'encrypted_key': rk1.encryptedKey,
                         'key_type': _to_key_type(rk1.keyType)
                     })
 
