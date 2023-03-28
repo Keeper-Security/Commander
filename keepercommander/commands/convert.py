@@ -199,7 +199,7 @@ class ConvertCommand(Command):
             rq = {
                 'command': 'sync_down',
                 'revision': 0,
-                'include': api.NON_SHARED_DATA_SCOPE + api.EXPLICIT
+                'include': ['non_shared_data', 'explicit']
             }
             rs = api.communicate(params, rq)
             nsd = {x['record_uid']: x['data'] for x in rs.get('non_shared_data', [])}

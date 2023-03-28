@@ -364,7 +364,11 @@ class LoginV3Flow:
 
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
-            params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
+            if 'encrypted_private_key' in keys:
+                params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
+                encrypted_private_key = utils.base64_url_decode(keys['encrypted_private_key'])
+                decrypted_private_key = crypto.decrypt_aes_v1(encrypted_private_key, params.data_key)
+                params.rsa_key2 = crypto.load_rsa_private_key(decrypted_private_key)
             if 'encrypted_ecc_private_key' in keys:
                 encrypted_ecc_key = utils.base64_url_decode(keys['encrypted_ecc_private_key'])
                 decrypted_ecc_key = crypto.decrypt_aes_v2(encrypted_ecc_key, params.data_key)
@@ -1311,7 +1315,7 @@ class CommonHelperMethods:
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         digest.update(shared_key)
         enc_key = digest.finalize()
-        decrypted_data = rest_api.decrypt_aes(encrypted_data, enc_key)
+        decrypted_data = crypto.decrypt_aes_v2(encrypted_data, enc_key)
         return decrypted_data
 
     @staticmethod
@@ -1414,7 +1418,7 @@ class CommonHelperMethods:
             digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
             digest.update(shared_key)
             enc_key = digest.finalize()
-            encrypted_data_key = rest_api.encrypt_aes(params.data_key, enc_key)
+            encrypted_data_key = crypto.encrypt_aes_v2(params.data_key, enc_key)
             eph_public_key = ephemeral_key2.public_key().public_bytes(serialization.Encoding.X962,
                                                                       serialization.PublicFormat.UncompressedPoint)
 

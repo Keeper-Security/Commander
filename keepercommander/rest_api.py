@@ -114,14 +114,6 @@ SERVER_PUBLIC_KEYS = {
 }   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]]
 
 
-def encrypt_aes(data, key):
-    return crypto.encrypt_aes_v2(data, key)
-
-
-def decrypt_aes(data, key):
-    return crypto.decrypt_aes_v2(data, key)
-
-
 def execute_rest(context, endpoint, payload):
     # type: (RestApiContext, str, proto.ApiRequestPayload) -> Union[bytes, dict]
     if not context.transmission_key:
@@ -145,7 +137,7 @@ def execute_rest(context, endpoint, payload):
         api_request.publicKeyId = context.server_key_id
         api_request.locale = context.locale or 'en_US'
 
-        api_request.encryptedPayload = encrypt_aes(payload.SerializeToString(), context.transmission_key)
+        api_request.encryptedPayload = crypto.encrypt_aes_v2(payload.SerializeToString(), context.transmission_key)
 
         request_data = api_request.SerializeToString()
         if endpoint.startswith('https://'):
@@ -177,7 +169,7 @@ def execute_rest(context, endpoint, payload):
 
             rs_body = rs.content
             if rs_body:
-                rs_body = decrypt_aes(rs.content, context.transmission_key)
+                rs_body = crypto.decrypt_aes_v2(rs.content, context.transmission_key)
             return rs_body
         elif rs.status_code >= 400:
             if content_type.startswith('application/json'):

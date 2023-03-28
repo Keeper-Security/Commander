@@ -946,8 +946,9 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         break
 
             for node_name in unmatched_nodes:
-                dt = {'displayname': node_name}
-                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                dt = json.dumps({'displayname': node_name})
+                encrypted_data = crypto.encrypt_aes_v1(
+                    crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                 rq = {
                     'command': 'node_add',
                     'node_id': self.get_enterprise_id(params),
@@ -1213,8 +1214,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         encrypted_data = node['encrypted_data']
                         if kwargs.get('name'):
                             dt = node['data']
-                            dt['dsplayname'] = kwargs.get('name')
-                            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                            dt['displayname'] = kwargs.get('name')
+                            data = json.dumps(dt)
+                            encrypted_data = utils.base64_url_encode(
+                                crypto.encrypt_aes_v1(data.encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                         if parent_id:
                             if is_in_chain(parent_id, node['node_id']):
                                 logging.warning('Cannot move node to itself or its children')
@@ -1340,7 +1343,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 if user_name:
                     dt['displayname'] = user_name
 
-                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                encrypted_data = utils.base64_url_encode(
+                    crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                 rq = {
                     'command': 'enterprise_user_add',
                     'enterprise_user_id': self.get_enterprise_id(params),
@@ -1511,17 +1515,18 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     for rk2 in params.enterprise['role_keys2']:
                                         if rk2['role_id'] == role_id:
                                             encrypted_key_decoded = base64.urlsafe_b64decode(rk2['role_key'] + '==')
-                                            role_key = rest_api.decrypt_aes(encrypted_key_decoded,
-                                                                            params.enterprise['unencrypted_tree_key'])
+                                            role_key = crypto.decrypt_aes_v2(
+                                                encrypted_key_decoded, params.enterprise['unencrypted_tree_key'])
                                             break
 
                                 if 'role_keys' in params.enterprise and role_key is None:
                                     for rk in params.enterprise['role_keys']:
                                         if rk['role_id'] == role_id:
+                                            encrypted_key = utils.base64_url_decode(rk['encrypted_key'])
                                             if rk['key_type'] == 'encrypted_by_data_key':
-                                                role_key = api.decrypt_data(rk['encrypted_key'], params.data_key)
+                                                role_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                                             elif rk['key_type'] == 'encrypted_by_public_key':
-                                                role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+                                                role_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
                                             break
 
                             user_pkeys = {}
@@ -1633,7 +1638,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             dt = {
                                 'displayname': user_name or user['data'].get('displayname') or ''
                             }
-                            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                            encrypted_data = utils.base64_url_encode(
+                                crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                         rq = {
                             'command': 'enterprise_user_update',
                             'enterprise_user_id': user['enterprise_user_id'],
@@ -1891,6 +1897,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             if not role_names:
                 return
 
+            tree_key = params.enterprise['unencrypted_tree_key']
             if node_id is None:
                 root_nodes = list(self.get_user_root_nodes(params))
                 if len(root_nodes) == 0:
@@ -1898,12 +1905,12 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 node_id = root_nodes[0]
 
             for role_name in role_names:
-                dt = { "displayname": role_name }
+                data = json.dumps({ "displayname": role_name }).encode('utf-8')
                 rq = {
                     "command": "role_add",
                     "role_id": self.get_enterprise_id(params),
                     "node_id": node_id,
-                    "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    "encrypted_data": utils.base64_url_encode(crypto.encrypt_aes_v1(data, tree_key)),
                     "visible_below": (kwargs.get('visible_below') == 'on') or False,
                     "new_user_inherit": (kwargs.get('new_user') == 'on') or False
                 }
@@ -2232,13 +2239,14 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     role_name = role['data'].get('displayname')
                 if not node_id:
                     node_id = role['node_id']
-                dt = { "displayname": role_name }
+                dt = json.dumps({ "displayname": role_name })
                 role_id = self.get_enterprise_id(params)
                 rq = {
                     "command": "role_add",
                     "role_id": role_id,
                     "node_id": node_id,
-                    "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    "encrypted_data": utils.base64_url_encode(
+                        crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key'])),
                     "visible_below": role.get('visible_below') or False,
                     "new_user_inherit": role.get('new_user_inherit') or False
                 }
@@ -2301,8 +2309,9 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     encrypted_data = role['encrypted_data']
                     if kwargs.get('name'):
                         role_name = kwargs.get('name').strip()
-                        dt = { "displayname": role_name }
-                        encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                        dt = json.dumps({ "displayname": role_name })
+                        encrypted_data = utils.base64_url_encode(
+                            crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                     rq = {
                         "command": "role_update",
                         "role_id": role['role_id'],
@@ -2704,7 +2713,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 team_node_id = node_id if is_new_team else item['node_id']
                 team_uid = api.generate_record_uid() if is_new_team else item['team_uid']
                 team_key = api.generate_aes_key()
-                encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
+                encrypted_team_key = crypto.encrypt_aes_v2(team_key, params.enterprise['unencrypted_tree_key'])
 
                 private_key, public_key = crypto.generate_rsa_key()
                 encrypted_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(private_key), team_key)
@@ -2960,7 +2969,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
     def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
         if not self.enterprise_private_rsa_key:
             tree_key = params.enterprise['unencrypted_tree_key']
-            key = rest_api.decrypt_aes(enterprise_priv_key, tree_key)
+            key = crypto.decrypt_aes_v2(enterprise_priv_key, tree_key)
             key = crypto.load_rsa_private_key(key)
             self.enterprise_private_rsa_key = key
         return self.enterprise_private_rsa_key
@@ -3052,7 +3061,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 master_pw_strength = 1
 
                 if sr.encryptedReportData:
-                    sri = rest_api.decrypt_aes(sr.encryptedReportData, tree_key)
+                    sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
                     data = json.loads(sri)
                 else:
                     data = {dk: 0 for dk in self.score_data_keys}
@@ -3065,21 +3074,21 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     updated_sr.revision = security_report_data_rs.asOfRevision
                     updated_sr.enterpriseUserId = sr.enterpriseUserId
                     report = json.dumps(data).encode('utf-8')
-                    updated_sr.encryptedReportData = rest_api.encrypt_aes(report, tree_key)
+                    updated_sr.encryptedReportData = crypto.encrypt_aes_v2(report, tree_key)
                     updated_security_reports.append(updated_sr)
 
                 if 'weak_record_passwords' in data:
-                    row['weak'] = data['weak_record_passwords']
+                    row['weak'] = data['weak_record_passwords'] or 0
                 if 'strong_record_passwords' in data:
-                    row['strong'] = data['strong_record_passwords']
+                    row['strong'] = data['strong_record_passwords'] or 0
                 if 'total_record_passwords' in data:
-                    row['total'] = data['total_record_passwords']
+                    row['total'] = data['total_record_passwords'] or 0
                 if 'passed_records' in data:
-                    row['passed'] = data['passed_records']
+                    row['passed'] = data['passed_records'] or 0
                 if 'at_risk_records' in data:
-                    row['at_risk'] = data['at_risk_records']
+                    row['at_risk'] = data['at_risk_records'] or 0
                 if 'ignored_records' in data:
-                    row['ignored'] = data['ignored_records']
+                    row['ignored'] = data['ignored_records'] or 0
 
                 row['medium'] = row['total'] - row['weak'] - row['strong']
                 row['unique'] = row['total'] - row['reused']
@@ -3703,7 +3712,8 @@ class DeviceApproveCommand(EnterpriseCommand):
                             keys = params.enterprise['keys']
                             try:
                                 ecc_private_key_data = utils.base64_url_decode(keys['ecc_encrypted_private_key'])
-                                ecc_private_key_data = api.decrypt_aes_plain(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
+                                ecc_private_key_data = crypto.decrypt_aes_v2(
+                                    ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
                                 private_value = int.from_bytes(ecc_private_key_data, byteorder='big', signed=False)
                                 ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
                             except Exception as e:
@@ -3723,7 +3733,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                                     digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                                     digest.update(shared_key)
                                     enc_key = digest.finalize()
-                                    data_key = api.decrypt_aes_plain(enc_data_key[65:], enc_key)
+                                    data_key = crypto.decrypt_aes_v2(enc_data_key[65:], enc_key)
                                     data_keys[key.enterpriseUserId] = data_key
                                 except Exception as e:
                                     logging.debug(e)
@@ -3749,12 +3759,13 @@ class DeviceApproveCommand(EnterpriseCommand):
                     if data_key_rs.userDataKeys:
                         for dk in data_key_rs.userDataKeys:
                             try:
-                                role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
-                                private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
+                                role_key = crypto.decrypt_aes_v2(dk.roleKey, params.enterprise['unencrypted_tree_key'])
+                                encrypted_private_key = utils.base64_url_decode(dk.privateKey)
+                                decrypted_private_key = crypto.decrypt_aes_v1(encrypted_private_key, role_key)
+                                private_key = crypto.load_rsa_private_key(decrypted_private_key)
                                 for user_dk in dk.enterpriseUserIdDataKeyPairs:
                                     if user_dk.enterpriseUserId not in data_keys:
-                                        data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
-                                        data_key = api.decrypt_rsa(data_key_str, private_key)
+                                        data_key = crypto.decrypt_rsa(user_dk.encryptedDataKey, private_key)
                                         data_keys[user_dk.enterpriseUserId] = data_key
                             except Exception as ex:
                                 logging.debug(ex)
@@ -3780,7 +3791,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                         digest.update(shared_key)
                         enc_key = digest.finalize()
-                        encrypted_data_key = rest_api.encrypt_aes(data_key, enc_key)
+                        encrypted_data_key = crypto.encrypt_aes_v2(data_key, enc_key)
                         eph_public_key = ephemeral_key.public_key().public_bytes(
                             serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
                         device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key

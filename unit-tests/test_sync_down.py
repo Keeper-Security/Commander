@@ -1,30 +1,15 @@
 from unittest import TestCase, mock
 
 from data_vault import VaultEnvironment, get_connected_params, get_sync_down_response, get_synced_params
-from helper import KeeperApiHelper
-from keepercommander.api import sync_down
-from keepercommander.proto import record_pb2
+from keepercommander.api import sync_down, crypto, utils
+from keepercommander.proto import SyncDown_pb2
 
 vault_env = VaultEnvironment()
 
 
 class TestSyncDown(TestCase):
-
-    def setUp(self):
-        self.communicate_mock = mock.patch('keepercommander.api.communicate').start()
-        self.communicate_mock.side_effect = KeeperApiHelper.communicate_command
-        self.communicate_rest = mock.patch('keepercommander.api.communicate_rest').start()
-
-    def tearDown(self):
-        mock.patch.stopall()
-
     def test_full_sync(self):
-        params = get_connected_params()
-        self.communicate_mock.side_effect = None
-        self.communicate_mock.return_value = get_sync_down_response()
-        self.communicate_rest.return_value = record_pb2.RecordTypesResponse()
-
-        sync_down(params)
+        params = get_synced_params()
 
         self.assertEqual(len(params.record_cache), 3)
         self.assertEqual(len(params.shared_folder_cache), 1)
@@ -37,16 +22,12 @@ class TestSyncDown(TestCase):
 
         records_to_delete = [x['record_uid'] for x in params.meta_data_cache.values() if x['owner']]
 
-        def sync_down_removed_records(rq):
-            self.assertEqual(rq['command'], 'sync_down')
-            return {
-                'revision': vault_env.revision + 1,
-                'removed_records': records_to_delete
-            }
-
-        KeeperApiHelper.communicate_expect([sync_down_removed_records])
-        sync_down(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
+            rs = SyncDown_pb2.SyncDownResponse()
+            rs.continuationToken = crypto.get_random_bytes(64)
+            rs.removedRecords.extend((utils.base64_url_decode(x) for x in records_to_delete))
+            mock_comm.return_value = rs
+            sync_down(params)
 
         self.assertEqual(len(params.record_cache), len_before - len(records_to_delete))
         self.assert_key_unencrypted(params)
@@ -55,16 +36,12 @@ class TestSyncDown(TestCase):
         params = get_synced_params()
         teams_to_delete = [x['team_uid'] for x in params.team_cache.values()]
 
-        def sync_down_removed_teams(rq):
-            self.assertEqual(rq['command'], 'sync_down')
-            return {
-                'revision': vault_env.revision + 1,
-                'removed_teams': teams_to_delete
-            }
-
-        KeeperApiHelper.communicate_expect([sync_down_removed_teams])
-        sync_down(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
+            rs = SyncDown_pb2.SyncDownResponse()
+            rs.continuationToken = crypto.get_random_bytes(64)
+            rs.removedTeams.extend((utils.base64_url_decode(x) for x in teams_to_delete))
+            mock_comm.return_value = rs
+            sync_down(params)
 
         self.assertEqual(len(params.record_cache), 3)
         self.assertEqual(len(params.team_cache), 0)
@@ -74,16 +51,12 @@ class TestSyncDown(TestCase):
         params = get_synced_params()
         sf_to_delete = [x['shared_folder_uid'] for x in params.shared_folder_cache.values()]
 
-        def sync_down_removed_shared_folders(rq):
-            self.assertEqual(rq['command'], 'sync_down')
-            return {
-                'revision': vault_env.revision + 1,
-                'removed_shared_folders': sf_to_delete
-            }
-
-        KeeperApiHelper.communicate_expect([sync_down_removed_shared_folders])
-        sync_down(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
+            rs = SyncDown_pb2.SyncDownResponse()
+            rs.continuationToken = crypto.get_random_bytes(64)
+            rs.removedSharedFolders.extend((utils.base64_url_decode(x) for x in sf_to_delete))
+            mock_comm.return_value = rs
+            sync_down(params)
 
         self.assertEqual(len(params.record_cache), 3)
         self.assertEqual(len(params.shared_folder_cache), 1)
@@ -92,16 +65,12 @@ class TestSyncDown(TestCase):
 
         teams_to_delete = [x['team_uid'] for x in params.team_cache.values()]
 
-        def sync_down_removed_teams(rq):
-            self.assertEqual(rq['command'], 'sync_down')
-            return {
-                'revision': vault_env.revision + 1,
-                'removed_teams': teams_to_delete
-            }
-
-        KeeperApiHelper.communicate_expect([sync_down_removed_teams])
-        sync_down(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
+            rs = SyncDown_pb2.SyncDownResponse()
+            rs.continuationToken = crypto.get_random_bytes(64)
+            rs.removedTeams.extend((utils.base64_url_decode(x) for x in teams_to_delete))
+            mock_comm.return_value = rs
+            sync_down(params)
 
         self.assertEqual(len(params.record_cache), 2)
         self.assertEqual(len(params.shared_folder_cache), 0)
@@ -113,17 +82,13 @@ class TestSyncDown(TestCase):
         teams_to_delete = [x['team_uid'] for x in params.team_cache.values()]
         sf_to_delete = [x['shared_folder_uid'] for x in params.shared_folder_cache.values()]
 
-        def sync_down_removed_teams_and_shared_folders(rq):
-            self.assertEqual(rq['command'], 'sync_down')
-            return {
-                'revision': vault_env.revision + 1,
-                'removed_shared_folders': sf_to_delete,
-                'removed_teams': teams_to_delete
-            }
-
-        KeeperApiHelper.communicate_expect([sync_down_removed_teams_and_shared_folders])
-        sync_down(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
+            rs = SyncDown_pb2.SyncDownResponse()
+            rs.continuationToken = crypto.get_random_bytes(64)
+            rs.removedTeams.extend((utils.base64_url_decode(x) for x in teams_to_delete))
+            rs.removedSharedFolders.extend((utils.base64_url_decode(x) for x in sf_to_delete))
+            mock_comm.return_value = rs
+            sync_down(params)
 
         self.assertEqual(len(params.record_cache), 2)
         self.assertEqual(len(params.shared_folder_cache), 0)

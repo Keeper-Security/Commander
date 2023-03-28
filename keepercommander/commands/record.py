@@ -776,7 +776,7 @@ class TrashMixin:
                             if key_type == 1:
                                 record_key = crypto.decrypt_aes_v1(record_key, params.data_key)
                             elif key_type == 2:
-                                record_key = api.decrypt_rsa(record_key, params.rsa_key)
+                                record_key = crypto.decrypt_rsa(record_key, params.rsa_key2)
                             elif key_type == 3:
                                 record_key = crypto.decrypt_aes_v2(record_key, params.data_key)
                             elif key_type == 4:

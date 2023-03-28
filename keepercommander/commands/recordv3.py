@@ -329,7 +329,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 }
                 file['data_unencrypted'] = file_data
                 rdata = json.dumps(file_data).encode('utf-8')
-                rdata = api.encrypt_aes_plain(rdata, file['record_key'])
+                rdata = crypto.encrypt_aes_v2(rdata, file['record_key'])
                 file['data'] = rdata
                 files.append(file)
             else:
@@ -341,7 +341,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             def IV_LEN(): return 12
             def GCM_TAG_LEN(): return 16
             encrypted_file_size = IV_LEN() + file['size'] + GCM_TAG_LEN() # size of the encrypted file, not original file
-            attachment_record_key = api.encrypt_aes_plain(file['record_key'], params.data_key)
+            attachment_record_key = crypto.encrypt_aes_v2(file['record_key'], params.data_key)
             record_link_key = crypto.encrypt_aes_v2(file['record_key'], record_key)
 
             rf = records.File()
@@ -436,7 +436,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
 
             sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
             sf = params.shared_folder_cache[sh_uid]
-            rq['folder_key'] = api.encrypt_aes_plain(record_key, sf['shared_folder_key_unencrypted'])
+            rq['folder_key'] = crypto.encrypt_aes_v2(record_key, sf['shared_folder_key_unencrypted'])
             if 'key_type' not in sf:
                 if 'teams' in sf:
                     for team in sf['teams']:
