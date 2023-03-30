@@ -14,7 +14,6 @@ import os
 from typing import Optional
 
 from keepercommander import api
-from keepercommander.__main__ import get_params_from_config
 from keepercommander.commands.enterprise import UserReportCommand, SecurityAuditReportCommand
 from keepercommander.params import KeeperParams
 
@@ -23,7 +22,7 @@ def create_user_report(params):  # type: (KeeperParams) -> Optional[str]
     user_report = UserReportCommand()
     user_report_data = user_report.execute(params, format='json')
     data = json.loads(user_report_data)
-    users = {x['email']:x for x in data}
+    users = {x['email']: x for x in data}
     security_audit_report = SecurityAuditReportCommand()
     security_audit_report_data = security_audit_report.execute(params, format='json')
     if security_audit_report_data:
@@ -83,6 +82,7 @@ def get_params():
 
 
 if __name__ == '__main__':
+    from keepercommander.__main__ import get_params_from_config
     my_params = get_params_from_config(os.path.join(os.path.dirname(__file__), 'config.json'))
 
     if my_params.user:

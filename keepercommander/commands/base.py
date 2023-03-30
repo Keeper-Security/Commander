@@ -178,7 +178,7 @@ def is_json_value_field(obj):
     return True
 
 
-WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url'}
+WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim'}
 
 
 def field_to_title(field):   # type: (str) -> str
