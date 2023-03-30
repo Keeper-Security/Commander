@@ -3069,17 +3069,17 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     updated_security_reports.append(updated_sr)
 
                 if 'weak_record_passwords' in data:
-                    row['weak'] = data['weak_record_passwords']
+                    row['weak'] = data.get('weak_record_passwords') or 0
                 if 'strong_record_passwords' in data:
-                    row['strong'] = data['strong_record_passwords']
+                    row['strong'] = data.get('strong_record_passwords') or 0
                 if 'total_record_passwords' in data:
-                    row['total'] = data['total_record_passwords']
+                    row['total'] = data.get('total_record_passwords') or 0
                 if 'passed_records' in data:
-                    row['passed'] = data['passed_records']
+                    row['passed'] = data.get('passed_records') or 0
                 if 'at_risk_records' in data:
-                    row['at_risk'] = data['at_risk_records']
+                    row['at_risk'] = data.get('at_risk_records') or 0
                 if 'ignored_records' in data:
-                    row['ignored'] = data['ignored_records']
+                    row['ignored'] = data.get('ignored_records') or 0
 
                 row['medium'] = row['total'] - row['weak'] - row['strong']
                 row['unique'] = row['total'] - row['reused']

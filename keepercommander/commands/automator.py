@@ -18,13 +18,13 @@ from typing import Optional
 from .. import api, crypto, utils
 from ..params import KeeperParams
 
-from .base import GroupCommand, dump_report_data
+from .base import GroupCommand, dump_report_data, report_output_parser, field_to_title
 from .enterprise import EnterpriseCommand
 
 from ..proto import automator_pb2 as automator_proto
 from ..proto import ssocloud_pb2 as ssocloud
 
-automator_list_parser = argparse.ArgumentParser(prog='automator-list')
+automator_list_parser = argparse.ArgumentParser(prog='automator-list', parents=[report_output_parser])
 
 automator_view_parser = argparse.ArgumentParser(prog='automator-view')
 automator_view_parser.add_argument('target', help='Automator ID or Name.')
@@ -99,15 +99,18 @@ class AutomatorMixin(object):
         return '{0}={1}'.format(setting.settingTag, setting.settingValue or '')
 
     @staticmethod
-    def dump_automators(params):  # type: (KeeperParams) -> None
+    def dump_automators(params, fmt=None, filename=None):
+        # type: (KeeperParams, Optional[str], Optional[str]) -> None
         table = []
-        headers = ['ID', 'Name', 'Enabled', 'URL', 'Skills']
+        headers = ['id', 'name', 'enabled', 'url', 'skills']
+        if fmt and fmt != 'json':
+            headers = [field_to_title(x) for x in headers]
         if params.automators:
             for info in params.automators:
                 row = [info.automatorId, info.name, info.enabled, info.url,
                        [AutomatorMixin.skill_to_name(x.skillType) for x in info.automatorSkills]]
                 table.append(row)
-        dump_report_data(table, headers=headers)
+        return dump_report_data(table, headers=headers, fmt=fmt, filename=filename)
 
     @staticmethod
     def dump_automator(endpoint, status=False):    # type: (automator_proto.AutomatorInfo, bool) -> None
@@ -190,19 +193,19 @@ class AutomatorMixin(object):
 
 
 class AutomatorListCommand(EnterpriseCommand, AutomatorMixin):
-    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+    def get_parser(self):
         return automator_list_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+    def execute(self, params, **kwargs):
         self.ensure_loaded(params, True)
-        self.dump_automators(params)
+        return self.dump_automators(params, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
 
 class AutomatorViewCommand(EnterpriseCommand, AutomatorMixin):
-    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+    def get_parser(self):
         return automator_view_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+    def execute(self, params, **kwargs):
         automator = self.find_automator(params, kwargs.get('target'))
 
         rq = automator_proto.AdminGetAutomatorRequest()

@@ -19,9 +19,8 @@ import logging
 import re
 import time
 from typing import Optional, Dict, Iterable, Any, Set
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlunparse
 
-import requests
 from tabulate import tabulate
 
 from . import base
@@ -33,7 +32,7 @@ from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions
-from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
+from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path
 from ..loginv3 import LoginV3API
 
 
@@ -139,12 +138,6 @@ record_permission_parser.add_argument('-d', '--can-edit', dest='can_edit', actio
 record_permission_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or folder UID')
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
-
-file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments.')
-file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
-                                help='Try downloading every attachment you have access to.')
-file_report_parser.error = raise_parse_exception
-file_report_parser.exit = suppress_exit
 
 
 find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.')
@@ -1584,54 +1577,6 @@ class RecordPermissionCommand(Command):
                     logging.info('')
 
                 params.sync_data = True
-
-
-class FileReportCommand(Command):
-    def get_parser(self):
-        return file_report_parser
-
-    def execute(self, params, **kwargs):
-        headers = ['#', 'Title', 'Record UID', 'File ID']
-        if kwargs.get('try_download'):
-            headers.append('Downloadable')
-        table = []
-        for record_uid in params.record_cache:
-            r = api.get_record(params, record_uid)
-            if not r.attachments:
-                continue
-            file_ids = {}
-            for atta in r.attachments:
-                file_id = atta.get('id')
-                file_ids[file_id] = ''
-            if kwargs.get('try_download'):
-                ids = [x for x in file_ids]
-                rq = {
-                    'command': 'request_download',
-                    'file_ids': ids,
-                }
-                api.resolve_record_access_path(params, r.record_uid, path=rq)
-                logging.info('Downloading attachments for record %s', r.title)
-                try:
-                    rs = api.communicate(params, rq)
-                    urls = {}
-                    for file_id, dl in zip(ids, rs['downloads']):
-                        if 'url' in dl:
-                            urls[file_id] = dl['url']
-                        elif 'error_code' in dl:
-                            file_ids[file_id] = dl['error_code']
-                    for file_id in urls:
-                        url = urls[file_id]
-                        opt_rs = requests.get(url, proxies=params.rest_context.proxies, headers={"Range": "bytes=0-1"})
-                        file_ids[file_id] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
-                except Exception as e:
-                    logging.debug(e)
-            for file_id in file_ids:
-                row = [len(table) + 1, r.title, r.record_uid, file_id]
-                if kwargs.get('try_download'):
-                    row.append(file_ids[file_id] or '-')
-                table.append(row)
-
-        dump_report_data(table, headers)
 
 
 class FindDuplicateCommand(Command):

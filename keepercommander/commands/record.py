@@ -29,7 +29,7 @@ from ..proto import enterprise_pb2, record_pb2
 from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode, get_folder_uid, \
     find_parent_top_folder
 from ..team import Team
-from . import record_edit, base, record_totp
+from . import record_edit, base, record_totp, record_file_report
 
 
 def register_commands(commands):
@@ -50,6 +50,7 @@ def register_commands(commands):
     commands['upload-attachment'] = record_edit.RecordUploadAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
     commands['totp'] = record_totp.TotpCommand()
+    commands['file-report'] = record_file_report.RecordFileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -118,8 +119,8 @@ list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
 
 
-record_history_parser = argparse.ArgumentParser(
-    prog='history', description='Show the history of a record modifications.')
+record_history_parser = argparse.ArgumentParser(prog='history', parents=[base.report_output_parser],
+                                                description='Show the history of a record modifications.')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
     help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
@@ -1162,15 +1163,17 @@ class RecordHistoryCommand(Command, RecordMixin):
                 return
 
             if action == 'list':
-                headers = ['Version', 'Modified By', 'Time Modified']
+                fmt = kwargs.get('format') or ''
+                headers = ['version', 'modified_by', 'time_modified']
+                if fmt != 'json':
+                    headers = [base.field_to_title(x) for x in headers]
                 rows = []
                 for i, version in enumerate(history):
                     dt = None
                     if 'client_modified_time' in version:
                         dt = datetime.datetime.fromtimestamp(int(version['client_modified_time'] / 1000.0))
                     rows.append([f'V.{length-i}' if i > 0 else 'Current', version.get('user_name') or '', dt])
-                base.dump_report_data(rows, headers, title='Record History')
-                return
+                return base.dump_report_data(rows, headers, fmt=fmt, filename=kwargs.get('output'))
 
             revision = kwargs.get('revision') or 0
             if revision < 0 or revision >= length:
