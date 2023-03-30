@@ -127,7 +127,7 @@ class _EnterpriseLoader(object):
                     if len(encrypted_tree_key) == 60:
                         self._enterprise._tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, params.msp_tree_key)
                     else:
-                        self._enterprise._tree_key = crypto.decrypt_rsa(rs.treeKey.treeKey, params.rsa_key2)
+                        self._enterprise._tree_key = crypto.decrypt_rsa(encrypted_tree_key, params.rsa_key2)
                 params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
 
             keys = {}    # type: Dict[str, str]
