@@ -1242,12 +1242,13 @@ class MSPCopyRoleCommand(EnterpriseCommand):
                     dst_role_id = dst_roles[0]['role_id']
                 else:
                     dst_role_id = self.get_enterprise_id(mc_params)
-                    dt = { "displayname": role_name }
+                    dt = json.dumps({ "displayname": role_name })
                     mc_rqs.append({
                         "command": 'role_add',
                         "role_id": dst_role_id,
                         "node_id": node_id,
-                        "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), mc_params.enterprise['unencrypted_tree_key']),
+                        "encrypted_data": utils.base64_url_encode(
+                            crypto.encrypt_aes_v1(dt.encode('utf-8'), mc_params.enterprise['unencrypted_tree_key'])),
                         "visible_below": role.get('visible_below', True),
                         "new_user_inherit": role.get('new_user_inherit',  False)
                     })

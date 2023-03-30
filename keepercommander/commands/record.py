@@ -17,7 +17,7 @@ import itertools
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
+from typing import Dict, Any, List, Optional, Tuple, Set, Union, Iterable
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -169,7 +169,7 @@ rm_parser.add_argument('record', nargs='?', type=str, action='store', help='reco
 
 
 def find_record(params, record_name, types=None):
-    # type: (KeeperParams, str, Optional[Iterator[str]]) -> vault.KeeperRecord
+    # type: (KeeperParams, str, Optional[Iterable[str]]) -> vault.KeeperRecord
     if not record_name:
         raise Exception(f'Record name cannot be empty.')
 
@@ -776,7 +776,7 @@ class TrashMixin:
                             if key_type == 1:
                                 record_key = crypto.decrypt_aes_v1(record_key, params.data_key)
                             elif key_type == 2:
-                                record_key = api.decrypt_rsa(record_key, params.rsa_key)
+                                record_key = crypto.decrypt_rsa(record_key, params.rsa_key2)
                             elif key_type == 3:
                                 record_key = crypto.decrypt_aes_v2(record_key, params.data_key)
                             elif key_type == 4:

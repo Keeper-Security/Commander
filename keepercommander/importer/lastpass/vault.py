@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 from tempfile import mkdtemp
+from typing import Optional
 
 from . import fetcher
 from . import parser
@@ -72,7 +73,7 @@ class Vault(object):
         accounts = []
 
         key = encryption_key
-        rsa_private_key = None
+        rsa_private_key = None   # type: Optional[bytes]
         shared_folder = None
 
         for i in chunks:

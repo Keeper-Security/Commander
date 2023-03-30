@@ -526,7 +526,8 @@ class GroupCommand(CliCommand):
         self._aliases = {}         # type: dict[str, str]
         self.default_verb = ''
 
-    def register_command(self, verb, command, description=None, alias=None):   # type: (any, Command, str) -> None
+    def register_command(self, verb, command, description=None, alias=None):
+        # type: (Any, Command, Optional[str], Optional[str]) -> None
         verb = verb.lower()
         self._commands[verb] = command
         if not description:

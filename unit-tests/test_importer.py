@@ -54,12 +54,14 @@ class TestImporterUtils(TestCase):
             nonlocal json_text
             return json_text
 
-        with mock.patch('keepercommander.api.sync_down'), mock.patch('builtins.open', mock.mock_open()) as m_open:
+        with mock.patch('keepercommander.sync_down.sync_down'), mock.patch('builtins.open', mock.mock_open()) as m_open:
             m_open.return_value.write = mock_write
             cmd_export.execute(params_export, format='json', name='json')
 
-        with mock.patch('keepercommander.api.sync_down'), mock.patch('builtins.open', mock.mock_open()) as m_open, \
-                mock.patch('keepercommander.importer.imp_exp.execute_import_folder_record', return_value=([], [])):
+        with mock.patch('keepercommander.sync_down.sync_down'), \
+                mock.patch('builtins.open', mock.mock_open()) as m_open, \
+                mock.patch('keepercommander.importer.imp_exp.execute_import_folder_record', return_value=([], [])), \
+                mock.patch('keepercommander.importer.imp_exp.execute_records_add', return_value=[]):
             m_open.return_value.read = mock_read
             self.communicate_mock.side_effect = None
             self.communicate_mock.return_value = {

@@ -1,20 +1,21 @@
-import os
 import base64
 import json
-import copy
-
+import os
+from typing import List, Union, Optional, Dict
 from unittest import mock
 
-from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES
-from keepercommander import rest_api, api, params, record, shared_folder, team, crypto, utils
-from keepercommander.proto import record_pb2
+from Cryptodome.PublicKey import RSA
+
+from keepercommander import api, params, shared_folder, team, crypto, utils, vault, vault_extensions, record_facades
+from keepercommander.proto import record_pb2, SyncDown_pb2
 
 _USER_NAME = 'unit.test@company.com'
 _USER_PASSWORD = base64.b64encode(os.urandom(8)).decode('utf-8').strip('=')
 _USER_ITERATIONS = 1000
 _USER_SALT = os.urandom(16)
-_USER_DATA_KEY = os.urandom(32)
+_USER_DATA_KEY = utils.generate_aes_key()
+_USER_ACCOUNT_UID = utils.generate_uid()
 
 _SESSION_TOKEN = base64.urlsafe_b64encode(os.urandom(64)).decode('utf-8').strip('=')
 _DEVICE_ID = os.urandom(64)
@@ -25,12 +26,12 @@ _2FA_DEVICE_TOKEN = base64.urlsafe_b64encode(os.urandom(32)).decode('utf-8').str
 _private_key, _public_key = crypto.generate_rsa_key()
 
 _DER_PRIVATE_KEY = crypto.unload_rsa_private_key(_private_key)
-_ENCRYPTED_PRIVATE_KEY = api.encrypt_aes(_DER_PRIVATE_KEY, _USER_DATA_KEY)
+_ENCRYPTED_PRIVATE_KEY = utils.base64_url_encode(crypto.encrypt_aes_v1(_DER_PRIVATE_KEY, _USER_DATA_KEY))
 
 _IMPORTED_PUBLIC_KEY = crypto.unload_rsa_public_key(_public_key)
 
 _V2_DERIVED_KEY = crypto.derive_keyhash_v2('data_key', _USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
-_dk = rest_api.encrypt_aes(_USER_DATA_KEY, _V2_DERIVED_KEY)
+_dk = crypto.encrypt_aes_v2(_USER_DATA_KEY, _V2_DERIVED_KEY)
 _ENCRYPTED_DATA_KEY = base64.urlsafe_b64encode(_dk).decode('utf-8').strip()
 
 _V1_DERIVED_KEY = crypto.derive_keyhash_v1(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
@@ -73,238 +74,250 @@ def get_connected_params():
     p.iterations = _USER_ITERATIONS
     p.salt = _USER_SALT
     p.data_key = _USER_DATA_KEY
+    p.account_uid_bytes = utils.base64_url_decode(_USER_ACCOUNT_UID)
 
     p.auth_verifier = utils.base64_url_encode(utils.create_auth_verifier(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS))
     p.rsa_key = RSA.importKey(_DER_PRIVATE_KEY)
+    p.rsa_key2 = crypto.load_rsa_private_key(_DER_PRIVATE_KEY)
     p.session_token = _SESSION_TOKEN
     return p
 
 
+def get_sync_down_responses(p, request, endpoint, rs_type):
+    if endpoint == 'vault/sync_down':
+        return get_sync_down_response()
+    elif endpoint == 'vault/get_record_types':
+        content = json.dumps({
+            "$id": "login",
+            "categories": ["login"],
+            "description": "Login template",
+            "fields": [
+                {"$ref": "login"},
+                {"$ref": "password"},
+                {"$ref": "url"},
+                {"$ref": "fileRef"},
+                {"$ref": "oneTimeCode"}
+            ]
+        })
+        rs = record_pb2.RecordTypesResponse()
+        rt = record_pb2.RecordType()
+        rt.recordTypeId = 1
+        rt.content = content
+        rt.scope = record_pb2.RT_STANDARD
+        rs.recordTypes.append(rt)
+        rs.standardCounter = 1
+        return rs
+    raise NotImplementedError()
+
 def get_synced_params():
     p = get_connected_params()
-    with mock.patch('keepercommander.api.communicate') as mock_comm, mock.patch('keepercommander.api.communicate_rest') as mock_rest:
-        mock_comm.return_value = get_sync_down_response()
-        mock_rest.return_value = record_pb2.RecordTypesResponse()
+    with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
+        mock_comm.side_effect = get_sync_down_responses
         api.sync_down(p)
-
-    p.record_type_cache[1] = json.dumps({
-        "$id": "login",
-        "categories": ["login"],
-        "description": "Login template",
-        "fields": [
-            {"$ref": "login"},
-            {"$ref": "password"},
-            {"$ref": "url"},
-            {"$ref": "fileRef"},
-            {"$ref": "oneTimeCode"}
-        ]
-    })
     return p
 
 
 _REVISION = 100
-_RECORDS = []
-_RECORD_METADATA = []
-_SHARED_FOLDERS = []
-_USER_FOLDERS = []
-_USER_FOLDER_RECORDS = []
-_USER_FOLDER_SHARED_FOLDER = []
-_TEAMS = []
+_RECORDS = []                     # type: List[SyncDown_pb2.Record]
+_RECORD_METADATA = []             # type: List[SyncDown_pb2.RecordMetaData]
+_SHARED_FOLDERS = []              # type: List[SyncDown_pb2.SharedFolder]
+_SHARED_FOLDER_USERS = []         # type: List[SyncDown_pb2.SharedFolderUser]
+_SHARED_FOLDER_TEAMS = []         # type: List[SyncDown_pb2.SharedFolderTeam]
+_SHARED_FOLDER_RECORDS = []       # type: List[SyncDown_pb2.SharedFolderRecord]
+_USER_FOLDERS = []                # type: List[SyncDown_pb2.UserFolder]
+_USER_FOLDER_RECORDS = []         # type: List[SyncDown_pb2.UserFolderRecord]
+_USER_FOLDER_SHARED_FOLDER = []   # type: List[SyncDown_pb2.UserFolderSharedFolder]
+_TEAMS = []                       # type: List[SyncDown_pb2.Team]
 
 
-def get_sync_down_response():
-    return {
-        'result': 'success',
-        'result_code': '',
-        'message': '',
-        'full_sync': True,
-        'revision': _REVISION,
-        'records': copy.deepcopy(_RECORDS),
-        'record_meta_data': copy.deepcopy(_RECORD_METADATA),
-        'shared_folders': copy.deepcopy(_SHARED_FOLDERS),
-        'teams': copy.deepcopy(_TEAMS),
-        'user_folders': copy.deepcopy(_USER_FOLDERS),
-        'user_folder_records': copy.deepcopy(_USER_FOLDER_RECORDS),
-        'user_folder_shared_folders': copy.deepcopy(_USER_FOLDER_SHARED_FOLDER),
-    }
+def get_sync_down_response():    # type: () -> SyncDown_pb2.SyncDownResponse
+    response = SyncDown_pb2.SyncDownResponse()
+    response.continuationToken = crypto.get_random_bytes(64)
+    response.hasMore = False
+    response.cacheStatus = SyncDown_pb2.CLEAR
+    response.teams.extend(_TEAMS)
+    response.userFolders.extend(_USER_FOLDERS)
+    response.sharedFolders.extend(_SHARED_FOLDERS)
+    response.sharedFolderUsers.extend(_SHARED_FOLDER_USERS)
+    response.sharedFolderTeams.extend(_SHARED_FOLDER_TEAMS)
+    response.sharedFolderRecords.extend(_SHARED_FOLDER_RECORDS)
+    response.records.extend(_RECORDS)
+    response.recordMetaData.extend(_RECORD_METADATA)
+    response.userFolderRecords.extend(_USER_FOLDER_RECORDS)
+    response.userFolderSharedFolders.extend(_USER_FOLDER_SHARED_FOLDER)
+
+    return response
 
 
-def register_record(record, key_type=None):
-    # type: (record.Record, int or None) -> bytes
-    data = {
-        'title': record.title or '',
-        'secret1': record.login or '',
-        'secret2': record.password or '',
-        'link': record.login_url or '',
-        'notes': record.notes or '',
-        'custom': record.custom_fields or '',
-        'folder': record.folder or ''
-    }
+def register_record(rec, key_type=None):
+    # type: (Union[vault.PasswordRecord, vault.TypedRecord], Optional[int]) -> bytes
 
-    extra = None
-    udata = None
-    if record.attachments:
-        extra = {
-            'files': record.attachments
-        }
-        udata = {
-            'file_id': [x['id'] for x in record.attachments]
-        }
+    extra = None   # type: Optional[dict]
+    udata = None   # type: Optional[dict]
+    if isinstance(rec, vault.PasswordRecord):
+        data = vault_extensions.extract_password_record_data(rec)
+        extra = vault_extensions.extract_password_record_extras(rec, None)
+        if rec.attachments:
+            udata = {'file_id': [x.id for x in rec.attachments]}
+    elif isinstance(rec, vault.TypedRecord):
+        data = vault_extensions.extract_typed_record_data(rec)
+    else:
+        raise Exception('Unsupported record type')
 
-    record_key = api.generate_aes_key() if key_type != 0 else _USER_DATA_KEY
-    rec_object = {
-        'record_uid': record.record_uid,
-        'revision': record.revision if (0 < record.revision <= _REVISION) else _REVISION,
-        'version': 2 if key_type != 0 else 1,
-        'shared': key_type not in [0, 1],
-        'data': api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key),
-    }
-    if extra:
-        rec_object['extra'] = api.encrypt_aes(json.dumps(extra).encode('utf-8'), record_key)
-    if udata:
-        rec_object['udata'] = udata
+    record_key = utils.generate_aes_key() if key_type != 0 else _USER_DATA_KEY
+
+    rec_object = SyncDown_pb2.Record()
+    rec_object.recordUid = utils.base64_url_decode(rec.record_uid)
+    rec_object.revision = rec.revision if (0 < rec.revision <= _REVISION) else _REVISION
+    rec_object.version = 2 if isinstance(rec, vault.PasswordRecord) else 3
+    rec_object.shared = key_type not in [0, 1]
+    rec_object.clientModifiedTime = utils.current_milli_time()
+    if isinstance(rec, vault.PasswordRecord):
+        rec_object.data = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), record_key)
+        if extra:
+            rec_object.extra = crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), record_key)
+        if udata:
+            rec_object.udata = json.dumps(udata)
+    else:
+        rec_object.data = crypto.encrypt_aes_v2(json.dumps(data).encode('utf-8'), record_key)
 
     _RECORDS.append(rec_object)
 
-    meta_data = {
-        'record_uid': record.record_uid,
-        'owner': key_type in [0, 1],
-        'can_share': key_type == 1,
-        'can_edit': key_type == 1,
-        'record_key_type': key_type
-    }
+    if isinstance(key_type, int):
+        meta_data = SyncDown_pb2.RecordMetaData()
+        meta_data.recordUid = utils.base64_url_decode(rec.record_uid)
+        meta_data.owner = key_type in [0, 1]
+        meta_data.recordKeyType = key_type
+        meta_data.canShare = key_type == 1
+        meta_data.canEdit = key_type == 1
 
-    if key_type == 0:
-        _RECORD_METADATA.append(meta_data)
-    if key_type == 1:
-        meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, _USER_DATA_KEY))
-        _RECORD_METADATA.append(meta_data)
-    elif key_type == 2:
-        meta_data['record_key'] = utils.base64_url_encode(crypto.encrypt_rsa(record_key, _public_key))
+        if key_type == 0:
+            pass
+        if key_type == 1:
+            meta_data.recordKey = crypto.encrypt_aes_v1(record_key, _USER_DATA_KEY)
+        elif key_type == 2:
+            meta_data.recordKey = crypto.encrypt_rsa(record_key, _public_key)
+
         _RECORD_METADATA.append(meta_data)
 
     return record_key
 
 
-def register_records_to_folder(folder_uid, record_uids):
-    # type: (str or None, list) -> None
+def register_records_to_folder(folder_uid, record_uids):    # type: (Optional[str], list) -> None
     for record_uid in record_uids:
-        ufr = {
-            'record_uid': record_uid
-        }
+        ufr = SyncDown_pb2.UserFolderRecord()
+        ufr.recordUid = utils.base64_url_decode(record_uid)
         if folder_uid:
-            ufr['folder_uid'] = folder_uid
+            ufr.folderUid = utils.base64_url_decode(folder_uid)
         _USER_FOLDER_RECORDS.append(ufr)
 
 
-def register_shared_folder(shared_folder, records):
-    # type: (shared_folder.SharedFolder, dict) -> bytes
+def register_shared_folder(shared_folder, records):  # type: (shared_folder.SharedFolder, Dict[str, bytes]) -> bytes
+    shared_folder_key = utils.generate_aes_key()
 
-    shared_folder_key = api.generate_aes_key()
-    sf = {
-        'shared_folder_uid': shared_folder.shared_folder_uid,
-        'key_type': 1,
-        'shared_folder_key': api.encrypt_aes(shared_folder_key, _USER_DATA_KEY),
-        'name': api.encrypt_aes(shared_folder.name.encode('utf-8'), shared_folder_key),
-        'is_account_folder': False,
-        'manage_records': False,
-        'manage_users': False,
-        'default_manage_records': True,
-        'default_manage_users': True,
-        'default_can_edit': True,
-        'default_can_share': True,
-        'full_sync': True,
-        'records': [{
-            'record_uid': x[0],
-            'record_key': api.encrypt_aes(x[1], shared_folder_key),
-            'can_share': False,
-            'can_edit': False
-        } for x in records.items()],
-        'users': [{
-            'username': _USER_NAME,
-            'manage_records': True,
-            'manage_users': True
-        }],
-        'revision': 5
-    }
+    sf = SyncDown_pb2.SharedFolder()
+    sf.sharedFolderUid = utils.base64_url_decode(shared_folder.shared_folder_uid)
+    sf.revision = 5
+    sf.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, _USER_DATA_KEY)
+    sf.keyType = 1
+    sf.data =  crypto.encrypt_aes_v1(json.dumps({'name': shared_folder.name}).encode(), shared_folder_key)
+    sf.defaultManageRecords = True
+    sf.defaultManageUsers = True
+    sf.defaultCanEdit = True
+    sf.defaultCanReshare = True
+    sf.cacheStatus = SyncDown_pb2.CLEAR
+    sf.name = crypto.encrypt_aes_v1(shared_folder.name.encode('utf-8'), shared_folder_key)
     _SHARED_FOLDERS.append(sf)
+
+    sfu = SyncDown_pb2.SharedFolderUser()
+    sfu.sharedFolderUid = utils.base64_url_decode(shared_folder.shared_folder_uid)
+    sfu.manageRecords = True
+    sfu.manageUsers = True
+    sfu.accountUid = utils.base64_url_decode(_USER_ACCOUNT_UID)
+    _SHARED_FOLDER_USERS.append(sfu)
+
+    for record_uid, record_key in records.items():
+        sfr = SyncDown_pb2.SharedFolderRecord()
+        sfr.sharedFolderUid = utils.base64_url_decode(shared_folder.shared_folder_uid)
+        sfr.recordUid = utils.base64_url_decode(record_uid)
+        sfr.recordKey = crypto.encrypt_aes_v1(record_key, shared_folder_key)
+        sfr.canShare = False
+        sfr.canEdit = False
+        sfr.ownerAccountUid = utils.base64_url_decode(_USER_ACCOUNT_UID)
+        sfr.owner = True
+        _SHARED_FOLDER_RECORDS.append(sfr)
 
     return shared_folder_key
 
 
-def register_team(team, key_type, sfs=None):
-    # type: (team.Team, int, dict) -> bytes
-    team_key = api.generate_aes_key()
-    t = {
-        'team_uid': team.team_uid,
-        'name': team.name,
-        'team_key_type': key_type,
-        'team_key': api.encrypt_aes(team_key, _USER_DATA_KEY) if key_type == 1 else api.encrypt_rsa(team_key, _IMPORTED_PUBLIC_KEY),
-        'team_private_key': api.encrypt_aes(_DER_PRIVATE_KEY, team_key),
-        'restrict_edit': team.restrict_edit,
-        'restrict_share': team.restrict_share,
-        'restrict_view': team.restrict_view,
-    }
+def register_team(team, key_type, sfs=None):     # type: (team.Team, int, dict) -> bytes
+    public_key = crypto.load_rsa_public_key(_IMPORTED_PUBLIC_KEY)
+    team_key = utils.generate_aes_key()
+
+    t = SyncDown_pb2.Team()
+    t.teamUid = utils.base64_url_decode(team.team_uid)
+    t.name = team.name
+    t.teamKey = crypto.encrypt_aes_v1(team_key, _USER_DATA_KEY) \
+        if key_type == 1 else crypto.encrypt_rsa(team_key, public_key)
+    t.teamKeyType = key_type
+    t.restrictEdit = team.restrict_edit
+    t.restrictShare = team.restrict_share
+    t.restrictView = team.restrict_view
     _TEAMS.append(t)
 
-    if sfs:
-        t['shared_folder_keys'] = [{
-            'shared_folder_uid': x[0],
-            'key_type': 1,
-            'shared_folder_key': api.encrypt_aes(x[1], team_key)
-        } for x in sfs.items()]
+    if isinstance(sfs, dict):
+        for shared_folder_uid, shared_folder_key in sfs.items():
+            sfk = SyncDown_pb2.SharedFolderKey()
+            sfk.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+            sfk.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, team_key)
+            t.sharedFolderKeys.append(sfk)
 
-        sf_uids = set()
-        for uid in sfs:
-            sf_uids.add(uid)
-        for sf in _SHARED_FOLDERS:
-            if sf['shared_folder_uid'] in sf_uids:
-                if 'teams' not in sf:
-                    sf['teams'] = []
-                sf['teams'].append({
-                    'team_uid': team.team_uid,
-                    'name': team.name,
-                    'manage_records': key_type == 1,
-                    'manage_users': key_type == 1
-                })
+            sft = SyncDown_pb2.SharedFolderTeam()
+            sft.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+            sft.teamUid = utils.base64_url_decode(team.team_uid)
+            sft.name = team.name
+            sft.manageRecords = key_type == 1
+            sft.manageUsers = key_type == 1
+            _SHARED_FOLDER_TEAMS.append(sft)
 
     return team_key
 
 
 def generate_data():
-    r1 = record.Record()
-    r1.record_uid = api.generate_record_uid()
-    r1.folder = 'Old Folder'
+    r1 = vault.PasswordRecord()
+    r1.record_uid = utils.generate_uid()
     r1.title = 'Record 1'
     r1.login = 'user1@keepersecurity.com'
     r1.password = 'password1'
     r1.login_url = 'https://keepersecurity.com/1'
-    r1.set_field('field1', 'value1')
+    r1.set_custom_value('field1', 'value1')
     r1.notes = 'note1'
-    r1.attachments = [{
-        'name': 'Attachment 1',
-        'key': base64.urlsafe_b64encode(api.generate_aes_key()).decode('utf-8').rstrip('='),
-        'id': 'ABCDEFGH',
-        'size': 1000
-    }]
+    atta1 = vault.AttachmentFile()
+    atta1.id = 'ABCDEFGH'
+    atta1.name = 'Attachment 1'
+    atta1.key = utils.base64_url_encode(api.generate_aes_key())
+    atta1.size = 1000
+    r1.attachments = [atta1]
     r1.revision = 1
     r1_key = register_record(r1, 1)
 
-    r2 = record.Record()
-    r2.record_uid = api.generate_record_uid()
+    facade = record_facades.LoginRecordFacade()
+    r2 = vault.TypedRecord()
+    r2.record_uid = utils.generate_uid()
     r2.title = 'Record 2'
-    r2.login = 'user2@keepersecurity.com'
-    r2.password = 'password2'
-    r2.login_url = 'https://keepersecurity.com/2'
-    r2.set_field('field2', 'value2')
-    r2.notes = 'note2'
     r2.revision = 2
+    facade.record = r2
+    facade.login = 'user2@keepersecurity.com'
+    facade.password = 'password2'
+    facade.login_url = 'https://keepersecurity.com/2'
+    facade.notes = 'note2'
+    r2.custom.append(vault.TypedField.new_field('text', 'value2', 'field2'))
     r2_key = register_record(r2, 2)
 
     register_records_to_folder(None, [r1.record_uid, r2.record_uid])
 
-    r3 = record.Record()
-    r3.record_uid = api.generate_record_uid()
+    r3 = vault.PasswordRecord()
+    r3.record_uid = utils.generate_uid()
     r3.title = 'Record 3'
     r3.login = 'user3@keepersecurity.com'
     r3.password = 'password3'
@@ -313,7 +326,7 @@ def generate_data():
     r3_key = register_record(r3)
 
     sf1 = shared_folder.SharedFolder()
-    sf1.shared_folder_uid = api.generate_record_uid()
+    sf1.shared_folder_uid = utils.generate_uid()
     sf1.default_manage_records = False
     sf1.default_manage_users = False
     sf1.default_can_edit = False
@@ -323,28 +336,26 @@ def generate_data():
         r3.record_uid: r3_key
     })
     register_records_to_folder(sf1.shared_folder_uid, [r3.record_uid])
-    _USER_FOLDER_SHARED_FOLDER.append({'shared_folder_uid': sf1.shared_folder_uid})
+    ufsf = SyncDown_pb2.UserFolderSharedFolder()
+    ufsf.sharedFolderUid = utils.base64_url_decode(sf1.shared_folder_uid)
+    _USER_FOLDER_SHARED_FOLDER.append(ufsf)
 
     t1 = team.Team()
-    t1.team_uid = api.generate_record_uid()
+    t1.team_uid = utils.generate_uid()
     t1.name = 'Team 1'
     t1.restrict_edit = True
     t1.restrict_share = True
     t1.restrict_view = False
 
-    register_team(t1, 1, {
-        sf1.shared_folder_uid: sf1_key
-    })
+    register_team(t1, 1, {sf1.shared_folder_uid: sf1_key})
 
-    folder_key = api.generate_aes_key()
-    _USER_FOLDERS.append({
-        'folder_uid': api.generate_record_uid(),
-        'key_type': 1,
-        'user_folder_key': api.encrypt_aes(folder_key, _USER_DATA_KEY),
-        'revision': 200,
-        'type': 'user_folder',
-        'data': api.encrypt_aes(json.dumps({'name': 'User Folder 1'}).encode('utf-8'), folder_key)
-    })
-
+    folder_key = utils.generate_aes_key()
+    uf = SyncDown_pb2.UserFolder()
+    uf.folderUid = utils.base64_url_decode(utils.generate_uid())
+    uf.userFolderKey = crypto.encrypt_aes_v1(folder_key, _USER_DATA_KEY)
+    uf.keyType = 1
+    uf.revision = 4
+    uf.data = crypto.encrypt_aes_v1(json.dumps({'name': 'User Folder 1'}).encode('utf-8'), folder_key)
+    _USER_FOLDERS.append(uf)
 
 generate_data()

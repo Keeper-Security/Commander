@@ -19,7 +19,7 @@ import logging
 import re
 import time
 from typing import Optional, Dict, Iterable, Any, Set
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlunparse
 
 import requests
 from tabulate import tabulate
