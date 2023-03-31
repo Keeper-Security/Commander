@@ -72,7 +72,7 @@ audit_report_parser.add_argument('--created', dest='created', action='store',
                                  help='Filter: Created date. Predefined filters: '
                                       'today, yesterday, last_7_days, last_30_days, month_to_date, last_month, '
                                       'year_to_date, last_year')
-audit_report_parser.add_argument('--event-type', dest='event_type', action='store',
+audit_report_parser.add_argument('--event-type', dest='event_type', action='append',
                                  help='Filter: Audit Event Type')
 audit_report_parser.add_argument('--username', dest='username', action='store',
                                  help='Filter: Username of event originator')
@@ -1263,7 +1263,14 @@ class AuditReportCommand(Command):
             audit_filter['created'] = 'last_30_days'
 
         if 'event_type' in kwargs and kwargs['event_type']:
-            audit_filter['audit_event_type'] = self.get_filter(kwargs['event_type'], AuditReportCommand.convert_str_or_int)
+            event_types = []
+            for event_type in kwargs['event_type']:
+                event_type_filter = self.get_filter(event_type, AuditReportCommand.convert_str_or_int)
+                if isinstance(event_type_filter, list):
+                    event_types.extend(event_type_filter)
+                else:
+                    event_types.append(event_type_filter)
+            audit_filter['audit_event_type'] = event_types
         if 'username' in kwargs and kwargs['username']:
             audit_filter['username'] = self.get_filter(kwargs['username'], AuditReportCommand.convert_str)
         if 'to_username' in kwargs and kwargs['to_username']:
