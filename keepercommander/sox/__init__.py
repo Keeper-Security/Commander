@@ -59,8 +59,8 @@ def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -
     return os.path.join(path, f'sox_{enterprise_id}.db')
 
 
-def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False):
-    # type: (KeeperParams, int, bool, int, bool, bool) -> sox_data.SoxData
+def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False, shared_only=False):
+    # type: (KeeperParams, int, bool, int, bool, bool, bool) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
         def to_storage_types(user_data, username_lookup):
             def to_record_entity(record):
@@ -101,7 +101,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
                 rq = enterprise_pb2.PreliminaryComplianceDataRequest()
                 rq.enterpriseUserIds.extend(chunk)
-                rq.includeNonShared = True
+                rq.includeNonShared = not shared_only
                 has_more = True
                 while has_more:
                     rq.continuationToken = token or rq.continuationToken
@@ -133,14 +133,16 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         get_connection=lambda: sqlite3.connect(database_name), owner=params.user, database_name=database_name
     )
     last_updated = storage.last_prelim_data_update
-    refresh_data = rebuild or not last_updated or min_updated > last_updated
+    only_shared_cached = storage.shared_records_only
+    refresh_data = rebuild or not last_updated or min_updated > last_updated or only_shared_cached and not shared_only
     if refresh_data and not cache_only:
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
         sync_down(user_lookup, storage)
+        storage.set_shared_records_only(shared_only)
     return sox_data.SoxData(ec_private_key=key, storage=storage, no_cache=no_cache)
 
 
-def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False):
+def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
         def run_sync_tasks():
             async def do_tasks(return_exceptions=False):
@@ -198,6 +200,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 report_run.records.extend(raw_ruids)
                 caf = report_run.reportCriteriaAndFilter
                 caf.nodeId = node_uid
+                caf.criteria.includeNonShared = not shared_only
                 endpoint = 'enterprise/run_compliance_report'
                 return api.communicate_rest(params, rq, endpoint, rs_type=enterprise_pb2.ComplianceReportResponse)
 
@@ -325,7 +328,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
 
         run_sync_tasks()
 
-    sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated)
+    sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only)
     last_compliance_data_update = sd.storage.last_compliance_data_update
     refresh_data = rebuild or min_updated > last_compliance_data_update
     if refresh_data:
