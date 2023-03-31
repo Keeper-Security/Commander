@@ -109,9 +109,10 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 
         rebuild = kwargs.get('rebuild')
         no_cache = kwargs.get('no_cache')
+        shared_only = kwargs.get('shared')
         get_sox_data_fn = sox.get_prelim_data if self.prelim_only else sox.get_compliance_data
         fn_args = [params, enterprise_id] if self.prelim_only else [params, node_id, enterprise_id]
-        fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache}
+        fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache, 'shared_only': shared_only}
         sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         report_fmt = kwargs.get('format', 'table')
         headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
@@ -122,7 +123,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 class ComplianceReportCommand(BaseComplianceReportCommand):
     def __init__(self):
         headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url']
-        super(ComplianceReportCommand, self).__init__(headers, False)
+        super(ComplianceReportCommand, self).__init__(headers, allow_no_opts=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return default_report_parser
@@ -263,7 +264,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
 class ComplianceTeamReportCommand(BaseComplianceReportCommand):
     def __init__(self):
         headers = ['team_name', 'shared_folder_name', 'shared_folder_uid', 'permissions']
-        super(ComplianceTeamReportCommand, self).__init__(headers, True)
+        super(ComplianceTeamReportCommand, self).__init__(headers, allow_no_opts=True)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return team_report_parser
@@ -287,6 +288,10 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
 
         return report_data
 
+    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        kwargs['shared'] = True
+        return super().execute(params, **kwargs)
+
 
 class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
     def __init__(self):
@@ -297,10 +302,14 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                    'ip_address',
                    'device',
                    'last_access']
-        super(ComplianceRecordAccessReportCommand, self).__init__(headers, True, True)
+        super(ComplianceRecordAccessReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=True)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return access_report_parser
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        kwargs['shared'] = True
+        return super().execute(params, **kwargs)
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
         def get_accessed_records(user):
