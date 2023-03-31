@@ -42,7 +42,7 @@ from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from .. import api, rest_api, crypto, utils, constants
 from ..display import bcolors
-from ..error import CommandError, KeeperApiError
+from ..error import CommandError, KeeperApiError, Error
 from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ..sox.sox_types import RecordPermissions
@@ -3431,12 +3431,18 @@ class ExternalSharesReportCommand(EnterpriseCommand):
                 cmd = ShareRecordCommand()
                 for rec_uid, user_uids in get_direct_shares().items():
                     emails = [external_users.get(user_uid).email for user_uid in user_uids]
-                    cmd.execute(params, email=emails, action='revoke', record=rec_uid)
+                    try:
+                        cmd.execute(params, email=emails, action='revoke', record=rec_uid)
+                    except Error:
+                        pass
             if share_type in ('shared-folder', 'all'):
                 cmd = ShareFolderCommand()
                 for sf_uid, user_uids in get_sf_shares().items():
                     emails = [external_users.get(user_uid).email for user_uid in user_uids]
-                    cmd.execute(params, user=emails, action='remove', folder=sf_uid)
+                    try:
+                        cmd.execute(params, user=emails, action='remove', folder=sf_uid)
+                    except Error:
+                        pass
 
         def apply_action():
             if action == 'remove':
