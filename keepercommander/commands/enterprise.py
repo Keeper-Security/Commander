@@ -3385,7 +3385,7 @@ class ExternalSharesReportCommand(EnterpriseCommand):
             node_id = params.enterprise['nodes'][0].get('node_id', 0)
             enterprise_id = node_id >> 32
             now_ts = datetime.datetime.now().timestamp()
-            self.sox_data = get_compliance_data(params, node_id, enterprise_id, True, now_ts)
+            self.sox_data = get_compliance_data(params, node_id, enterprise_id, True, now_ts, False, True)
         return self.sox_data
 
     def get_parser(self):

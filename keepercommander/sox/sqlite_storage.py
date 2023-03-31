@@ -25,6 +25,7 @@ class Metadata:
         self.records_dated = 0
         self.last_pw_audit = 0
         self.compliance_data_last_update = 0
+        self.shared_records_only = False
 
 
 class SqliteSoxStorage:
@@ -159,6 +160,15 @@ class SqliteSoxStorage:
     @property
     def teams(self):  # type: () -> IEntityStorage
         return self.get_teams()
+
+    @property
+    def shared_records_only(self):
+        return self._get_history().shared_records_only
+
+    def set_shared_records_only(self, value):   # type: (bool) -> None
+        history = self._get_history()
+        history.shared_records_only = value
+        self._metadata.store(history)
 
     def clear_non_aging_data(self):
         self._records.delete_all()
