@@ -74,17 +74,19 @@ audit_report_parser.add_argument('--created', dest='created', action='store',
                                       'year_to_date, last_year')
 audit_report_parser.add_argument('--event-type', dest='event_type', action='append',
                                  help='Filter: Audit Event Type')
-audit_report_parser.add_argument('--username', dest='username', action='store',
+audit_report_parser.add_argument('--username', dest='username', action='append',
                                  help='Filter: Username of event originator')
-audit_report_parser.add_argument('--to-username', dest='to_username', action='store',
+audit_report_parser.add_argument('--to-username', dest='to_username', action='append',
                                  help='Filter: Username of event target')
 audit_report_parser.add_argument('--geo-location', dest='geo_location', action='store',
                                  help='Filter: Geo location')
+audit_report_parser.add_argument('--ip-address', dest='ip_address', action='append',
+                                 help='Filter: IP Address(es)')
 audit_report_parser.add_argument('--device-type', dest='device_type', action='store',
                                  help='Filter: Device type')
-audit_report_parser.add_argument('--record-uid', dest='record_uid', action='store',
+audit_report_parser.add_argument('--record-uid', dest='record_uid', action='append',
                                  help='Filter: Record UID')
-audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='store',
+audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='append',
                                  help='Filter: Shared Folder UID')
 min_opt_help = 'limit report to event-specific and local data (skips retrieval of compliance data if not in cache)'
 audit_report_parser.add_argument('--minimal', action='store_true', help=min_opt_help)
@@ -915,9 +917,10 @@ Filters                 Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. De
 --shared-folder-uid     Shared Folder UID
 --event-type            Audit Event Type.  Value is event type id or event type name
                         audit-report --report-type=dim --columns=audit_event_type
---geo-location          Geo location. 
+--geo-location          Geo location 
                         Example: "El Dorado Hills, California, US", "CH", "Munich,Bayern,DE"
                         audit-report --report-type=dim --columns=geo_location
+--ip-address            IP Address
 --device-type           Keeper device/application and optional version
                         Example: "Commander", "Web App, 16.3.4"    
                         audit-report --report-type=dim --columns=device_type                     
@@ -1272,15 +1275,47 @@ class AuditReportCommand(Command):
                     event_types.append(event_type_filter)
             audit_filter['audit_event_type'] = event_types
         if 'username' in kwargs and kwargs['username']:
-            audit_filter['username'] = self.get_filter(kwargs['username'], AuditReportCommand.convert_str)
+            usernames = set()
+            for un in kwargs['username']:
+                uns = self.get_filter(un, AuditReportCommand.convert_str)
+                if isinstance(uns, list):
+                    usernames.update(uns)
+                elif isinstance(uns, str):
+                    usernames.add(uns)
+            if len(usernames) > 0:
+                audit_filter['username'] = list(usernames)
         if 'to_username' in kwargs and kwargs['to_username']:
-            audit_filter['to_username'] = self.get_filter(kwargs['to_username'], AuditReportCommand.convert_str)
+            to_usernames = set()
+            for to_un in kwargs['to_username']:
+                to_uns = self.get_filter(to_un, AuditReportCommand.convert_str)
+                if isinstance(to_uns, list):
+                    to_usernames.update(to_uns)
+                elif isinstance(to_uns, str):
+                    to_usernames.add(to_uns)
+            if len(to_usernames) > 0:
+                audit_filter['to_username'] = list(to_usernames)
         if 'record_uid' in kwargs and kwargs['record_uid']:
-            audit_filter['record_uid'] = self.get_filter(kwargs['record_uid'], AuditReportCommand.convert_str)
+            record_uids = set()
+            for r_uid in kwargs['record_uid']:
+                r_uids = self.get_filter(r_uid, AuditReportCommand.convert_str)
+                if isinstance(r_uids, list):
+                    record_uids.update(r_uids)
+                elif isinstance(r_uids, str):
+                    record_uids.add(r_uids)
+            if len(record_uids) > 0:
+                audit_filter['record_uid'] = list(record_uids)
         if 'shared_folder_uid' in kwargs and kwargs['shared_folder_uid']:
-            audit_filter['shared_folder_uid'] = self.get_filter(kwargs['shared_folder_uid'], AuditReportCommand.convert_str)
+            shared_uids = set()
+            for sf_uid in kwargs['shared_folder_uid']:
+                sf_uids = self.get_filter(sf_uid, AuditReportCommand.convert_str)
+                if isinstance(sf_uids, list):
+                    shared_uids.update(sf_uids)
+                elif isinstance(sf_uids, str):
+                    shared_uids.add(sf_uids)
+            if len(shared_uids) > 0:
+                audit_filter['shared_folder_uid'] = list(shared_uids)
+        ip_filter = set()
         if 'geo_location' in kwargs and kwargs['geo_location']:
-            ip_filter = set()
             geo_location_comps = kwargs['geo_location'].split(',')
             country = (geo_location_comps.pop() if geo_location_comps else '').strip().lower()
             if not country:
@@ -1299,7 +1334,15 @@ class AuditReportCommand(Command):
                         continue
                 ip_filter.update(geo.get('ip_addresses'))
             if len(ip_filter) == 0:
-                raise CommandError('audit-report', "'geo_location' filter: no events")
+                raise CommandError('audit-report', "'geo_location' filter: invalid GEO location")
+        if 'ip_address' in kwargs and kwargs['ip_address']:
+            for ip_address in kwargs['ip_address']:
+                ip_addr = self.get_filter(ip_address, AuditReportCommand.convert_str)
+                if isinstance(ip_addr, list):
+                    ip_filter.update(ip_addr)
+                elif isinstance(ip_addr, str):
+                    ip_filter.add(ip_addr)
+        if len(ip_filter) > 0:
             audit_filter['ip_address'] = list(ip_filter)
         if 'device_type' in kwargs and kwargs['device_type']:
             version_filter = set()
