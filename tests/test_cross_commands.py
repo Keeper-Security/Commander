@@ -1,14 +1,13 @@
 import json
 import os
+from unittest import TestCase
 
 import pytest
 
-from keepercommander.params import KeeperParams
+from keepercommander import api, crypto, utils
+from keepercommander.commands.enterprise import EnterpriseTeamCommand, EnterpriseRoleCommand
 from keepercommander.error import KeeperApiError
-from keepercommander import api, crypto
-from keepercommander.commands.enterprise import EnterpriseTeamCommand, EnterpriseUserCommand, EnterpriseRoleCommand
-
-from unittest import TestCase
+from keepercommander.params import KeeperParams
 
 
 @pytest.mark.integration
@@ -199,7 +198,7 @@ class TestCrossEnterpriseCommands(TestCase):
         cmd = EnterpriseRoleCommand()
         ent2_node_id = cmd.get_enterprise_id(param2)
         dt = { "displayname": "Node ID" }
-        encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), param2.enterprise['unencrypted_tree_key'])
+        encrypted_data = utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), param2.enterprise['unencrypted_tree_key']))
         rq = {
             "command": "node_add",
             "node_id": ent2_node_id,
@@ -223,7 +222,8 @@ class TestCrossEnterpriseCommands(TestCase):
         cmd = EnterpriseRoleCommand()
         ent2_role_id = cmd.get_enterprise_id(param2)
         dt = { "displayname": "Role" }
-        encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), param2.enterprise['unencrypted_tree_key'])
+        encrypted_data = utils.base64_url_encode(
+            crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), param2.enterprise['unencrypted_tree_key']))
         rq = {
             "command": "role_add",
             "role_id": ent2_role_id,

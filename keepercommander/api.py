@@ -11,7 +11,6 @@
 
 import base64
 import collections
-import hashlib
 import itertools
 import json
 import logging
@@ -23,9 +22,6 @@ from datetime import datetime
 from typing import Optional, Tuple, Iterable, List, Dict, Any
 
 import google
-from Cryptodome import Random
-from Cryptodome.Cipher import AES, PKCS1_v1_5
-from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 
 from . import constants, rest_api, loginv3, utils, crypto, vault
@@ -33,13 +29,14 @@ from .display import bcolors
 from .enterprise import query_enterprise as qe
 from .error import KeeperApiError
 from .params import KeeperParams, PublicKeys, LAST_RECORD_UID
-from .proto import client_pb2, APIRequest_pb2, record_pb2 as records, enterprise_pb2
+from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
 from .record import Record
 from .recordv3 import RecordV3
 from .shared_folder import SharedFolder
 from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
 from .team import Team
 from .ttk import TTK
+from .sync_down import sync_down
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
@@ -84,12 +81,13 @@ def accept_account_transfer_consent(params):
     answer = answer.lower()
     if answer.lower() == 'accept':
         for role in params.settings['share_account_to']:
-            public_key = RSA.importKey(base64.urlsafe_b64decode(role['public_key'] + '=='))
-            transfer_key = encrypt_rsa(params.data_key, public_key)
+            encoded_public = utils.base64_url_decode(role['public_key'])
+            public_key = crypto.load_rsa_public_key(encoded_public)
+            transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
             request = {
                 'command': 'share_account',
                 'to_role_id': role['role_id'],
-                'transfer_key': transfer_key
+                'transfer_key': utils.base64_url_encode(transfer_key)
             }
             communicate(params, request)
         return True
@@ -124,68 +122,6 @@ def pad_aes_gcm(json):
     return result
 
 
-def decrypt_aes_plain(data: bytes, key: bytes):
-    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=data[:12])
-    return cipher.decrypt_and_verify(data[12:-16], data[-16:])
-
-
-def decrypt_aes(data, key):
-    # type: (str, bytes) -> bytes
-    decoded_data = base64.urlsafe_b64decode(data + '==')
-    iv = decoded_data[:16]
-    ciphertext = decoded_data[16:]
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    return cipher.decrypt(ciphertext)
-
-
-def decrypt_data(data, key):
-    # type: (str, bytes) -> bytes
-    return unpad_binary(decrypt_aes(data, key))
-
-
-def encrypt_aes_plain(data: bytes, key: bytes):
-    iv = os.urandom(12)
-    cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=iv)
-    enc_data, tag = cipher.encrypt_and_digest(data)
-    return iv + enc_data + tag
-
-
-def encrypt_aes(data, key):
-    iv = os.urandom(16)
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    encrypted_data = iv + cipher.encrypt(pad_binary(data))
-    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
-
-
-def encrypt_aes_key(key_to_encrypt, encryption_key):
-    iv = os.urandom(16)
-    cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
-    encrypted_data = iv + cipher.encrypt(key_to_encrypt)
-    return (base64.urlsafe_b64encode(encrypted_data).decode()).rstrip('=')
-
-
-def encrypt_rsa_plain(data, rsa_key):
-    cipher = PKCS1_v1_5.new(rsa_key)
-    return cipher.encrypt(data)
-
-
-def encrypt_rsa(data, rsa_public_key):
-    cipher = PKCS1_v1_5.new(rsa_public_key)
-    encrypted_data = cipher.encrypt(data)
-    return (base64.urlsafe_b64encode(encrypted_data).decode('utf-8')).rstrip('=')
-
-
-def decrypt_rsa(data, rsa_private_key):
-    decoded_key = base64.urlsafe_b64decode(data + '==')
-    # some keys might come shorter due to stripping leading 0's
-    if 250 < len(decoded_key) < 256:
-        decoded_key = bytearray(256 - len(decoded_key)) + decoded_key
-    dsize = SHA256.digest_size
-    sentinel = Random.new().read(15 + dsize)
-    cipher = PKCS1_v1_5.new(rsa_private_key)
-    return cipher.decrypt(decoded_key, sentinel)
-
-
 def decrypt_rsa_key(encrypted_private_key, data_key):
     """ Decrypt the RSA private key
     PKCS1 formatted private key, which is described by the ASN.1 type:
@@ -202,611 +138,8 @@ def decrypt_rsa_key(encrypted_private_key, data_key):
           otherPrimeInfos   OtherPrimeInfos OPTIONAL
     }
     """
-    return RSA.importKey(decrypt_data(encrypted_private_key, data_key))
-
-
-def merge_lists_on_value(list1, list2, field_name):
-    d = {x[field_name]: x for x in list1}
-    d.update({x[field_name]: x for x in list2})
-    return [x for x in d.values()]
-
-
-FOLDER_SCOPE = ['shared_folder', 'sfheaders', 'sfrecords', 'sfusers', 'teams']
-RECORD_SCOPE = ['folders', 'record', 'typed_record', 'app_record', 'sharing_changes']
-PAM_CONFIGURATION = ['pam_configuration']
-NON_SHARED_DATA_SCOPE = ['non_shared_data']
-EXPLICIT = ['explicit']
-
-
-def sync_down(params, record_types=False):
-    """Sync full or partial data down to the client"""
-
-    params.sync_data = False
-
-    if params.revision == 0:
-        logging.info('Syncing...')
-
-    includes = FOLDER_SCOPE + ['user_auth']
-    skip_records = params.config and 'skip_records' in params.config and params.config['skip_records'] is True
-    if not skip_records:
-        includes += RECORD_SCOPE + PAM_CONFIGURATION
-
-    rq = {
-        'command': 'sync_down',
-        'revision': params.revision or 0,
-        'include': includes + EXPLICIT
-    }
-    response_json = communicate(params, rq)
-
-    check_convert_to_folders = False
-
-    def delete_record_key(rec_uid):
-        if rec_uid in params.record_cache:
-            record = params.record_cache[rec_uid]
-            if 'record_key_unencrypted' in record:
-                del record['record_key_unencrypted']
-                if 'data_unencrypted' in record:
-                    del record['data_unencrypted']
-                if 'extra_unencrypted' in record:
-                    del record['extra_unencrypted']
-
-    def delete_shared_folder_key(sf_uid):
-        if sf_uid in params.shared_folder_cache:
-            shared_folder = params.shared_folder_cache[sf_uid]
-            if 'shared_folder_key_unencrypted' in shared_folder:
-                del shared_folder['shared_folder_key_unencrypted']
-                if 'records' in shared_folder:
-                    for sfr in shared_folder['records']:
-                        record_uid = sfr['record_uid']
-                        if record_uid not in params.meta_data_cache:
-                            delete_record_key(record_uid)
-
-    def delete_team_key(team_uid):
-        if team_uid in params.team_cache:
-            team = params.team_cache[team_uid]
-            if 'team_key_unencrypted' in team:
-                del team['team_key_unencrypted']
-                if 'shared_folder_keys' in team:
-                    for sfk in team['shared_folder_keys']:
-                        delete_shared_folder_key(sfk['shared_folder_uid'])
-
-    params.available_team_cache = None
-    if 'full_sync' in response_json:
-        if response_json['full_sync']:
-            check_convert_to_folders = True
-            params.record_cache.clear()
-            params.meta_data_cache.clear()
-            params.shared_folder_cache.clear()
-            params.team_cache.clear()
-            params.available_team_cache = None
-            params.subfolder_cache.clear()
-            params.subfolder_record_cache.clear()
-            params.record_history.clear()
-
-    if 'revision' in response_json:
-        logging.debug('Getting revision %d', params.revision)
-        params.revision = response_json['revision']
-
-    if 'removed_records' in response_json:
-        logging.debug('Processing removed records')
-        for record_uid in response_json['removed_records']:
-            # remove record metadata
-            if record_uid in params.meta_data_cache:
-                del params.meta_data_cache[record_uid]
-            # delete record key
-            delete_record_key(record_uid)
-            # remove record from user folders
-            for folder_uid in params.subfolder_record_cache:
-                if record_uid in params.subfolder_record_cache[folder_uid]:
-                    if folder_uid in params.subfolder_cache:
-                        folder = params.subfolder_cache[folder_uid]
-                        if folder.get('type') == 'user_folder':
-                            params.subfolder_record_cache[folder_uid].remove(record_uid)
-                    elif folder_uid == '':
-                        params.subfolder_record_cache[folder_uid].remove(record_uid)
-
-    if 'removed_teams' in response_json:
-        logging.debug('Processing removed teams')
-        for team_uid in response_json['removed_teams']:
-            delete_team_key(team_uid)
-            # remove team from shared folder
-            for shared_folder_uid in params.shared_folder_cache:
-                shared_folder = params.shared_folder_cache[shared_folder_uid]
-                if 'teams' in shared_folder:
-                    shared_folder['teams'] = [x for x in shared_folder['teams'] if x['team_uid'] != team_uid]
-            if team_uid in params.team_cache:
-                del params.team_cache[team_uid]
-
-    if 'removed_shared_folders' in response_json:
-        logging.debug('Processing removed shared folders')
-        for sf_uid in response_json['removed_shared_folders']:
-            if sf_uid in params.shared_folder_cache:
-                delete_shared_folder_key(sf_uid)
-                shared_folder = params.shared_folder_cache[sf_uid]
-                if 'shared_folder_key' in shared_folder:
-                    del shared_folder['shared_folder_key']
-                if 'key_type' in shared_folder:
-                    del shared_folder['key_type']
-                if 'users' in shared_folder:
-                    shared_folder['users'] = [x for x in shared_folder['users'] if x['username'] != params.user]
-                if 'records' in shared_folder:
-                    for r in shared_folder['records']:
-                        if 'record_uid' in r:
-                            delete_record_key(r['record_uid'])
-
-    if 'removed_links' in response_json:
-        logging.debug('Processing removed record links')
-        for link in response_json['removed_links']:
-            record_uid = link['record_uid']
-            if record_uid in params.record_cache:
-                delete_record_key(record_uid)
-                record = params.record_cache[record_uid]
-                owner_uid = link['owner_uid']
-                if 'owner_uid' in record:
-                    if record['owner_uid'] == owner_uid:
-                        del record['owner_uid']
-                        if 'link_key' in record:
-                            del record['link_key']
-
-    if 'user_folders_removed' in response_json:
-        for ufr in response_json['user_folders_removed']:
-            f_uid = ufr['folder_uid']
-            if f_uid in params.subfolder_cache:
-                del params.subfolder_cache[f_uid]
-            if f_uid in params.subfolder_record_cache:
-                del params.subfolder_record_cache[f_uid]
-
-    if 'shared_folder_folder_removed' in response_json:
-        for sffr in response_json['shared_folder_folder_removed']:
-            f_uid = sffr['folder_uid'] if 'folder_uid' in sffr else sffr['shared_folder_uid']
-            if f_uid in params.subfolder_cache:
-                del params.subfolder_cache[f_uid]
-            if f_uid in params.subfolder_record_cache:
-                del params.subfolder_record_cache[f_uid]
-
-    if 'user_folder_shared_folders_removed' in response_json:
-        for ufsfr in response_json['user_folder_shared_folders_removed']:
-            f_uid = ufsfr['shared_folder_uid']
-            if f_uid in params.subfolder_cache:
-                del params.subfolder_cache[f_uid]
-            if f_uid in params.subfolder_record_cache:
-                del params.subfolder_record_cache[f_uid]
-
-    if 'user_folders_removed_records' in response_json:
-        for ufrr in response_json['user_folders_removed_records']:
-            f_uid = ufrr.get('folder_uid') or ''
-            if f_uid in params.subfolder_record_cache:
-                rs = params.subfolder_record_cache[f_uid]
-                r_uid = ufrr['record_uid']
-                if r_uid in rs:
-                    rs.remove(r_uid)
-
-    if 'shared_folder_folder_records_removed' in response_json:
-        for sfrrr in response_json['shared_folder_folder_records_removed']:
-            f_uid = sfrrr['folder_uid'] if 'folder_uid' in sfrrr else sfrrr['shared_folder_uid']
-            if f_uid in params.subfolder_record_cache:
-                rs = params.subfolder_record_cache[f_uid]
-                r_uid = sfrrr['record_uid']
-                if r_uid in rs:
-                    rs.remove(r_uid)
-
-    # convert record keys from RSA to AES-256
-    if 'record_meta_data' in response_json:
-        logging.debug('Processing record_meta_data')
-        for meta_data in response_json['record_meta_data']:
-            try:
-                if 'record_key' not in meta_data:
-                    # old record that doesn't have a record key so make one
-                    logging.debug('...no record key.  creating...')
-                    # store as b64 encoded string
-                    # note: decode() converts bytestream (b') to string
-                    # note2: remove == from the end
-                    meta_data['record_key_unencrypted'] = os.urandom(32)
-                    meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
-                    meta_data['record_key_type'] = 1
-                    # temporary flag for decryption routine below
-                    meta_data['old_record_flag'] = True
-                    meta_data['is_converted_record_type'] = True
-
-                elif meta_data['record_key_type'] == 3:
-                    # AES256GCM-encrypted key
-                    decoded_key = base64.urlsafe_b64decode(meta_data['record_key'] + '==')
-                    key_unencrypted = decrypt_aes_plain(decoded_key, params.data_key)
-                    if len(key_unencrypted) == 32:
-                        meta_data['record_key_unencrypted'] = key_unencrypted
-
-                elif meta_data['record_key_type'] == 2:
-                    logging.debug('Converting RSA-encrypted key')
-                    # decrypt the type2 key using their RSA key
-                    key_unencrypted = decrypt_rsa(meta_data['record_key'], params.rsa_key)
-                    if len(key_unencrypted) == 32:
-                        meta_data['record_key_unencrypted'] = key_unencrypted
-                        meta_data['record_key'] = encrypt_aes(meta_data['record_key_unencrypted'], params.data_key)
-                        meta_data['record_key_type'] = 1
-                        meta_data['is_converted_record_type'] = True
-
-                elif meta_data['record_key_type'] == 1:
-                    meta_data['record_key_unencrypted'] = decrypt_data(meta_data['record_key'], params.data_key)
-
-                elif meta_data['record_key_type'] == 4:
-                    # ECIES-encrypted key
-                    decoded_key = utils.base64_url_decode(meta_data['record_key'])
-                    key_unencrypted = crypto.decrypt_ec(decoded_key, params.ecc_key)
-                    if len(key_unencrypted) == 32:
-                        meta_data['record_key_unencrypted'] = key_unencrypted
-            except Exception as e:
-                logging.debug('Decryption error: %s', e)
-
-            # add to local cache
-            if 'record_key_unencrypted' in meta_data:
-                params.meta_data_cache[meta_data['record_uid']] = meta_data
-            else:
-                logging.error('Could not decrypt meta data key: %s', meta_data['record_uid'])
-
-    if 'teams' in response_json:
-        for team in response_json['teams']:
-            try:
-                if team['team_key_type'] == 2:
-                    team['team_key_unencrypted'] = decrypt_rsa(team['team_key'], params.rsa_key)
-                else:
-                    team['team_key_unencrypted'] = decrypt_data(team['team_key'], params.data_key)
-                team['team_private_key_unencrypted'] = decrypt_rsa_key(team['team_private_key'], team['team_key_unencrypted'])
-            except:
-                logging.warning('Could not decrypt team key: %s', team.get('name'))
-                continue
-            if 'removed_shared_folders' in team:
-                for sf_uid in team['removed_shared_folders']:
-                    delete_shared_folder_key(sf_uid)
-            params.team_cache[team['team_uid']] = team
-
-    if 'shared_folders' in response_json:
-        logging.debug('Processing shared_folders')
-        for shared_folder in response_json['shared_folders']:
-            shared_folder_uid = shared_folder['shared_folder_uid']
-
-            if shared_folder_uid in params.shared_folder_cache and shared_folder.get('full_sync'):
-                logging.debug('Shared Folder full sync: %s', shared_folder_uid)
-                del params.shared_folder_cache[shared_folder_uid]
-
-            if shared_folder_uid in params.shared_folder_cache:
-                delete_shared_folder_key(shared_folder_uid)
-
-                # incremental shared folder upgrade
-                existing_sf = params.shared_folder_cache[shared_folder_uid]
-
-                existing_sf['default_can_edit'] = shared_folder['default_can_edit']
-                existing_sf['default_can_share'] = shared_folder['default_can_share']
-                existing_sf['default_manage_records'] = shared_folder['default_manage_records']
-                existing_sf['default_manage_users'] = shared_folder['default_manage_users']
-
-                if ('records_removed' in shared_folder) and ('records' in existing_sf):
-                    rrs = set(shared_folder['records_removed'])
-                    for record_uid in rrs:
-                        delete_record_key(record_uid)
-                    existing_sf['records'] = [record for record in existing_sf['records'] if record['record_uid'] not in rrs]
-
-                if ('users_removed' in shared_folder) and ('users' in existing_sf):
-                    urs = set(shared_folder['users_removed'])
-                    existing_sf['users'] = [user for user in existing_sf['users'] if user['username'] not in urs]
-
-                if ('teams_removed' in shared_folder) and ('teams' in existing_sf):
-                    trs = set(shared_folder['teams_removed'])
-                    existing_sf['teams'] = [team for team in existing_sf['teams'] if team['team_uid'] not in trs]
-
-                if 'records' in shared_folder:
-                    existing_records = existing_sf['records'] if 'records' in existing_sf else []
-                    existing_sf['records'] = merge_lists_on_value(existing_records, shared_folder['records'], 'record_uid')
-
-                if 'users' in shared_folder:
-                    existing_users = existing_sf['users'] if 'users' in existing_sf else ''
-                    existing_sf['users'] = merge_lists_on_value(existing_users, shared_folder['users'], 'username')
-
-                if 'teams' in shared_folder:
-                    existing_teams = existing_sf['teams'] if 'teams' in existing_sf else ''
-                    existing_sf['teams'] = merge_lists_on_value(existing_teams, shared_folder['teams'], 'team_uid')
-
-                existing_sf['revision'] = shared_folder['revision']
-                if 'manage_records' in shared_folder:
-                    existing_sf['manage_records'] = shared_folder['manage_records']
-                if 'manage_users' in shared_folder:
-                    existing_sf['manage_users'] = shared_folder['manage_users']
-                if 'is_account_folder' in shared_folder:
-                    existing_sf['is_account_folder'] = shared_folder['is_account_folder']
-                if 'name' in shared_folder:
-                    existing_sf['name'] = shared_folder['name']
-            else:
-                params.shared_folder_cache[shared_folder_uid] = shared_folder
-
-    if 'records' in response_json:
-        logging.debug('Processing records')
-        for record in response_json['records']:
-            params.record_cache[record['record_uid']] = record
-
-    # process team keys
-    for team_uid in params.team_cache:
-        team = params.team_cache[team_uid]
-        for sf_key in team['shared_folder_keys']:
-            if 'shared_folder_key_unencrypted' not in sf_key:
-                try:
-                    if sf_key['key_type'] == 2:
-                        sf_key['shared_folder_key_unencrypted'] = decrypt_rsa(sf_key['shared_folder_key'], team['team_private_key_unencrypted'])
-                    else:
-                        sf_key['shared_folder_key_unencrypted'] = decrypt_data(sf_key['shared_folder_key'], team['team_key_unencrypted'])
-                except Exception as e:
-                    logging.debug('Decryption error: %s', e)
-
-    # process shared folder keys
-    sf_to_delete = []
-    for shared_folder_uid in params.shared_folder_cache:
-        shared_folder = params.shared_folder_cache[shared_folder_uid]
-        if 'shared_folder_key_unencrypted' not in shared_folder:
-            if 'shared_folder_key' in shared_folder:
-                try:
-                    if shared_folder['key_type'] == 2:
-                        shared_folder['shared_folder_key_unencrypted'] = decrypt_rsa(shared_folder['shared_folder_key'], params.rsa_key)
-                    else:
-                        shared_folder['shared_folder_key_unencrypted'] = decrypt_data(shared_folder['shared_folder_key'], params.data_key)
-                except Exception as e:
-                    logging.debug('Decryption error: %s', e)
-            else:
-                if 'teams' in shared_folder:
-                    teams_to_remove = set()
-                    for to in shared_folder['teams']:
-                        team_uid = to['team_uid']
-                        if team_uid in params.team_cache:
-                            team = params.team_cache[team_uid]
-                            if 'shared_folder_keys' in team:
-                                sfk = [x for x in team['shared_folder_keys'] if x['shared_folder_uid'] == shared_folder_uid]
-                                if len(sfk) > 0:
-                                    if 'shared_folder_key_unencrypted' in sfk[0]:
-                                        shared_folder['shared_folder_key_unencrypted'] = sfk[0]['shared_folder_key_unencrypted']
-                                        break
-                        else:
-                            teams_to_remove.add(team_uid)
-                        if len(teams_to_remove) > 0:
-                            shared_folder['teams'] = [x for x in shared_folder['teams'] if x['team_uid'] not in teams_to_remove]
-
-            if 'shared_folder_key_unencrypted' in shared_folder:
-                try:
-                    shared_folder['name_unencrypted'] = decrypt_data(shared_folder['name'], shared_folder['shared_folder_key_unencrypted']).decode('utf-8')
-                except Exception as e:
-                    logging.debug('Shared folder %s name decryption error: %s', shared_folder_uid, e)
-                    shared_folder['name_unencrypted'] = shared_folder_uid
-                if 'records' in shared_folder:
-                    shared_folder_key = shared_folder['shared_folder_key_unencrypted']
-                    for sfr in shared_folder['records']:
-                        if 'record_key_unencrypted' not in sfr:
-                            try:
-                                encrypted_key = utils.base64_url_decode(sfr['record_key'])
-                                if len(encrypted_key) == 60:
-                                    decrypted_key = crypto.decrypt_aes_v2(encrypted_key, shared_folder_key)
-                                else:
-                                    decrypted_key = crypto.decrypt_aes_v1(encrypted_key, shared_folder_key)
-                                sfr['record_key_unencrypted'] = decrypted_key
-                            except Exception as e:
-                                logging.debug('Shared folder %s record key decryption error: %s', shared_folder_uid, e)
-
-            else:
-                sf_to_delete.append(shared_folder_uid)
-
-    if len(sf_to_delete) > 0:
-        for shared_folder_uid in sf_to_delete:
-            logging.debug('Delete shared folder with unresolved key: %s', shared_folder_uid)
-            del params.shared_folder_cache[shared_folder_uid]
-            if shared_folder_uid in params.subfolder_cache:
-                del params.subfolder_cache[shared_folder_uid]
-
-    # process record keys
-    records_to_delete = []  # type: List[dict]
-    for record_uid in params.record_cache:
-        record = params.record_cache[record_uid]
-        record_key = record.get('record_key_unencrypted')
-        if not record_key:
-            if record_uid in params.meta_data_cache:
-                meta_data = params.meta_data_cache[record_uid]
-                record_key = meta_data['record_key_unencrypted']
-                record['record_key_unencrypted'] = record_key
-                if meta_data.get('old_record_flag'):
-                    record_key = params.data_key
-
-            if 'record_key_unencrypted' not in record:
-                for shared_folder_uid in params.shared_folder_cache:
-                    shared_folder = params.shared_folder_cache[shared_folder_uid]
-                    if 'records' in shared_folder:
-                        recs = [x['record_key_unencrypted'] for x in shared_folder['records'] if x['record_uid'] == record_uid and 'record_key_unencrypted' in x]
-                        if len(recs) > 0:
-                            record_key = recs[0]
-                            record['record_key_unencrypted'] = record_key
-                            break
-
-            if not record_key:
-                records_to_delete.append(record)
-
-    for record in records_to_delete:
-        record_uid = record['record_uid']
-        if 'link_key' in record and 'owner_uid' in record:
-            host_record_uid = record['owner_uid']
-            if host_record_uid in params.record_cache:
-                host_record = params.record_cache[host_record_uid]
-                if 'record_key_unencrypted' in host_record:
-                    host_record_key = host_record['record_key_unencrypted']
-                    try:
-                        record['record_key_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['link_key']), host_record_key)
-                    except Exception as e:
-                        logging.debug('Record %s link key decryption error: %s', record_uid, e)
-        if 'record_key_unencrypted' not in record:
-            params.record_cache.pop(record_uid)
-    del records_to_delete
-
-    # decrypt records
-    for record_uid in params.record_cache:
-        record = params.record_cache[record_uid]
-        record_key = record.get('record_key_unencrypted')
-        if record_key and 'data_unencrypted' not in record:
-            try:
-                if 'version' in record and record['version'] >= 3:
-                    record['data_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(record['data']), record_key) if 'data' in record else b'{}'
-                else:
-                    record['data_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(record['data']), record_key) if 'data' in record else b'{}'
-                    record['extra_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(record['extra']), record_key) if 'extra' in record else b'{}'
-            except Exception as e:
-                logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
-
-    # decrypt user folders
-    if 'user_folders' in response_json:
-        check_convert_to_folders = False
-        for uf in response_json['user_folders']:
-            encrypted_key = uf['user_folder_key']
-            if uf['key_type'] == 2:
-                uf['folder_key_unencrypted'] = decrypt_rsa(encrypted_key, params.rsa_key)
-            else:
-                uf['folder_key_unencrypted'] = decrypt_data(encrypted_key, params.data_key)
-            params.subfolder_cache[uf['folder_uid']] = uf
-
-    # decrypt shared folder folders
-    if 'shared_folder_folders' in response_json:
-        check_convert_to_folders = False
-        for sff in response_json['shared_folder_folders']:
-            encrypted_key = sff['shared_folder_folder_key']
-            sf_uid = sff['shared_folder_uid']
-            if sf_uid in params.shared_folder_cache:
-                sf = params.shared_folder_cache[sf_uid]
-                sff['folder_key_unencrypted'] = decrypt_data(encrypted_key, sf['shared_folder_key_unencrypted'])
-                params.subfolder_cache[sff['folder_uid']] = sff
-
-    if 'user_folder_shared_folders' in response_json:
-        check_convert_to_folders = False
-        for ufsf in response_json['user_folder_shared_folders']:
-            ufsf['type'] = 'shared_folder'
-            sf_uid = ufsf['shared_folder_uid']
-            if sf_uid in params.shared_folder_cache:
-                params.subfolder_cache[sf_uid] = ufsf
-
-    if 'user_folder_records' in response_json:
-        for ufr in response_json['user_folder_records']:
-            fuid = ufr.get('folder_uid') or ''
-            if fuid not in params.subfolder_record_cache:
-                params.subfolder_record_cache[fuid] = set()
-            record_uid = ufr['record_uid']
-            if record_uid in params.record_cache:
-                params.subfolder_record_cache[fuid].add(record_uid)
-
-    if 'shared_folder_folder_records' in response_json:
-        for sffr in response_json['shared_folder_folder_records']:
-            key = sffr['folder_uid'] if 'folder_uid' in sffr else sffr['shared_folder_uid']
-            if key not in params.subfolder_record_cache:
-                params.subfolder_record_cache[key] = set()
-            record_uid = sffr['record_uid']
-            if record_uid in params.record_cache:
-                params.subfolder_record_cache[key].add(record_uid)
-
-    if 'sharing_changes' in response_json:
-        for sharing_change in response_json['sharing_changes']:
-            record_uid = sharing_change['record_uid']
-            if record_uid in params.record_cache:
-                record = params.record_cache[record_uid]
-                record['shared'] = sharing_change['shared']
-                if 'shares' in record:
-                    del record['shares']
-
-    prepare_folder_tree(params)
-
-    """
-    # remove records that are not referenced by any folder
-    all_records = set(params.record_cache.keys())
-    record_links = set()
-    for uids in params.subfolder_record_cache.values():
-        if isinstance(uids, set):
-            record_links.update(uids)
-    for record_uid in all_records.difference(record_links):
-        if record_uid in params.record_cache:
-            if params.record_cache[record_uid].get('version') == 4:
-                continue
-            del params.record_cache[record_uid]
-        if record_uid in params.meta_data_cache:
-            del params.meta_data_cache[record_uid]
-    """
-
-    if 'pending_shares_from' in response_json:
-        params.pending_share_requests.update(response_json['pending_shares_from'])
-
-    try:
-        if check_convert_to_folders:
-            rq = {
-                'command': 'check_flag',
-                'flag': 'folders'
-            }
-            rs = communicate(params, rq)
-    except:
-        pass
-
-    if params.breach_watch and 'breach_watch_records' in response_json:
-        if not params.breach_watch_records:
-            params.breach_watch_records = {}
-        for bwr in response_json['breach_watch_records']:
-            record_uid = bwr.get('record_uid')
-            if not record_uid:
-                continue
-            record = params.record_cache.get(record_uid)
-            if not record:
-                continue
-            if 'record_key_unencrypted' not in record:
-                continue
-            try:
-                if 'data' in bwr:
-                    data = utils.base64_url_decode(bwr['data'])
-                    data = crypto.decrypt_aes_v2(data, record['record_key_unencrypted'])
-                    data_obj = client_pb2.BreachWatchData()
-                    data_obj.ParseFromString(data)
-                    bwr['data_unencrypted'] = google.protobuf.json_format.MessageToDict(data_obj)
-                params.breach_watch_records[record_uid] = bwr
-            except Exception as e:
-                logging.debug('Decrypt bw data: %s', e)
-
-    if 'full_sync' in response_json or record_types:
-        # Record V3 types cache population
-        rq = records.RecordTypesRequest()
-        rq.standard = True
-        rq.user = True
-        rq.enterprise = True
-        rq.pam = True
-        record_types_rs = communicate_rest(params, rq, 'vault/get_record_types', rs_type=records.RecordTypesResponse)
-
-        if len(record_types_rs.recordTypes) > 0:
-            params.record_type_cache = {}
-            conflict_type_id = 1000000
-            for rt in record_types_rs.recordTypes:
-                type_id = rt.recordTypeId
-                if rt.scope == records.RT_ENTERPRISE:
-                    type_id += 1000
-                elif rt.scope == records.RT_USER:
-                    continue
-                while type_id in params.record_type_cache:
-                    conflict_type_id += 1
-                    type_id = conflict_type_id
-                params.record_type_cache[type_id] = rt.content
-
-    if 'full_sync' in response_json:
-        if params.breach_watch:
-            weak_count = 0
-            for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
-                weak_count += 1
-            if weak_count > 0:
-                logging.info(bcolors.WARNING +
-                             f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
-                             '\nUse \"breachwatch list\" command to get more details' +
-                             bcolors.ENDC)
-
-        record_count = 0
-        valid_versions = {2, 3}
-        for r in params.record_cache.values():
-            if r.get('version', 0) in valid_versions:
-                record_count += 1
-        if record_count:
-            logging.info('Decrypted [%d] record(s)', record_count)
-        if skip_records:
-            logging.warning(bcolors.FAIL + 'Record loading is prevented in the configuration file.' + bcolors.ENDC)
-            logging.info('To load records use \"sync-down --force\" command.')
+    decoded_data = utils.base64_url_decode(encrypted_private_key)
+    return RSA.importKey(crypto.decrypt_aes_v1(decoded_data, data_key))
 
 
 def get_record(params, record_uid):
@@ -1009,13 +342,13 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                     try:
                         aes = b''
                         rsa = b''
+                        encrypted_key = utils.base64_url_decode(tk['key'])
                         if tk['type'] == 1:
-                            encrypted_key = utils.base64_url_decode(tk['key'])
                             aes = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                         elif tk['type'] == 2:
-                            aes = decrypt_rsa(tk['key'], params.rsa_key)
+                            aes = crypto.decrypt_rsa(tk['key'], params.rsa_key2)
                         elif tk['type'] == 3:
-                            rsa = utils.base64_url_decode(tk['key'])
+                            rsa = encrypted_key
                         params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes)
                     except Exception as e:
                         logging.debug(e)
@@ -1171,11 +504,12 @@ def prepare_record(params, record):
         record_object['revision'] = rec['revision']
         if record.record_uid in params.meta_data_cache and params.meta_data_cache[record.record_uid].get('is_converted_record_type'):
             logging.debug('Converted record sends record key')
-            record_object['record_key'] = encrypt_aes(unencrypted_key, params.data_key)
+            record_object['record_key'] = \
+                utils.base64_url_encode(crypto.encrypt_aes_v1(unencrypted_key, params.data_key))
     else:
         logging.debug('Generated record key')
         unencrypted_key = os.urandom(32)
-        record_object['record_key'] = encrypt_aes(unencrypted_key, params.data_key)
+        record_object['record_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(unencrypted_key, params.data_key))
         record_object['revision'] = 0
 
     data['title'] = record.title
@@ -1187,8 +521,10 @@ def prepare_record(params, record):
     data['custom'] = record.custom_fields
     Record.validate_record_data(data, extra, udata)
 
-    record_object['data'] = encrypt_aes(json.dumps(data).encode('utf-8'), unencrypted_key)
-    record_object['extra'] = encrypt_aes(json.dumps(extra).encode('utf-8'), unencrypted_key)
+    record_object['data'] = \
+        utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), unencrypted_key))
+    record_object['extra'] = \
+        utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), unencrypted_key))
     record_object['udata'] = udata
 
     try:
@@ -1272,13 +608,13 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
         record_object['revision'] = rec['revision']
     else:
         logging.debug('Generated record key')
-        unencrypted_key = generate_record_uid()
-        key = encrypt_aes_plain(unencrypted_key, params.data_key)
+        unencrypted_key = utils.generate_aes_key()
+        key = crypto.decrypt_aes_v2(unencrypted_key, params.data_key)
         key = base64.urlsafe_b64encode(key)
         record_object['record_key'] = key
         record_object['revision'] = 0
 
-    rdata = encrypt_aes_plain(bytes(data, 'utf-8'), unencrypted_key)
+    rdata = crypto.encrypt_aes_v2(bytes(data, 'utf-8'), unencrypted_key)
     record_object['data'] = base64.urlsafe_b64encode(rdata).decode('utf-8')
 
     try:
@@ -1463,7 +799,7 @@ def get_pb2_record_update(params, rec, **kwargs):
 
     record_links_add = []
     for link in links_add:
-        rl = records.RecordLink()
+        rl = record_pb2.RecordLink()
         rl.record_uid = link.get('record_uid')
         rl.record_key = link.get('record_key')
         if rl.record_uid and rl.record_key:
@@ -1471,7 +807,7 @@ def get_pb2_record_update(params, rec, **kwargs):
 
     record_links_remove = [x['record_uid'] or b'' for x in links_remove]
 
-    ru = records.RecordUpdate()
+    ru = record_pb2.RecordUpdate()
     uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
     data = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['data'])
     ru.record_uid = uid
@@ -1493,14 +829,14 @@ def get_pb2_record_update(params, rec, **kwargs):
 def get_record_v3_response(params, rq, endpoint, record_rq_by_uid, silent=True):
     # type: (KeeperParams, Any, str, dict[dict], bool) -> Optional[bool]
     rs = communicate_rest(params, rq, endpoint)
-    records_modify_rs = records.RecordsModifyResponse()
+    records_modify_rs = record_pb2.RecordsModifyResponse()
     records_modify_rs.ParseFromString(rs)
 
     for r in records_modify_rs.records:
         ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
         record_rq = record_rq_by_uid[ruid]
-        success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
-        status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
+        success = (r.status == record_pb2.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        status = record_pb2.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
 
         if not success:
             logging.error(bcolors.FAIL + 'Error: Record update failed with status - %s' + bcolors.ENDC, status)
@@ -1539,7 +875,7 @@ def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ..
     if not record_rq:
         return
     ru = record_rq['pb2_record_update']
-    rq = records.RecordsUpdateRequest()
+    rq = record_pb2.RecordsUpdateRequest()
     rq.records.append(ru)
     record_rq_by_uid = {rec.record_uid: record_rq}
     return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid, silent=kwargs.get('silent'))
@@ -1550,7 +886,7 @@ def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
-    rq = records.RecordsUpdateRequest()
+    rq = record_pb2.RecordsUpdateRequest()
     record_rq_by_uid = {}
     for rec in rec_list:
         record_rq = get_pb2_record_update(params, rec, **kwargs)
@@ -1593,7 +929,7 @@ def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterabl
         return
 
     uids = set((x for x in record_uids if x in params.record_cache))
-    audit_data = []   # type: List[records.RecordAddAuditData]
+    audit_data = []   # type: List[record_pb2.RecordAddAuditData]
     for record_uid in uids:
         record = get_record(params, record_uid)
         if record:
@@ -1601,7 +937,7 @@ def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterabl
                 title = record.title
                 if len(title) > 900:
                     title = title[:900]
-                audit = records.RecordAddAuditData()
+                audit = record_pb2.RecordAddAuditData()
                 audit.record_uid = utils.base64_url_decode(record_uid)
                 audit.revision = record.revision
                 data = {
@@ -1614,7 +950,7 @@ def add_record_audit_data(params, record_uids):   # type: (KeeperParams, Iterabl
                 audit_data.append(audit)
 
     if audit_data:
-        rq = records.AddAuditDataRequest()
+        rq = record_pb2.AddAuditDataRequest()
         rq.records.extend(audit_data)
         try:
             communicate_rest(params, rq, 'vault/record_add_audit_data')
@@ -1637,7 +973,7 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
     links = links.get('record_links') or []
 
     for link in links:
-        rl = records.RecordLink()
+        rl = record_pb2.RecordLink()
         rl.record_uid = link.get('record_uid')
         rl.record_key = link.get('record_key')
         if rl.record_uid and rl.record_key:
@@ -1646,7 +982,7 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
     uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_rq['record_uid'])
 
     unencrypted_key = record_rq['record_key_unencrypted']
-    key = encrypt_aes_plain(unencrypted_key, params.data_key)
+    key = crypto.encrypt_aes_v2(unencrypted_key, params.data_key)
     #key = base64.urlsafe_b64encode(key)
 
     data = record_rq['data_unencrypted'].decode('utf-8') if isinstance(record_rq['data_unencrypted'], bytes) else record_rq['data_unencrypted']
@@ -1676,16 +1012,14 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
             'record_type': rt_name,
         }
         if url: adata['url'] = url  # url will only be supplied if there is one on the record
-        audit = records.RecordAudit()
+        audit = record_pb2.RecordAudit()
         audit.version = 0
         audit.data = crypto.encrypt_ec(json.dumps(adata).encode('utf-8'), params.enterprise_ec_key)
 
     data = pad_aes_gcm(data)
 
     rdata = bytes(data, 'utf-8')
-    rdata = encrypt_aes_plain(rdata, unencrypted_key)
-    rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
-    rdata = loginv3.CommonHelperMethods.url_safe_str_to_bytes(rdata)
+    rdata = crypto.encrypt_aes_v2(rdata, unencrypted_key)
 
     rq = kwargs.get('rq') or {}
     folder_type = rq.get('folder_type')
@@ -1693,14 +1027,14 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
     folder_key = rq.get('folder_key')
     if folder_type:
         folder_type_enum = {
-            BaseFolderNode.RootFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
-            BaseFolderNode.UserFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
-            BaseFolderNode.SharedFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder'].number,
-            BaseFolderNode.SharedFolderFolderType: records.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder_folder'].number
+            BaseFolderNode.RootFolderType: record_pb2.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
+            BaseFolderNode.UserFolderType: record_pb2.RecordFolderType.DESCRIPTOR.values_by_name['user_folder'].number,
+            BaseFolderNode.SharedFolderType: record_pb2.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder'].number,
+            BaseFolderNode.SharedFolderFolderType: record_pb2.RecordFolderType.DESCRIPTOR.values_by_name['shared_folder_folder'].number
         }
         folder_type = folder_type_enum.get(folder_type)
 
-    ra = records.RecordAdd()
+    ra = record_pb2.RecordAdd()
     ra.record_uid = uid
     ra.record_key = key
     ra.client_modified_time = record_rq['client_modified_time']
@@ -1718,17 +1052,17 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
         ra.audit.version = audit.version
         ra.audit.data = audit.data
 
-    rq = records.RecordsAddRequest()
+    rq = record_pb2.RecordsAddRequest()
     rq.records.append(ra)
     #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
     rs = communicate_rest(params, rq, 'vault/records_add')
-    records_modify_rs = records.RecordsModifyResponse()
+    records_modify_rs = record_pb2.RecordsModifyResponse()
     records_modify_rs.ParseFromString(rs)
 
     for r in records_modify_rs.records:
         ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
-        success = (r.status == records.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
-        status = records.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
+        success = (r.status == record_pb2.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
+        status = record_pb2.RecordModifyResult.DESCRIPTOR.values_by_number[r.status].name
 
         if not success:
             logging.error(bcolors.FAIL + 'Error: Record add failed with status - %s' + bcolors.ENDC, status)
@@ -1769,52 +1103,6 @@ def generate_record_uid():
 
 def generate_aes_key():
     return os.urandom(32)
-
-
-def prepare_folder_tree(params):
-    # type: (KeeperParams) -> None
-    params.folder_cache = {}
-    params.root_folder = RootFolderNode()
-
-    for sf in params.subfolder_cache.values():
-        if sf['type'] == 'user_folder':
-            uf = UserFolderNode()
-            uf.uid = sf['folder_uid']
-            uf.parent_uid = sf.get('parent_uid')
-            try:
-                data = json.loads(decrypt_data(sf['data'], sf['folder_key_unencrypted']).decode())
-            except Exception as e:
-                logging.debug('Error decrypting user folder name. Folder UID: %s. Error: %s', uf.uid, e)
-                data = {}
-            uf.name = data['name'] if 'name' in data else uf.uid
-            params.folder_cache[uf.uid] = uf
-
-        elif sf['type'] == 'shared_folder_folder':
-            sff = SharedFolderFolderNode()
-            sff.uid = sf['folder_uid']
-            sff.shared_folder_uid = sf['shared_folder_uid']
-            sff.parent_uid = sf.get('parent_uid') or sff.shared_folder_uid
-            try:
-                data = json.loads(decrypt_data(sf['data'], sf['folder_key_unencrypted']).decode())
-            except Exception as e:
-                logging.debug('Error decrypting shared folder folder name. Folder UID: %s. Error: %s', sff.uid, e)
-                data = {}
-            sff.name = data['name'] if 'name' in data else sff.uid
-            params.folder_cache[sff.uid] = sff
-
-        elif sf['type'] == 'shared_folder':
-            shf = SharedFolderNode()
-            shf.uid = sf['shared_folder_uid']
-            shf.parent_uid = sf.get('folder_uid')
-            folder = params.shared_folder_cache.get(shf.uid)
-            if folder is not None:
-                shf.name = folder['name_unencrypted']
-            params.folder_cache[shf.uid] = shf
-
-    for f in params.folder_cache.values():
-        parent_folder = params.folder_cache.get(f.parent_uid) if f.parent_uid else params.root_folder
-        if parent_folder:
-            parent_folder.subfolders.append(f.uid)
 
 
 def resolve_record_permission_path(params, record_uid, permission):
@@ -1943,12 +1231,12 @@ def get_record_shares(params, record_uids, is_share_admin=False):
         while len(uids) > 0:
             chunk = uids[:999]
             uids = uids[999:]
-            rq = records.GetRecordDataWithAccessInfoRequest()
+            rq = record_pb2.GetRecordDataWithAccessInfoRequest()
             rq.clientTime = utils.current_milli_time()
             rq.recordUid.extend([utils.base64_url_decode(x) for x in chunk])
-            rq.recordDetailsInclude = records.SHARE_ONLY
+            rq.recordDetailsInclude = record_pb2.SHARE_ONLY
             rs = communicate_rest(params, rq, 'vault/get_records_details',
-                                  rs_type=records.GetRecordDataWithAccessInfoResponse)
+                                  rs_type=record_pb2.GetRecordDataWithAccessInfoResponse)
             for info in rs.recordDataWithAccessInfo:
                 record_uid = utils.base64_url_encode(info.recordUid)
                 rec = params.record_cache[record_uid] if record_uid in params.record_cache else {'record_uid': record_uid}  # type: dict
@@ -2014,6 +1302,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.session_token = params.session_token
     mc_params.data_key = params.data_key
     mc_params.rsa_key = params.rsa_key
+    mc_params.rsa_key2 = params.rsa_key2
     mc_params.ecc_key = params.ecc_key
 
     mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
@@ -2087,9 +1376,9 @@ def load_records_in_shared_folder(params, shared_folder_uid, record_uids=None):
     record_set.difference_update(params.record_cache.keys())
 
     while len(record_set) > 0:
-        rq = records.GetRecordDataWithAccessInfoRequest()
+        rq = record_pb2.GetRecordDataWithAccessInfoRequest()
         rq.clientTime = utils.current_milli_time()
-        rq.recordDetailsInclude = records.DATA_PLUS_SHARE
+        rq.recordDetailsInclude = record_pb2.DATA_PLUS_SHARE
         for uid in record_set:
             try:
                 rq.recordUid.append(utils.base64_url_decode(uid))
@@ -2097,7 +1386,7 @@ def load_records_in_shared_folder(params, shared_folder_uid, record_uids=None):
                 logging.debug('Incorrect record UID \"%s\": %s', uid, e)
         record_set.clear()
 
-        rs = communicate_rest(params, rq, 'vault/get_records_details', rs_type=records.GetRecordDataWithAccessInfoResponse)
+        rs = communicate_rest(params, rq, 'vault/get_records_details', rs_type=record_pb2.GetRecordDataWithAccessInfoResponse)
         for record_info in rs.recordDataWithAccessInfo:
             record_uid = utils.base64_url_encode(record_info.recordUid)
             record_data = record_info.recordData

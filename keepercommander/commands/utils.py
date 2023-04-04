@@ -38,7 +38,7 @@ from .helpers.timeout import (
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .. import __version__
 from .. import api, rest_api, loginv3, crypto, utils, vault, constants
-from ..api import communicate_rest, pad_aes_gcm, encrypt_aes_plain
+from ..api import communicate_rest, pad_aes_gcm
 from ..breachwatch import BreachWatch
 from ..constants import get_abbrev_by_host
 from ..display import bcolors
@@ -53,7 +53,6 @@ from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, ApplicationSha
     GetApplicationsSummaryResponse, SecurityData, SecurityDataRequest
 from ..proto.record_pb2 import ApplicationAddRequest
 from ..record import Record
-from ..rest_api import execute_rest
 from ..utils import json_to_base64, password_score
 from ..versioning import is_binary_app, is_up_to_date_version
 from .connect import ConnectSshCommand
@@ -356,13 +355,15 @@ class SyncDownCommand(Command):
         return sync_down_parser
 
     def execute(self, params, **kwargs):
-        if kwargs.get('force'):
+        force = kwargs.get('force')
+        if force is True:
             params.revision = 0
+            params.sync_down_token = b''
             if params.config:
                 if 'skip_records' in params.config:
                     del params.config['skip_records']
 
-        api.sync_down(params, record_types=True)
+        api.sync_down(params, record_types=force is True)
 
         accepted = False
         if len(params.pending_share_requests) > 0:
@@ -1242,7 +1243,7 @@ class KSMCommand(Command):
 
             added_secret_uids_type_pairs.append((uid, share_type))
 
-            encrypted_secret_key = rest_api.encrypt_aes(share_key_decrypted, master_key)
+            encrypted_secret_key = crypto.encrypt_aes_v2(share_key_decrypted, master_key)
 
             app_share = AppShareAdd()
             app_share.secretUid = CommonHelperMethods.url_safe_str_to_bytes(uid)
@@ -1263,7 +1264,7 @@ class KSMCommand(Command):
         api_request_payload.payload = app_share_add_rq.SerializeToString()
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
 
-        rs = execute_rest(params.rest_context, 'vault/app_share_add', api_request_payload)
+        rs = rest_api.execute_rest(params.rest_context, 'vault/app_share_add', api_request_payload)
 
         if type(rs) is bytes:
 
@@ -1365,8 +1366,8 @@ class KSMCommand(Command):
         }
 
         data_json = json.dumps(app_record_data)
-        record_key_unencrypted = os.urandom(32)
-        record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
+        record_key_unencrypted = utils.generate_aes_key()
+        record_key_encrypted = crypto.encrypt_aes_v2(record_key_unencrypted, params.data_key)
 
         app_record_uid_str = api.generate_record_uid()
         app_record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(app_record_uid_str)
@@ -1375,9 +1376,7 @@ class KSMCommand(Command):
         data = pad_aes_gcm(data)
 
         rdata = bytes(data, 'utf-8')
-        rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
-        rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
-        rdata = loginv3.CommonHelperMethods.url_safe_str_to_bytes(rdata)
+        rdata = crypto.encrypt_aes_v2(rdata, record_key_unencrypted)
 
         client_modif_time = api.current_milli_time()
 
@@ -1411,7 +1410,7 @@ class KSMCommand(Command):
         api_request_payload.payload = rq.SerializeToString()
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
 
-        rs = execute_rest(params.rest_context, 'vault/app_share_remove', api_request_payload)
+        rs = rest_api.execute_rest(params.rest_context, 'vault/app_share_remove', api_request_payload)
 
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
@@ -1509,7 +1508,7 @@ class KSMCommand(Command):
         api_request_payload.payload = rq.SerializeToString()
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(params.session_token + '==')
 
-        rs = execute_rest(params.rest_context, 'vault/app_client_remove', api_request_payload)
+        rs = rest_api.execute_rest(params.rest_context, 'vault/app_client_remove', api_request_payload)
 
         if type(rs) is dict:
             raise KeeperApiError(rs['error'], rs['message'])
@@ -1558,7 +1557,7 @@ class KSMCommand(Command):
                 logging.error(e.args[0])
                 return
 
-            encrypted_master_key = rest_api.encrypt_aes(master_key, secret_bytes)
+            encrypted_master_key = crypto.encrypt_aes_v2(master_key, secret_bytes)
 
             rq = AddAppClientRequest()
             rq.appRecordUid = CommonHelperMethods.url_safe_str_to_bytes(rec_cache_val.get('record_uid'))
@@ -2046,7 +2045,7 @@ class ResetPasswordCommand(Command):
             sync_rq = {
                 'command': 'sync_down',
                 'revision': 0,
-                'include': ['user_auth'] + api.EXPLICIT
+                'include': ['user_auth', 'explicit']
             }
             sync_rs = api.communicate(params, sync_rq)
             if 'user_auth' in sync_rs:

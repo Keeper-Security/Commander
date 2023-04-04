@@ -265,9 +265,11 @@ class FolderListCommand(Command, RecordMixin):
                 if cols == 0:
                     cols = 1
 
-                if cols > 2:
-                    if ((max_name * cols) + (cols - 1) * 2) > width:
+                while ((max_name * cols) + (cols - 1) * 2) > width:
+                    if cols > 2:
                         cols = cols - 1
+                    else:
+                        break
 
                 tbl = FolderListCommand.chunk_list([x.ljust(max_name) if cols > 1 else x for x in names], cols)
 
@@ -468,7 +470,7 @@ class FolderMakeCommand(Command):
             encryption_key = sf['shared_folder_key_unencrypted']
             request['shared_folder_uid'] = sf_uid
 
-        request['key'] = api.encrypt_aes(folder_key, encryption_key)
+        request['key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(folder_key, encryption_key))
         if base_folder.type not in {BaseFolderNode.RootFolderType, BaseFolderNode.SharedFolderType}:
             request['parent_uid'] = base_folder.uid
 
@@ -489,10 +491,10 @@ class FolderMakeCommand(Command):
         name = name.replace('//', '/')
 
         if request['folder_type'] == 'shared_folder':
-            request['name'] = api.encrypt_aes(name.encode('utf-8'), folder_key)
+            request['name'] = utils.base64_url_encode(crypto.encrypt_aes_v1(name.encode('utf-8'), folder_key))
 
-        data = {'name': name}
-        request['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
+        data = json.dumps({'name': name})
+        request['data'] = utils.base64_url_encode(crypto.encrypt_aes_v1(data.encode('utf-8'), folder_key))
 
         api.communicate(params, request)
         params.sync_data = True
@@ -631,7 +633,7 @@ class FolderMoveCommand(Command):
             FolderMoveCommand.prepare_transition_keys(params, f, keys, encryption_key)
 
         sf = params.subfolder_cache[folder.uid]
-        transition_key = api.encrypt_aes(sf['folder_key_unencrypted'], encryption_key)
+        transition_key = utils.base64_url_encode(crypto.encrypt_aes_v1(sf['folder_key_unencrypted'], encryption_key))
         keys.append({
             'uid': folder.uid,
             'key': transition_key

@@ -16,7 +16,7 @@ import os
 import re
 
 from .base import suppress_exit, raise_parse_exception, Command
-from .. import api, generator
+from .. import api, generator, utils, crypto
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..record import Record
@@ -170,7 +170,7 @@ class RecordAddCommand(Command, RecordUtils):
             'command': 'record_add',
             'record_uid': record_uid,
             'record_type': 'password',
-            'record_key': api.encrypt_aes(record_key, params.data_key),
+            'record_key': utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, params.data_key)),
             'how_long_ago': 0
         }
         if folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
@@ -179,7 +179,8 @@ class RecordAddCommand(Command, RecordUtils):
 
             sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
             sf = params.shared_folder_cache[sh_uid]
-            rq['folder_key'] = api.encrypt_aes(record_key, sf['shared_folder_key_unencrypted'])
+            rq['folder_key'] = utils.base64_url_encode(
+                crypto.encrypt_aes_v1(record_key, sf['shared_folder_key_unencrypted']))
             if 'key_type' not in sf:
                 if 'teams' in sf:
                     for team in sf['teams']:
@@ -201,7 +202,7 @@ class RecordAddCommand(Command, RecordUtils):
         }
         Record.validate_record_data(data, None, None)
 
-        rq['data'] = api.encrypt_aes(json.dumps(data).encode('utf-8'), record_key)
+        rq['data'] = utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), record_key))
 
         api.communicate(params, rq)
         api.sync_down(params)

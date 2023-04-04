@@ -797,10 +797,20 @@ class ShareReportCommand(Command):
     @staticmethod
     def sf_report(params, out=None, fmt=None, show_team_users=False):
         def get_share_info(share_target, name_key):  # type: (Dict[str, Any], str) -> Dict[str, str]
-            permissions_lookup = {'manage_users': 'Manage Users', 'manage_records': 'Manage Records'}
+            manage_users = share_target.get('manage_users')
+            manage_records = share_target.get('manage_records')
+            if not manage_users and not manage_records:
+                permissions = "No User Permissions"
+            elif not manage_users and manage_records:
+                permissions = "Cam Manage Records"
+            elif manage_users and not manage_records:
+                permissions = "Can Manage Users"
+            else:
+                permissions = "Can Manage Users & Records"
+
             share = {
                 'name': share_target.get(name_key),
-                'permissions': ', '.join([val for k, val in permissions_lookup.items() if share_target.get(k)])
+                'permissions': permissions
             }
             return share
 

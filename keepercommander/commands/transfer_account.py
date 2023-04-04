@@ -217,7 +217,7 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
             role_key = None
             if 'role_key' in rs:
                 role_key = utils.base64_url_decode(rs['role_key'])
-                role_key = crypto.decrypt_rsa(role_key, params.rsa_key)
+                role_key = crypto.decrypt_rsa(role_key, params.rsa_key2)
             elif 'role_key_id' in rs:
                 role_key_id = rs['role_key_id']
                 if 'role_keys2' in params.enterprise:
