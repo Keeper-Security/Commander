@@ -10,7 +10,7 @@
 
 import warnings
 from datetime import datetime
-from typing import Dict, NamedTuple
+from typing import Dict, NamedTuple, Optional
 from urllib.parse import urlparse, urlunparse
 
 from urllib3.exceptions import InsecureRequestWarning
@@ -116,16 +116,21 @@ class KeeperParams:
         self.data_key = None
         self.client_key = None
         self.rsa_key = None
+        self.rsa_key2 = None
         self.ecc_key = None
         self.enterprise_ec_key = None
         self.enterprise_rsa_key = None
         self.revision = 0
+        self.sync_down_token = None    # type: Optional[bytes]
         self.record_cache = {}
         self.meta_data_cache = {}
+        self.non_shared_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
+        self.record_link_cache = {}
         self.key_cache = {}    # type: Dict[str, PublicKeys]
         self.available_team_cache = None
+        self.user_cache = {}
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}
         self.root_folder = None
@@ -177,20 +182,25 @@ class KeeperParams:
         self.data_key = None
         self.client_key = None
         self.rsa_key = None
+        self.rsa_key2 = None
         self.ecc_key = None
         self.enterprise_ec_key = None
         self.enterprise_rsa_key = None
         self.revision = 0
+        self.sync_down_token = None
         self.record_cache.clear()
         self.meta_data_cache.clear()
+        self.non_shared_data_cache.clear()
         self.shared_folder_cache.clear()
         self.team_cache.clear()
+        self.record_link_cache.clear()
         self.available_team_cache = None
         self.key_cache.clear()
         self.subfolder_cache .clear()
         self.subfolder_record_cache.clear()
         if self.folder_cache:
             self.folder_cache.clear()
+        self.user_cache.clear()
 
         self.root_folder = None
         self.current_folder = None

@@ -15,7 +15,7 @@ import json
 import logging
 import re
 from collections import OrderedDict
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 from ..utils import is_url, is_email
 from .base import raise_parse_exception, suppress_exit, Command
@@ -148,7 +148,7 @@ class ConvertCommand(Command):
             return
 
         folder = params.folder_cache.get(params.current_folder, params.root_folder)
-        records_by_folder = {}
+        records_by_folder = {}   # type: Dict
         folder_path = {}
         for pattern in pattern_list:
             if pattern in params.record_cache:
@@ -199,7 +199,7 @@ class ConvertCommand(Command):
             rq = {
                 'command': 'sync_down',
                 'revision': 0,
-                'include': api.NON_SHARED_DATA_SCOPE + api.EXPLICIT
+                'include': ['non_shared_data', 'explicit']
             }
             rs = api.communicate(params, rq)
             nsd = {x['record_uid']: x['data'] for x in rs.get('non_shared_data', [])}

@@ -207,7 +207,7 @@ class BaseFolderNode:
         if self.type == BaseFolderNode.RootFolderType:
             return 'Root'
         elif self.type == BaseFolderNode.UserFolderType:
-            return 'Regular Folder'
+            return 'Personal Folder'
         elif self.type == BaseFolderNode.SharedFolderType:
             return 'Shared Folder'
         elif self.type == BaseFolderNode.SharedFolderFolderType:

@@ -63,8 +63,8 @@ def pam_configuration_get_field_by_id(decrypted_record_dict, field_id):
 def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_urlsafe):
 
     data_json = json.dumps(data)
-    record_key_unencrypted = os.urandom(32)
-    record_key_encrypted = api.encrypt_aes_plain(record_key_unencrypted, params.data_key)
+    record_key_unencrypted = utils.generate_aes_key()
+    record_key_encrypted = crypto.encrypt_aes_v2(record_key_unencrypted, params.data_key)
 
     config_v6_record_uid_str = api.generate_record_uid()
     config_v6_record_uid = utils.base64_url_decode(config_v6_record_uid_str)
@@ -73,9 +73,7 @@ def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_
     data = api.pad_aes_gcm(data)
 
     rdata = bytes(data, 'utf-8')
-    rdata = api.encrypt_aes_plain(rdata, record_key_unencrypted)
-    rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
-    rdata = utils.base64_url_decode(rdata)
+    rdata = crypto.encrypt_aes_v2(rdata, record_key_unencrypted)
 
     car = ConfigurationAddRequest()
     car.configurationUid = config_v6_record_uid

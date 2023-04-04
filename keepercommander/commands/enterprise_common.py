@@ -14,19 +14,10 @@ import collections
 import logging
 
 from .base import Command, user_choice
-from .. import api, utils, crypto, rest_api
+from .. import api, utils, crypto
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto.enterprise_pb2 import RoleTeam, RoleTeams
-
-
-def decrypt_role_key(params, role_key):
-    if role_key['key_type'] == 'encrypted_by_data_key':
-        return api.decrypt_data(role_key['encrypted_key'], params.data_key)
-    elif role_key['key_type'] == 'encrypted_by_public_key':
-        return api.decrypt_rsa(role_key['encrypted_key'], params.rsa_key)
-    else:
-        return None
 
 
 class EnterpriseCommand(Command):
@@ -145,13 +136,13 @@ class EnterpriseCommand(Command):
                     role_key = next((rk2['role_key'] for rk2 in role_keys2 if rk2['role_id'] == role_id), None)
                     if role_key:
                         encrypted_key_decoded = base64.urlsafe_b64decode(role_key + '==')
-                        role_key = rest_api.decrypt_aes(
+                        role_key = crypto.decrypt_aes_v2(
                             encrypted_key_decoded, params.enterprise['unencrypted_tree_key']
                         )
                     else:
                         role_keys = params.enterprise.get('role_keys', [])
                         role_key = next((
-                            decrypt_role_key(params, rk) for rk in role_keys if rk['role_id'] == role_id
+                            self.decrypt_role_key(params, rk) for rk in role_keys if rk['role_id'] == role_id
                         ), None)
                 rq = {
                     'command': 'role_user_add' if is_add else 'role_user_remove',
@@ -182,10 +173,11 @@ class EnterpriseCommand(Command):
 
     @staticmethod
     def decrypt_role_key(params, rk):
+        encrypted_key = utils.base64_url_decode(rk['encrypted_key'])
         if rk['key_type'] == 'encrypted_by_data_key':
-            return api.decrypt_data(rk['encrypted_key'], params.data_key)
+            return crypto.decrypt_aes_v1(encrypted_key, params.data_key)
         elif rk['key_type'] == 'encrypted_by_public_key':
-            return api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+            return crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
         else:
             return None
 

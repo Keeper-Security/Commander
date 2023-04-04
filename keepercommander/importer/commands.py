@@ -256,7 +256,7 @@ class RecordExportCommand(ImporterCommand):
         export_format = kwargs.pop('format', None)
         export_name = kwargs.pop('name', None)
 
-        if format:
+        if export_format:
             msize = kwargs.pop('max_size', None)    # type: str
             if msize:
                 multiplier = 1
