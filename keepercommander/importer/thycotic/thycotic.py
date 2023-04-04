@@ -184,7 +184,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         return input('Enter TOTP code: '.rjust(25))
 
     def do_import(self, filename, **kwargs):
-        # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder]]
+        # type: (BaseImporter, str, ...) -> Iterable[Union[Record, SharedFolder]]
         loaded_record_types = {}
         params = kwargs.get('params')
         if isinstance(params, KeeperParams):

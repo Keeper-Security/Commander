@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Iterator, List, Optional, Union, Dict, Tuple, Set
+from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 
 """Import and export functionality."""
 import abc
@@ -32,7 +32,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
-from .. import api
+from .. import api, sync_down
 from .. import utils, crypto
 from ..commands import base
 from ..display import bcolors
@@ -228,7 +228,7 @@ def convert_keeper_record(record, has_attachments=False):
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
-    api.sync_down(params)
+    sync_down.sync_down(params)
 
     exporter = exporter_for_format(file_format)()  # type: BaseExporter
     if 'max_size' in kwargs:
@@ -492,7 +492,7 @@ def import_user_permissions(params, shared_folders):  # type: (KeeperParams, Lis
     if not folders:
         return
 
-    api.sync_down(params)
+    sync_down.sync_down(params)
 
     folder_lookup = {}
     if params.folder_cache:
@@ -524,7 +524,7 @@ def import_user_permissions(params, shared_folders):  # type: (KeeperParams, Lis
         permissions = prepare_folder_permission(params, folders)
         if permissions:
             rs = api.execute_batch(params, permissions)
-            api.sync_down(params)
+            sync_down.sync_down(params)
             if rs:
                 teams_added = 0
                 users_added = 0
@@ -636,7 +636,7 @@ def _import(params, file_format, filename, **kwargs):
         import_user_permissions(params, folders)
         return
 
-    api.sync_down(params)
+    sync_down.sync_down(params)
 
     manage_users = kwargs.get('manage_users') or False
     manage_records = kwargs.get('manage_records') or False
@@ -663,7 +663,7 @@ def _import(params, file_format, filename, **kwargs):
     if folder_add:
         fol_rs, _ = execute_import_folder_record(params, folder_add, None)
         _ = fol_rs
-        api.sync_down(params)
+        sync_down.sync_down(params)
 
     if files:
         pass
@@ -868,7 +868,7 @@ def _import(params, file_format, filename, **kwargs):
         if records_v3_to_update:
             rec_rs = execute_records_update(params, records_v3_to_update)
 
-        api.sync_down(params)
+        sync_down.sync_down(params)
 
         # update audit data
         if audit_uids and params.enterprise_ec_key:
@@ -881,19 +881,19 @@ def _import(params, file_format, filename, **kwargs):
                     api.communicate_rest(params, rq, 'vault/record_add_audit_data')
                 except Exception as e:
                     logging.debug('Update record audit error: %s', e)
-            api.sync_down(params)
+            sync_down.sync_down(params)
 
         # ensure records are linked to folders
         record_links = prepare_record_link(params, records)
         if record_links:
             api.execute_batch(params, record_links)
-            api.sync_down(params)
+            sync_down.sync_down(params)
 
         # adjust shared folder permissions
         shared_update = prepare_record_permission(params, records)
         if shared_update:
             api.execute_batch(params, shared_update)
-            api.sync_down(params)
+            sync_down.sync_down(params)
 
         # upload attachments
         v2_atts = []
@@ -1307,7 +1307,8 @@ def upload_attachment(params, attachments):
                         'record_uid': record_id,
                         'version': 2,
                         'client_modified_time': api.current_milli_time(),
-                        'extra': api.encrypt_aes(json.dumps(extra).encode('utf-8'), rec['record_key_unencrypted']),
+                        'extra': utils.base64_url_encode(
+                            crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), rec['record_key_unencrypted'])),
                         'udata': udata,
                         'revision': rec['revision']
                     }
@@ -1316,7 +1317,7 @@ def upload_attachment(params, attachments):
             try:
                 rs = api.communicate(params, rq)
                 if rs['result'] == 'success':
-                    api.sync_down(params)
+                    sync_down.sync_down(params)
             except Exception as e:
                 logging.debug(e)
 
@@ -1364,16 +1365,15 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
                     if parent_uid:
                         fol_req.parentFolderUid = base64.urlsafe_b64decode(parent_uid + '==')
 
-                    folder_key = os.urandom(32)
-                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(api.encrypt_aes(folder_key, params.data_key) + '==')
+                    folder_key = utils.generate_aes_key()
+                    fol_req.encryptedFolderKey = crypto.encrypt_aes_v1(folder_key, params.data_key)
 
                     data = {'name': comp}
-                    string = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
-                    fol_req.folderData = base64.urlsafe_b64decode(string + '==')
+                    fol_req.folderData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), folder_key)
 
                     if folder_type == 'shared_folder':
-                        string2 = api.encrypt_aes(comp.encode('utf-8'), folder_key)
-                        fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(string2 + '==')
+                        fol_req.sharedFolderFields.encryptedFolderName = \
+                            crypto.encrypt_aes_v1(comp.encode('utf-8'), folder_key)
                         fol_req.sharedFolderFields.manageUsers = fol.manage_users or manage_users
                         fol_req.sharedFolderFields.manageRecords = fol.manage_records or manage_records
                         fol_req.sharedFolderFields.canEdit = fol.can_edit or can_edit
@@ -1439,19 +1439,17 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
 
                                 folder_key = os.urandom(32)
                                 if folder_type == 'shared_folder_folder':
-                                    string3 = api.encrypt_aes(folder_key, parent_shared_folder_key or params.data_key)
-                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(string3 + '==')
+                                    fol_req.encryptedFolderKey = \
+                                        crypto.encrypt_aes_v1(folder_key, parent_shared_folder_key or params.data_key)
                                 else:
-                                    string4 = api.encrypt_aes(folder_key, params.data_key)
-                                    fol_req.encryptedFolderKey = base64.urlsafe_b64decode(string4 + '==')
+                                    fol_req.encryptedFolderKey = crypto.encrypt_aes_v1(folder_key, params.data_key)
 
-                                data = {'name': comp}
-                                string5 = api.encrypt_aes(json.dumps(data).encode('utf-8'), folder_key)
-                                fol_req.folderData = base64.urlsafe_b64decode(string5 + '==')
+                                data = json.dumps({'name': comp})
+                                fol_req.folderData = crypto.encrypt_aes_v1(data.encode('utf-8'), folder_key)
 
                                 if folder_type == 'shared_folder':
-                                    string6 = api.encrypt_aes(comp.encode('utf-8'), folder_key)
-                                    fol_req.sharedFolderFields.encryptedFolderName = base64.urlsafe_b64decode(string6 + '==')
+                                    fol_req.sharedFolderFields.encryptedFolderName = \
+                                        crypto.encrypt_aes_v1(comp.encode('utf-8'), folder_key)
 
                                     parent_shared_folder_key = folder_key
                                     parent_shared_folder_uid = folder_uid
@@ -1478,7 +1476,7 @@ def prepare_folder_add(params, folders, records, manage_users, manage_records, c
 
 
 def prepare_record_audit(params, uids):
-    # type: (KeeperParams, Iterator[str]) -> Iterator[record_pb2.RecordAddAuditData]
+    # type: (KeeperParams, Iterable[str]) -> Iterator[record_pb2.RecordAddAuditData]
     if not params.enterprise_ec_key:
         return
     for uid in uids:
@@ -1735,7 +1733,7 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
 
 
 def prepare_record_add_or_update(update_flag, params, records):
-    # type: (bool, KeeperParams, Iterator[ImportRecord]) -> Tuple[List[ImportRecord], dict]
+    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -1902,15 +1900,17 @@ def prepare_record_link(params, records):
                                     dst_folder.shared_folder_uid
                                 if ssf_uid != dsf_uid:
                                     shf = params.shared_folder_cache[dsf_uid]
-                                    transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
+                                    transition_key = utils.base64_url_encode(
+                                        crypto.encrypt_aes_v1(record_key, shf['shared_folder_key_unencrypted']))
                             else:
-                                transition_key = api.encrypt_aes(record_key, params.data_key)
+                                transition_key = utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, params.data_key))
                         else:
                             if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
                                 dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType else \
                                     dst_folder.shared_folder_uid
                                 shf = params.shared_folder_cache[dsf_uid]
-                                transition_key = api.encrypt_aes(record_key, shf['shared_folder_key_unencrypted'])
+                                transition_key = utils.base64_url_encode(
+                                    crypto.encrypt_aes_v1(record_key, shf['shared_folder_key_unencrypted']))
                         if transition_key is not None:
                             req['transition_keys'].append({
                                 'uid': rec.uid,

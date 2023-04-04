@@ -1,20 +1,24 @@
 # coding: utf-8
-from base64 import b64decode
 import binascii
 import codecs
-from io import BytesIO
-import struct
 import re
+import struct
+from base64 import b64decode
+from io import BytesIO
+from typing import Any
 from urllib.parse import urlunsplit, urlencode
 
-from Cryptodome.Cipher import AES, PKCS1_OAEP
-from Cryptodome.Util import number
-from Cryptodome.PublicKey import RSA
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.padding import OAEP, MGF1
+from cryptography.hazmat.primitives.ciphers import Cipher
+from cryptography.hazmat.primitives.ciphers.algorithms import AES
+from cryptography.hazmat.primitives.ciphers.modes import CBC, ECB
+from cryptography.hazmat.primitives.hashes import SHA1
 
 from .account import Account
 from .attachment import LastpassAttachment
 from .chunk import Chunk
-
 
 # Secure note types that contain account-like information
 ALLOWED_SECURE_NOTE_TYPES = [
@@ -111,16 +115,10 @@ def parse_PRIK(chunk, encryption_key):
                               encryption_key)
 
     hex_key = re.match(br'^LastPassPrivateKey<(?P<hex_key>.*)>LastPassPrivateKey$', decrypted).group('hex_key')
-    rsa_key = RSA.importKey(decode_hex(hex_key))
-
-    rsa_key.dmp1 = rsa_key.d % (rsa_key.p - 1)
-    rsa_key.dmq1 = rsa_key.d % (rsa_key.q - 1)
-    rsa_key.iqmp = number.inverse(rsa_key.q, rsa_key.p)
-
-    return rsa_key
+    return decode_hex(hex_key)
 
 
-def parse_SHAR(chunk, encryption_key, rsa_key):
+def parse_SHAR(chunk, encryption_key, rsa_key):   # type: (Any, bytes, bytes) -> Any
     # TODO: Fake some data and make a test
     io = BytesIO(chunk.payload)
     id = read_item(io)
@@ -139,7 +137,7 @@ def parse_SHAR(chunk, encryption_key, rsa_key):
         except:
             key = ''
     if not key:
-        key = decode_hex(PKCS1_OAEP.new(rsa_key).decrypt(encrypted_key))
+        key = decode_hex(decode_rsa_plain_oaep(encrypted_key, rsa_key))
 
     name = decode_aes256_base64_auto(encrypted_name, key)
 
@@ -334,12 +332,19 @@ def decode_aes256(cipher, iv, data, encryption_key):
     If for :ecb iv is not used and should be set to "".
     """
     if cipher == 'cbc':
-        aes = AES.new(encryption_key, AES.MODE_CBC, iv)
+        aes_cipher = Cipher(AES(encryption_key), CBC(iv), backend=default_backend())
     elif cipher == 'ecb':
-        aes = AES.new(encryption_key, AES.MODE_ECB)
+        aes_cipher = Cipher(AES(encryption_key), ECB(), backend=default_backend())
     else:
         raise ValueError('Unknown AES mode')
-    d = aes.decrypt(data)
+    decrypter = aes_cipher.decryptor()
+    d = decrypter.update(data) + decrypter.finalize()
     # http://passingcuriosity.com/2009/aes-encryption-in-python-with-m2crypto/
     unpad = lambda s: s[0:-ord(d[-1:])]
     return unpad(d)
+
+
+def decode_rsa_plain_oaep(data, der_private_key):
+    assert isinstance(data, bytes)
+    rsa_key = serialization.load_der_private_key(der_private_key, None, default_backend())
+    return rsa_key.decrypt(data, OAEP(mgf=MGF1(algorithm=SHA1()), algorithm=SHA1(), label=None))

@@ -294,12 +294,12 @@ class RecordType:
 
 class BaseImporter(abc.ABC):
     def execute(self, name, **kwargs):
-        # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder, File]]
+        # type: (BaseImporter, str, ...) -> Iterable[Union[Record, SharedFolder, File]]
         yield from self.do_import(name, **kwargs)
 
     @abc.abstractmethod
     def do_import(self, filename, **kwargs):
-        # type: (BaseImporter, str, dict) -> Iterable[Union[Record, SharedFolder, File]]
+        # type: (BaseImporter, str, ...) -> Iterable[Union[Record, SharedFolder, File]]
         pass
 
     def extension(self):

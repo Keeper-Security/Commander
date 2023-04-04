@@ -253,8 +253,9 @@ class SharedRecord:
         shares = rec_cached.get('shares', dict())
 
         user_perms = list(shares.get('user_permissions', []))
-        self.owner = next(up.get('username') for up in user_perms if up.get('owner'))
-        load_user_permissions(user_perms)
+        if len(user_perms) > 0:
+            self.owner = next((up.get('username') for up in user_perms if up.get('owner')), '')
+            load_user_permissions(user_perms)
 
         sf_perms = shares.get('shared_folder_permissions', [])
         SF_UID = 'shared_folder_uid'
@@ -272,4 +273,3 @@ class SharedRecord:
             load_team_permissions(teams, sf_uid)
 
         apply_role_restrictions()
-

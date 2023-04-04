@@ -371,7 +371,7 @@ class TestEnterprise(TestCase):
         if request['command'] == 'team_get_keys':
             rs['keys'] = [{
                 'team_uid': x,
-                'key': api.encrypt_aes(ent_env.team_key, vault_env.data_key),
+                'key': utils.base64_url_encode(crypto.encrypt_aes_v1(ent_env.team_key, vault_env.data_key)),
                 'type': 1
             } for x in request['teams']]
             return rs

@@ -17,7 +17,7 @@ import itertools
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
+from typing import Dict, Any, List, Optional, Tuple, Set, Union, Iterable
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -170,7 +170,7 @@ rm_parser.add_argument('record', nargs='?', type=str, action='store', help='reco
 
 
 def find_record(params, record_name, types=None):
-    # type: (KeeperParams, str, Optional[Iterator[str]]) -> vault.KeeperRecord
+    # type: (KeeperParams, str, Optional[Iterable[str]]) -> vault.KeeperRecord
     if not record_name:
         raise Exception(f'Record name cannot be empty.')
 
@@ -777,7 +777,7 @@ class TrashMixin:
                             if key_type == 1:
                                 record_key = crypto.decrypt_aes_v1(record_key, params.data_key)
                             elif key_type == 2:
-                                record_key = api.decrypt_rsa(record_key, params.rsa_key)
+                                record_key = crypto.decrypt_rsa(record_key, params.rsa_key2)
                             elif key_type == 3:
                                 record_key = crypto.decrypt_aes_v2(record_key, params.data_key)
                             elif key_type == 4:
@@ -1314,28 +1314,27 @@ class SharedRecordsReport(Command):
         show_team_users = kwargs.get('show_team_users')
         team_records = set()    # type: Set[Tuple[Union[str, None], str]]
         rows = []
+        unique_records = {}
         for e in shared_records_data_rs.events:
-            record_uid = api.decode_uid_to_str(e.recordUid)
+            record_uid = utils.base64_url_encode(e.recordUid)
             r_parents = set(find_folders(params, record_uid) or ())
 
             # Ignore non-contained records if container filter is set
             if containers and not f_uids.intersection(r_parents):
                 continue
 
-            cached_record = None
+            if record_uid not in unique_records:
+                cached_record = None
+                if record_uid in params.record_cache:   # to avoid not found warning log messages
+                    cached_record = vault.KeeperRecord.load(params, record_uid)
 
-            if record_uid in params.record_cache:   # to avoid not found warning log messages
-                cached_record = api.get_record(params, record_uid)
-
-            if not cached_record:   # probably deleted record
-                logging.debug("Record uid=%s was not located in current cache." % record_uid)
-                continue
+                if not cached_record:   # probably deleted record
+                    logging.debug("Record uid=%s was not located in current cache.", record_uid)
+                    continue
+                unique_records[record_uid] = cached_record.title
 
             # Folder Path(s)
-            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
-            path_str = ""
-            for i in range(len(folders)):
-                path_str = path_str + ('{0}{1}'.format('\n' if i > 0 else '', folders[i]))
+            folders = [get_folder_path(params, x) for x in r_parents]
 
             if not e.canEdit and not e.canReshare:
                 permissions = "Read Only"
@@ -1348,11 +1347,11 @@ class SharedRecordsReport(Command):
 
             user_row = {
                 'record_uid': record_uid,
-                'title': cached_record.title,
+                'title': unique_records.get(record_uid) or '',
                 'share_to': e.userName,
                 'shared_from': shared_from_mapping.get(e.shareFrom, 'Other Share'),
                 'permissions': permissions,
-                'folder_path': path_str
+                'folder_path': folders
             }
 
             if e.shareFrom == 3:
