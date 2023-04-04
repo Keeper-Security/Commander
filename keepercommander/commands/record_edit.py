@@ -21,8 +21,8 @@ from typing import List, Optional, Any, Dict, Union, Sequence
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from .base import Command, RecordMixin
-from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management
+from .base import Command, RecordMixin, FolderMixin
+from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management, subfolder
 from ..commands import recordv3
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -64,7 +64,11 @@ delete_attachment_parser.add_argument('record', action='store', help='record pat
 
 
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
-download_parser.add_argument('record', action='store', help='record path or UID')
+download_parser.add_argument('-r', '--recursive', dest='recursive', action='store_true',
+                             help='Download recursively through subfolders')
+download_parser.add_argument('--out-dir', dest='out_dir', action='store',
+                             help='Local folder for downloaded files')
+download_parser.add_argument('records', action='append', help='Record/Folder path or UID')
 
 
 upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
@@ -955,37 +959,61 @@ class RecordDownloadAttachmentCommand(Command):
         return download_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-        if not name:
+        records = kwargs.get('records')
+        if not records:
             self.get_parser().print_help()
             return
 
-        record_uid = None
-        if name in params.record_cache:
-            record_uid = name
-        else:
-            rs = try_resolve_path(params, name)
-            if rs is not None:
-                folder, name = rs
-                if folder is not None and name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == name.lower():
-                                record_uid = uid
-                                break
+        record_uids = set()
+        for record in records:
+            folder_uid = None
+            if record in params.record_cache:
+                record_uids.add(record)
+            elif record in params.folder_cache:
+                folder_uid = record
+            else:
+                rs = try_resolve_path(params, record)
+                if rs is not None:
+                    folder, name = rs
+                    if folder is not None:
+                        if name:
+                            for uid in params.subfolder_record_cache[folder_uid]:
+                                r = vault.KeeperRecord.load(params, uid)
+                                if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
+                                    if r.title.lower() == name.lower():
+                                        record_uids.add(r.record_uid)
+                                        break
+                        else:
+                            folder_uid = folder.uid
+            if folder_uid:
+                folders = set()
+                folders.add(folder_uid)
+                if kwargs.get('recursive') is True:
+                    FolderMixin.traverse_folder_tree(
+                        params, folder_uid, lambda x: folders.add(x.uid))
+                for uid in folders:
+                    if uid in params.subfolder_record_cache:
+                        for record_uid in params.subfolder_record_cache[uid]:
+                            if record_uid in params.record_cache:
+                                record_uids.add(record_uid)
 
-        if not record_uid:
-            logging.error('Record UID not found for record name "%s"', str(name))
+        if len(record_uids) == 0:
+            logging.error('Record(s) "%s" not found', ', '.join(records))
             return
-
-        attachments = list(attachment.prepare_attachment_download(params, record_uid))
-        if len(attachments) == 0:
-            raise CommandError('download-attachment', 'No attachments associated with the record')
-
-        for atta in attachments:
-            atta.download_to_file(params, atta.title)
+        output_dir = kwargs.get('out_dir')
+        if output_dir:
+            output_dir = os.path.expanduser(output_dir)
+        else:
+            output_dir = os.getcwd()
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+        for record_uid in record_uids:
+            attachments = list(attachment.prepare_attachment_download(params, record_uid))
+            for atta in attachments:
+                name = os.path.join(output_dir, atta.title)
+                if os.path.isfile(name):
+                    name = os.path.join(output_dir, f'({atta.file_id}) {atta.title}')
+                atta.download_to_file(params, name)
 
 
 class RecordUploadAttachmentCommand(Command):
