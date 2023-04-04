@@ -27,7 +27,7 @@ from .vault import KeeperRecord, PasswordRecord, TypedRecord, FileRecord, Attach
 
 
 def prepare_attachment_download(params, record_uid, attachment_name=None):
-    # type: (KeeperParams, str, Optional[str]) -> Iterator['AttachmentDownloadRequest']
+    # type: (KeeperParams, str, Optional[str]) -> Iterator[AttachmentDownloadRequest]
     record = KeeperRecord.load(params, record_uid)
     if not record:
         logging.warning('Record UID \"%s\" not found.', record_uid)
