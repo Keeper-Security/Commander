@@ -70,7 +70,7 @@ msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update
                                             description='Modify Managed Company license.')
 msp_update_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 msp_update_parser.add_argument('-p', '--plan', dest='plan', action='store',
-                               choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
+                               choices=[x[1] for x in constants.MSP_PLANS],
                                help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
 msp_update_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
                                help='Maximum licences allowed. -1: unlimited')
@@ -112,7 +112,7 @@ msp_add_parser.add_argument('--node', dest='node', action='store', help='node na
 msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
                             help='Maximum licences allowed. -1: unlimited')
 msp_add_parser.add_argument('-p', '--plan', dest='plan', action='store', required=True,
-                            choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
+                            choices=[x[1] for x in constants.MSP_PLANS],
                             help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
 msp_add_parser.add_argument('-f', '--file-plan', dest='file_plan', action='store',
                             help=f'File storage plan: {", ".join((x[2].lower() for x in constants.MSP_FILE_PLANS))}')
@@ -131,7 +131,7 @@ msp_convert_node_parser = argparse.ArgumentParser(prog='msp-convert-node',
 msp_convert_node_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
                                      help='Number of seats')
 msp_convert_node_parser.add_argument('-p', '--plan', dest='plan', action='store',
-                                     choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
+                                     choices=[x[1] for x in constants.MSP_PLANS],
                                      help='License Plan')
 msp_convert_node_parser.add_argument('node', action='store', help='node name or node ID')
 
