@@ -1289,11 +1289,10 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
 
     resp = loginv3.LoginV3API.loginToMc(params.rest_context, params.session_token, mc_id)
 
-    mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
+    mc_params = KeeperParams(server=params.server)
 
     mc_params.config = params.config
     mc_params.auth_verifier = params.auth_verifier
-    mc_params.mfa_token = params.mfa_token
     mc_params.salt = params.salt
     mc_params.iterations = params.iterations
     mc_params.user = params.user
@@ -1315,12 +1314,9 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
 
 
 def login_and_get_mc_params(params, mc_id):
-
-    mc_params = KeeperParams(server=params.server, device_id=params.rest_context.device_id)
-
+    mc_params = KeeperParams(server=params.server)
     mc_params.config = params.config
     mc_params.auth_verifier = params.auth_verifier
-    mc_params.mfa_token = params.mfa_token
     mc_params.salt = params.salt
     mc_params.iterations = params.iterations
     mc_params.user = params.user
