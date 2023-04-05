@@ -890,18 +890,12 @@ class LoginV3API:
             if 'private_key' in params.config:
                 del params.config['private_key']
 
-        encrypted_device_token_str = None
+        if not params.device_token:
+            if 'device_token' in params.config and params.config['device_token']:
+                params.device_token = params.config['device_token']
 
-        if params.device_token:
-            encrypted_device_token_str = params.device_token
-        elif 'device_token' in params.config:
-            if params.config['device_token']:
-                encrypted_device_token_str = params.config['device_token']
-
-        if encrypted_device_token_str is None:
-
+        if not params.device_token:
             public_key = CommonHelperMethods.public_key_ecc(params)
-
             rq = proto.DeviceRegistrationRequest()
 
             rq.clientVersion = rest_api.CLIENT_VERSION
@@ -918,20 +912,12 @@ class LoginV3API:
                 register_device_rs.ParseFromString(rs)
 
                 # A globally unique device id for each device encrypted by the device token key
-                encrypted_device_token_bytes = register_device_rs.encryptedDeviceToken
+                params.device_token = utils.base64_url_encode(register_device_rs.encryptedDeviceToken)
+                CommonHelperMethods.config_file_set_property(params, "device_token", params.device_token)
             else:
                 raise KeeperApiError(rs['error'], rs['message'])
 
-            # Get or save key from file
-            encrypted_device_token_str = CommonHelperMethods.bytes_to_url_safe_str(encrypted_device_token_bytes)
-
-            CommonHelperMethods.config_file_set_property(params, "device_token", encrypted_device_token_str)
-
-        try:
-            encrypted_device_token_bytes = utils.base64_url_decode(encrypted_device_token_str)
-        except:
-            raise InvalidDeviceToken()
-        return encrypted_device_token_bytes
+        return utils.base64_url_decode(params.device_token)
 
     @staticmethod
     def requestDeviceVerificationMessage(params: KeeperParams,
@@ -997,10 +983,6 @@ class LoginV3API:
                     LoginV3API.register_device_in_region(params, encryptedDeviceToken)
                     return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
 
-                if rs['error'] == 'bad_request':
-                    # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
-                    params.device_id = None
-                    # continue
                 if rs['error'] == 'restricted_client_type':
                     msg = "%s.\n\n%s" % (rs['message'], permissions_error_msg)
                     raise KeeperApiError(rs['error'], msg)
@@ -1049,11 +1031,6 @@ class LoginV3API:
                         return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
                     else:
                         raise InvalidDeviceToken()
-
-                if rs['error'] == 'bad_request':
-                    # logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
-                    params.device_id = None
-                    # continue
 
                 err_msg = rs['message']
                 if rs['error'] == 'device_not_registered':
