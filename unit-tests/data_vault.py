@@ -18,7 +18,6 @@ _USER_DATA_KEY = utils.generate_aes_key()
 _USER_ACCOUNT_UID = utils.generate_uid()
 
 _SESSION_TOKEN = base64.urlsafe_b64encode(os.urandom(64)).decode('utf-8').strip('=')
-_DEVICE_ID = os.urandom(64)
 
 _2FA_ONE_TIME_TOKEN = '123456'
 _2FA_DEVICE_TOKEN = base64.urlsafe_b64encode(os.urandom(32)).decode('utf-8').strip('=')
@@ -52,7 +51,6 @@ class VaultEnvironment:
         self.public_key = _public_key
         self.encoded_public_key = utils.base64_url_encode(_IMPORTED_PUBLIC_KEY)
         self.session_token = _SESSION_TOKEN
-        self.device_id = _DEVICE_ID
         self.one_time_token = _2FA_ONE_TIME_TOKEN
         self.device_token = _2FA_DEVICE_TOKEN
         self.encrypted_private_key = _ENCRYPTED_PRIVATE_KEY
@@ -62,8 +60,7 @@ class VaultEnvironment:
 
 
 def get_user_params():
-    p = params.KeeperParams(server='https://test.keepersecurity.com/', device_id=_DEVICE_ID)
-    p.config['device_id'] = base64.urlsafe_b64encode(_DEVICE_ID).decode('utf-8').rstrip('=')
+    p = params.KeeperParams(server='https://test.keepersecurity.com/')
     p.user = _USER_NAME
     p.password = _USER_PASSWORD
     return p

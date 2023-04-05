@@ -508,11 +508,7 @@ class ThisDeviceCommand(Command):
         acct_summary_dict = MessageToDict(acct_summary)
 
         devices = acct_summary_dict['devices']
-
-        if 'device_token' not in params.config:
-            current_device_token = rest_api.get_device_token(params.rest_context)
-        else:
-            current_device_token = params.config['device_token']
+        current_device_token = params.config['device_token']
 
         this_device = next((item for item in devices if compare_device_tokens(item['encryptedDeviceToken'], current_device_token)), None)
 

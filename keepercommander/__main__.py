@@ -68,12 +68,6 @@ def get_params_from_config(config_filename):
                     if 'timedelay' in params.config:
                         params.timedelay = params.config['timedelay']
 
-                    if 'mfa_token' in params.config:
-                        params.mfa_token = params.config['mfa_token']
-
-                    if 'mfa_type' in params.config:
-                        params.mfa_type = params.config['mfa_type']
-
                     if 'commands' in params.config:
                         if params.config['commands']:
                             params.commands.extend(params.config['commands'])
@@ -87,15 +81,14 @@ def get_params_from_config(config_filename):
                     if 'batch_mode' in params.config:
                         params.batch_mode = params.config['batch_mode'] is True
 
-                    if 'device_id' in params.config:
-                        device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
-                        params.rest_context.device_id = device_id
-
                     if 'logout_timer' in params.config:
                         params.logout_timer = params.config['logout_timer']
 
                     if 'private_key' in params.config:
                         params.device_private_key = params.config['private_key']
+
+                    if 'device_token' in params.config:
+                        params.device_token = params.config['device_token']
 
                     if 'proxy' in params.config:
                         params.proxy = params.config['proxy']

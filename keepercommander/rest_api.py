@@ -28,7 +28,7 @@ from . import __version__
 
 
 # CLIENT_VERSION = 'c' + __version__
-CLIENT_VERSION = 'c16.8.12'
+CLIENT_VERSION = 'c16.9.0'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(
@@ -196,85 +196,6 @@ def execute_rest(context, endpoint, payload):
                     else:
                         logging.debug('<<< HTTP Status: [%s]  Reason: [%s]', rs.status_code, rs.reason)
                 raise KeeperApiError(rs.status_code, rs.reason)
-
-
-def get_device_token(context):
-    # type: (RestApiContext) -> str
-
-    if not context.device_id:
-        rq = proto.DeviceRequest()
-        rq.clientVersion = CLIENT_VERSION
-        rq.deviceName = ''
-
-        api_request_payload = proto.ApiRequestPayload()
-        api_request_payload.payload = rq.SerializeToString()
-        rs = execute_rest(context, 'authentication/get_device_token', api_request_payload)
-        if type(rs) is bytes:
-            device_rs = proto.DeviceResponse()
-            device_rs.ParseFromString(rs)
-            if proto.DeviceStatus.Name(device_rs.status) == 'DEVICE_OK':
-                context.device_id = device_rs.encryptedDeviceToken
-        elif type(rs) is dict:
-            raise KeeperApiError(rs['error'], rs['message'])
-
-    return context.device_id
-
-
-def pre_login(context, username, two_factor_token=None):
-    # type: (RestApiContext, str, bytes or None) -> proto.PreLoginResponse
-
-    attempt = 0
-    while attempt < 3:
-        attempt += 1
-        rq = proto.PreLoginRequest()
-        rq.authRequest.clientVersion = CLIENT_VERSION
-        rq.authRequest.username = username.lower()
-        rq.authRequest.encryptedDeviceToken = get_device_token(context)
-        rq.loginType = proto.LoginType.Value('NORMAL')
-        if two_factor_token:
-            rq.twoFactorToken = two_factor_token
-
-        api_request_payload = proto.ApiRequestPayload()
-        api_request_payload.payload = rq.SerializeToString()
-        rs = execute_rest(context, 'authentication/pre_login', api_request_payload)
-        if type(rs) == bytes:
-            pre_login_rs = proto.PreLoginResponse()
-            pre_login_rs.ParseFromString(rs)
-            return pre_login_rs
-
-        elif type(rs) is dict:
-            if 'error' in rs and 'message' in rs:
-                if rs['error'] == 'region_redirect':
-                    context.device_id = None
-                    context.server_base = 'https://{0}/'.format(rs['region_host'])
-                    logging.warning('Switching to region: %s', rs['region_host'])
-                    continue
-                if rs['error'] == 'bad_request':
-                    logging.warning('Pre-Auth error: %s', rs.get('additional_info'))
-                    context.device_id = None
-                    continue
-
-                raise KeeperApiError(rs['error'], rs['message'])
-    raise Exception('Cannot get user information')
-
-
-def get_new_user_params(context, username):
-    # type: (RestApiContext, str) -> proto.NewUserMinimumParams
-    rq = proto.AuthRequest()
-    rq.clientVersion = CLIENT_VERSION
-    rq.username = username.lower()
-    rq.encryptedDeviceToken = get_device_token(context)
-
-    api_request_payload = proto.ApiRequestPayload()
-    api_request_payload.payload = rq.SerializeToString()
-    rs = execute_rest(context, 'authentication/get_new_user_params', api_request_payload)
-    if type(rs) is bytes:
-        pre_login_rs = proto.NewUserMinimumParams()
-        pre_login_rs.ParseFromString(rs)
-        return pre_login_rs
-
-    if type(rs) is dict:
-        raise KeeperApiError(rs['error'], rs['message'])
 
 
 def v2_execute(context, rq):

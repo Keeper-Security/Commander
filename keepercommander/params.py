@@ -28,12 +28,11 @@ class PublicKeys(NamedTuple):
 
 
 class RestApiContext:
-    def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US', device_id=None):
+    def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US'):
         self.server_base = server
         self.transmission_key = None
         self.__server_key_id = 7
         self.locale = locale
-        self.__device_id = device_id
         self.__store_server_key = False
         self.proxies = None
         self._certificate_check = True
@@ -53,13 +52,6 @@ class RestApiContext:
 
     def __set_server_key_id(self, key_id):
         self.__server_key_id = key_id
-        self.__store_server_key = True
-
-    def __get_device_id(self):
-        return self.__device_id
-
-    def __set_device_id(self, device_id):
-        self.__device_id = device_id
         self.__store_server_key = True
 
     def __get_store_server_key(self):
@@ -89,7 +81,6 @@ class RestApiContext:
         return self._fail_on_throttle
 
     server_base = property(__get_server_base, __set_server_base)
-    device_id = property(__get_device_id, __set_device_id)
     server_key_id = property(__get_server_key_id, __set_server_key_id)
     store_server_key = property(__get_store_server_key)
     certificate_check = property(get_certificate_check, set_certificate_check)
@@ -99,15 +90,13 @@ class RestApiContext:
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self, config_filename='', config=None, server='keepersecurity.com', device_id=None):
+    def __init__(self, config_filename='', config=None, server='keepersecurity.com'):
         self.config_filename = config_filename
         self.config = config or {}
         self.auth_verifier = None
         self.__server = server
         self.user = ''
         self.password = ''
-        self.mfa_token = ''
-        self.mfa_type = 'device_token'
         self.commands = []
         self.plugins = []
         self.session_token = None
@@ -149,7 +138,7 @@ class KeeperParams:
         self.msp_tree_key = None
         self.prepare_commands = False
         self.batch_mode = False
-        self.__rest_context = RestApiContext(server=server, device_id=device_id)
+        self.__rest_context = RestApiContext(server=server)
         self.pending_share_requests = set()
         self.environment_variables = {}
         self.record_history = {}        # type: dict[str, (list[dict], int)]
@@ -173,8 +162,6 @@ class KeeperParams:
         self.auth_verifier = None
         self.user = ''
         self.password = ''
-        self.mfa_type = 'device_token'
-        self.mfa_token = ''
         self.commands.clear()
         self.session_token = None
         self.salt = None
