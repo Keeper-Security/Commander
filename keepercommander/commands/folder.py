@@ -310,14 +310,13 @@ class FolderTreeCommand(Command):
             display.formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares,
                                    hide_shares_key=hide_key, title=title)
         else:
-            rs = try_resolve_path(params, folder_name)
-            if rs is not None:
-                folder, pattern = rs
-                if len(pattern) == 0:
+            folders, pattern = try_resolve_path(params, folder_name, find_all_matches=True)
+            if not pattern:
+                for idx, folder in enumerate(folders):
                     display.formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares,
-                                           hide_shares_key=hide_key, title=title)
-                else:
-                    raise CommandError('tree', f'Folder {folder_name} not found')
+                                           hide_shares_key=hide_key or idx > 0, title=title)
+            else:
+                raise CommandError('tree', f'Folder {folder_name} not found')
 
 
 class FolderRenameCommand(Command):
