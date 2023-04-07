@@ -31,7 +31,7 @@ from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_ba
 
 from . import aliases, commands, enterprise_commands, msp_commands, record
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, dump_report_data, as_boolean
-from .helpers.record import get_record_uid
+from .helpers.record import get_record_uids as get_ruids
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
 )
@@ -2204,11 +2204,11 @@ class SyncSecurityDataCommand(Command):
                 names = [names]
             if names:
                 for name in names:
-                    uid = get_record_uid(params, name)
-                    if uid is None:
-                        raise CommandError('sync-security-data', f'Record {name} could not be found.')
+                    record_uids = get_ruids(params, name)
+                    if not record_uids:
+                        logging.warning(f'Record {name} could not be found (skipping security data update).')
                     else:
-                        uids.add(uid)
+                        uids.update(get_ruids(params, name))
             return uids
 
         if not params.enterprise_ec_key:
