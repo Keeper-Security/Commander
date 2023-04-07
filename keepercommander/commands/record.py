@@ -26,7 +26,7 @@ from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
-from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode, get_folder_uid, \
+from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode, get_folder_uids, \
     find_parent_top_folder
 from ..team import Team
 from . import record_edit, base, record_totp, record_file_report
@@ -1291,11 +1291,15 @@ class SharedRecordsReport(Command):
         export_name = kwargs.get('output')
         containers = kwargs.get('folder')
         f_uids = set()
+        log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
+        on_folder_fn = lambda folder: f_uids.add(folder.uid)
         for name in containers:
-            uid = get_folder_uid(params, name)
-            log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
-            on_folder_fn = lambda f: f_uids.add(f.uid)
-            FolderMixin.traverse_folder_tree(params, uid, on_folder_fn) if uid else log_folder_fn(name)
+            folder_uids = get_folder_uids(params, name)
+            if not folder_uids:
+                log_folder_fn(name)
+                continue
+            for uid in folder_uids:
+                FolderMixin.traverse_folder_tree(params, uid, on_folder_fn)
 
         shared_records_data_rs = api.communicate_rest(
             params, None, 'report/get_shared_record_report', rs_type=enterprise_pb2.SharedRecordResponse)
