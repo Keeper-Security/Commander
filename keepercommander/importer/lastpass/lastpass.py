@@ -17,6 +17,7 @@ import tempfile
 from glob import glob
 from typing import Optional, List
 
+from ...params import KeeperParams
 from ..importer import (
     BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, BaseDownloadMembership,
     replace_email_domain, FIELD_TYPE_ONE_TIME_CODE)
@@ -131,6 +132,12 @@ class LastPassImporter(BaseImporter):
             logging.warning(warn_msg)
 
     def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
+        request_settings = {}
+        params = kwargs.get('params')
+        if isinstance(params, KeeperParams):
+            request_settings['proxies'] = params.rest_context.proxies
+            request_settings['certificate_check'] = params.rest_context.certificate_check
+
         self.tmpdir = tmpdir
         username = name
         password = getpass.getpass(prompt='...' + 'LastPass Password'.rjust(30) + ': ', stream=None)
@@ -140,9 +147,8 @@ class LastPassImporter(BaseImporter):
             twofa_code = None
 
         try:
-            vault = Vault.open_remote(
-                username, password, multifactor_password=twofa_code, users_only=users_only, tmpdir=tmpdir
-            )
+            vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only,
+                                      tmpdir=tmpdir, **request_settings)
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
@@ -527,7 +533,7 @@ class LastPassImporter(BaseImporter):
         record.fields.append(host)
         record.login_url = ''
 
-    def populate_server(self, record, notes):  # type: (str, Record, dict) -> None
+    def populate_server(self, record, notes):  # type: (Record, dict) -> None
         record.type = 'serverCredentials'
         host = RecordField(type='host')
         host.value = {
@@ -675,9 +681,13 @@ class LastpassMembershipDownload(BaseDownloadMembership):
             twofa_code = None
 
         session = None
+        request_settings = {
+            'proxies': params.rest_context.proxies,
+            'certificate_check': params.rest_context.certificate_check
+        }
         try:
-            session = fetcher.login(username, password, twofa_code, None)
-            blob = fetcher.fetch(session)
+            session = fetcher.login(username, password, twofa_code, **request_settings)
+            blob = fetcher.fetch(session, **request_settings)
             encryption_key = blob.encryption_key(username, password)
             vault = Vault(blob, encryption_key, session, shared_folder_details=False, get_attachments=False)
 
@@ -686,7 +696,7 @@ class LastpassMembershipDownload(BaseDownloadMembership):
             for lpsf in lastpass_shared_folder:
                 logging.info('Loading shared folder membership for "%s"', lpsf.name)
 
-                members, teams, error = fetcher.fetch_shared_folder_members(session, lpsf.id)
+                members, teams, error = fetcher.fetch_shared_folder_members(session, lpsf.id, **request_settings)
                 sf = SharedFolder()
                 sf.uid = lpsf.id
                 sf.path = lpsf.name
@@ -701,7 +711,7 @@ class LastpassMembershipDownload(BaseDownloadMembership):
             logging.warning(e)
         finally:
             if session:
-                fetcher.logout(session)
+                fetcher.logout(session, **request_settings)
 
     @staticmethod
     def _lastpass_permission(lp_permission, team=False):  # type: (dict, Optional[bool]) -> Permission

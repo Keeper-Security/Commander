@@ -148,7 +148,7 @@ parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help
 parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
                     help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
                          'Windows Start Menu.')
-parser.add_argument('--proxy', dest='proxy', action='store', help='Proxy server..')
+parser.add_argument('--proxy', dest='proxy', action='store', help='Proxy server')
 unmask_help = 'Disable default masking of sensitive information (e.g., passwords) in output'
 parser.add_argument('--unmask-all', action='store_true', help=unmask_help)
 fail_on_throttle_help = 'Disable default client-side pausing of command execution and re-sending of requests upon ' \

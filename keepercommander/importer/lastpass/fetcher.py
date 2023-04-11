@@ -27,25 +27,24 @@ https_host = 'https://lastpass.com'
 query_string = 'mobile=1&b64=1&hash=0.0&hasplugin=3.0.23&requestsrc=android'
 
 
-def login(username, password, multifactor_password=None, client_id=None):
-    key_iteration_count = request_iteration_count(username)
-    return request_login(username, password, key_iteration_count, multifactor_password, client_id)
+def login(username, password, multifactor_password=None, client_id=None, **kwargs):
+    key_iteration_count = request_iteration_count(username, **kwargs)
+    return request_login(username, password, key_iteration_count, multifactor_password, client_id, **kwargs)
 
 
-def logout(session, web_client=http):
-    # type: (Session, requests) -> None
-    response = web_client.get(
-        'https://lastpass.com/logout.php?mobile=1',
-        cookies={'PHPSESSID': session.id}
-    )
+def logout(session, web_client=http, **kwargs):
+    # type: (Session, requests, ...) -> None
+    response = web_client.get('https://lastpass.com/logout.php?mobile=1', cookies={'PHPSESSID': session.id},
+                              proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
 
     if response.status_code != requests.codes.ok:
         raise NetworkError()
 
 
-def fetch(session, web_client=http):
+def fetch(session, web_client=http, **kwargs):
     url = f'{https_host}/getaccts.php?{query_string}'
-    response = web_client.get(url, cookies={'PHPSESSID': session.id})
+    response = web_client.get(url, cookies={'PHPSESSID': session.id},
+                              proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
 
     if response.status_code != requests.codes.ok:
         raise NetworkError()
@@ -53,13 +52,14 @@ def fetch(session, web_client=http):
     return blob.Blob(decode_blob(response.content), session.key_iteration_count)
 
 
-def stream_attachment(session, attach_info, web_client=http):
+def stream_attachment(session, attach_info, web_client=http, **kwargs):
     url = f'{https_host}/getattach.php'
     data = {'getattach': attach_info.storagekey}
     shared_folder = attach_info.parent.shared_folder
     if shared_folder:
         data['sharedfolderid'] = shared_folder.id
-    response = web_client.post(url, data=data, cookies={'PHPSESSID': session.id}, stream=True)
+    response = web_client.post(url, data=data, cookies={'PHPSESSID': session.id}, stream=True,
+                               proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
 
     if response.status_code != requests.codes.ok:
         shared_folder_msg = '' if shared_folder is None else f' in shared folder {shared_folder.name}'
@@ -73,9 +73,10 @@ def stream_attachment(session, attach_info, web_client=http):
     return response
 
 
-def fetch_shared_folder_members(session, shareid, web_client=http):
+def fetch_shared_folder_members(session, shareid, web_client=http, **kwargs):
     url = f'{https_host}/getSharedFolderMembers.php?{query_string}&shareid={shareid}'
-    response = web_client.get(url, cookies={'PHPSESSID': session.id})
+    response = web_client.get(url, cookies={'PHPSESSID': session.id},
+                              proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
 
     if response.status_code != requests.codes.ok:
         error = f'HTTP {response.status_code}, {response.reason}'
@@ -96,10 +97,9 @@ def fetch_shared_folder_members(session, shareid, web_client=http):
     return shared_folder_members, response_dict.get('groups', []), error
 
 
-def request_iteration_count(username, web_client=http):
-    response = web_client.get('https://lastpass.com/iterations.php',
-                               params={'email': username},
-                               headers=headers)
+def request_iteration_count(username, web_client=http, **kwargs):
+    response = web_client.get('https://lastpass.com/iterations.php', params={'email': username}, headers=headers,
+                              proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
     if response.status_code != requests.codes.ok:
         raise NetworkError()
 
@@ -114,7 +114,8 @@ def request_iteration_count(username, web_client=http):
     raise InvalidResponseError('Key iteration count is not positive')
 
 
-def request_login(username, password, key_iteration_count, multifactor_password=None, client_id=None, web_client=http):
+def request_login(username, password, key_iteration_count, multifactor_password=None, client_id=None,
+                  web_client=http, **kwargs):
     body = {
         'method': 'mobile',
         'web': 1,
@@ -130,9 +131,8 @@ def request_login(username, password, key_iteration_count, multifactor_password=
     if client_id:
         body['imei'] = client_id
 
-    response = web_client.post('https://lastpass.com/login.php',
-                               data=body,
-                               headers=headers)
+    response = web_client.post('https://lastpass.com/login.php', data=body, headers=headers,
+                               proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
 
     if response.status_code != requests.codes.ok:
         raise NetworkError()
