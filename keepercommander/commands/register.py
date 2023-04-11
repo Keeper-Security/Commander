@@ -183,6 +183,8 @@ class ShareFolderCommand(Command):
     def execute(self, params, **kwargs):
         def get_share_admin_obj_uids(obj_names, obj_type):
             # type: (List[Optional[str], int], int) -> Set[Optional[str]] or None
+            if not obj_names:
+                return None
             try:
                 rq = record_pb2.AmIShareAdmin()
                 for name in obj_names:
