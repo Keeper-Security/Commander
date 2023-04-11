@@ -61,6 +61,7 @@ def get_shared_records(params, record_uids):
         members = no_share_users.union(no_share_teams).union(no_share_team_members)
         return members
 
+    api.get_record_shares(params, record_uids)
     sf_teams = [shared_folder.get('teams', []) for shared_folder in params.shared_folder_cache.values()]
     sf_share_admins = fetch_sf_admins()
     team_uids = {t.get('team_uid') for teams in sf_teams for t in teams}
@@ -73,7 +74,7 @@ def get_shared_records(params, record_uids):
 
 
 class SharePermissions:
-    SharePermissionsType = Enum('SharePermissionsType', ['TEAM', 'USER', 'SF_USER', 'TEAM_USER'])
+    SharePermissionsType = Enum('SharePermissionsType', ['USER', 'SF_USER', 'TEAM', 'TEAM_USER'])
     bits_text_lookup = {(1 << 0): 'Edit', (1 << 1): 'Share'}
 
     def __init__(self, sp_types=None):

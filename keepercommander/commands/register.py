@@ -954,8 +954,6 @@ class ShareReportCommand(Command):
         else:
             record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
 
-        api.get_record_shares(params, record_uids)
-
         from keepercommander.shared_record import get_shared_records
         shared_records = get_shared_records(params, record_uids)
 
