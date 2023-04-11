@@ -155,7 +155,7 @@ def try_resolve_path(params, path, find_all_matches=False):
         else (next(iter(folders)) if folders else None, path)
 
 
-def get_folder_uids(params, name):  # type: (KeeperParams, str) -> Set[Optional[str]]
+def get_folder_uids(params, name):  # type: (KeeperParams, str or None) -> Set[Optional[str]]
     uids = set()
     if name in params.folder_cache or name == '':
         uids.add(name)
