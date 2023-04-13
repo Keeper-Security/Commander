@@ -296,6 +296,7 @@ class AuditLogBaseExport(abc.ABC):
             else:
                 record.custom.append(vault.TypedField.new_field('text', value, name))
 
+
 class AuditLogSplunkExport(AuditLogBaseExport):
     def __init__(self):
         super(AuditLogSplunkExport, self).__init__()
@@ -1786,28 +1787,23 @@ class ActionReportCommand(EnterpriseCommand):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
 
         def batch_apply_cmd(users, api_cmd_rq=None, dryrun=False, userid_field='enterprise_user_id'):
+            user_ids = [user.get(userid_field) for user in users]
             cmd_status = 'aborted' if api_cmd_rq else 'n/a'
             affected = 0
             server_msg = 'n/a'
             cmd = 'NONE (No action specified)' if api_cmd_rq is None else api_cmd_rq.get('command')
             if api_cmd_rq is not None and len(users):
-                cmd_rqs = [{**api_cmd_rq, userid_field: user[userid_field]} for user in users]
-                rq = cmd_rq('execute', requests=cmd_rqs)
+                cmd_rqs = [{**api_cmd_rq, userid_field: user_id} for user_id in user_ids]
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
-                    rs = api.communicate(params, rq)
-                    cmd_status = rs.get('result')
-                    server_msg = rs.get('message')
-                    affected = len(users)
-                    if cmd_status == 'success':
-                        results = rs.get('results')
-                        fails = [result for result in results if result.get('result') != 'success']
-                        if any(fails):
-                            fail = fails[0]
-                            cmd_status = 'incomplete'
-                            affected = len(users) - len(fails)
-                            server_msg = fail.get('message')
+                    responses = api.execute_batch(params, cmd_rqs)
+                    fails = [rs for rs in responses if rs.get('result') != 'success']
+                    affected = len(users) - len(fails)
+                    cmd_status = 'fail' if not responses \
+                        else 'incomplete' if any(fails) \
+                        else 'success'
+                    server_msg = '\n\t\t\t'.join(fail.get('message') for fail in fails)
 
             return get_action_results_text(cmd, cmd_status, server_msg, affected)
 
@@ -1911,6 +1907,12 @@ class ActionReportCommand(EnterpriseCommand):
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
+
+        # Sync local enterprise data if changes were made
+        if admin_action != 'none' and not dry_run:
+            from keepercommander.commands.enterprise import GetEnterpriseDataCommand
+            get_enterprise_data_cmd = GetEnterpriseDataCommand()
+            get_enterprise_data_cmd.execute(params)
 
         title = f'Admin Action Taken:\n{action_msg}\n'
         title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '
