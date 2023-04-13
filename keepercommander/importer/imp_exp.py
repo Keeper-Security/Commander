@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Iterator, List, Optional, Union, Dict, Tuple, Set
+from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 
 """Import and export functionality."""
 import abc
@@ -1735,7 +1735,7 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
 
 
 def prepare_record_add_or_update(update_flag, params, records):
-    # type: (bool, KeeperParams, Iterator[ImportRecord]) -> Tuple[List[ImportRecord], dict]
+    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], dict]
     """
     Find what records to import or update.
 

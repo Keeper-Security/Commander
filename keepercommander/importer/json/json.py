@@ -12,7 +12,7 @@
 import json
 import sys
 
-from typing import List
+from typing import List, Optional, Any, Dict
 
 from .. import imp_exp
 from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission,
@@ -21,7 +21,109 @@ from ... import api, utils, record_types
 from ...proto import enterprise_pb2
 
 
-class KeeperJsonImporter(BaseFileImporter):
+class KeeperJsonMixin:
+    @staticmethod
+    def json_to_record(j_record):   # type: (Dict[str, Any]) -> Optional[Record]
+        record = Record()
+        record.uid = j_record.get('uid')
+        if '$type' in j_record:
+            record.type = j_record['$type']
+        record.title = j_record.get('title') or ''
+        record.login = j_record.get('login') or ''
+        record.password = j_record.get('password') or ''
+        record.login_url = j_record.get('login_url') or ''
+        record.notes = j_record.get('notes') or ''
+        custom_fields = j_record.get('custom_fields')
+        if type(custom_fields) is dict:
+            for name in custom_fields:
+                value = custom_fields[name]
+                if name[0] == '$':
+                    pos = name.find(':')
+                    if pos > 0:
+                        field_type = name[1:pos].strip()
+                        field_name = name[pos+1:].strip()
+                    else:
+                        field_type = name[1:].strip()
+                        field_name = ''
+                else:
+                    field_type = ''
+                    field_name = name
+
+                ft = record_types.RecordFields.get(field_type or 'text')
+                if ft:
+                    is_multiple = ft.multiple != record_types.Multiple.Never
+                else:
+                    is_multiple = False
+                    if not field_name:
+                        field_name = name
+                        field_type = ''
+
+                if isinstance(value, list) and not is_multiple:
+                    for v in value:
+                        field = RecordField()
+                        field.type = field_type
+                        field.label = field_name
+                        field.value = v
+                        record.fields.append(field)
+                else:
+                    field = RecordField()
+                    field.type = field_type
+                    field.label = field_name
+                    field.value = value
+                    record.fields.append(field)
+        if 'schema' in j_record:
+            record.schema = []
+            for s in j_record['schema']:
+                pos = s.find(':')
+                if pos > 0:
+                    schema_ref = s[0:pos].strip()
+                    schema_label = s[pos+1:].strip()
+                else:
+                    schema_ref = s
+                    schema_label = ''
+                if schema_ref[0] == '$':
+                    schema_ref = schema_ref[1:]
+
+                sf = RecordSchemaField()
+                sf.ref = schema_ref
+                sf.label = schema_label
+                record.schema.append(sf)
+        if 'references' in j_record:
+            record.references = []
+            for ref_name in j_record['references']:
+                if not ref_name:
+                    continue
+                ref_value = j_record['references'][ref_name]
+                if not ref_value:
+                    continue
+                if type(ref_value) != list:
+                    ref_value = [ref_value]
+                ref_type = ref_name
+                ref_label = ''
+                pos = ref_name.find(':')
+                if pos > 0:
+                    ref_type = ref_name[1:pos].strip()
+                    ref_label = ref_name[pos+1].strip()
+                if ref_type[0] == '$':
+                    ref_type = ref_type[1:]
+                rr = RecordReferences()
+                rr.type = ref_type
+                rr.label = ref_label
+                rr.uids.extend(ref_value)
+                record.references.append(rr)
+        if 'folders' in j_record:
+            record.folders = []
+            for f in j_record['folders']:
+                folder = Folder()
+                folder.domain = f.get('shared_folder')
+                folder.path = f.get('folder')
+                folder.can_edit = f.get('can_edit')
+                folder.can_share = f.get('can_share')
+                record.folders.append(folder)
+        return record
+
+
+class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
     def do_import(self, filename, **kwargs):
         users_only = kwargs.get('users_only') or False
         with open(filename, "r", encoding='utf-8') as json_file:
@@ -75,103 +177,7 @@ class KeeperJsonImporter(BaseFileImporter):
 
             if not users_only and records:
                 for r in records:
-                    record = Record()
-                    record.uid = r.get('uid')
-                    if '$type' in r:
-                        record.type = r['$type']
-                    record.title = r.get('title')
-                    record.login = r.get('login')
-                    record.password = r.get('password')
-                    record.login_url = r.get('login_url')
-                    record.notes = r.get('notes')
-                    custom_fields = r.get('custom_fields')
-                    if type(custom_fields) is dict:
-                        for name in custom_fields:
-                            value = custom_fields[name]
-                            if name[0] == '$':
-                                pos = name.find(':')
-                                if pos > 0:
-                                    field_type = name[1:pos].strip()
-                                    field_name = name[pos+1:].strip()
-                                else:
-                                    field_type = name[1:].strip()
-                                    field_name = ''
-                            else:
-                                field_type = ''
-                                field_name = name
-
-                            ft = record_types.RecordFields.get(field_type or 'text')
-                            if ft:
-                                is_multiple = ft.multiple != record_types.Multiple.Never
-                            else:
-                                is_multiple = False
-                                if not field_name:
-                                    field_name = name
-                                    field_type = ''
-
-                            if isinstance(value, list) and not is_multiple:
-                                for v in value:
-                                    field = RecordField()
-                                    field.type = field_type
-                                    field.label = field_name
-                                    field.value = v
-                                    record.fields.append(field)
-                            else:
-                                field = RecordField()
-                                field.type = field_type
-                                field.label = field_name
-                                field.value = value
-                                record.fields.append(field)
-                    if 'schema' in r:
-                        record.schema = []
-                        for s in r['schema']:
-                            pos = s.find(':')
-                            if pos > 0:
-                                schema_ref = s[0:pos].strip()
-                                schema_label = s[pos+1:].strip()
-                            else:
-                                schema_ref = s
-                                schema_label = ''
-                            if schema_ref[0] == '$':
-                                schema_ref = schema_ref[1:]
-
-                            sf = RecordSchemaField()
-                            sf.ref = schema_ref
-                            sf.label = schema_label
-                            record.schema.append(sf)
-                    if 'references' in r:
-                        record.references = []
-                        for ref_name in r['references']:
-                            if not ref_name:
-                                continue
-                            ref_value = r['references'][ref_name]
-                            if not ref_value:
-                                continue
-                            if type(ref_value) != list:
-                                ref_value = [ref_value]
-                            ref_type = ref_name
-                            ref_label = ''
-                            pos = field_name.find(':')
-                            if pos > 0:
-                                ref_type = field_name[1:pos].strip()
-                                ref_label = field_name[pos+1].strip()
-                            if ref_type[0] == '$':
-                                ref_type = ref_type[1:]
-                            rr = RecordReferences()
-                            rr.type = ref_type
-                            rr.label = ref_label
-                            rr.uids.extend(ref_value)
-                            record.references.append(rr)
-                    if 'folders' in r:
-                        record.folders = []
-                        for f in r['folders']:
-                            folder = Folder()
-                            folder.domain = f.get('shared_folder')
-                            folder.path = f.get('folder')
-                            folder.can_edit = f.get('can_edit')
-                            folder.can_share = f.get('can_share')
-                            record.folders.append(folder)
-
+                    record = KeeperJsonMixin.json_to_record(r)
                     yield record
 
     def extension(self):
