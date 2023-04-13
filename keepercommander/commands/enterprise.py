@@ -166,10 +166,10 @@ enterprise_user_parser.add_argument('--add-team', dest='add_team', action='appen
 enterprise_user_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-team only')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
-# enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL",
-#                                     help='new email alias for a user')
-# enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL",
-#                                     help='delete email alias')
+enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL",
+                                    help='new email alias for a user')
+enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL",
+                                    help='delete email alias')
 enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
