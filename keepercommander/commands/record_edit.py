@@ -385,6 +385,62 @@ class RecordEditMixin:
             notes = notes.replace('\\n', '\n')
         return notes
 
+    @staticmethod
+    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
+        new_fields = []
+        old_fields = list(record.fields)
+        custom = list(record.custom)
+        should_rebuild = False
+        for typed_field in typed_fields:
+            if not isinstance(typed_field, dict):
+                return
+            field_type = typed_field.get('$ref')
+            if not field_type:
+                return
+            field_label = typed_field.get('label') or ''
+            required = typed_field.get('required')
+            rf = record_types.RecordFields.get(field_type)
+            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
+
+            field = next((x for x in old_fields if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                new_fields.append(field)
+                old_fields.remove(field)
+                if field.label != field_label:
+                    field.label = field_label
+                    should_rebuild = True
+                continue
+
+            field = next((x for x in custom if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                field.required = required
+                new_fields.append(field)
+                custom.remove(field)
+                should_rebuild = True
+                continue
+
+            field = vault.TypedField.new_field(field_type, None, field_label)
+            field.required = required
+            new_fields.append(field)
+            should_rebuild = True
+
+        if len(old_fields) > 0:
+            custom.extend(old_fields)
+            should_rebuild = True
+
+        if not should_rebuild:
+            should_rebuild = any(x for x in custom if not x.value)
+
+        if should_rebuild:
+            record.fields.clear()
+            record.fields.extend(new_fields)
+            record.custom.clear()
+            record.custom.extend((x for x in custom if x.value))
+
+        return should_rebuild
+
     def assign_typed_fields(self, record, fields):
         # type: (vault.TypedRecord, List[ParsedFieldValue]) -> None
         if not isinstance(record, vault.TypedRecord):
@@ -799,62 +855,6 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
 
         record_management.update_record(params, record)
         params.sync_data = True
-
-    @staticmethod
-    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
-        new_fields = []
-        old_fields = list(record.fields)
-        custom = list(record.custom)
-        should_rebuild = False
-        for typed_field in typed_fields:
-            if not isinstance(typed_field, dict):
-                return
-            field_type = typed_field.get('$ref')
-            if not field_type:
-                return
-            field_label = typed_field.get('label') or ''
-            required = typed_field.get('required')
-            rf = record_types.RecordFields.get(field_type)
-            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
-
-            field = next((x for x in old_fields if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                new_fields.append(field)
-                old_fields.remove(field)
-                if field.label != field_label:
-                    field.label = field_label
-                    should_rebuild = True
-                continue
-
-            field = next((x for x in custom if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                field.required = required
-                new_fields.append(field)
-                custom.remove(field)
-                should_rebuild = True
-                continue
-
-            field = vault.TypedField.new_field(field_type, None, field_label)
-            field.required = required
-            new_fields.append(field)
-            should_rebuild = True
-
-        if len(old_fields) > 0:
-            custom.extend(old_fields)
-            should_rebuild = True
-
-        if not should_rebuild:
-            should_rebuild = any(x for x in custom if not x.value)
-
-        if should_rebuild:
-            record.fields.clear()
-            record.fields.extend(new_fields)
-            record.custom.clear()
-            record.custom.extend((x for x in custom if x.value))
-
-        return should_rebuild
 
 
 class RecordAppendNotesCommand(Command):
