@@ -34,7 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from . import aram, base, audit_alerts
 from . import compliance
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .register import ShareRecordCommand, ShareFolderCommand
@@ -104,7 +104,7 @@ SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'use
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
 
-enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info',
+enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info', parents=[report_output_parser],
                                                  description='Display a tree structure of your enterprise.',
                                                  formatter_class=RawTextHelpFormatter)
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
@@ -113,10 +113,6 @@ enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
-enterprise_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                    default='table', help='output format. applicable to users, teams, and roles.')
-enterprise_info_parser.add_argument('--output', dest='output', action='store',
-                                    help='output file name. (ignored for table format)')
 enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                     help='comma-separated list of available columns per argument:' +
                                          '\n for `nodes` (%s)' % ', '.join(SUPPORTED_NODE_COLUMNS) +
@@ -124,11 +120,8 @@ enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                          '\n for `teams` (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
                                          '\n for `roles` (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
                                     )
-
 enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
                                     help='search pattern. applicable to users, teams, and roles.')
-enterprise_info_parser.error = raise_parse_exception
-enterprise_info_parser.exit = suppress_exit
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node(s).')
@@ -230,24 +223,25 @@ enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
-team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Enable or disable automated team and user approval.')
+team_approve_parser = argparse.ArgumentParser(prog='team-approve', parents=[report_output_parser],
+                                              description='Enable or disable automated team and user approval.')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
 team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
-team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
-team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
-team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
-team_approve_parser.error = raise_parse_exception
-team_approve_parser.exit = suppress_exit
+team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store',
+                                 help='disable record edits')
+team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store',
+                                 help='disable record re-shares')
+team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store',
+                                 help='disable view/copy passwords')
+team_approve_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                                 help='Report on run approval commands only. Do not run.')
 
-device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices.')
+device_approve_parser = argparse.ArgumentParser(prog='device-approve', parents=[report_output_parser],
+                                                description='Approve Cloud SSO Devices.')
 device_approve_parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='reload list of pending approval requests')
 device_approve_parser.add_argument('--approve', '-a', dest='approve', action='store_true', help='approve user devices')
 device_approve_parser.add_argument('--deny', '-d', dest='deny', action='store_true', help='deny user devices')
 device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
-device_approve_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                    default='table', help='Output format. Applicable to list of devices in the queue.')
-device_approve_parser.add_argument('--output', dest='output', action='store',
-                                    help='Output file name (ignored for table format)')
 device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
 device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit
@@ -3492,6 +3486,8 @@ class TeamApproveCommand(EnterpriseCommand):
         return team_approve_parser
 
     def execute(self, params, **kwargs):
+        table = []
+
         approve_teams = True
         approve_users = True
         if kwargs.get('team') or kwargs.get('user'):
@@ -3527,19 +3523,23 @@ class TeamApproveCommand(EnterpriseCommand):
                 }
                 request_batch.append(rq)
             if request_batch:
-                rs = api.execute_batch(params, request_batch)
-                if rs:
-                    success = 0
-                    failure = 0
-                    for status in rs:
-                        if 'result' in status:
-                            if status['result'] == 'success':
-                                success += 1
-                            else:
-                                failure += 1
-                    if success or failure:
-                        logging.info('Team approval: success %s; failure %s', success, failure)
-                api.query_enterprise(params)
+                if not kwargs.get('dry_run'):
+                    rs = api.execute_batch(params, request_batch)
+                    if rs:
+                        success = 0
+                        failure = 0
+                        for status in rs:
+                            if 'result' in status:
+                                if status['result'] == 'success':
+                                    success += 1
+                                else:
+                                    failure += 1
+                        if success or failure:
+                            logging.info('Team approval: success %s; failure %s', success, failure)
+                    api.query_enterprise(params)
+                else:
+                    for rq in request_batch:
+                        table.append(['Approve Team', rq['team_name'], ''])
 
         request_batch.clear()
         if approve_users and 'queued_team_users' in params.enterprise and \
@@ -3573,19 +3573,37 @@ class TeamApproveCommand(EnterpriseCommand):
                                 rq['user_type'] = 0
                                 request_batch.append(rq)
             if request_batch:
-                rs = api.execute_batch(params, request_batch)
-                if rs:
-                    success = 0
-                    failure = 0
-                    for status in rs:
-                        if 'result' in status:
-                            if status['result'] == 'success':
-                                success += 1
-                            else:
-                                failure += 1
-                    if success or failure:
-                        logging.info('Team User approval: success %s; failure %s', success, failure)
-                api.query_enterprise(params)
+                if not kwargs.get('dry_run'):
+                    rs = api.execute_batch(params, request_batch)
+                    if rs:
+                        success = 0
+                        failure = 0
+                        for status in rs:
+                            if 'result' in status:
+                                if status['result'] == 'success':
+                                    success += 1
+                                else:
+                                    failure += 1
+                        if success or failure:
+                            logging.info('Team User approval: success %s; failure %s', success, failure)
+                    api.query_enterprise(params)
+                else:
+                    for rq in request_batch:
+                        team_uid = rq['team_uid']
+                        team_name = team_uid
+                        if team_uid in teams:
+                            if 'name' in teams['team_uid']:
+                                team_name = teams['team_uid']['name']
+                        user_id = rq['enterprise_user_id']
+                        username = user_id
+                        if user_id in active_users:
+                            username = active_users[user_id]
+
+                        table.append(['Approve User', team_name, username])
+
+        if kwargs.get('dry_run') and len(table) > 0:
+            headers = ['Action', 'Team', 'User']
+            return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
 
 class DeviceApproveCommand(EnterpriseCommand):

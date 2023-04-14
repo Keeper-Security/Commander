@@ -21,7 +21,7 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List, Any, Iterable
+from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict
 
 import sys
 from tabulate import tabulate
@@ -30,10 +30,10 @@ from .. import api, crypto, utils, vault
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
-aliases = {}        # type: {str, str}
-commands = {}       # type: {str, Command}
-enterprise_commands = {}     # type: {str, Command}
-msp_commands = {}   # type: {str, Command}
+aliases = {}                 # type: Dict[str, str]
+commands = {}                # type: Dict[str, Command]
+enterprise_commands = {}     # type: Dict[str, Command]
+msp_commands = {}            # type: Dict[str, Command]
 command_info = OrderedDict()
 
 
