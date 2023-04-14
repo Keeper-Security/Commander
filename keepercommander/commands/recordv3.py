@@ -776,15 +776,17 @@ class RecordTypeInfo(Command):
     def get_parser(self):
         return record_type_info_parser
 
-    def resolve_record_type(self, params, record_type_id):
+    @staticmethod
+    def resolve_record_type(params, record_type_id):
         record_type_info = {}
         if params.record_type_cache and record_type_id in params.record_type_cache:
             record_type_info = { record_type_id: params.record_type_cache.get(record_type_id) }
 
         return record_type_info
 
-    def resolve_record_types(self, params, record_type_id):
-        records = [] # (count, category, recordTypeId, content)
+    @staticmethod
+    def resolve_record_types(params, record_type_id):
+        records = []  # (count, category, recordTypeId, content)
         if params.record_type_cache:
             if record_type_id and (type(record_type_id) == int or record_type_id.isdigit()):
                 record_type_id = int(record_type_id)
@@ -812,7 +814,8 @@ class RecordTypeInfo(Command):
 
         return records
 
-    def resolve_categories(self, params, category):
+    @staticmethod
+    def resolve_categories(params, category):
         categories = [] # count, category, recordTypeId, content
         should_resolve_all = not category or category.isspace() or category == '*'
         if params.record_type_cache:
@@ -912,7 +915,7 @@ class RecordTypeInfo(Command):
         #     return
         # 2021-06-07 if no record_name or field_name specified - list all record types
         has_categories_only = False
-        row_data = self.resolve_record_types(params, lrid)
+        row_data = RecordTypeInfo.resolve_record_types(params, lrid)
 
         rows = []
         for count, cat, rtid, content in row_data:

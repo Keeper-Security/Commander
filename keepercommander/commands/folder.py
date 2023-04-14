@@ -214,7 +214,7 @@ class FolderListCommand(Command, RecordMixin):
                         continue
                     rec = params.record_cache[uid]
                     rv = rec.get('version', 0)
-                    if rv in (0, 4, 5):
+                    if rv not in (2, 3):
                         continue    # skip fileRef and application records - they use file-report command
 
                     r = vault.KeeperRecord.load(params, rec)

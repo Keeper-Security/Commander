@@ -410,12 +410,15 @@ class RecordGetUidCommand(Command):
                                 f_type = f.type
                                 if f_type.endswith('Ref'):
                                     continue
-                                if f_type not in record_types.RecordFields:
-                                    f_type = 'text'
-                                rf = record_types.RecordFields[f_type]
-                                ft = record_types.FieldTypes.get(rf.type)
-                                key = rf.name
-                                if rf.multiple == record_types.Multiple.Optional:
+                                if f_type in record_types.RecordFields:
+                                    rf = record_types.RecordFields[f_type]
+                                    ft = record_types.FieldTypes.get(rf.type)
+                                    key = rf.name
+                                else:
+                                    rf = None
+                                    ft = None
+                                    key = f'{f_type}.'
+                                if rf and rf.multiple == record_types.Multiple.Optional:
                                     if f.label:
                                         f_label = f.label.replace('\\', '\\\\').replace('"', '\\"').replace('=', '==')
                                         if ' ' in f_label or "'" in f_label:
@@ -425,47 +428,61 @@ class RecordGetUidCommand(Command):
                                     fields[key] = ''
                                 else:
                                     value = ''
-                                    for f_value in f.value:
-                                        if isinstance(f_value, type(ft.value)):
-                                            if isinstance(f_value, str):
-                                                f_value = f_value.strip()
-                                                if f_value:
-                                                    value = f_value
-                                            elif isinstance(f_value, int):
-                                                if ft.name == 'date':
-                                                    if f_value > 0:
-                                                        dt = datetime.datetime.fromtimestamp(int(f_value / 1000)).date()
-                                                        value = str(dt)
-                                                else:
+                                    if ft:
+                                        for f_value in f.value:
+                                            if isinstance(f_value, type(ft.value)):
+                                                if isinstance(f_value, str):
+                                                    f_value = f_value.strip()
+                                                    if f_value:
+                                                        value = f_value
+                                                elif isinstance(f_value, bool):
                                                     value = str(f_value)
-                                            elif isinstance(value, bool):
-                                                value = '1' if value else '0'
-                                            elif isinstance(f_value, dict):
-                                                if ft.name == 'host':
-                                                    v = vault.TypedField.export_host_field(f_value)
-                                                elif ft.name == 'phone':
-                                                    v = vault.TypedField.export_phone_field(f_value)
-                                                elif ft.name == 'name':
-                                                    v = vault.TypedField.export_name_field(f_value)
-                                                elif ft.name == 'address':
-                                                    v = vault.TypedField.export_address_field(f_value)
-                                                elif ft.name == 'securityQuestion':
-                                                    v = vault.TypedField.export_q_and_a_field(f_value)
-                                                elif ft.name == 'paymentCard':
-                                                    v = vault.TypedField.export_card_field(f_value)
-                                                elif ft.name == 'bankAccount':
-                                                    v = vault.TypedField.export_account_field(f_value)
-                                                elif ft.name == 'privateKey':
-                                                    v = vault.TypedField.export_ssh_key_field(f_value)
-                                                else:
-                                                    continue
-                                                if v:
-                                                    if value:
-                                                        value += '; ' + v
+                                                elif isinstance(f_value, int):
+                                                    if ft.name == 'date':
+                                                        if f_value > 0:
+                                                            dt = datetime.datetime.fromtimestamp(int(f_value / 1000)).date()
+                                                            value = str(dt)
                                                     else:
-                                                        value = v
-                                        if value and rf.multiple != record_types.Multiple.Always:
-                                            break
+                                                        value = str(f_value)
+                                                elif isinstance(f_value, dict):
+                                                    if ft.name == 'host':
+                                                        v = vault.TypedField.export_host_field(f_value)
+                                                    elif ft.name == 'phone':
+                                                        v = vault.TypedField.export_phone_field(f_value)
+                                                    elif ft.name == 'name':
+                                                        v = vault.TypedField.export_name_field(f_value)
+                                                    elif ft.name == 'address':
+                                                        v = vault.TypedField.export_address_field(f_value)
+                                                    elif ft.name == 'securityQuestion':
+                                                        v = vault.TypedField.export_q_and_a_field(f_value)
+                                                    elif ft.name == 'paymentCard':
+                                                        v = vault.TypedField.export_card_field(f_value)
+                                                    elif ft.name == 'bankAccount':
+                                                        v = vault.TypedField.export_account_field(f_value)
+                                                    elif ft.name == 'privateKey':
+                                                        v = vault.TypedField.export_ssh_key_field(f_value)
+                                                    elif ft.name == 'schedule':
+                                                        v = vault.TypedField.export_schedule_field(f_value)
+                                                    else:
+                                                        v = f'$JSON:{json.dumps(f_value)}'
+                                                    if v:
+                                                        if value:
+                                                            value += '; ' + v
+                                                        else:
+                                                            value = v
+                                            if value and rf.multiple != record_types.Multiple.Always:
+                                                break
+                                    else:
+                                        if len(f.value) == 1:
+                                            f_value = f.value[0]
+                                            if isinstance(f_value, str):
+                                                value = f_value
+                                            elif isinstance(f_value, int):
+                                                value = str(f_value)
+                                            else:
+                                                value = f'$JSON:{json.dumps(f_value)}'
+                                        else:
+                                            value = f'$JSON:{json.dumps(f.value)}'
 
                                     fields[key] = value
                         pairs = []
@@ -646,8 +663,10 @@ class RecordListCommand(Command):
                     record_type.add('file')
                 elif rt == 'general':
                     record_version.update((1, 2))
+                if rt == 'pam':
+                    record_version.add(6)
                 else:
-                    record_version.add(3)
+                    record_version.update((3, 6))
                     record_type.add(rt)
         else:
             record_version = None if verbose else (1, 2, 3)

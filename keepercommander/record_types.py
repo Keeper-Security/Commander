@@ -37,7 +37,13 @@ FieldTypes = {x[0]: x for x in (
     FieldType('date', 0, 'calendar date with validation, stored as unix milliseconds'),
     FieldType('bankAccount', {'accountType': '', 'routingNumber': '', 'accountNumber': '', 'otherType': ''},
               'bank account information'),
-    FieldType('privateKey', {'publicKey': '', 'privateKey': ''}, 'private and/or public keys in ASN.1 format')
+    FieldType('pamResources', {'controllerUid': '', 'folderUid': '', 'resourceRef': []},
+              'PAM resources'),
+    FieldType('privateKey', {'publicKey': '', 'privateKey': ''}, 'private and/or public keys in ASN.1 format'),
+    FieldType('checkbox', False, 'on/off checkbox'),
+    FieldType('dropdown', '', 'list of text choices'),
+    FieldType('schedule', {'type': '', 'utcTime': '', 'month': '', }, 'schedule information'),
+    FieldType('recordRef', '', 'reference to other record'),
 )}   # type: Dict[str, FieldType]
 
 
@@ -61,20 +67,16 @@ RecordFields = {x[0]: x for x in (
     RecordField('pinCode', 'secret', Multiple.Never),
     RecordField('expirationDate', 'date', Multiple.Never),
     RecordField('birthDate', 'date', Multiple.Never),
-    RecordField('name', 'name', Multiple.Optional),
-    RecordField('phone', 'phone', Multiple.Optional),
-    RecordField('email', 'email', Multiple.Optional),
-    RecordField('address', 'address', Multiple.Optional),
-    RecordField('date', 'date', Multiple.Optional),
-    RecordField('paymentCard', 'paymentCard', Multiple.Optional),
-    RecordField('multiline', 'multiline', Multiple.Optional),
-    RecordField('url', 'url', Multiple.Optional),
-    RecordField('host', 'host', Multiple.Optional),
-    RecordField('secret', 'secret', Multiple.Optional),
-    RecordField('otp', 'otp', Multiple.Optional),
-    RecordField('text', 'text', Multiple.Optional),
     RecordField('securityQuestion', 'securityQuestion', Multiple.Always),
-    RecordField('addressRef', 'addressRef', Multiple.Optional),
-    RecordField('cardRef', 'cardRef', Multiple.Optional),
     RecordField('fileRef', 'fileRef', Multiple.Always),
+
+    RecordField('pamResources', 'pamResources', Multiple.Never),
+    RecordField('pamHostname', 'host', Multiple.Never),
+    RecordField('databaseType', 'dropdown', Multiple.Never),
+    RecordField('directoryType', 'dropdown', Multiple.Never),
+
 )}   # type: Dict[str, RecordField]
+
+for ft in FieldTypes.values():
+    if ft.name not in RecordFields:
+        RecordFields[ft.name] = RecordField(ft.name, ft.name, Multiple.Optional)

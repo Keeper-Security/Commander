@@ -1,11 +1,12 @@
-import logging
+from typing import Sequence, Optional, List
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from keepercommander import api, utils
-from keepercommander.commands.utils import KSMCommand
-from keepercommander.loginv3 import CommonHelperMethods
-from keepercommander.proto import pam_pb2
+from ... import api, utils
+from ...commands.utils import KSMCommand
+from ...loginv3 import CommonHelperMethods
+from ...params import KeeperParams
+from ...proto import pam_pb2, enterprise_pb2
 
 
 def find_one_gateway_by_uid_or_name(params, gateway_name_or_uid):
@@ -24,15 +25,15 @@ def find_one_gateway_by_uid_or_name(params, gateway_name_or_uid):
     return found_gateway_uid_str
 
 
-def get_all_gateways(params):
+def get_all_gateways(params):  # type: (KeeperParams) -> Sequence[pam_pb2.PAMController]
     rs = api.communicate_rest(params, None, 'pam/get_controllers', rs_type=pam_pb2.PAMControllersResponse)
     return rs.controllers
 
 
-def find_connected_gateways(all_controllers, identifier):
+def find_connected_gateways(all_controllers, identifier):  # type: (List[bytes], str) -> Optional[bytes]
     # Will search connected controllers by the "controllerName", "deviceName", or "deviceToken"
 
-    found_connected_controller_uid_bytes = next((c for c in all_controllers if (CommonHelperMethods.bytes_to_url_safe_str(c) == identifier)), None)
+    found_connected_controller_uid_bytes = next((c for c in all_controllers if (utils.base64_url_encode(c) == identifier)), None)
 
     if found_connected_controller_uid_bytes:
         # if len(found_connected_controller) > 1:
@@ -54,7 +55,8 @@ def create_gateway(params, gateway_name, ksm_app, config_init, ott_expire_in_min
                                                 access_expire_in_min=None, # how long the client has access to the application, None=Never, int = num of min
                                                 client_name=gateway_name,
                                                 config_init=False,
-                                                silent=True)
+                                                silent=True,
+                                                client_type=enterprise_pb2.DISCOVERY_AND_ROTATION_CONTROLLER)
 
     one_time_token_dict = one_time_token_dict[0]
     one_time_token = one_time_token_dict.get('oneTimeToken')
@@ -68,12 +70,10 @@ def create_gateway(params, gateway_name, ksm_app, config_init, ott_expire_in_min
     return one_time_token
 
 
-def remove_gateway(params, gateway_uid):
+def remove_gateway(params, gateway_uid):   # type: (KeeperParams, bytes) -> None
     rq = pam_pb2.PAMGenericUidRequest()
-    rq.uid = utils.base64_url_decode(gateway_uid)
-
-    rs = api.communicate_rest(params, rq, 'pam/remove_controller', rs_type=pam_pb2.PAMControllersResponse)
-
-    # TODO: Add error checking
-
-    return True
+    rq.uid = gateway_uid
+    rs = api.communicate_rest(params, rq, 'pam/remove_controller', rs_type=pam_pb2.PAMRemoveControllerResponse)
+    controller = next((x for x in rs.controllers if x.controllerUid == gateway_uid), None)
+    if controller:
+        raise Exception(controller.message)
