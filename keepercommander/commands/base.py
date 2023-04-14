@@ -21,7 +21,7 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict
+from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 
 import sys
 from tabulate import tabulate
@@ -527,7 +527,7 @@ class GroupCommand(CliCommand):
         self.default_verb = ''
 
     def register_command(self, verb, command, description=None, alias=None):
-        # type: (Any, Command, Optional[str], Optional[str]) -> None
+        # type: (Any, CliCommand, Optional[str], Optional[str]) -> None
         verb = verb.lower()
         self._commands[verb] = command
         if not description:
@@ -710,6 +710,17 @@ class RecordMixin:
 
 
 class FolderMixin:
+    @staticmethod
+    def get_records_in_folder_tree(params, folder_uid):   # type: (KeeperParams, str) -> Set[str]
+        records = set()
+
+        def add_records(f):   # type: (BaseFolderNode) -> None
+            if f.uid in params.subfolder_record_cache:
+                records.update(params.subfolder_record_cache[f.uid])
+
+        FolderMixin.traverse_folder_tree(params, folder_uid, add_records)
+        return records
+
     @staticmethod
     def traverse_folder_tree(params, folder_uid, callback):
         # type: (KeeperParams, str, Callable[[BaseFolderNode], None]) -> None

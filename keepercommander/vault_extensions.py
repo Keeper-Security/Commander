@@ -93,6 +93,8 @@ def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[s
         return ' @ '.join((str(x) for x in comps if x))
 
     if isinstance(record, vault.TypedRecord):
+        if record.version == 6:
+            return 'PAM Configuration'
         field = next((x for x in record.fields if x.type == 'login'), None)
         if field:
             value = field.get_default_value()

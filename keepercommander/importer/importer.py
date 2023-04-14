@@ -341,6 +341,8 @@ class BaseImporter(abc.ABC):
                 v = vault.TypedField.import_card_field(str_value)
             elif field_type == 'bankAccount':
                 v = vault.TypedField.import_account_field(str_value)
+            elif field_type == 'schedule':
+                v = vault.TypedField.import_schedule_field(str_value)
             else:
                 v = str_value
                 if field_type in RecordV3.field_values:
@@ -468,8 +470,10 @@ class BaseExporter(abc.ABC):
                 return vault.TypedField.export_card_field(field_value)
             if field_type == 'bankAccount':
                 return vault.TypedField.export_account_field(field_value)
-            if field_type == 'keyPair':
+            if field_type in ('keyPair', 'privateKey'):
                 return vault.TypedField.export_ssh_key_field(field_value)
+            if field_type == 'schedule':
+                return vault.TypedField.export_schedule_field(field_value)
             return json.dumps(field_value)
 
         return str(field_value)

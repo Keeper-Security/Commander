@@ -8,6 +8,7 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+
 from typing import Optional, List, Callable, Any
 
 from .vault import TypedRecord, TypedField
@@ -73,7 +74,7 @@ def string_getter(name):   # type: (str) -> Callable[[TypedRecordFacade], str]
     return getter
 
 
-def string_setter(name):   # type: (str) -> Callable[[Any, Any], None]
+def string_setter(name):   # type: (str) -> Callable[[Any, str], None]
     def setter(obj, value):
         field = getattr(obj, name)
         if isinstance(field, TypedField):
@@ -87,8 +88,45 @@ def string_setter(name):   # type: (str) -> Callable[[Any, Any], None]
     return setter
 
 
+def string_element_getter(name, element_name):   # type: (str, str) -> Callable[[Any], str]
+    def getter(obj):
+        field = getattr(obj, name)
+        if isinstance(field, TypedField):
+            if len(field.value) > 0 and isinstance(field.value[0], dict):
+                return field.value[0].get(element_name) or ''
+    return getter
+
+
+def string_element_setter(name, element_name):   # type: (str, str) -> Callable[[Any, str], None]
+    def setter(obj, value):
+        field = getattr(obj, name)
+        if isinstance(field, TypedField):
+            if value:
+                if len(field.value) == 0:
+                    field.value.append({})
+                if isinstance(field.value[0], dict):
+                    field.value[0][element_name] = value
+            else:
+                if len(field.value) > 0 and isinstance(field.value[0], dict):
+                    field.value[0][element_name] = value
+    return setter
+
+
+def list_element_getter(name, element_name):   # type: (str, str) -> Callable[[TypedRecordFacade], list]
+    def getter(obj):
+        field = getattr(obj, name)
+        if isinstance(field, TypedField):
+            if len(field.value) > 0 and isinstance(field.value[0], dict):
+                if element_name not in field.value[0] or not isinstance(field.value[0][element_name], list):
+                    field.value[0][element_name] = []
+                return field.value[0][element_name]
+    return getter
+
+
 class FileRefRecordFacade(TypedRecordFacade):
-    def __init__(self):     # type: () -> None
+    _file_ref_getter = string_list_getter('_file_ref')
+
+    def __init__(self):
         super(FileRefRecordFacade, self).__init__()
         self._file_ref = None       # type: Optional[TypedField]
 
@@ -102,10 +140,21 @@ class FileRefRecordFacade(TypedRecordFacade):
             self._file_ref = None
         super(FileRefRecordFacade, self).load_typed_fields()
 
-    file_ref = property(string_list_getter('_file_ref'))
+    @property
+    def file_ref(self):
+        return FileRefRecordFacade._file_ref_getter(self)
 
 
 class LoginRecordFacade(FileRefRecordFacade):
+    _login_getter = string_getter('_login')
+    _login_setter = string_setter('_login')
+    _password_getter = string_getter('_password')
+    _password_setter = string_setter('_password')
+    _url_getter = string_getter('_url')
+    _url_setter = string_setter('_url')
+    _oneTimeCode_getter = string_getter('_oneTimeCode')
+    _oneTimeCode_setter = string_setter('_oneTimeCode')
+
     def __init__(self):
         super(LoginRecordFacade, self).__init__()
         self._login = None        # type: Optional[TypedField]
@@ -113,10 +162,37 @@ class LoginRecordFacade(FileRefRecordFacade):
         self._url = None          # type: Optional[TypedField]
         self._oneTimeCode = None  # type: Optional[TypedField]
 
-    login = property(fget=string_getter('_login'), fset=string_setter('_login'))
-    password = property(fget=string_getter('_password'), fset=string_setter('_password'))
-    url = property(fget=string_getter('_url'), fset=string_setter('_url'))
-    oneTimeCode = property(fget=string_getter('_oneTimeCode'), fset=string_setter('_oneTimeCode'))
+    @property
+    def login(self):
+        return LoginRecordFacade._login_getter(self)
+
+    @login.setter
+    def login(self, value):
+        LoginRecordFacade._login_setter(self, value)
+
+    @property
+    def password(self):
+        return LoginRecordFacade._password_getter(self)
+
+    @password.setter
+    def password(self, value):
+        LoginRecordFacade._password_setter(self, value)
+
+    @property
+    def url(self):
+        return LoginRecordFacade._url_getter(self)
+
+    @url.setter
+    def url(self, value):
+        LoginRecordFacade._url_setter(self, value)
+
+    @property
+    def oneTimeCode(self):
+        return LoginRecordFacade._oneTimeCode_getter(self)
+
+    @oneTimeCode.setter
+    def oneTimeCode(self, value):
+        LoginRecordFacade._oneTimeCode_setter(self, value)
 
     def load_typed_fields(self):
         if self.record:

@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from .base import Command, RecordMixin, FolderMixin
-from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management, subfolder
+from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management
 from ..commands import recordv3
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -572,6 +572,8 @@ class RecordEditMixin:
                                     value.append(qav)
                         elif ft.name == 'privateKey':
                             value = vault.TypedField.import_ssh_key_field(parsed_field.value)
+                        elif ft.name == 'schedule':
+                            value = vault.TypedField.import_schedule_field(parsed_field.value)
                         else:
                             self.on_warning(f'Unsupported field type: {record_field.type}')
                 if value:
@@ -677,6 +679,62 @@ class RecordEditMixin:
                 j_rt = json.loads(jrt_fields)
                 if isinstance(j_rt, dict):
                     return j_rt.get('fields')
+
+    @staticmethod
+    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
+        new_fields = []
+        old_fields = list(record.fields)
+        custom = list(record.custom)
+        should_rebuild = False
+        for typed_field in typed_fields:
+            if not isinstance(typed_field, dict):
+                return
+            field_type = typed_field.get('$ref')
+            if not field_type:
+                return
+            field_label = typed_field.get('label') or ''
+            required = typed_field.get('required')
+            rf = record_types.RecordFields.get(field_type)
+            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
+
+            field = next((x for x in old_fields if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                new_fields.append(field)
+                old_fields.remove(field)
+                if field.label != field_label:
+                    field.label = field_label
+                    should_rebuild = True
+                continue
+
+            field = next((x for x in custom if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                field.required = required
+                new_fields.append(field)
+                custom.remove(field)
+                should_rebuild = True
+                continue
+
+            field = vault.TypedField.new_field(field_type, None, field_label)
+            field.required = required
+            new_fields.append(field)
+            should_rebuild = True
+
+        if len(old_fields) > 0:
+            custom.extend(old_fields)
+            should_rebuild = True
+
+        if not should_rebuild:
+            should_rebuild = any(x for x in custom if not x.value)
+
+        if should_rebuild:
+            record.fields.clear()
+            record.fields.extend(new_fields)
+            record.custom.clear()
+            record.custom.extend((x for x in custom if x.value))
+
+        return should_rebuild
 
 
 class RecordAddCommand(Command, RecordEditMixin):
@@ -982,7 +1040,6 @@ class RecordDownloadAttachmentCommand(Command):
                                 if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
                                     if r.title.lower() == name.lower():
                                         record_uids.add(r.record_uid)
-                                        break
                         else:
                             folder_uid = folder.uid
             if folder_uid:

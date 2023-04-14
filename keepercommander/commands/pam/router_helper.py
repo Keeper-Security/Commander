@@ -6,18 +6,16 @@ import requests
 from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
 from requests import ConnectionError
 
-from keepercommander import crypto, utils, rest_api, loginv3
-from keepercommander.commands.base import dump_report_data
-from keepercommander.commands.pam import gateway_helper
-from keepercommander.commands.pam.pam_dto import GatewayAction
-from keepercommander.display import bcolors
-from keepercommander.error import KeeperApiError
-from keepercommander.params import KeeperParams
-from keepercommander.proto.pam_pb2 import PAMOnlineControllers, PAMGenericUidRequest, PAMRotationSchedulesResponse, \
-    ControllerResponse
-from keepercommander.proto.router_pb2 import RouterRotationInfo, RouterResponse, RouterResponseCode, RRC_OK, \
-    RouterControllerMessage, RRC_BAD_STATE, RRC_TIMEOUT, RRC_CONTROLLER_DOWN
-from keepercommander.utils import base64_url_decode, string_to_bytes
+import google
+
+from . import gateway_helper
+from .pam_dto import GatewayAction
+from .. import base
+from ... import crypto, utils, rest_api
+from ...display import bcolors
+from ...error import KeeperApiError
+from ...params import KeeperParams
+from ...proto import pam_pb2, router_pb2
 
 VERIFY_SSL = True
 
@@ -35,13 +33,15 @@ def get_router_url(params: KeeperParams):
     return krouter_server_url
 
 
-def router_get_connected_gateways(params):
-
+def router_get_connected_gateways(params):  # type: (KeeperParams) -> pam_pb2.PAMOnlineControllers
     rs = _post_request_to_router(params, 'get_controllers')
 
     if type(rs) == bytes:
-        pam_online_controllers = PAMOnlineControllers()
+        pam_online_controllers = pam_pb2.PAMOnlineControllers()
         pam_online_controllers.ParseFromString(rs)
+        if logging.getLogger().level <= logging.DEBUG:
+            js = google.protobuf.json_format.MessageToJson(pam_online_controllers)
+            logging.debug('>>> [GW RS] %s: %s', 'get_controllers', js)
 
         return pam_online_controllers
 
@@ -64,19 +64,20 @@ def router_get_connected_gateways(params):
 
 
 def router_set_record_rotation_information(params, proto_request):
-
     rs = _post_request_to_router(params, 'set_record_rotation', proto_request)
 
     return rs
 
 
 def router_get_rotation_schedules(params, proto_request):
-
     rs = _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request)
 
     if type(rs) == bytes:
-        rsr = PAMRotationSchedulesResponse()
+        rsr = pam_pb2.PAMRotationSchedulesResponse()
         rsr.ParseFromString(rs)
+        if logging.getLogger().level <= logging.DEBUG:
+            js = google.protobuf.json_format.MessageToJson(rsr)
+            logging.debug('>>> [GW RS] %s: %s', 'get_rotation_schedules', js)
 
         return rsr
 
@@ -94,10 +95,12 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
     else:
         encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
 
-
     encrypted_payload = b''
 
     if rq_proto:
+        if logging.getLogger().level <= logging.DEBUG:
+            js = google.protobuf.json_format.MessageToJson(rq_proto)
+            logging.debug('>>> [GW RQ] %s: %s', path, js)
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
     encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
@@ -129,11 +132,11 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
 
         if type(rs_body) == bytes:
 
-            router_response = RouterResponse()
+            router_response = router_pb2.RouterResponse()
             router_response.ParseFromString(rs_body)
 
-            rrc = RouterResponseCode.Name(router_response.responseCode)
-            if router_response.responseCode != RRC_OK:
+            rrc = router_pb2.RouterResponseCode.Name(router_response.responseCode)
+            if router_response.responseCode != router_pb2.RRC_OK:
                 raise Exception(router_response.errorMessage + ' Response code: ' + rrc)
 
             if router_response.encryptedPayload:
@@ -141,6 +144,7 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
                 payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
             else:
                 payload_decrypted = None
+
             return payload_decrypted
 
         return rs_body
@@ -185,7 +189,8 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
 
     # 1. Find connected gateway to send action to
     try:
-        router_enterprise_controllers_connected = router_get_connected_gateways(params).controllers
+        router_enterprise_controllers_connected = \
+            [x.controllerUid for x in router_get_connected_gateways(params).controllers]
 
     except requests.exceptions.ConnectionError as errc:
         logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_host}]{bcolors.ENDC}")
@@ -208,7 +213,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
             return
         elif len(router_enterprise_controllers_connected) == 1:
             destination_gateway_uid_bytes = router_enterprise_controllers_connected[0]
-            destination_gateway_uid_str = loginv3.CommonHelperMethods.bytes_to_url_safe_str(destination_gateway_uid_bytes)
+            destination_gateway_uid_str = utils.base64_url_encode(destination_gateway_uid_bytes)
         else:  # There are more than two Gateways connected. Selecting the right one
 
             if not gateway_action.gateway_destination:
@@ -221,17 +226,17 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
                 return
 
             destination_gateway_uid_bytes = gateway_helper.find_connected_gateways(router_enterprise_controllers_connected, gateway_action.gateway_destination)
-            destination_gateway_uid_str = loginv3.CommonHelperMethods.bytes_to_url_safe_str(destination_gateway_uid_bytes)
+            destination_gateway_uid_str = utils.base64_url_encode(destination_gateway_uid_bytes)
 
     msg_id = gateway_action.conversationId if gateway_action.conversationId else GatewayAction.generate_conversation_id()
-    msg_id_bytes = string_to_bytes(msg_id)
+    msg_id_bytes = msg_id.encode('utf-8')
 
-    rq = RouterControllerMessage()
+    rq = router_pb2.RouterControllerMessage()
     rq.messageUid = msg_id_bytes
     rq.controllerUid = destination_gateway_uid_bytes
     rq.messageType = message_type
     rq.streamResponse = is_streaming
-    rq.payload = string_to_bytes(gateway_action.toJSON())
+    rq.payload = gateway_action.toJSON().encode('utf-8')
     rq.timeout = 15000  # Default time out how long the response from the Gateway should be
 
     transmission_key = utils.generate_aes_key()
@@ -245,22 +250,22 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     rs_body = response.content
 
     if type(rs_body) == bytes:
-        router_response = RouterResponse()
+        router_response = router_pb2.RouterResponse()
         router_response.ParseFromString(rs_body)
 
-        rrc = RouterResponseCode.Name(router_response.responseCode)
-        if router_response.responseCode == RRC_OK:
+        rrc = router_pb2.RouterResponseCode.Name(router_response.responseCode)
+        if router_response.responseCode == router_pb2.RRC_OK:
             logging.debug("Good response...")
 
-        elif router_response.responseCode == RRC_BAD_STATE:
+        elif router_response.responseCode == router_pb2.RRC_BAD_STATE:
             raise Exception(router_response.errorMessage + ' response code: ' + rrc)
 
-        elif router_response.responseCode == RRC_TIMEOUT:
+        elif router_response.responseCode == router_pb2.RRC_TIMEOUT:
             # Router tried to send message to the Controller but the response didn't arrive on time
             # ex. if Router is expecting response to be within 3 sec, but the gateway didn't respond within that time
             raise Exception(router_response.errorMessage + ' response code: ' + rrc)
 
-        elif router_response.responseCode == RRC_CONTROLLER_DOWN:
+        elif router_response.responseCode == router_pb2.RRC_CONTROLLER_DOWN:
             # Sent an action to the Controller that is no longer online
             raise Exception(router_response.errorMessage + ' response code: ' + rrc)
 
@@ -273,7 +278,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
 
             payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
 
-            controller_response = ControllerResponse()
+            controller_response = pam_pb2.ControllerResponse()
             controller_response.ParseFromString(payload_decrypted)
 
             gateway_response_payload = json.loads(controller_response.payload)
@@ -337,7 +342,7 @@ def print_router_response(router_response, response_type, original_conversation_
     router_response_response_payload_str = router_response_response.get('payload')
     router_response_response_payload_dict = json.loads(router_response_response_payload_str)
 
-    gateway_response_conversation_id = base64_url_decode(router_response_response_payload_dict.get('conversation_id')).decode("utf-8")
+    gateway_response_conversation_id = utils.base64_url_decode(router_response_response_payload_dict.get('conversation_id')).decode("utf-8")
 
     if router_response_response_payload_dict.get('warnings'):
         for w in router_response_response_payload_dict.get('warnings'):
@@ -489,7 +494,7 @@ def print_configs_from_router(params, router_response):
 
     table.sort(key=lambda x: (x[3] or '', x[1].lower()))
 
-    dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
+    base.dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
 def encrypt_pwd_complexity(rule_list_dict, record_key_unencrypted):

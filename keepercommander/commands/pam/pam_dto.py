@@ -1,8 +1,8 @@
 import abc
 import base64
 import json
+
 from keepercommander import crypto
-from keepercommander.crypto import encrypt_aes_v2
 
 
 class RouterRequest:

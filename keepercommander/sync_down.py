@@ -246,7 +246,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 record_uid = utils.base64_url_encode(nsd.recordUid)
                 params.non_shared_data_cache[record_uid] = {
                     'record_uid': record_uid,
-                    'data': utils.base64_url_encode(r.data),
+                    'data': utils.base64_url_encode(nsd.data),
                 }
 
         if len(response.teams) > 0:
@@ -822,6 +822,27 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             except Exception as e:
                 logging.debug('Record %s data/extra decryption error: %s', record_uid, e)
 
+    logging.debug('Decrypting non shared data')
+    for record_uid, nsd in params.non_shared_data_cache.items():
+        if 'data_unencrypted' not in nsd and record_uid in params.record_cache:
+            record = params.record_cache[record_uid]
+            data = nsd.get('data')
+            if data:
+                version = record.get('version') or 0
+                try:
+                    if version >= 3:
+                        nsd['data_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(data), params.data_key)
+                    else:
+                        nsd['data_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(data), params.data_key)
+                except:
+                    try:
+                        if version < 3:
+                            nsd['data_unencrypted'] = crypto.decrypt_aes_v2(utils.base64_url_decode(data), params.data_key)
+                        else:
+                            nsd['data_unencrypted'] = crypto.decrypt_aes_v1(utils.base64_url_decode(data), params.data_key)
+                    except Exception as e:
+                        logging.debug('Non Shared Data %s data decryption error: %s', record_uid, e)
+
     logging.debug('Decrypting folders')
     for folder_uid, sf in params.subfolder_cache.items():
         folder_type = sf['type']
@@ -862,16 +883,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         record_types_rs = _sync_record_types(params)
         if len(record_types_rs.recordTypes) > 0:
             params.record_type_cache = {}
-            conflict_type_id = 1000000
             for rt in record_types_rs.recordTypes:
                 type_id = rt.recordTypeId
-                if rt.scope == record_pb2.RT_ENTERPRISE:
-                    type_id += 1000
-                elif rt.scope == record_pb2.RT_USER:
-                    continue
-                while type_id in params.record_type_cache:
-                    conflict_type_id += 1
-                    type_id = conflict_type_id
+                type_id += rt.scope * 1000000
                 params.record_type_cache[type_id] = rt.content
 
     if full_sync:
@@ -902,10 +916,12 @@ def _sync_record_types(params):  # type: (KeeperParams) -> Any
     rq.pam = True
     return api.communicate_rest(params, rq, 'vault/get_record_types', rs_type=record_pb2.RecordTypesResponse)
 
+
 def merge_lists_on_value(list1, list2, field_name):
     d = {x[field_name]: x for x in list1}
     d.update({x[field_name]: x for x in list2})
     return [x for x in d.values()]
+
 
 def prepare_folder_tree(params):    # type: (KeeperParams) -> None
     params.folder_cache = {}
