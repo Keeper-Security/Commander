@@ -672,23 +672,23 @@ class LoginV3Flow:
             return 'TOTP (Google and Microsoft Authenticator)'
         if channel == proto.TWO_FA_CT_SMS:
             return 'Send SMS Code'
-        if channel == proto.TWO_FA_CODE_DUO:
+        if channel == proto.TWO_FA_CT_DUO:
             return 'DUO'
-        if channel == proto.TWO_FA_CODE_RSA:
+        if channel == proto.TWO_FA_CT_RSA:
             return 'RSA SecurID'
         if channel == proto.TWO_FA_CT_U2F:
             return 'U2F (FIDO Security Key)'
         if channel == proto.TWO_FA_CT_WEBAUTHN:
             return 'WebAuthN (FIDO2 Security Key)'
-        if channel == proto.TWO_FA_CODE_DNA:
+        if channel == proto.TWO_FA_CT_DNA:
             return 'Keeper DNA (Watch)'
 
     @staticmethod
     def handleTwoFactor(params: KeeperParams, encryptedLoginToken, login_resp):
         print("This account requires 2FA Authentication")
 
-        supported_channels = {proto.TWO_FA_CODE_TOTP, proto.TWO_FA_CT_SMS, proto.TWO_FA_CODE_DUO, proto.TWO_FA_CODE_RSA,
-                              proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN, proto.TWO_FA_CODE_DNA}
+        supported_channels = {proto.TWO_FA_CODE_TOTP, proto.TWO_FA_CT_SMS, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA,
+                              proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN, proto.TWO_FA_CT_DNA}
         channels = [x for x in login_resp.channels if x.channelType in supported_channels]
 
         if LoginV3Flow.warned_on_fido_package:
