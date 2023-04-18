@@ -77,9 +77,11 @@ share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'remove'], default='grant',
                                  action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
-                                 help='account email, team, or \'*\' as default folder permission')
+                                 help='account email, team, @existing for all users and teams in the folder, '
+                                      'or \'*\' as default folder permission')
 share_folder_parser.add_argument('-r', '--record', dest='record', action='append',
-                                 help='record name, record UID, or \'*\' as default folder permission')
+                                 help='record name, record UID, @existing for all records in the folder,'
+                                      ' or \'*\' as default folder permission')
 share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true',
                                  help='account permission: can manage records.')
 share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true',
@@ -182,7 +184,7 @@ class ShareFolderCommand(Command):
 
     def execute(self, params, **kwargs):
         def get_share_admin_obj_uids(obj_names, obj_type):
-            # type: (List[Optional[str], int], int) -> Set[Optional[str]] or None
+            # type: (List[Optional[str], int], int) -> Optional[Set[str]]
             if not obj_names:
                 return None
             try:
@@ -203,18 +205,26 @@ class ShareFolderCommand(Command):
                 return None
 
         names = kwargs.get('folder')
-        if not isinstance(names, List):
+        if not isinstance(names, list):
             names = [names]
 
-        get_folder_by_uid = lambda uid: params.folder_cache.get(uid)
-        folder_uids = {uid for name in names for uid in get_folder_uids(params, name)}
-        folders = {get_folder_by_uid(uid) for uid in folder_uids}
-        shared_folder_uids = {uid for uid in folder_uids if uid in params.shared_folder_cache}
-        sf_subfolders = {f for f in folders if f.type == 'shared_folder_folder'}
-        shared_folder_uids.update({subfolder.shared_folder_uid for subfolder in sf_subfolders})
-        unresolved_names = [name for name in names if not get_folder_uids(params, name)]
-        share_admin_folder_uids = get_share_admin_obj_uids(unresolved_names, record_pb2.CHECK_SA_ON_SF)
-        shared_folder_uids.update(share_admin_folder_uids or {})
+        all_folders = any(True for x in names if x == '*')
+        if all_folders:
+            names = [x for x in names if x != '*']
+
+        shared_folder_uids = set()    # type: Set[str]
+        if all_folders:
+            shared_folder_uids.update(params.shared_folder_cache.keys())
+        else:
+            get_folder_by_uid = lambda uid: params.folder_cache.get(uid)
+            folder_uids = {uid for name in names for uid in get_folder_uids(params, name)}
+            folders = {get_folder_by_uid(uid) for uid in folder_uids}
+            shared_folder_uids.update([uid for uid in folder_uids if uid in params.shared_folder_cache])
+            sf_subfolders = {f for f in folders if f.type == 'shared_folder_folder'}
+            shared_folder_uids.update({subfolder.shared_folder_uid for subfolder in sf_subfolders})
+            unresolved_names = [name for name in names if not get_folder_uids(params, name)]
+            share_admin_folder_uids = get_share_admin_obj_uids(unresolved_names, record_pb2.CHECK_SA_ON_SF)
+            shared_folder_uids.update(share_admin_folder_uids or [])
 
         if not shared_folder_uids:
             raise CommandError('share-folder', 'Enter name of at least one existing folder')
@@ -224,11 +234,14 @@ class ShareFolderCommand(Command):
         as_users = set()
         as_teams = set()
 
+        all_users = False
         default_account = False
         if 'user' in kwargs:
             for u in (kwargs.get('user') or []):
                 if u == '*':
                     default_account = True
+                elif u == '@current':
+                    all_users = True
                 else:
                     em = re.match(constants.EMAIL_PATTERN, u)
                     if em is not None:
@@ -245,6 +258,7 @@ class ShareFolderCommand(Command):
                             logging.warning('User %s could not be resolved as email or team', u)
 
         record_uids = set()
+        all_records = False
         default_record = False
         unresolved_names = []
         if 'record' in kwargs:
@@ -252,6 +266,8 @@ class ShareFolderCommand(Command):
             for r in records:
                 if r == '*':
                     default_record = True
+                elif r == '@current':
+                    all_records = True
                 else:
                     r_uids = get_record_uids(params, r)
                     record_uids.update(r_uids) if r_uids else unresolved_names.append(r)
@@ -260,13 +276,27 @@ class ShareFolderCommand(Command):
                 sa_record_uids = get_share_admin_obj_uids(unresolved_names, record_pb2.CHECK_SA_ON_RECORD)
                 record_uids.update(sa_record_uids or {})
 
-        if len(as_users) == 0 and len(as_teams) == 0 and len(record_uids) == 0 and not default_record and not default_account:
+        if len(as_users) == 0 and len(as_teams) == 0 and len(record_uids) == 0 and \
+                not default_record and not default_account and \
+                not all_users and not all_records:
             logging.info('Nothing to do')
             return
 
         for sf_uid in shared_folder_uids:
+            sf_users = set(as_users)
+            sf_teams = set(as_teams)
+            sf_records = set(record_uids)
             if sf_uid in params.shared_folder_cache:
                 sh_fol = params.shared_folder_cache[sf_uid]
+                if all_users or all_records:
+                    if all_users:
+                        if 'users' in sh_fol:
+                            sf_users.update((x['username'] for x in sh_fol['users'] if x['username'] != params.user))
+                        if 'teams' in sh_fol:
+                            sf_teams.update((x['team_uid'] for x in sh_fol['teams']))
+                    if all_records:
+                        if 'records' in sh_fol:
+                            sf_records.update((x['record_uid'] for x in sh_fol['records']))
             else:
                 sh_fol = {
                     'shared_folder_uid': sf_uid,
@@ -277,7 +307,7 @@ class ShareFolderCommand(Command):
                     'records': [{'record_uid': x, 'can_share': action != 'grant', 'can_edit': action != 'grant'}
                                 for x in record_uids]
                 }
-            self.send_command(params, kwargs, sh_fol, as_users, as_teams, record_uids, default_record, default_account)
+            self.send_command(params, kwargs, sh_fol, sf_users, sf_teams, sf_records, default_record, default_account)
 
     @staticmethod
     def send_command(params, kwargs, curr_sf, users, teams, rec_uids, default_record=False, default_account=False):

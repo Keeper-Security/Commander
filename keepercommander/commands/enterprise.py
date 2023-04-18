@@ -103,6 +103,7 @@ SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'use
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
+enterprise_data_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info', parents=[report_output_parser],
                                                  description='Display a tree structure of your enterprise.',
@@ -329,7 +330,7 @@ class GetEnterpriseDataCommand(Command):
         return enterprise_data_parser
 
     def execute(self, params, **kwargs):
-        api.query_enterprise(params)
+        api.query_enterprise(params, kwargs.get('force') or False)
 
 
 class EnterpriseInfoCommand(EnterpriseCommand):

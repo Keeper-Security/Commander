@@ -1272,8 +1272,10 @@ def get_record_shares(params, record_uids, is_share_admin=False):
         return result
 
 
-def query_enterprise(params):
+def query_enterprise(params, force=False):
     try:
+        if force is True and params.enterprise:
+            params.enterprise = None
         qe(params)
     except Exception as e:
         share_account_by = params.get_share_account_timestamp()
