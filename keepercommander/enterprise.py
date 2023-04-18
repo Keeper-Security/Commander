@@ -181,6 +181,7 @@ class _EnterpriseLoader(object):
             if rs.cacheStatus == proto.CLEAR:
                 for d in self._data_types.values():
                     d.clear(params)
+                self._enterprise._enterprise_name = ''
 
             if not self._enterprise.enterprise_name and rs.generalData:
                 self._enterprise._enterprise_name = rs.generalData.enterpriseName
