@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
-from typing import Optional, Tuple, Dict, Iterable, List, Set
+from typing import Optional, Tuple, Dict, Iterable, List, Set, Union
 
 from .params import KeeperParams
 
@@ -29,11 +29,21 @@ def get_folder_path(params, folder_uid, delimiter='/'):
     return path
 
 
-def find_folders(params, record_uid):
+def find_folders(params, record_uid):   # type: (KeeperParams, str) -> Iterable[str]
     for fuid in params.subfolder_record_cache:
         if record_uid in params.subfolder_record_cache[fuid]:
             if fuid:
                 yield fuid
+
+
+def find_all_folders(params, record_uid):   # type: (KeeperParams, str) -> Iterable[BaseFolderNode]
+    for fuid in params.subfolder_record_cache:
+        if record_uid in params.subfolder_record_cache[fuid]:
+            if fuid:
+                if fuid in params.folder_cache:
+                    yield params.folder_cache[fuid]
+            else:
+                yield params.root_folder
 
 
 def find_parent_top_folder(params, record_uid):
@@ -121,7 +131,7 @@ def path_split(params, folder, path_string):
 
 
 def try_resolve_path(params, path, find_all_matches=False):
-    # type: (KeeperParams, str, bool) -> Optional[Tuple[List[BaseFolderNode] or BaseFolderNode, Optional[str]]]
+    # type: (KeeperParams, str, bool) -> Tuple[Union[List[BaseFolderNode], BaseFolderNode, None], Optional[str]]
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
     Set find_all_matches = True to get a list of folders and component path

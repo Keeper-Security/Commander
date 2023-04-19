@@ -215,9 +215,12 @@ enterprise_team_parser.add_argument('-ar', '--add-role', action='append', help='
 enterprise_team_parser.add_argument('-rr', '--remove-role', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-user only')
-enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
-enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
-enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
+enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store',
+                                    help='disable record edits')
+enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store',
+                                    help='disable record re-shares')
+enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store',
+                                    help='disable view/copy passwords')
 enterprise_team_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 enterprise_team_parser.add_argument('--name', dest='name', action='store', help='team\'s new name')
 enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name or UID')
@@ -239,10 +242,13 @@ team_approve_parser.add_argument('--dry-run', dest='dry_run', action='store_true
 
 device_approve_parser = argparse.ArgumentParser(prog='device-approve', parents=[report_output_parser],
                                                 description='Approve Cloud SSO Devices.')
-device_approve_parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='reload list of pending approval requests')
-device_approve_parser.add_argument('--approve', '-a', dest='approve', action='store_true', help='approve user devices')
+device_approve_parser.add_argument('--reload', '-r', dest='reload', action='store_true',
+                                   help='reload list of pending approval requests')
+device_approve_parser.add_argument('--approve', '-a', dest='approve', action='store_true',
+                                   help='approve user devices')
 device_approve_parser.add_argument('--deny', '-d', dest='deny', action='store_true', help='deny user devices')
-device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
+device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true',
+                                   help='approve only devices coming from a trusted IP address')
 device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
 device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit

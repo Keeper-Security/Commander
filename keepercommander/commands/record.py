@@ -17,7 +17,7 @@ import itertools
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterable
+from typing import Dict, Any, List, Optional, Iterable, Tuple
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -26,7 +26,7 @@ from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
-from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode, get_folder_uids
+from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, get_folder_uids
 from ..team import Team
 from . import record_edit, base, record_totp, record_file_report
 
@@ -165,7 +165,7 @@ rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record')
 rm_parser.add_argument('--all', dest='purge', action='store_true',
                        help='remove the record from all folders')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID')
 
 
 def find_record(params, record_name, types=None):
@@ -1506,79 +1506,68 @@ class RecordRemoveCommand(Command):
         return rm_parser
 
     def execute(self, params, **kwargs):
-        folder = None
-        name = None
-        record_path = kwargs['record'] if 'record' in kwargs else None
-        if record_path:
-            rs = try_resolve_path(params, record_path)
-            if rs is not None:
-                folder, name = rs
-
-        if folder is None or name is None:
-            logging.warning('Enter name of existing record')
-            return
-
-        record_uid = None
-        if name in params.record_cache:
-            record_uid = name
-            folders = list(find_folders(params, record_uid))
-            if len(folders) > 0:
-                folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
-        else:
-            folder_uid = folder.uid or ''
-            if folder_uid in params.subfolder_record_cache:
-                for uid in params.subfolder_record_cache[folder_uid]:
-                    r = api.get_record(params, uid)
-                    if r.title.lower() == name.lower():
-                        record_uid = uid
-                        break
-
-        if record_uid is None:
-            raise CommandError('rm', 'Enter name of existing record')
-
-        if kwargs.get('purge'):
-            rq = {
-                'command': 'record_update',
-                'pt': 'Commander',
-                'device_id': 'Commander',
-                'client_time': api.current_milli_time(),
-                'delete_records': [record_uid]
-            }
-            if not kwargs.get('force'):
-                answer = base.user_choice('Do you want to proceed with record removal?', 'yn', default='n')
-                if answer.lower() != 'y':
-                    return
-            rs = api.communicate(params, rq)
-            if 'delete_records' in rs:
-                for status in rs['delete_records']:
-                    if status['status'] != 'success':
-                        logging.warning('Record remove error: %s', status.get('status'))
-        else:
-            del_obj = {
-                'delete_resolution': 'unlink',
-                'object_uid': record_uid,
-                'object_type': 'record'
-            }
-            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-                del_obj['from_type'] = 'user_folder'
-                if folder.type == BaseFolderNode.UserFolderType:
-                    del_obj['from_uid'] = folder.uid
-            else:
-                del_obj['from_type'] = 'shared_folder_folder'
-                del_obj['from_uid'] = folder.uid
-
+        records_to_delete = []     # type: List[Tuple[BaseFolderNode, str]]
+        record_names = kwargs.get('records')
+        if isinstance(record_names, list):
+            for name in record_names:
+                if name in params.record_cache:
+                    record_uid = name
+                    for folder in find_all_folders(params, record_uid):
+                        records_to_delete.append((folder, record_uid))
+                else:
+                    orig_len = len(records_to_delete)
+                    rs = try_resolve_path(params, name, find_all_matches=True)
+                    if rs:
+                        folders, record_name = rs
+                        if record_name:
+                            if not isinstance(folders, list):
+                                if isinstance(folders, BaseFolderNode):
+                                    folders = [folders]
+                                else:
+                                    folders = [params.root_folder]
+                            for folder in folders:
+                                if not isinstance(folder, BaseFolderNode):
+                                    continue
+                                if folder.uid not in params.subfolder_record_cache:
+                                    continue
+                                for record_uid in params.subfolder_record_cache[folder.uid]:
+                                    if record_name == record_uid:
+                                        records_to_delete.append((folder, record_uid))
+                                    else:
+                                        record = vault.KeeperRecord.load(params, record_uid)
+                                        if record:
+                                            if record.title.casefold() == record_name.casefold():
+                                                records_to_delete.append((folder, record_uid))
+                    if len(records_to_delete) == orig_len:
+                        raise CommandError('rm', f'Record {name} cannot be resolved')
+        if len(records_to_delete) > 0:
             rq = {
                 'command': 'pre_delete',
-                'objects': [del_obj]
+                'objects': []
             }
+
+            for folder, record_uid in records_to_delete:
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': record_uid,
+                    'object_type': 'record'
+                }
+                if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                    del_obj['from_type'] = 'user_folder'
+                    if folder.type == BaseFolderNode.UserFolderType:
+                        del_obj['from_uid'] = folder.uid
+                else:
+                    del_obj['from_type'] = 'shared_folder_folder'
+                    del_obj['from_uid'] = folder.uid
+                rq['objects'].append(del_obj)
 
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
                 pdr = rs['pre_delete_response']
 
-                force = kwargs['force'] if 'force' in kwargs else None
+                force = kwargs.get('force') or False
                 np = 'y'
-                if not force:
+                if force is not True:
                     summary = pdr['would_delete']['deletion_summary']
                     for x in summary:
                         print(x)
@@ -1589,7 +1578,5 @@ class RecordRemoveCommand(Command):
                         'pre_delete_token': pdr['pre_delete_token']
                     }
                     api.communicate(params, rq)
-
-        BreachWatch.save_reused_pw_count(params)
-        params.sync_data = True
-
+                    BreachWatch.save_reused_pw_count(params)
+                    params.sync_data = True

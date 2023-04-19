@@ -164,7 +164,7 @@ class CommandCompleter(Completer):
                     if cmd in commands:
                         command = commands[cmd]
                         if isinstance(command, Command):
-                            cmd_parser = command.get_parser()
+                            cmd_parser = command._get_parser_safe()
                         elif isinstance(command, GroupCommand):
                             c, sep, rest = raw_input.partition(' ')
                             if sep == ' ':
@@ -173,7 +173,7 @@ class CommandCompleter(Completer):
                                 if c in command.subcommands:
                                     sub_command = command.subcommands[c]
                                     if isinstance(sub_command, Command):
-                                        cmd_parser = sub_command.get_parser()
+                                        cmd_parser = sub_command._get_parser_safe()
                             else:
                                 grp_cmd = commands[cmd]   # type: GroupCommand
                                 for subcommand in grp_cmd.subcommands:
@@ -185,9 +185,14 @@ class CommandCompleter(Completer):
                                'rm', 'ls', 'clipboard-copy', 'find-password', 'one-time-share-list', 'one-time-share-create'}:
                         args = CommandCompleter.fix_input(raw_input)
                         if args is not None:
-                            opts, _ = (cmd_parser or record_parser).parse_known_args(shlex.split(args))
+                            opts, _ = (cmd_parser or record_parser). parse_known_args(shlex.split(args))
                             if hasattr(opts, 'record'):
                                 extra['prefix'] = opts.record or ''
+                            if hasattr(opts, 'records'):
+                                extra['prefix'] = ''
+                                if len(opts.records) > 0:
+                                    if raw_input[-1] != ' ':
+                                        extra['prefix'] = opts.records[-1]
                             elif hasattr(opts, 'pattern'):
                                 extra['prefix'] = opts.pattern or ''
                             else:
