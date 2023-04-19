@@ -106,6 +106,7 @@ def get_sync_down_responses(p, request, endpoint, rs_type):
         return rs
     raise NotImplementedError()
 
+
 def get_synced_params():
     p = get_connected_params()
     with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
