@@ -114,7 +114,7 @@ class TestRecord(TestCase):
         with mock.patch('keepercommander.commands.base.user_choice') as choice_mock:
             choice_mock.return_value = KeyboardInterrupt()
             KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
-            cmd.execute(params, force=True, record=rec.record_uid)
+            cmd.execute(params, force=True, records=[rec.record_uid])
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
             KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
@@ -124,20 +124,20 @@ class TestRecord(TestCase):
             with mock.patch('builtins.print'):
                 choice_mock.return_value = 'y'
                 KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
-                cmd.execute(params, record=rec.record_uid)
+                cmd.execute(params, records=[rec.record_uid])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
                 KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
-                cmd.execute(params, record=rec.title)
+                cmd.execute(params, records=[rec.title])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
                 choice_mock.return_value = 'n'
                 KeeperApiHelper.communicate_expect([pre_delete_command])
-                cmd.execute(params, record=rec.record_uid)
+                cmd.execute(params, records=[rec.record_uid])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
                 KeeperApiHelper.communicate_expect([pre_delete_command])
-                cmd.execute(params, record=rec.title)
+                cmd.execute(params, records=[rec.title])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
     def test_search_command(self):
