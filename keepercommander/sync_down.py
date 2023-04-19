@@ -459,8 +459,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 if fuid not in params.subfolder_record_cache:
                     params.subfolder_record_cache[fuid] = set()
                 record_uid = utils.base64_url_encode(ufr.recordUid)
-                if record_uid in params.record_cache:
-                    params.subfolder_record_cache[fuid].add(record_uid)
+                params.subfolder_record_cache[fuid].add(record_uid)
 
         if len(response.userFolderSharedFolders) > 0:
             def convert_user_folder_shared_folder(ufsf):
@@ -476,8 +475,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             for ufsf in response.userFolderSharedFolders:
                 uf_sf = convert_user_folder_shared_folder(ufsf)
                 sf_uid = uf_sf['shared_folder_uid']
-                if sf_uid in params.shared_folder_cache:
-                    params.subfolder_cache[sf_uid] = uf_sf
+                params.subfolder_cache[sf_uid] = uf_sf
 
         if len(response.sharedFolderFolders) > 0:
             for p_sff in response.sharedFolderFolders:
@@ -500,8 +498,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 if key not in params.subfolder_record_cache:
                     params.subfolder_record_cache[key] = set()
                 record_uid = utils.base64_url_encode(sffr.recordUid)
-                if record_uid in params.record_cache:
-                    params.subfolder_record_cache[key].add(record_uid)
+                params.subfolder_record_cache[key].add(record_uid)
 
         if len(response.sharingChanges) > 0:
             for sharing_change in response.sharingChanges:
