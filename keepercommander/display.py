@@ -258,7 +258,9 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
         if show_records and isinstance(node, BaseFolderNode):
             node_uid = '' if node.type == '/' else node.uid
             rec_uids = get_contained_record_uids(params, node_uid).get(node_uid)
-            rec_nodes.extend([api.get_record(params, rec_uid) for rec_uid in rec_uids])
+            records = [api.get_record(params, rec_uid) for rec_uid in rec_uids]
+            records = [r for r in records if isinstance(r, Record)]
+            rec_nodes.extend(records)
 
         dir_nodes.sort(key=lambda f: f.name.lower(), reverse=False)
         rec_nodes.sort(key=lambda r: r.title.lower(), reverse=False)
