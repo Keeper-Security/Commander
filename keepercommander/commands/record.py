@@ -162,10 +162,8 @@ clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store'
 
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record')
-rm_parser.add_argument('--all', dest='purge', action='store_true',
-                       help='remove the record from all folders')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID')
+rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
 
 def find_record(params, record_name, types=None):
@@ -1508,38 +1506,48 @@ class RecordRemoveCommand(Command):
     def execute(self, params, **kwargs):
         records_to_delete = []     # type: List[Tuple[BaseFolderNode, str]]
         record_names = kwargs.get('records')
-        if isinstance(record_names, list):
-            for name in record_names:
-                if name in params.record_cache:
-                    record_uid = name
-                    for folder in find_all_folders(params, record_uid):
-                        records_to_delete.append((folder, record_uid))
-                else:
-                    orig_len = len(records_to_delete)
-                    rs = try_resolve_path(params, name, find_all_matches=True)
-                    if rs:
-                        folders, record_name = rs
-                        if record_name:
-                            if not isinstance(folders, list):
-                                if isinstance(folders, BaseFolderNode):
-                                    folders = [folders]
+        if not isinstance(record_names, list):
+            if isinstance(record_names, str):
+                record_names = [record_names]
+            else:
+                record_names = []
+        record_name = kwargs.get('record')
+        if isinstance(record_name, str):
+            record_names.append(record_name)
+
+        for name in record_names:
+            if name in params.record_cache:
+                record_uid = name
+                for folder in find_all_folders(params, record_uid):
+                    records_to_delete.append((folder, record_uid))
+            else:
+                orig_len = len(records_to_delete)
+                rs = try_resolve_path(params, name, find_all_matches=True)
+                if rs:
+                    folders, record_name = rs
+                    if record_name:
+                        if not isinstance(folders, list):
+                            if isinstance(folders, BaseFolderNode):
+                                folders = [folders]
+                            else:
+                                folders = [params.root_folder]
+                        for folder in folders:
+                            if not isinstance(folder, BaseFolderNode):
+                                continue
+                            folder_uid = folder.uid or ''
+                            if folder_uid not in params.subfolder_record_cache:
+                                continue
+                            for record_uid in params.subfolder_record_cache[folder_uid]:
+                                if record_name == record_uid:
+                                    records_to_delete.append((folder, record_uid))
                                 else:
-                                    folders = [params.root_folder]
-                            for folder in folders:
-                                if not isinstance(folder, BaseFolderNode):
-                                    continue
-                                if folder.uid not in params.subfolder_record_cache:
-                                    continue
-                                for record_uid in params.subfolder_record_cache[folder.uid]:
-                                    if record_name == record_uid:
-                                        records_to_delete.append((folder, record_uid))
-                                    else:
-                                        record = vault.KeeperRecord.load(params, record_uid)
-                                        if record:
-                                            if record.title.casefold() == record_name.casefold():
-                                                records_to_delete.append((folder, record_uid))
-                    if len(records_to_delete) == orig_len:
-                        raise CommandError('rm', f'Record {name} cannot be resolved')
+                                    record = vault.KeeperRecord.load(params, record_uid)
+                                    if record:
+                                        if record.title.casefold() == record_name.casefold():
+                                            records_to_delete.append((folder, record_uid))
+                if len(records_to_delete) == orig_len:
+                    raise CommandError('rm', f'Record {name} cannot be resolved')
+
         if len(records_to_delete) > 0:
             rq = {
                 'command': 'pre_delete',
