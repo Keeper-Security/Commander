@@ -431,6 +431,14 @@ def print_router_response(router_response, response_type, original_conversation_
         installed_packages_list = host_details.get('installed-python-packages')
         installed_packages_str = ', '.join(installed_packages_list)
 
+        hostname = host_details.get('hostname')
+        ip_address_local = host_details.get('ip_address_local')
+        ip_address_external = host_details.get('ip_address_external')
+
+        print(f'\t{bcolors.OKGREEN}Hostname          : {hostname}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}IP Address (loc.) : {ip_address_local}{bcolors.ENDC}')
+        print(f'\t{bcolors.OKGREEN}IP Address (ext.) : {ip_address_external}{bcolors.ENDC}')
+
         print(f'\t{bcolors.OKGREEN}OS                : {host_details.get("os")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Current Time      : {host_details.get("current-time")}{bcolors.ENDC}')
         print(f'\t{bcolors.OKGREEN}Executable        : {host_details.get("executable")}{bcolors.ENDC}')
