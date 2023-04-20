@@ -115,7 +115,7 @@ class _EnterpriseLoader(object):
             params.enterprise = {}
             self._continuationToken = b''
 
-        if not self._enterprise.tree_key:
+        if not self._enterprise.tree_key or not self._continuationToken:
             rq = proto.GetEnterpriseDataKeysRequest()
             rs = api.communicate_rest(params, rq, 'enterprise/get_enterprise_data_keys',
                                       rs_type=proto.GetEnterpriseDataKeysResponse)
