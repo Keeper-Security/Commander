@@ -68,7 +68,7 @@ download_parser.add_argument('-r', '--recursive', dest='recursive', action='stor
                              help='Download recursively through subfolders')
 download_parser.add_argument('--out-dir', dest='out_dir', action='store',
                              help='Local folder for downloaded files')
-download_parser.add_argument('records', action='append', help='Record/Folder path or UID')
+download_parser.add_argument('records', nargs='*', help='Record/Folder path or UID')
 
 
 upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
@@ -1035,11 +1035,13 @@ class RecordDownloadAttachmentCommand(Command):
                     folder, name = rs
                     if folder is not None:
                         if name:
-                            for uid in params.subfolder_record_cache[folder_uid]:
-                                r = vault.KeeperRecord.load(params, uid)
-                                if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
-                                    if r.title.lower() == name.lower():
-                                        record_uids.add(r.record_uid)
+                            f_uid = folder.uid or ''
+                            if f_uid in params.subfolder_record_cache:
+                                for uid in params.subfolder_record_cache[f_uid]:
+                                    r = vault.KeeperRecord.load(params, uid)
+                                    if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
+                                        if r.title.lower() == name.lower():
+                                            record_uids.add(r.record_uid)
                         else:
                             folder_uid = folder.uid
             if folder_uid:
