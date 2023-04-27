@@ -373,6 +373,12 @@ class RecordGetUidCommand(Command):
                         ro['notes'] = r.notes
                     ro['version'] = r.version
                     ro['shared'] = rec.get('shared', False)
+                    if 'client_modified_time' in rec:
+                        cmt = rec['client_modified_time']
+                        if isinstance(cmt, (int, float)):
+                            cmt = int(cmt / 1000)
+                            dt = datetime.datetime.fromtimestamp(cmt)
+                            ro['client_modified_time'] = dt.isoformat()
 
                     if 'shares' in rec:
                         if 'user_permissions' in rec['shares']:
