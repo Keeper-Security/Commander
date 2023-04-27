@@ -276,7 +276,7 @@ def password_score(password):  # type: (str) -> int
 
 
 def is_pw_weak(pw_score):           # type: (int) -> bool
-    return pw_score <= 40
+    return pw_score < 40
 
 
 def is_pw_strong(pw_score):         # type: (int) -> bool

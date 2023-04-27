@@ -274,6 +274,7 @@ security_audit_report_parser.add_argument('-b', '--breachwatch', dest='breachwat
 save_help = 'save updated security audit reports'
 security_audit_report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
 security_audit_report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
+security_audit_report_parser.add_argument('-st', '--score-type', action='store', choices=['strong_passwords', 'default'], default='default', help='define how score is calculated')
 security_audit_report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format.')
 security_audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 security_audit_report_parser.error = raise_parse_exception
@@ -2977,8 +2978,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
     def get_parser(self):
         return security_audit_report_parser
 
+    def get_strong_by_total(self, total, strong):
+        return 0 if (total == 0) else (strong / total)
+
     def get_security_score(self, total, strong, unique, twoFactorOn, masterPassword):
-        strongByTotal = 0 if (total == 0) else (strong / total)
+        strongByTotal = self.get_strong_by_total(total, strong)
         uniqueByTotal = 0 if (total == 0) else (unique / total)
         twoFactorOnVal = 1 if (twoFactorOn is True) else 0
         score = (strongByTotal + uniqueByTotal + masterPassword + twoFactorOnVal) / 4
@@ -3019,6 +3023,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
+        score_type = kwargs.get('score_type', 'default')
         save_report = kwargs.get('save')
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
@@ -3093,9 +3098,15 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 row['medium'] = row['total'] - row['weak'] - row['strong']
                 row['unique'] = row['total'] - row['reused']
 
-                score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on,
-                                                master_pw_strength)
-                score = int(100 * round(score, 2))
+                strong = row.get('strong')
+                total = row.get('total')
+                unique = row.get('unique')
+                score = self.get_strong_by_total(total, strong) if score_type == 'strong_passwords' \
+                    else self.get_security_score(total, strong, unique, twofa_on, master_pw_strength)
+
+                # Match vault's score format (truncated, not rounded, to nearest whole %) if score_type specified
+                score = int(100 * score) if score_type == 'strong_passwords' \
+                    else int(100 * round(score, 2))
                 row['securityScore'] = score
 
                 rows.append(row)
