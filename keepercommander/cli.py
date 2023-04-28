@@ -465,7 +465,7 @@ def loop(params):  # type: (KeeperParams) -> int
         except Exception as e:
             logging.error(e)
     else:
-        if isinstance(params.config, dict) and 'server' in params.config:
+        if params.device_token:
             logging.info('Current Keeper region: %s', params.server)
         else:
             logging.info('Use "server" command to change Keeper region > "server US"')

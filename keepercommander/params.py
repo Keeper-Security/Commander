@@ -36,7 +36,7 @@ class RestApiContext:
         self.__store_server_key = False
         self.proxies = None
         self._certificate_check = True
-        self._fail_on_throttle = False
+        self.fail_on_throttle = False
 
     def __get_server_base(self):
         return self.__server_base
@@ -66,10 +66,12 @@ class RestApiContext:
         else:
             self.proxies = None
 
-    def get_certificate_check(self):
+    @property
+    def certificate_check(self):
         return self._certificate_check
 
-    def set_certificate_check(self, value):
+    @certificate_check.setter
+    def certificate_check(self, value):
         if isinstance(value, bool):
             self._certificate_check = value
             if value:
@@ -77,14 +79,9 @@ class RestApiContext:
             else:
                 warnings.simplefilter('ignore', InsecureRequestWarning)
 
-    def get_fail_on_throttle(self):
-        return self._fail_on_throttle
-
     server_base = property(__get_server_base, __set_server_base)
     server_key_id = property(__get_server_key_id, __set_server_key_id)
     store_server_key = property(__get_store_server_key)
-    certificate_check = property(get_certificate_check, set_certificate_check)
-    fail_on_throttle = property(get_fail_on_throttle)
 
 
 class KeeperParams:
@@ -216,7 +213,6 @@ class KeeperParams:
         self.breach_watch = None
         self.breach_watch_records = None
         self.sso_login_info = None
-        self.unmask_all = False
         self.ws = None
         if self.ssh_agent:
             self.ssh_agent.close()
