@@ -18,15 +18,15 @@ import json
 import logging
 import re
 import time
+from functools import partial
 from typing import Optional, Dict, Iterable, Any, Set, List
 from urllib.parse import urlunparse
-
-from tabulate import tabulate
 
 from . import base
 from .base import dump_report_data, field_to_title, raise_parse_exception, suppress_exit, Command, GroupCommand, FolderMixin
 from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
+from .record import RecordRemoveCommand
 from .. import api, utils, crypto, constants, rest_api
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError, Error
@@ -150,6 +150,9 @@ find_duplicate_parser.add_argument('--login', dest='login', action='store_true',
 find_duplicate_parser.add_argument('--password', dest='password', action='store_true', help='Match duplicates by password.')
 find_duplicate_parser.add_argument('--url', dest='url', action='store_true', help='Match duplicates by URL.')
 find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
+find_duplicate_parser.add_argument('-m', '--merge', action='store_true', help='Consolidate duplicate records')
+force_help = 'Delete duplicates w/o being prompted for confirmation (valid only w/ --merge option)'
+find_duplicate_parser.add_argument('-f', '--force', action='store_true', help=force_help)
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
 
@@ -1575,11 +1578,24 @@ class FindDuplicateCommand(Command):
         return find_duplicate_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        def remove_duplicates(get_dupe_info_fn, dupe_uids):
+            from prompt_toolkit.shortcuts import confirm
+            trash_msg = 'NOTE: Deleted records can be found in your trash bin via the `trash list` command'
+            confirm_msg = f'Are you sure you want to delete the following duplicate records: \n{get_dupe_info_fn()}' \
+                          f'\n{trash_msg}\n?'
+            if kwargs.get('force') or confirm(confirm_msg):
+                print(f'Deleting {len(dupe_uids)} records...')
+                rm_cmd = RecordRemoveCommand()
+                rm_cmd.execute(params, records=list(dupe_uids), force=True)
+            else:
+                print('Duplicate record removal aborted. No records removed.')
+
         by_title = kwargs.get('title', False)
         by_login = kwargs.get('login', False)
         by_password = kwargs.get('password', False)
         by_url = kwargs.get('url', False)
         by_custom = kwargs.get('full', False)
+        consolidate = kwargs.get('merge', False)
         if by_custom:
             by_title = True
             by_login = True
@@ -1678,16 +1694,21 @@ class FindDuplicateCommand(Command):
             if by_url:
                 headers.append('Website Address')
             headers.extend(['UID', 'Record Owner'])
+            table_raw = []
             table = []
+            to_remove = set()
             for i in range(len(duplicates)):
+                owners = set()
                 duplicate = duplicates[i]
                 for j in range(len(duplicate)):
                     record_uid = duplicate[j]
                     record = api.get_record(params, record_uid)
+                    raw_row = [record.title or '', record.login or '']
                     row = [i+1 if j == 0 else None, record.title if j == 0 or not by_title else '', record.login if j == 0 or not by_login else '']
                     if by_url:
                         row.append(record.login_url if j == 0 else '')
                     row.append(record_uid)
+                    raw_row.append(record_uid)
                     rec = params.record_cache[record_uid]
                     owner = params.user if rec.get('shared') is False else ''
                     if 'shares' in rec:
@@ -1697,9 +1718,18 @@ class FindDuplicateCommand(Command):
                             un = next((x['username'] for x in user_permissions if x.get('owner')), None)
                             if un:
                                 owner = un
+                    owners.add(owner)
                     row.append(owner)
+                    raw_row.append(owner)
+                    if len(owners) == 1 and j != 0:
+                        to_remove.add(record_uid)
                     table.append(row)
-            print(tabulate(table, headers=headers))
+                    table_raw.append(raw_row)
+            dump_report_data(table, headers=headers)
+            if consolidate:
+                dup_info = [r for r in table_raw for rec_uid in to_remove if r[2] == rec_uid]
+                dump_removed_data_fn = lambda dupe_data: dump_report_data(dupe_data, headers, row_number=True)
+                remove_duplicates(partial(dump_removed_data_fn, dup_info), to_remove)
         else:
             logging.info('No duplicates found.')
 
