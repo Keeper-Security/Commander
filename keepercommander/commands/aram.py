@@ -23,7 +23,7 @@ import platform
 import re
 from functools import partial
 
-from typing import Optional, List, Union, Any
+from typing import Optional, List, Union
 
 import requests
 import socket
@@ -43,10 +43,10 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from ..constants import EMAIL_PATTERN
-from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name
+from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name, \
+    get_compliance_data, get_node_id
 from ..sox.sox_data import RebuildTask
 from ..sox.storage_types import StorageRecordAging
-from typing import Dict, Callable
 
 audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
@@ -113,8 +113,8 @@ aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
                                  help='Delete local record database')
 aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='store_true',
                                  help='remove any local non-memory storage of data upon command completion')
-aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['owner', 'title', 'last_changed'],
-                                 help='sort output')
+aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', default='last_changed',
+                                 choices=['owner', 'title', 'last_changed', 'shared'], help='sort output')
 aging_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                  default='table', help='output format.')
 aging_report_parser.add_argument('--output', dest='output', action='store',
@@ -123,6 +123,8 @@ aging_report_parser.add_argument('--period', dest='period', action='store',
                                  help='Period the password has not been modified')
 aging_report_parser.add_argument('--username', dest='username', action='store',
                                  help='Report expired passwords for user')
+aging_report_parser.add_argument('--exclude-deleted', action='store_true', help='Exclude deleted records from report')
+
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
@@ -1581,9 +1583,16 @@ class AgingReportCommand(Command):
             return
         period_min_ts = int(dt.timestamp())
 
-        from ..sox import get_prelim_data
-        sd = get_prelim_data(params, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=period_min_ts)
-        AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts)
+        rebuild = kwargs.get('rebuild')
+        exclude_deleted = kwargs.get('exclude_deleted')
+        node_id = get_node_id(params, enterprise_id)
+
+        get_sox_data_fn = get_compliance_data if exclude_deleted else get_prelim_data
+        sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted \
+            else [params, enterprise_id, rebuild]
+        sd_kwargs = {'min_updated': period_min_ts}
+        sd = get_sox_data_fn(*sd_args, **sd_kwargs)
+        AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts, rebuild=rebuild)
 
         def clean_up():
             if kwargs.get('no_cache') and sd:
@@ -1609,7 +1618,7 @@ class AgingReportCommand(Command):
             change_ts = ur.record.last_pw_change
             created_after_date = created_ts and (created_ts >= date_ts)
             pw_changed_after_date = change_ts and (change_ts >= date_ts)
-            if created_after_date or pw_changed_after_date:
+            if created_after_date or pw_changed_after_date or exclude_deleted and ur.record.in_trash:
                 continue
             else:
                 email = sd.get_user(ur.user_uid).email
@@ -1620,22 +1629,13 @@ class AgingReportCommand(Command):
                 table.append(row)
         clean_up()
 
-        sort_column = None
-        sort_desc = False
-        sort_by = kwargs.get('sort_by')
-        if sort_by:
-            key_fn = None    # type: Optional[Callable[[Any], Any]]
-            if sort_by == 'owner':
-                sort_column = 0
-            elif sort_by == 'title':
-                sort_column = 1
-            elif sort_by == 'last_changed':
-                sort_desc = True
-                sort_column = 2
-            elif sort_by == 'shared':
-                sort_desc = True
-                sort_column = 3
-        return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'),
+        sort_by = kwargs.get('sort_by', 'last_changed')
+        sort_keys = ['owner', 'title', 'last_changed', 'shared']
+        column_lookup = {value: index for index, value in enumerate(sort_keys)}
+        sort_column = column_lookup.get(sort_by)
+        sort_desc = sort_by in ('last_changed', 'shared')
+        title = f'Aging Report: Records With Passwords Last Modified Before {dt.strftime("%Y/%m/%d %H:%M:%S")}'
+        return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'), title=title,
                                 sort_by=sort_column, sort_desc=sort_desc)
 
     @staticmethod
@@ -1643,7 +1643,10 @@ class AgingReportCommand(Command):
         pass
 
     @staticmethod
-    def update_aging_data(params, sox, period_start_ts):   # type: (KeeperParams, sox_data.SoxData, int) -> None
+    def update_aging_data(params, sox, period_start_ts, rebuild=False):
+        # type: (KeeperParams, sox_data.SoxData, int, Optional[bool]) -> None
+        if rebuild:
+            sox.storage.clear_aging_data()
         from_date = min(sox.storage.records_dated, sox.storage.last_pw_audit)
         if from_date > period_start_ts:
             return
@@ -1651,10 +1654,12 @@ class AgingReportCommand(Command):
             min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
             from_date = int(min_dt.timestamp())
 
+        filter_period = {'min': from_date}
         audit_filter = {
-            'audit_event_type': ['record_add', 'record_password_change'],
-            'created': {'min': 0}
+            'audit_event_type': ['record_add', 'record_password_change', 'folder_add_record'],
+            'created': filter_period
         }
+        limit = API_EVENT_RAW_ROW_LIMIT
         rq = {
             'command':      'get_audit_event_reports',
             'scope':        'enterprise',
@@ -1662,55 +1667,60 @@ class AgingReportCommand(Command):
             'columns':      ['record_uid', 'audit_event_type'],
             'aggregate':    ['last_created'],
             'filter':       audit_filter,
-            'order':        'ascending',
-            'limit':        API_EVENT_SUMMARY_ROW_LIMIT
+            'limit':        limit
         }
-        changed_records = {}    # type: Dict[str, StorageRecordAging]
-        last_added = 0
-        last_password_change = 0
-        done = False
+
+        rec_lookup = sox.get_records()
         logging.info('Loading record password change information...')
+        folder_add_lookup = {}
+        created_lookup = {}
+        pw_change_lookup = {}
+        done = False
         while not done:
-            audit_filter['created']['min'] = from_date
             rs = api.communicate(params, rq)
             events = rs['audit_event_overview_report_rows']
-            done = len(events) < API_EVENT_SUMMARY_ROW_LIMIT - 100
-            if not done:
-                from_date = events[-1]['last_created']
-                if events[0]['last_created'] == from_date:
-                    from_date += 1
+            done = len(events) < limit
+            if not done and events:
+                filter_period['max'] = int(events[-1].get('last_created')) + 1
+
             for event in events:
                 record_uid = event['record_uid']
-                ra = None    # type: Optional[StorageRecordAging]
-                if record_uid not in changed_records:
-                    if record_uid in sox.get_records():
-                        ra = sox.storage.record_aging.get_entity(record_uid)
-                        if ra is None:
-                            ra = StorageRecordAging(record_uid=record_uid)
-                            changed_records[record_uid] = ra
-                else:
-                    ra = changed_records[record_uid]
-                event_type = event['audit_event_type']
-                created = event['last_created']
-                if event_type == 'record_add':
-                    if ra:
-                        ra.created = created
-                    last_added = created
-                elif event_type == 'record_password_change':
-                    if ra:
-                        ra.last_pw_change = created
-                    last_password_change = created
-        if len(changed_records) > 0:
-            sox.storage.record_aging.put_entities(changed_records.values())
+                record = rec_lookup.get(record_uid)
+                if not record:
+                    logging.debug(f'record-aging: record {record_uid} does not exist')
+                    continue
+                event_type = event.get('audit_event_type')
+                event_ts = int(event.get('last_created'))
+                aging_obj = {record_uid: event_ts}
+                if event_type in ('record_add', 'folder_add_record'):
+                    lookup = created_lookup if event_type == 'record_add' else folder_add_lookup
+                    if record_uid not in created_lookup:
+                        lookup.update(aging_obj)
+                elif event_type == 'record_password_change' and event_ts > record.last_pw_change and record_uid not in pw_change_lookup:
+                    pw_change_lookup.update(aging_obj)
+        created_lookup.update({r_uid: ts for r_uid, ts in folder_add_lookup.items() if r_uid not in created_lookup})
+        records_to_update = {
+            'created': created_lookup,
+            'last_pw_change': pw_change_lookup
+        }
+
+        sox.storage.set_last_pw_audit()
+        sox.storage.set_records_dated()
+
+        aging_entities = {}
+        for attr in records_to_update:
+            aging_objs = records_to_update.get(attr)
+            for uid, event_ts in aging_objs.items():
+                ra = aging_entities.get(uid) or sox.storage.record_aging.get_entity(uid) or StorageRecordAging(uid)
+                setattr(ra, attr, event_ts)
+                aging_entities[uid] = ra
+
+        # Save updated record-aging entities and re-load local SOX data
+        if aging_entities:
+            sox.storage.record_aging.put_entities(aging_entities.values())
             rebuild_task = RebuildTask(False)
-            rebuild_task.update_records(changed_records.keys())
+            rebuild_task.update_records(aging_entities.keys())
             sox.rebuild_data(rebuild_task)
-
-        if last_added > 0:
-            sox.storage.set_records_dated(last_added)
-
-        if last_password_change > 0:
-            sox.storage.set_last_pw_audit(last_password_change)
 
 
 class ActionReportCommand(EnterpriseCommand):
