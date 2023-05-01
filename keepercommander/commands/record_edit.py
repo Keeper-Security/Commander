@@ -21,7 +21,7 @@ from typing import List, Optional, Any, Dict, Union, Sequence
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from .base import Command, RecordMixin
+from .base import Command, RecordMixin, FolderMixin
 from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management
 from ..commands import recordv3
 from ..error import CommandError
@@ -64,7 +64,11 @@ delete_attachment_parser.add_argument('record', action='store', help='record pat
 
 
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
-download_parser.add_argument('record', action='store', help='record path or UID')
+download_parser.add_argument('-r', '--recursive', dest='recursive', action='store_true',
+                             help='Download recursively through subfolders')
+download_parser.add_argument('--out-dir', dest='out_dir', action='store',
+                             help='Local folder for downloaded files')
+download_parser.add_argument('records', nargs='*', help='Record/Folder path or UID')
 
 
 upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
@@ -385,6 +389,62 @@ class RecordEditMixin:
             notes = notes.replace('\\n', '\n')
         return notes
 
+    @staticmethod
+    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
+        new_fields = []
+        old_fields = list(record.fields)
+        custom = list(record.custom)
+        should_rebuild = False
+        for typed_field in typed_fields:
+            if not isinstance(typed_field, dict):
+                return
+            field_type = typed_field.get('$ref')
+            if not field_type:
+                return
+            field_label = typed_field.get('label') or ''
+            required = typed_field.get('required')
+            rf = record_types.RecordFields.get(field_type)
+            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
+
+            field = next((x for x in old_fields if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                new_fields.append(field)
+                old_fields.remove(field)
+                if field.label != field_label:
+                    field.label = field_label
+                    should_rebuild = True
+                continue
+
+            field = next((x for x in custom if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                field.required = required
+                new_fields.append(field)
+                custom.remove(field)
+                should_rebuild = True
+                continue
+
+            field = vault.TypedField.new_field(field_type, None, field_label)
+            field.required = required
+            new_fields.append(field)
+            should_rebuild = True
+
+        if len(old_fields) > 0:
+            custom.extend(old_fields)
+            should_rebuild = True
+
+        if not should_rebuild:
+            should_rebuild = any(x for x in custom if not x.value)
+
+        if should_rebuild:
+            record.fields.clear()
+            record.fields.extend(new_fields)
+            record.custom.clear()
+            record.custom.extend((x for x in custom if x.value))
+
+        return should_rebuild
+
     def assign_typed_fields(self, record, fields):
         # type: (vault.TypedRecord, List[ParsedFieldValue]) -> None
         if not isinstance(record, vault.TypedRecord):
@@ -512,6 +572,8 @@ class RecordEditMixin:
                                     value.append(qav)
                         elif ft.name == 'privateKey':
                             value = vault.TypedField.import_ssh_key_field(parsed_field.value)
+                        elif ft.name == 'schedule':
+                            value = vault.TypedField.import_schedule_field(parsed_field.value)
                         else:
                             self.on_warning(f'Unsupported field type: {record_field.type}')
                 if value:
@@ -617,6 +679,62 @@ class RecordEditMixin:
                 j_rt = json.loads(jrt_fields)
                 if isinstance(j_rt, dict):
                     return j_rt.get('fields')
+
+    @staticmethod
+    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
+        new_fields = []
+        old_fields = list(record.fields)
+        custom = list(record.custom)
+        should_rebuild = False
+        for typed_field in typed_fields:
+            if not isinstance(typed_field, dict):
+                return
+            field_type = typed_field.get('$ref')
+            if not field_type:
+                return
+            field_label = typed_field.get('label') or ''
+            required = typed_field.get('required')
+            rf = record_types.RecordFields.get(field_type)
+            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
+
+            field = next((x for x in old_fields if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                new_fields.append(field)
+                old_fields.remove(field)
+                if field.label != field_label:
+                    field.label = field_label
+                    should_rebuild = True
+                continue
+
+            field = next((x for x in custom if x.type == field_type and
+                          (ignore_label or (x.label or '') == field_label)), None)
+            if field:
+                field.required = required
+                new_fields.append(field)
+                custom.remove(field)
+                should_rebuild = True
+                continue
+
+            field = vault.TypedField.new_field(field_type, None, field_label)
+            field.required = required
+            new_fields.append(field)
+            should_rebuild = True
+
+        if len(old_fields) > 0:
+            custom.extend(old_fields)
+            should_rebuild = True
+
+        if not should_rebuild:
+            should_rebuild = any(x for x in custom if not x.value)
+
+        if should_rebuild:
+            record.fields.clear()
+            record.fields.extend(new_fields)
+            record.custom.clear()
+            record.custom.extend((x for x in custom if x.value))
+
+        return should_rebuild
 
 
 class RecordAddCommand(Command, RecordEditMixin):
@@ -800,62 +918,6 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
         record_management.update_record(params, record)
         params.sync_data = True
 
-    @staticmethod
-    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
-        new_fields = []
-        old_fields = list(record.fields)
-        custom = list(record.custom)
-        should_rebuild = False
-        for typed_field in typed_fields:
-            if not isinstance(typed_field, dict):
-                return
-            field_type = typed_field.get('$ref')
-            if not field_type:
-                return
-            field_label = typed_field.get('label') or ''
-            required = typed_field.get('required')
-            rf = record_types.RecordFields.get(field_type)
-            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
-
-            field = next((x for x in old_fields if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                new_fields.append(field)
-                old_fields.remove(field)
-                if field.label != field_label:
-                    field.label = field_label
-                    should_rebuild = True
-                continue
-
-            field = next((x for x in custom if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                field.required = required
-                new_fields.append(field)
-                custom.remove(field)
-                should_rebuild = True
-                continue
-
-            field = vault.TypedField.new_field(field_type, None, field_label)
-            field.required = required
-            new_fields.append(field)
-            should_rebuild = True
-
-        if len(old_fields) > 0:
-            custom.extend(old_fields)
-            should_rebuild = True
-
-        if not should_rebuild:
-            should_rebuild = any(x for x in custom if not x.value)
-
-        if should_rebuild:
-            record.fields.clear()
-            record.fields.extend(new_fields)
-            record.custom.clear()
-            record.custom.extend((x for x in custom if x.value))
-
-        return should_rebuild
-
 
 class RecordAppendNotesCommand(Command):
     def get_parser(self):
@@ -955,37 +1017,62 @@ class RecordDownloadAttachmentCommand(Command):
         return download_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs['record'] if 'record' in kwargs else None
-        if not name:
+        records = kwargs.get('records')
+        if not records:
             self.get_parser().print_help()
             return
 
-        record_uid = None
-        if name in params.record_cache:
-            record_uid = name
-        else:
-            rs = try_resolve_path(params, name)
-            if rs is not None:
-                folder, name = rs
-                if folder is not None and name is not None:
-                    folder_uid = folder.uid or ''
-                    if folder_uid in params.subfolder_record_cache:
-                        for uid in params.subfolder_record_cache[folder_uid]:
-                            r = api.get_record(params, uid)
-                            if r.title.lower() == name.lower():
-                                record_uid = uid
-                                break
+        record_uids = set()
+        for record in records:
+            folder_uid = None
+            if record in params.record_cache:
+                record_uids.add(record)
+            elif record in params.folder_cache:
+                folder_uid = record
+            else:
+                rs = try_resolve_path(params, record)
+                if rs is not None:
+                    folder, name = rs
+                    if folder is not None:
+                        if name:
+                            f_uid = folder.uid or ''
+                            if f_uid in params.subfolder_record_cache:
+                                for uid in params.subfolder_record_cache[f_uid]:
+                                    r = vault.KeeperRecord.load(params, uid)
+                                    if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
+                                        if r.title.lower() == name.lower():
+                                            record_uids.add(r.record_uid)
+                        else:
+                            folder_uid = folder.uid
+            if folder_uid:
+                folders = set()
+                folders.add(folder_uid)
+                if kwargs.get('recursive') is True:
+                    FolderMixin.traverse_folder_tree(
+                        params, folder_uid, lambda x: folders.add(x.uid))
+                for uid in folders:
+                    if uid in params.subfolder_record_cache:
+                        for record_uid in params.subfolder_record_cache[uid]:
+                            if record_uid in params.record_cache:
+                                record_uids.add(record_uid)
 
-        if not record_uid:
-            logging.error('Record UID not found for record name "%s"', str(name))
+        if len(record_uids) == 0:
+            logging.error('Record(s) "%s" not found', ', '.join(records))
             return
-
-        attachments = list(attachment.prepare_attachment_download(params, record_uid))
-        if len(attachments) == 0:
-            raise CommandError('download-attachment', 'No attachments associated with the record')
-
-        for atta in attachments:
-            atta.download_to_file(params, atta.title)
+        output_dir = kwargs.get('out_dir')
+        if output_dir:
+            output_dir = os.path.expanduser(output_dir)
+        else:
+            output_dir = os.getcwd()
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+        for record_uid in record_uids:
+            attachments = list(attachment.prepare_attachment_download(params, record_uid))
+            for atta in attachments:
+                name = os.path.join(output_dir, atta.title)
+                if os.path.isfile(name):
+                    name = os.path.join(output_dir, f'({atta.file_id}) {atta.title}')
+                atta.download_to_file(params, name)
 
 
 class RecordUploadAttachmentCommand(Command):

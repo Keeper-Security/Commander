@@ -114,7 +114,7 @@ class TestRecord(TestCase):
         with mock.patch('keepercommander.commands.base.user_choice') as choice_mock:
             choice_mock.return_value = KeyboardInterrupt()
             KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
-            cmd.execute(params, force=True, record=rec.record_uid)
+            cmd.execute(params, force=True, records=[rec.record_uid])
             self.assertTrue(KeeperApiHelper.is_expect_empty())
 
             KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
@@ -124,20 +124,20 @@ class TestRecord(TestCase):
             with mock.patch('builtins.print'):
                 choice_mock.return_value = 'y'
                 KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
-                cmd.execute(params, record=rec.record_uid)
+                cmd.execute(params, records=[rec.record_uid])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
                 KeeperApiHelper.communicate_expect([pre_delete_command, 'delete'])
-                cmd.execute(params, record=rec.title)
+                cmd.execute(params, records=[rec.title])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
                 choice_mock.return_value = 'n'
                 KeeperApiHelper.communicate_expect([pre_delete_command])
-                cmd.execute(params, record=rec.record_uid)
+                cmd.execute(params, records=[rec.record_uid])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
                 KeeperApiHelper.communicate_expect([pre_delete_command])
-                cmd.execute(params, record=rec.title)
+                cmd.execute(params, records=[rec.title])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
     def test_search_command(self):
@@ -247,7 +247,7 @@ class TestRecord(TestCase):
         params = get_synced_params()
         cmd = record_edit.RecordDownloadAttachmentCommand()
 
-        records = [x for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]
+        records = [x for x in params.record_cache.values() if 'extra_unencrypted' in x and len(x['extra_unencrypted']) > 10]
         rec = records[0]
         record_uid = rec['record_uid']
         extra = json.loads(rec['extra_unencrypted'].decode('utf-8'))
@@ -287,11 +287,15 @@ class TestRecord(TestCase):
 
     def test_delete_attachment_command(self):
         params = get_synced_params()
-        cmd = record_edit.RecordDeleteAttachmentCommand()
+        record_uid = next((x['record_uid'] for x in params.record_cache.values()
+                           if 'extra_unencrypted' in x and len(x['extra_unencrypted']) > 10), None)
 
-        record_uid = next(iter([x['record_uid'] for x in params.record_cache.values() if len(x['extra_unencrypted']) > 10]))
-        rec = api.get_record(params, record_uid)
+        rec = vault.KeeperRecord.load(params, record_uid)
+        self.assertIsNotNone(rec)
+        self.assertIsInstance(rec, vault.PasswordRecord)
+        self.assertGreater(len(rec.attachments), 0)
 
         KeeperApiHelper.communicate_expect(['record_update'])
-        cmd.execute(params, name=[rec.attachments[0]['id']], record=rec.title)
+        cmd = record_edit.RecordDeleteAttachmentCommand()
+        cmd.execute(params, name=[rec.attachments[0].id], record=rec.title)
         self.assertTrue(KeeperApiHelper.is_expect_empty())

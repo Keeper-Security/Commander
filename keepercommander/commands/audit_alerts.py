@@ -31,7 +31,8 @@ alert_target_parser = argparse.ArgumentParser(add_help=False)
 alert_target_parser.add_argument('target', metavar='ALERT', help='Alert ID or Name.')
 
 alert_view_parser = argparse.ArgumentParser(prog='audit-alert view', parents=[alert_target_parser])
-alert_history_parser = argparse.ArgumentParser(prog='audit-alert history', parents=[alert_target_parser])
+alert_history_parser = argparse.ArgumentParser(
+    prog='audit-alert history', parents=[report_output_parser, alert_target_parser])
 alert_reset_counts_parser = argparse.ArgumentParser(prog='audit-alert reset-counts', parents=[alert_target_parser])
 alert_delete_parser = argparse.ArgumentParser(prog='audit-alert remove', parents=[alert_target_parser])
 
@@ -369,7 +370,7 @@ class AuditAlertList(EnterpriseCommand, AuditSettingMixin):
                     pass
             disabled = ctx.get('disabled') is True
             table.append([alert_id, alert_name, events, freq, occurrences, alerts_sent, last_sent, not disabled])
-        dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'), sort_by=0)
+        return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'), sort_by=0)
 
 
 class AuditAlertDelete(EnterpriseCommand, AuditSettingMixin):
@@ -482,8 +483,11 @@ class AuditAlertHistory(EnterpriseCommand, AuditSettingMixin):
                                    alert_uid=alert.get('alertUid'), event_type='audit_alert_sent',
                                    limit=100, order='desc', format='json')
         events = json.loads(json_str)
+        fmt = kwargs.get('format') or ''
+        headers = ['alert_sent_at', 'occurrences']
+        if fmt != 'json':
+            headers = [field_to_title(x) for x in headers]
         table = []
-        header = ['Alert Sent At', 'Occurrences']
         for event in events:
             if 'recipient' in event:
                 recipient = event.get('recipient')
@@ -492,7 +496,7 @@ class AuditAlertHistory(EnterpriseCommand, AuditSettingMixin):
                         table[-1][1] += 1
                 else:
                     table.append([event.get('created'), 1])
-        dump_report_data(table, header)
+        return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
 
 
 class AuditAlertResetCount(EnterpriseCommand, AuditSettingMixin):

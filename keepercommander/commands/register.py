@@ -18,22 +18,23 @@ import json
 import logging
 import re
 import time
-from typing import Optional, Dict, Iterable, Any, Set
-from urllib.parse import urlparse, urlunparse
-
-import requests
-from tabulate import tabulate
+from functools import partial
+from typing import Optional, Dict, Iterable, Any, Set, List
+from urllib.parse import urlunparse
 
 from . import base
 from .base import dump_report_data, field_to_title, raise_parse_exception, suppress_exit, Command, GroupCommand, FolderMixin
+from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
+from .record import RecordRemoveCommand
 from .. import api, utils, crypto, constants, rest_api
 from ..display import bcolors
-from ..error import KeeperApiError, CommandError
+from ..error import KeeperApiError, CommandError, Error
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions
-from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, find_folders, get_folder_path
+from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
+    get_folder_uids
 from ..loginv3 import LoginV3API
 
 
@@ -76,9 +77,11 @@ share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'remove'], default='grant',
                                  action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
-                                 help='account email, team, or \'*\' as default folder permission')
+                                 help='account email, team, @existing for all users and teams in the folder, '
+                                      'or \'*\' as default folder permission')
 share_folder_parser.add_argument('-r', '--record', dest='record', action='append',
-                                 help='record name, record UID, or \'*\' as default folder permission')
+                                 help='record name, record UID, @existing for all records in the folder,'
+                                      ' or \'*\' as default folder permission')
 share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true',
                                  help='account permission: can manage records.')
 share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true',
@@ -90,7 +93,7 @@ share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='st
 share_folder_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                  help='Apply permission changes ignoring default folder permissions. Used on the '
                                       'initial sharing action')
-share_folder_parser.add_argument('folder', nargs='?', type=str, action='store', help='shared folder path or UID')
+share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 share_folder_parser.error = raise_parse_exception
 share_folder_parser.exit = suppress_exit
 
@@ -140,12 +143,6 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments.')
-file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
-                                help='Try downloading every attachment you have access to.')
-file_report_parser.error = raise_parse_exception
-file_report_parser.exit = suppress_exit
-
 
 find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.')
 find_duplicate_parser.add_argument('--title', dest='title', action='store_true', help='Match duplicates by title.')
@@ -153,6 +150,9 @@ find_duplicate_parser.add_argument('--login', dest='login', action='store_true',
 find_duplicate_parser.add_argument('--password', dest='password', action='store_true', help='Match duplicates by password.')
 find_duplicate_parser.add_argument('--url', dest='url', action='store_true', help='Match duplicates by URL.')
 find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
+find_duplicate_parser.add_argument('-m', '--merge', action='store_true', help='Consolidate duplicate records')
+force_help = 'Delete duplicates w/o being prompted for confirmation (valid only w/ --merge option)'
+find_duplicate_parser.add_argument('-f', '--force', action='store_true', help=force_help)
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
 
@@ -186,54 +186,65 @@ class ShareFolderCommand(Command):
         return share_folder_parser
 
     def execute(self, params, **kwargs):
-        shared_folder_uid = None
-
-        name = kwargs.get('folder')
-        if name:
-            if name in params.shared_folder_cache:
-                shared_folder_uid = name
-            elif name in params.folder_cache:
-                folder = params.folder_cache[name]
-                if isinstance(folder, SharedFolderFolderNode):
-                    shared_folder_uid = folder.shared_folder_uid
-                else:
-                    raise CommandError('share-folder', 'You can change permission of shared folders only')
-            else:
-                rs = try_resolve_path(params, name)
-                if rs is not None:
-                    folder, name = rs
-                    if len(name or '') == 0 and isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
-                        shared_folder_uid = folder.shared_folder_uid if isinstance(folder, SharedFolderFolderNode) else folder.uid
-
-        if not shared_folder_uid and params.enterprise:
+        def get_share_admin_obj_uids(obj_names, obj_type):
+            # type: (List[Optional[str], int], int) -> Optional[Set[str]]
+            if not obj_names:
+                return None
             try:
-                uid = utils.base64_url_decode(name)
-                if isinstance(uid, bytes) and len(uid) == 16:
-                    rq = record_pb2.AmIShareAdmin()
-                    osa = record_pb2.IsObjectShareAdmin()
-                    osa.uid = uid
-                    osa.objectType = record_pb2.CHECK_SA_ON_SF
-                    rq.isObjectShareAdmin.append(osa)
-                    rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
-                    if rs.isObjectShareAdmin:
-                        if rs.isObjectShareAdmin[0].isAdmin:
-                            shared_folder_uid = name
-            except:
-                pass
+                rq = record_pb2.AmIShareAdmin()
+                for name in obj_names:
+                    uid = utils.base64_url_decode(name)
+                    if isinstance(uid, bytes) and len(uid) == 16:
+                        osa = record_pb2.IsObjectShareAdmin()
+                        osa.uid = uid
+                        osa.objectType = obj_type
+                        rq.isObjectShareAdmin.append(osa)
+                rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
+                sa_obj_uids = {sa_obj.uid for sa_obj in rs.isObjectShareAdmin if sa_obj.isAdmin}
+                sa_obj_uids = {utils.base64_url_encode(uid) for uid in sa_obj_uids}
+                return sa_obj_uids
+            except Error as e:
+                print(f'get_share_admin: msg = {e.message}')
+                return None
 
-        if not shared_folder_uid:
-            raise CommandError('share-folder', 'Enter name of the existing folder')
+        names = kwargs.get('folder')
+        if not isinstance(names, list):
+            names = [names]
+
+        all_folders = any(True for x in names if x == '*')
+        if all_folders:
+            names = [x for x in names if x != '*']
+
+        shared_folder_uids = set()    # type: Set[str]
+        if all_folders:
+            shared_folder_uids.update(params.shared_folder_cache.keys())
+        else:
+            get_folder_by_uid = lambda uid: params.folder_cache.get(uid)
+            folder_uids = {uid for name in names for uid in get_folder_uids(params, name)}
+            folders = {get_folder_by_uid(uid) for uid in folder_uids}
+            shared_folder_uids.update([uid for uid in folder_uids if uid in params.shared_folder_cache])
+            sf_subfolders = {f for f in folders if f.type == 'shared_folder_folder'}
+            shared_folder_uids.update({subfolder.shared_folder_uid for subfolder in sf_subfolders})
+            unresolved_names = [name for name in names if not get_folder_uids(params, name)]
+            share_admin_folder_uids = get_share_admin_obj_uids(unresolved_names, record_pb2.CHECK_SA_ON_SF)
+            shared_folder_uids.update(share_admin_folder_uids or [])
+
+        if not shared_folder_uids:
+            raise CommandError('share-folder', 'Enter name of at least one existing folder')
 
         action = kwargs.get('action') or 'grant'
 
         as_users = set()
         as_teams = set()
 
+        all_users = False
         default_account = False
         if 'user' in kwargs:
             for u in (kwargs.get('user') or []):
                 if u == '*':
                     default_account = True
+                elif u == '@current':
+                    all_users = True
                 else:
                     em = re.match(constants.EMAIL_PATTERN, u)
                     if em is not None:
@@ -249,101 +260,69 @@ class ShareFolderCommand(Command):
                         else:
                             logging.warning('User %s could not be resolved as email or team', u)
 
-        record_uids = []
+        record_uids = set()
+        all_records = False
         default_record = False
+        unresolved_names = []
         if 'record' in kwargs:
             records = kwargs.get('record') or []
-            may_be_record_uid = set()   # type: Set[bytes]
             for r in records:
                 if r == '*':
                     default_record = True
-                elif r in params.record_cache:
-                    record_uids.append(r)
+                elif r == '@current':
+                    all_records = True
                 else:
-                    r_uid = None
-                    rs = try_resolve_path(params, r)
-                    if rs is not None:
-                        folder, name = rs
-                        if name:
-                            folder_uid = folder.uid or ''
-                            if folder_uid in params.subfolder_record_cache:
-                                for uid in params.subfolder_record_cache[folder_uid]:
-                                    rec = api.get_record(params, uid)
-                                    if name in {rec.title, rec.record_uid}:
-                                        r_uid = rec.record_uid
-                                        break
-                    if r_uid:
-                        record_uids.append(r_uid)
-                    else:
-                        record_uid = None
-                        if params.enterprise:
-                            try:
-                                uid = utils.base64_url_decode(r)
-                                if isinstance(uid, bytes) and len(uid) == 16:
-                                    record_uid = uid
-                            except:
-                                pass
-                        if record_uid:
-                            may_be_record_uid.add(record_uid)
-                        else:
-                            logging.error('\'%s\' is not an existing record title or UID', r)
-            if len(may_be_record_uid) > 0:
-                try:
-                    rq = record_pb2.AmIShareAdmin()
-                    for record_uid in may_be_record_uid:
-                        osa = record_pb2.IsObjectShareAdmin()
-                        osa.uid = record_uid
-                        osa.objectType = record_pb2.CHECK_SA_ON_RECORD
-                        rq.isObjectShareAdmin.append(osa)
-                    rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
-                    for sa in rs.isObjectShareAdmin:
-                        r_uid = utils.base64_url_encode(sa.uid)
-                        if sa.isAdmin and sa.objectType == record_pb2.CHECK_SA_ON_RECORD:
-                            record_uids.append(r_uid)
-                        else:
-                            logging.error('\'%s\' is not an existing record title or UID', r_uid)
-                except:
-                    pass
+                    r_uids = get_record_uids(params, r)
+                    record_uids.update(r_uids) if r_uids else unresolved_names.append(r)
 
-        if len(as_users) == 0 and len(as_teams) == 0 and len(record_uids) == 0 and not default_record and not default_account:
+            if unresolved_names:
+                sa_record_uids = get_share_admin_obj_uids(unresolved_names, record_pb2.CHECK_SA_ON_RECORD)
+                record_uids.update(sa_record_uids or {})
+
+        if len(as_users) == 0 and len(as_teams) == 0 and len(record_uids) == 0 and \
+                not default_record and not default_account and \
+                not all_users and not all_records:
             logging.info('Nothing to do')
             return
 
-        if shared_folder_uid in params.shared_folder_cache:
-            sh_fol = params.shared_folder_cache[shared_folder_uid]
-        else:
-            sh_fol = {
-                'shared_folder_uid': shared_folder_uid,
-            }
-            if len(as_users) > 0:
-                sh_fol['users'] = [{
-                    'username': x,
-                    'manage_records': False if action == 'grant' else True,
-                    'manage_users': False if action == 'grant' else True,
-                } for x in as_users]
-            if len(as_teams) > 0:
-                sh_fol['teams'] = [{
-                    'team_uid': x,
-                    'manage_records': False if action == 'grant' else True,
-                    'manage_users': False if action == 'grant' else True,
-                } for x in as_teams]
-            if len(record_uids) > 0:
-                sh_fol['records'] = [{
-                    'record_uid': x,
-                    'can_share': False if action == 'grant' else True,
-                    'can_edit': False if action == 'grant' else True,
-                } for x in record_uids]
+        for sf_uid in shared_folder_uids:
+            sf_users = set(as_users)
+            sf_teams = set(as_teams)
+            sf_records = set(record_uids)
+            if sf_uid in params.shared_folder_cache:
+                sh_fol = params.shared_folder_cache[sf_uid]
+                if all_users or all_records:
+                    if all_users:
+                        if 'users' in sh_fol:
+                            sf_users.update((x['username'] for x in sh_fol['users'] if x['username'] != params.user))
+                        if 'teams' in sh_fol:
+                            sf_teams.update((x['team_uid'] for x in sh_fol['teams']))
+                    if all_records:
+                        if 'records' in sh_fol:
+                            sf_records.update((x['record_uid'] for x in sh_fol['records']))
+            else:
+                sh_fol = {
+                    'shared_folder_uid': sf_uid,
+                    'users': [{'username': x, 'manage_records': action != 'grant', 'manage_users': action != 'grant'}
+                              for x in as_users],
+                    'teams': [{'team_uid': x, 'manage_records': action != 'grant', 'manage_users': action != 'grant'}
+                              for x in as_teams],
+                    'records': [{'record_uid': x, 'can_share': action != 'grant', 'can_edit': action != 'grant'}
+                                for x in record_uids]
+                }
+            self.send_command(params, kwargs, sh_fol, sf_users, sf_teams, sf_records, default_record, default_account)
 
+    @staticmethod
+    def send_command(params, kwargs, curr_sf, users, teams, rec_uids, default_record=False, default_account=False):
         rq = folder_pb2.SharedFolderUpdateV3Request()
-        rq.sharedFolderUid = utils.base64_url_decode(sh_fol['shared_folder_uid'])
-        if 'revision' in sh_fol:
-            rq.revision = sh_fol['revision']
+        rq.sharedFolderUid = utils.base64_url_decode(curr_sf['shared_folder_uid'])
+        if 'revision' in curr_sf:
+            rq.revision = curr_sf['revision']
         else:
             rq.forceUpdate = True
-
+        action = kwargs.get('action') or 'grant'
         mr = kwargs.get('manage_records')
         mu = kwargs.get('manage_users')
-
         if default_account and action != 'remove':
             if mr:
                 rq.defaultManageRecords = folder_pb2.BOOLEAN_TRUE if action == 'grant' else folder_pb2.BOOLEAN_FALSE
@@ -354,9 +333,9 @@ class ShareFolderCommand(Command):
             else:
                 rq.defaultManageUsers = folder_pb2.BOOLEAN_NO_CHANGE
 
-        if len(as_users) > 0:
-            existing_users = {x['username'] for x in sh_fol.get('users', [])}
-            for email in as_users:
+        if len(users) > 0:
+            existing_users = {x['username'] for x in curr_sf.get('users', [])}
+            for email in users:
                 uo = folder_pb2.SharedFolderUpdateUser()
                 uo.username = email
                 if email in existing_users:
@@ -378,9 +357,9 @@ class ShareFolderCommand(Command):
                         logging.warning('Please repeat this command when invitation is accepted.')
                     keys = params.key_cache.get(email)
                     if keys and keys.rsa:
-                        uo.manageRecords = folder_pb2.BOOLEAN_TRUE if mr else sh_fol.get('default_manage_records', False)
-                        uo.manageUsers = folder_pb2.BOOLEAN_TRUE if mu else sh_fol.get('default_manage_users', False)
-                        sf_key = sh_fol.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
+                        uo.manageRecords = folder_pb2.BOOLEAN_TRUE if mr else curr_sf.get('default_manage_records', False)
+                        uo.manageUsers = folder_pb2.BOOLEAN_TRUE if mu else curr_sf.get('default_manage_users', False)
+                        sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                         if sf_key:
                             rsa_key = crypto.load_rsa_public_key(keys.rsa)
                             uo.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
@@ -389,9 +368,9 @@ class ShareFolderCommand(Command):
                     else:
                         logging.warning('User %s not found', email)
 
-        if len(as_teams) > 0:
-            existing_teams = {x['team_uid']: x for x in sh_fol.get('teams', [])}
-            for team_uid in as_teams:
+        if len(teams) > 0:
+            existing_teams = {x['team_uid']: x for x in curr_sf.get('teams', [])}
+            for team_uid in teams:
                 to = folder_pb2.SharedFolderUpdateTeam()
                 to.teamUid = utils.base64_url_decode(team_uid)
 
@@ -408,9 +387,9 @@ class ShareFolderCommand(Command):
                     elif action == 'remove':
                         rq.sharedFolderRemoveTeam.append(to.teamUid)
                 elif action == 'grant':
-                    to.manageRecords = True if mr else sh_fol.get('default_manage_records', False)
-                    to.manageUsers = True if mu else sh_fol.get('default_manage_users', False)
-                    sf_key = sh_fol.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
+                    to.manageRecords = True if mr else curr_sf.get('default_manage_records', False)
+                    to.manageUsers = True if mu else curr_sf.get('default_manage_users', False)
+                    sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                     if sf_key:
                         if team_uid in params.team_cache:
                             team = params.team_cache[team_uid]
@@ -445,9 +424,9 @@ class ShareFolderCommand(Command):
             else:
                 rq.defaultCanShare = folder_pb2.BOOLEAN_NO_CHANGE
 
-        if len(record_uids) > 0:
-            existing_records = {x['record_uid'] for x in sh_fol.get('records', [])}
-            for record_uid in record_uids:
+        if len(rec_uids) > 0:
+            existing_records = {x['record_uid'] for x in curr_sf.get('records', [])}
+            for record_uid in rec_uids:
                 ro = folder_pb2.SharedFolderUpdateRecord()
                 ro.recordUid = utils.base64_url_decode(record_uid)
                 if record_uid in existing_records:
@@ -463,9 +442,9 @@ class ShareFolderCommand(Command):
                         rq.sharedFolderRemoveRecord.append(ro.recordUid)
                 else:
                     if action == 'grant':
-                        ro.canEdit = folder_pb2.BOOLEAN_TRUE if ce else sh_fol.get('default_can_edit', False)
-                        ro.canShare = folder_pb2.BOOLEAN_TRUE if cs else sh_fol.get('default_can_share', False)
-                        sf_key = sh_fol.get('shared_folder_key_unencrypted')
+                        ro.canEdit = folder_pb2.BOOLEAN_TRUE if ce else curr_sf.get('default_can_edit', False)
+                        ro.canShare = folder_pb2.BOOLEAN_TRUE if cs else curr_sf.get('default_can_share', False)
+                        sf_key = curr_sf.get('shared_folder_key_unencrypted')
                         if sf_key:
                             rec = params.record_cache[record_uid]
                             rec_key = rec['record_key_unencrypted']
@@ -851,10 +830,20 @@ class ShareReportCommand(Command):
     @staticmethod
     def sf_report(params, out=None, fmt=None, show_team_users=False):
         def get_share_info(share_target, name_key):  # type: (Dict[str, Any], str) -> Dict[str, str]
-            permissions_lookup = {'manage_users': 'Manage Users', 'manage_records': 'Manage Records'}
+            manage_users = share_target.get('manage_users')
+            manage_records = share_target.get('manage_records')
+            if not manage_users and not manage_records:
+                permissions = "No User Permissions"
+            elif not manage_users and manage_records:
+                permissions = "Cam Manage Records"
+            elif manage_users and not manage_records:
+                permissions = "Can Manage Users"
+            else:
+                permissions = "Can Manage Users & Records"
+
             share = {
                 'name': share_target.get(name_key),
-                'permissions': ', '.join([val for k, val in permissions_lookup.items() if share_target.get(k)])
+                'permissions': permissions
             }
             return share
 
@@ -950,8 +939,6 @@ class ShareReportCommand(Command):
             record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
         else:
             record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
-
-        api.get_record_shares(params, record_uids)
 
         from keepercommander.shared_record import get_shared_records
         shared_records = get_shared_records(params, record_uids)
@@ -1586,64 +1573,29 @@ class RecordPermissionCommand(Command):
                 params.sync_data = True
 
 
-class FileReportCommand(Command):
-    def get_parser(self):
-        return file_report_parser
-
-    def execute(self, params, **kwargs):
-        headers = ['#', 'Title', 'Record UID', 'File ID']
-        if kwargs.get('try_download'):
-            headers.append('Downloadable')
-        table = []
-        for record_uid in params.record_cache:
-            r = api.get_record(params, record_uid)
-            if not r.attachments:
-                continue
-            file_ids = {}
-            for atta in r.attachments:
-                file_id = atta.get('id')
-                file_ids[file_id] = ''
-            if kwargs.get('try_download'):
-                ids = [x for x in file_ids]
-                rq = {
-                    'command': 'request_download',
-                    'file_ids': ids,
-                }
-                api.resolve_record_access_path(params, r.record_uid, path=rq)
-                logging.info('Downloading attachments for record %s', r.title)
-                try:
-                    rs = api.communicate(params, rq)
-                    urls = {}
-                    for file_id, dl in zip(ids, rs['downloads']):
-                        if 'url' in dl:
-                            urls[file_id] = dl['url']
-                        elif 'error_code' in dl:
-                            file_ids[file_id] = dl['error_code']
-                    for file_id in urls:
-                        url = urls[file_id]
-                        opt_rs = requests.get(url, proxies=params.rest_context.proxies, headers={"Range": "bytes=0-1"})
-                        file_ids[file_id] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
-                except Exception as e:
-                    logging.debug(e)
-            for file_id in file_ids:
-                row = [len(table) + 1, r.title, r.record_uid, file_id]
-                if kwargs.get('try_download'):
-                    row.append(file_ids[file_id] or '-')
-                table.append(row)
-
-        dump_report_data(table, headers)
-
-
 class FindDuplicateCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return find_duplicate_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        def remove_duplicates(get_dupe_info_fn, dupe_uids):
+            from prompt_toolkit.shortcuts import confirm
+            trash_msg = 'NOTE: Deleted records can be found in your trash bin via the `trash list` command'
+            confirm_msg = f'Are you sure you want to delete the following duplicate records: \n{get_dupe_info_fn()}' \
+                          f'\n{trash_msg}\n?'
+            if kwargs.get('force') or confirm(confirm_msg):
+                print(f'Deleting {len(dupe_uids)} records...')
+                rm_cmd = RecordRemoveCommand()
+                rm_cmd.execute(params, records=list(dupe_uids), force=True)
+            else:
+                print('Duplicate record removal aborted. No records removed.')
+
         by_title = kwargs.get('title', False)
         by_login = kwargs.get('login', False)
         by_password = kwargs.get('password', False)
         by_url = kwargs.get('url', False)
         by_custom = kwargs.get('full', False)
+        consolidate = kwargs.get('merge', False)
         if by_custom:
             by_title = True
             by_login = True
@@ -1742,16 +1694,21 @@ class FindDuplicateCommand(Command):
             if by_url:
                 headers.append('Website Address')
             headers.extend(['UID', 'Record Owner'])
+            table_raw = []
             table = []
+            to_remove = set()
             for i in range(len(duplicates)):
+                owners = set()
                 duplicate = duplicates[i]
                 for j in range(len(duplicate)):
                     record_uid = duplicate[j]
                     record = api.get_record(params, record_uid)
+                    raw_row = [record.title or '', record.login or '']
                     row = [i+1 if j == 0 else None, record.title if j == 0 or not by_title else '', record.login if j == 0 or not by_login else '']
                     if by_url:
                         row.append(record.login_url if j == 0 else '')
                     row.append(record_uid)
+                    raw_row.append(record_uid)
                     rec = params.record_cache[record_uid]
                     owner = params.user if rec.get('shared') is False else ''
                     if 'shares' in rec:
@@ -1761,9 +1718,18 @@ class FindDuplicateCommand(Command):
                             un = next((x['username'] for x in user_permissions if x.get('owner')), None)
                             if un:
                                 owner = un
+                    owners.add(owner)
                     row.append(owner)
+                    raw_row.append(owner)
+                    if len(owners) == 1 and j != 0:
+                        to_remove.add(record_uid)
                     table.append(row)
-            print(tabulate(table, headers=headers))
+                    table_raw.append(raw_row)
+            dump_report_data(table, headers=headers)
+            if consolidate:
+                dup_info = [r for r in table_raw for rec_uid in to_remove if r[2] == rec_uid]
+                dump_removed_data_fn = lambda dupe_data: dump_report_data(dupe_data, headers, row_number=True)
+                remove_duplicates(partial(dump_removed_data_fn, dup_info), to_remove)
         else:
             logging.info('No duplicates found.')
 

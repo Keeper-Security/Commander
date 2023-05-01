@@ -17,7 +17,7 @@ import itertools
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterator, Tuple, Set, Union
+from typing import Dict, Any, List, Optional, Iterable, Tuple
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -26,10 +26,9 @@ from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, record_pb2
-from ..subfolder import try_resolve_path, get_folder_path, find_folders, BaseFolderNode, get_folder_uid, \
-    find_parent_top_folder
+from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, get_folder_uids
 from ..team import Team
-from . import record_edit, base, record_totp
+from . import record_edit, base, record_totp, record_file_report
 
 
 def register_commands(commands):
@@ -50,6 +49,7 @@ def register_commands(commands):
     commands['upload-attachment'] = record_edit.RecordUploadAttachmentCommand()
     commands['clipboard-copy'] = ClipboardCommand()
     commands['totp'] = record_totp.TotpCommand()
+    commands['file-report'] = record_file_report.RecordFileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -118,8 +118,8 @@ list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
 
 
-record_history_parser = argparse.ArgumentParser(
-    prog='history', description='Show the history of a record modifications.')
+record_history_parser = argparse.ArgumentParser(prog='history', parents=[base.report_output_parser],
+                                                description='Show the history of a record modifications.')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
     help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
@@ -162,14 +162,12 @@ clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store'
 
 
 rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record')
-rm_parser.add_argument('--all', dest='purge', action='store_true',
-                       help='remove the record from all folders')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
-rm_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
 
 def find_record(params, record_name, types=None):
-    # type: (KeeperParams, str, Optional[Iterator[str]]) -> vault.KeeperRecord
+    # type: (KeeperParams, str, Optional[Iterable[str]]) -> vault.KeeperRecord
     if not record_name:
         raise Exception(f'Record name cannot be empty.')
 
@@ -375,6 +373,12 @@ class RecordGetUidCommand(Command):
                         ro['notes'] = r.notes
                     ro['version'] = r.version
                     ro['shared'] = rec.get('shared', False)
+                    if 'client_modified_time' in rec:
+                        cmt = rec['client_modified_time']
+                        if isinstance(cmt, (int, float)):
+                            cmt = int(cmt / 1000)
+                            dt = datetime.datetime.fromtimestamp(cmt)
+                            ro['client_modified_time'] = dt.isoformat()
 
                     if 'shares' in rec:
                         if 'user_permissions' in rec['shares']:
@@ -409,12 +413,15 @@ class RecordGetUidCommand(Command):
                                 f_type = f.type
                                 if f_type.endswith('Ref'):
                                     continue
-                                if f_type not in record_types.RecordFields:
-                                    f_type = 'text'
-                                rf = record_types.RecordFields[f_type]
-                                ft = record_types.FieldTypes.get(rf.type)
-                                key = rf.name
-                                if rf.multiple == record_types.Multiple.Optional:
+                                if f_type in record_types.RecordFields:
+                                    rf = record_types.RecordFields[f_type]
+                                    ft = record_types.FieldTypes.get(rf.type)
+                                    key = rf.name
+                                else:
+                                    rf = None
+                                    ft = None
+                                    key = f'{f_type}.'
+                                if rf and rf.multiple == record_types.Multiple.Optional:
                                     if f.label:
                                         f_label = f.label.replace('\\', '\\\\').replace('"', '\\"').replace('=', '==')
                                         if ' ' in f_label or "'" in f_label:
@@ -424,47 +431,61 @@ class RecordGetUidCommand(Command):
                                     fields[key] = ''
                                 else:
                                     value = ''
-                                    for f_value in f.value:
-                                        if isinstance(f_value, type(ft.value)):
-                                            if isinstance(f_value, str):
-                                                f_value = f_value.strip()
-                                                if f_value:
-                                                    value = f_value
-                                            elif isinstance(f_value, int):
-                                                if ft.name == 'date':
-                                                    if f_value > 0:
-                                                        dt = datetime.datetime.fromtimestamp(int(f_value / 1000)).date()
-                                                        value = str(dt)
-                                                else:
+                                    if ft:
+                                        for f_value in f.value:
+                                            if isinstance(f_value, type(ft.value)):
+                                                if isinstance(f_value, str):
+                                                    f_value = f_value.strip()
+                                                    if f_value:
+                                                        value = f_value
+                                                elif isinstance(f_value, bool):
                                                     value = str(f_value)
-                                            elif isinstance(value, bool):
-                                                value = '1' if value else '0'
-                                            elif isinstance(f_value, dict):
-                                                if ft.name == 'host':
-                                                    v = vault.TypedField.export_host_field(f_value)
-                                                elif ft.name == 'phone':
-                                                    v = vault.TypedField.export_phone_field(f_value)
-                                                elif ft.name == 'name':
-                                                    v = vault.TypedField.export_name_field(f_value)
-                                                elif ft.name == 'address':
-                                                    v = vault.TypedField.export_address_field(f_value)
-                                                elif ft.name == 'securityQuestion':
-                                                    v = vault.TypedField.export_q_and_a_field(f_value)
-                                                elif ft.name == 'paymentCard':
-                                                    v = vault.TypedField.export_card_field(f_value)
-                                                elif ft.name == 'bankAccount':
-                                                    v = vault.TypedField.export_account_field(f_value)
-                                                elif ft.name == 'privateKey':
-                                                    v = vault.TypedField.export_ssh_key_field(f_value)
-                                                else:
-                                                    continue
-                                                if v:
-                                                    if value:
-                                                        value += '; ' + v
+                                                elif isinstance(f_value, int):
+                                                    if ft.name == 'date':
+                                                        if f_value > 0:
+                                                            dt = datetime.datetime.fromtimestamp(int(f_value / 1000)).date()
+                                                            value = str(dt)
                                                     else:
-                                                        value = v
-                                        if value and rf.multiple != record_types.Multiple.Always:
-                                            break
+                                                        value = str(f_value)
+                                                elif isinstance(f_value, dict):
+                                                    if ft.name == 'host':
+                                                        v = vault.TypedField.export_host_field(f_value)
+                                                    elif ft.name == 'phone':
+                                                        v = vault.TypedField.export_phone_field(f_value)
+                                                    elif ft.name == 'name':
+                                                        v = vault.TypedField.export_name_field(f_value)
+                                                    elif ft.name == 'address':
+                                                        v = vault.TypedField.export_address_field(f_value)
+                                                    elif ft.name == 'securityQuestion':
+                                                        v = vault.TypedField.export_q_and_a_field(f_value)
+                                                    elif ft.name == 'paymentCard':
+                                                        v = vault.TypedField.export_card_field(f_value)
+                                                    elif ft.name == 'bankAccount':
+                                                        v = vault.TypedField.export_account_field(f_value)
+                                                    elif ft.name == 'privateKey':
+                                                        v = vault.TypedField.export_ssh_key_field(f_value)
+                                                    elif ft.name == 'schedule':
+                                                        v = vault.TypedField.export_schedule_field(f_value)
+                                                    else:
+                                                        v = f'$JSON:{json.dumps(f_value)}'
+                                                    if v:
+                                                        if value:
+                                                            value += '; ' + v
+                                                        else:
+                                                            value = v
+                                            if value and rf.multiple != record_types.Multiple.Always:
+                                                break
+                                    else:
+                                        if len(f.value) == 1:
+                                            f_value = f.value[0]
+                                            if isinstance(f_value, str):
+                                                value = f_value
+                                            elif isinstance(f_value, int):
+                                                value = str(f_value)
+                                            else:
+                                                value = f'$JSON:{json.dumps(f_value)}'
+                                        else:
+                                            value = f'$JSON:{json.dumps(f.value)}'
 
                                     fields[key] = value
                         pairs = []
@@ -645,8 +666,10 @@ class RecordListCommand(Command):
                     record_type.add('file')
                 elif rt == 'general':
                     record_version.update((1, 2))
+                if rt == 'pam':
+                    record_version.add(6)
                 else:
-                    record_version.add(3)
+                    record_version.update((3, 6))
                     record_type.add(rt)
         else:
             record_version = None if verbose else (1, 2, 3)
@@ -776,7 +799,7 @@ class TrashMixin:
                             if key_type == 1:
                                 record_key = crypto.decrypt_aes_v1(record_key, params.data_key)
                             elif key_type == 2:
-                                record_key = api.decrypt_rsa(record_key, params.rsa_key)
+                                record_key = crypto.decrypt_rsa(record_key, params.rsa_key2)
                             elif key_type == 3:
                                 record_key = crypto.decrypt_aes_v2(record_key, params.data_key)
                             elif key_type == 4:
@@ -1162,15 +1185,17 @@ class RecordHistoryCommand(Command, RecordMixin):
                 return
 
             if action == 'list':
-                headers = ['Version', 'Modified By', 'Time Modified']
+                fmt = kwargs.get('format') or ''
+                headers = ['version', 'modified_by', 'time_modified']
+                if fmt != 'json':
+                    headers = [base.field_to_title(x) for x in headers]
                 rows = []
                 for i, version in enumerate(history):
                     dt = None
                     if 'client_modified_time' in version:
                         dt = datetime.datetime.fromtimestamp(int(version['client_modified_time'] / 1000.0))
                     rows.append([f'V.{length-i}' if i > 0 else 'Current', version.get('user_name') or '', dt])
-                base.dump_report_data(rows, headers, title='Record History')
-                return
+                return base.dump_report_data(rows, headers, fmt=fmt, filename=kwargs.get('output'))
 
             revision = kwargs.get('revision') or 0
             if revision < 0 or revision >= length:
@@ -1288,11 +1313,15 @@ class SharedRecordsReport(Command):
         export_name = kwargs.get('output')
         containers = kwargs.get('folder')
         f_uids = set()
+        log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
+        on_folder_fn = lambda folder: f_uids.add(folder.uid)
         for name in containers:
-            uid = get_folder_uid(params, name)
-            log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
-            on_folder_fn = lambda f: f_uids.add(f.uid)
-            FolderMixin.traverse_folder_tree(params, uid, on_folder_fn) if uid else log_folder_fn(name)
+            folder_uids = get_folder_uids(params, name)
+            if not folder_uids:
+                log_folder_fn(name)
+                continue
+            for uid in folder_uids:
+                FolderMixin.traverse_folder_tree(params, uid, on_folder_fn)
 
         shared_records_data_rs = api.communicate_rest(
             params, None, 'report/get_shared_record_report', rs_type=enterprise_pb2.SharedRecordResponse)
@@ -1303,83 +1332,30 @@ class SharedRecordsReport(Command):
             3: "Share Team Folder"
         }
 
-        def get_share_teams(rec_uid):
-            shared_folders = find_parent_top_folder(params, rec_uid)
-            cached_sfs = [params.shared_folder_cache.get(sf.uid) for sf in shared_folders]
-            return [team for sf in cached_sfs for team in sf.get('teams', [])]
-
         show_team_users = kwargs.get('show_team_users')
-        team_records = set()    # type: Set[Tuple[Union[str, None], str]]
         rows = []
-        for e in shared_records_data_rs.events:
-            record_uid = api.decode_uid_to_str(e.recordUid)
-            r_parents = set(find_folders(params, record_uid) or ())
-
-            # Ignore non-contained records if container filter is set
-            if containers and not f_uids.intersection(r_parents):
+        from keepercommander.shared_record import get_shared_records
+        shared_records = get_shared_records(params, {utils.base64_url_encode(e.recordUid) for e in
+                                                     shared_records_data_rs.events})
+        for uid, sr in shared_records.items():
+            # Filter by containing folder if specified
+            if containers and not f_uids.intersection(find_folders(params, uid)):
                 continue
 
-            cached_record = None
-
-            if record_uid in params.record_cache:   # to avoid not found warning log messages
-                cached_record = api.get_record(params, record_uid)
-
-            if not cached_record:   # probably deleted record
-                logging.debug("Record uid=%s was not located in current cache." % record_uid)
-                continue
-
-            # Folder Path(s)
-            folders = [get_folder_path(params, x) for x in find_folders(params, record_uid)]
-            path_str = ""
-            for i in range(len(folders)):
-                path_str = path_str + ('{0}{1}'.format('\n' if i > 0 else '', folders[i]))
-
-            if not e.canEdit and not e.canReshare:
-                permissions = "Read Only"
-            elif not e.canEdit and e.canReshare:
-                permissions = "Can Share"
-            elif e.canEdit and not e.canReshare:
-                permissions = "Can Edit"
-            else:
-                permissions = "Can Edit & Share"
-
-            user_row = {
-                'record_uid': record_uid,
-                'title': cached_record.title,
-                'share_to': e.userName,
-                'shared_from': shared_from_mapping.get(e.shareFrom, 'Other Share'),
-                'permissions': permissions,
-                'folder_path': path_str
-            }
-
-            if e.shareFrom == 3:
-                # Show team info for records shared via share team folders
-                for share_team in get_share_teams(record_uid):
-                    if isinstance(share_team, dict):
-                        team_record = share_team.get('team_uid'), record_uid
-                        if team_record not in team_records:
-                            team_records.add(team_record)
-                            team_row = {**user_row, 'share_to': '(Team) ' + share_team.get('name', '')}
-                            rows.append(team_row)
-                if show_team_users:
-                    user_row['share_to'] = '(Team User) ' + user_row.get('share_to')
-                    rows.append(user_row)
-            else:
-                rows.append(user_row)
-
-        rows.sort(key=lambda x: x.get('folder_path'), reverse=True)
+            folder_paths = '\n'.join(sr.folder_paths)
+            permissions = sr.get_ordered_permissions()
+            permissions = [p for p in permissions if sr.owner != p.to_name]
+            for p in permissions:
+                sources = [t.value for t in p.types]
+                share_from = '\n'.join([shared_from_mapping.get(min(s, max(shared_from_mapping.keys())), 'Other Share') for s in sources])
+                row = [sr.uid, sr.name, share_from, p.get_target(show_team_users), p.get_permissions_text(), folder_paths]
+                rows.append(row)
+        rows.sort(key=lambda x: x[5], reverse=True)
         fields = ['record_uid', 'title', 'share_to', 'shared_from', 'permissions', 'folder_path']
-
-        table = []
-        for raw in rows:
-            row = []
-            for f in fields:
-                row.append(raw[f])
-            table.append(row)
 
         if export_format == 'table':
             fields = [base.field_to_title(x) for x in fields]
-        return base.dump_report_data(table, fields, fmt=export_format, filename=export_name, row_number=True)
+        return base.dump_report_data(rows, fields, fmt=export_format, filename=export_name, row_number=True)
 
 
 class ClipboardCommand(Command, RecordMixin):
@@ -1534,79 +1510,78 @@ class RecordRemoveCommand(Command):
         return rm_parser
 
     def execute(self, params, **kwargs):
-        folder = None
-        name = None
-        record_path = kwargs['record'] if 'record' in kwargs else None
-        if record_path:
-            rs = try_resolve_path(params, record_path)
-            if rs is not None:
-                folder, name = rs
-
-        if folder is None or name is None:
-            logging.warning('Enter name of existing record')
-            return
-
-        record_uid = None
-        if name in params.record_cache:
-            record_uid = name
-            folders = list(find_folders(params, record_uid))
-            if len(folders) > 0:
-                folder = params.folder_cache[folders[0]] if len(folders[0]) > 0 else params.root_folder
-        else:
-            folder_uid = folder.uid or ''
-            if folder_uid in params.subfolder_record_cache:
-                for uid in params.subfolder_record_cache[folder_uid]:
-                    r = api.get_record(params, uid)
-                    if r.title.lower() == name.lower():
-                        record_uid = uid
-                        break
-
-        if record_uid is None:
-            raise CommandError('rm', 'Enter name of existing record')
-
-        if kwargs.get('purge'):
-            rq = {
-                'command': 'record_update',
-                'pt': 'Commander',
-                'device_id': 'Commander',
-                'client_time': api.current_milli_time(),
-                'delete_records': [record_uid]
-            }
-            if not kwargs.get('force'):
-                answer = base.user_choice('Do you want to proceed with record removal?', 'yn', default='n')
-                if answer.lower() != 'y':
-                    return
-            rs = api.communicate(params, rq)
-            if 'delete_records' in rs:
-                for status in rs['delete_records']:
-                    if status['status'] != 'success':
-                        logging.warning('Record remove error: %s', status.get('status'))
-        else:
-            del_obj = {
-                'delete_resolution': 'unlink',
-                'object_uid': record_uid,
-                'object_type': 'record'
-            }
-            if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
-                del_obj['from_type'] = 'user_folder'
-                if folder.type == BaseFolderNode.UserFolderType:
-                    del_obj['from_uid'] = folder.uid
+        records_to_delete = []     # type: List[Tuple[BaseFolderNode, str]]
+        record_names = kwargs.get('records')
+        if not isinstance(record_names, list):
+            if isinstance(record_names, str):
+                record_names = [record_names]
             else:
-                del_obj['from_type'] = 'shared_folder_folder'
-                del_obj['from_uid'] = folder.uid
+                record_names = []
+        record_name = kwargs.get('record')
+        if isinstance(record_name, str):
+            record_names.append(record_name)
 
+        for name in record_names:
+            if name in params.record_cache:
+                record_uid = name
+                for folder in find_all_folders(params, record_uid):
+                    records_to_delete.append((folder, record_uid))
+            else:
+                orig_len = len(records_to_delete)
+                rs = try_resolve_path(params, name, find_all_matches=True)
+                if rs:
+                    folders, record_name = rs
+                    if record_name:
+                        if not isinstance(folders, list):
+                            if isinstance(folders, BaseFolderNode):
+                                folders = [folders]
+                            else:
+                                folders = [params.root_folder]
+                        for folder in folders:
+                            if not isinstance(folder, BaseFolderNode):
+                                continue
+                            folder_uid = folder.uid or ''
+                            if folder_uid not in params.subfolder_record_cache:
+                                continue
+                            for record_uid in params.subfolder_record_cache[folder_uid]:
+                                if record_name == record_uid:
+                                    records_to_delete.append((folder, record_uid))
+                                else:
+                                    record = vault.KeeperRecord.load(params, record_uid)
+                                    if record:
+                                        if record.title.casefold() == record_name.casefold():
+                                            records_to_delete.append((folder, record_uid))
+                if len(records_to_delete) == orig_len:
+                    raise CommandError('rm', f'Record {name} cannot be resolved')
+
+        if len(records_to_delete) > 0:
             rq = {
                 'command': 'pre_delete',
-                'objects': [del_obj]
+                'objects': []
             }
+
+            for folder, record_uid in records_to_delete:
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': record_uid,
+                    'object_type': 'record'
+                }
+                if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                    del_obj['from_type'] = 'user_folder'
+                    if folder.type == BaseFolderNode.UserFolderType:
+                        del_obj['from_uid'] = folder.uid
+                else:
+                    del_obj['from_type'] = 'shared_folder_folder'
+                    del_obj['from_uid'] = folder.uid
+                rq['objects'].append(del_obj)
 
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
                 pdr = rs['pre_delete_response']
 
-                force = kwargs['force'] if 'force' in kwargs else None
+                force = kwargs.get('force') or False
                 np = 'y'
-                if not force:
+                if force is not True:
                     summary = pdr['would_delete']['deletion_summary']
                     for x in summary:
                         print(x)
@@ -1617,7 +1592,5 @@ class RecordRemoveCommand(Command):
                         'pre_delete_token': pdr['pre_delete_token']
                     }
                     api.communicate(params, rq)
-
-        BreachWatch.save_reused_pw_count(params)
-        params.sync_data = True
-
+                    BreachWatch.save_reused_pw_count(params)
+                    params.sync_data = True

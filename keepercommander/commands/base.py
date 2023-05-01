@@ -21,7 +21,7 @@ import os
 import re
 import shlex
 from collections import OrderedDict
-from typing import Optional, Sequence, Callable, List, Any, Iterable
+from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 
 import sys
 from tabulate import tabulate
@@ -30,10 +30,10 @@ from .. import api, crypto, utils, vault
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
-aliases = {}        # type: {str, str}
-commands = {}       # type: {str, Command}
-enterprise_commands = {}     # type: {str, Command}
-msp_commands = {}   # type: {str, Command}
+aliases = {}                 # type: Dict[str, str]
+commands = {}                # type: Dict[str, Command]
+enterprise_commands = {}     # type: Dict[str, Command]
+msp_commands = {}            # type: Dict[str, Command]
 command_info = OrderedDict()
 
 
@@ -178,7 +178,7 @@ def is_json_value_field(obj):
     return True
 
 
-WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url'}
+WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim'}
 
 
 def field_to_title(field):   # type: (str) -> str
@@ -526,7 +526,8 @@ class GroupCommand(CliCommand):
         self._aliases = {}         # type: dict[str, str]
         self.default_verb = ''
 
-    def register_command(self, verb, command, description=None, alias=None):   # type: (any, Command, str) -> None
+    def register_command(self, verb, command, description=None, alias=None):
+        # type: (Any, CliCommand, Optional[str], Optional[str]) -> None
         verb = verb.lower()
         self._commands[verb] = command
         if not description:
@@ -709,6 +710,17 @@ class RecordMixin:
 
 
 class FolderMixin:
+    @staticmethod
+    def get_records_in_folder_tree(params, folder_uid):   # type: (KeeperParams, str) -> Set[str]
+        records = set()
+
+        def add_records(f):   # type: (BaseFolderNode) -> None
+            if f.uid in params.subfolder_record_cache:
+                records.update(params.subfolder_record_cache[f.uid])
+
+        FolderMixin.traverse_folder_tree(params, folder_uid, add_records)
+        return records
+
     @staticmethod
     def traverse_folder_tree(params, folder_uid, callback):
         # type: (KeeperParams, str, Callable[[BaseFolderNode], None]) -> None

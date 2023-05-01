@@ -25,6 +25,7 @@ class Metadata:
         self.records_dated = 0
         self.last_pw_audit = 0
         self.compliance_data_last_update = 0
+        self.shared_records_only = False
 
 
 class SqliteSoxStorage:
@@ -82,14 +83,16 @@ class SqliteSoxStorage:
     def last_prelim_data_update(self):
         return self._get_history().prelim_data_last_update
 
-    def set_prelim_data_updated(self):
+    def set_prelim_data_updated(self, ts=None):  # type: (int or None) -> None
+        ts = int(datetime.datetime.now().timestamp()) if ts is None else ts
         history = self._get_history()
-        history.prelim_data_last_update = int(datetime.datetime.now().timestamp())
+        history.prelim_data_last_update = ts
         self._metadata.store(history)
 
-    def set_compliance_data_updated(self):
+    def set_compliance_data_updated(self, ts=None):  # type: (int or None) -> None
+        ts = int(datetime.datetime.now().timestamp()) if ts is None else ts
         history = self._get_history()
-        history.compliance_data_last_update = int(datetime.datetime.now().timestamp())
+        history.compliance_data_last_update = ts
         self._metadata.store(history)
 
     @property
@@ -100,18 +103,20 @@ class SqliteSoxStorage:
     def records_dated(self):
         return self._get_history().records_dated
 
-    def set_records_dated(self, ts):   # type: (int) -> None
+    def set_records_dated(self, ts=None):   # type: (int or None) -> None
+        ts = int(datetime.datetime.now().timestamp()) if ts is None else ts
         history = self._get_history()
-        history.records_dated = int(ts)
+        history.records_dated = int(ts) if ts is not None else 0
         self._metadata.store(history)
 
     @property
     def last_pw_audit(self):
         return self._get_history().last_pw_audit
 
-    def set_last_pw_audit(self, ts):    # type: (int) -> None
+    def set_last_pw_audit(self, ts=None):    # type: (int or None) -> None
+        ts = int(datetime.datetime.now().timestamp()) if ts is None else ts
         history = self._get_history()
-        history.last_pw_audit = int(ts)
+        history.last_pw_audit = ts
         self._metadata.store(history)
 
     def get_users(self):
@@ -160,6 +165,20 @@ class SqliteSoxStorage:
     def teams(self):  # type: () -> IEntityStorage
         return self.get_teams()
 
+    @property
+    def shared_records_only(self):
+        return self._get_history().shared_records_only
+
+    def set_shared_records_only(self, value):   # type: (bool) -> None
+        history = self._get_history()
+        history.shared_records_only = value
+        self._metadata.store(history)
+
+    def clear_aging_data(self):
+        self._record_aging.delete_all()
+        self.set_records_dated(0)
+        self.set_last_pw_audit(0)
+
     def clear_non_aging_data(self):
         self._records.delete_all()
         self._users.delete_all()
@@ -171,7 +190,8 @@ class SqliteSoxStorage:
         self._sf_record_links.delete_all()
         self._team_user_links.delete_all()
         self._record_permissions.delete_all()
-        self._metadata.delete_all()
+        self.set_prelim_data_updated(0)
+        self.set_compliance_data_updated(0)
 
     def rebuild_prelim_data(self, users, records, links):
         self.clear_non_aging_data()
@@ -183,6 +203,7 @@ class SqliteSoxStorage:
     def clear_all(self):
         self.clear_non_aging_data()
         self._record_aging.delete_all()
+        self._metadata.delete_all()
 
     def delete_db(self):
         try:

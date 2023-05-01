@@ -1,6 +1,6 @@
 import enum
 import sys
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from datetime import timedelta
 from urllib.parse import urlparse
 
@@ -97,7 +97,7 @@ _ENFORCEMENTS = [
     ("RESTRICT_FILE_UPLOAD", 33, "BOOLEAN", "SHARING_AND_UPLOADING"),
     ("REQUIRE_ACCOUNT_SHARE", 34, "ACCOUNT_SHARE", "SHARING_AND_UPLOADING"),
     ("RESTRICT_SHARING_INCOMING_ALL", 36, "BOOLEAN", "SHARING_AND_UPLOADING"),
-    ("RESTRICT_SHARING_INCOMING_ENTERPRISE", 37, "BOOLEAN", "SHARING_AND_UPLOADING"),
+    # ("RESTRICT_SHARING_INCOMING_ENTERPRISE", 37, "BOOLEAN", "SHARING_AND_UPLOADING"),
     ("RESTIRCT_SHARING_RECORD_AND_FOLDER", 120, "BOOLEAN", "SHARING_AND_UPLOADING"),
     ("RESTRICT_SHARING_RECORD_WITH_ATTACHMENTS", 121, "BOOLEAN", "SHARING_AND_UPLOADING"),
     ("RESTRICT_IP_ADDRESSES", 40, "IP_WHITELIST", "ALLOW_IP_LIST"),
@@ -195,6 +195,51 @@ def enforcement_list():  # type: () -> List[Tuple[str, str, str]]
 ENFORCEMENTS = {}
 for e in _ENFORCEMENTS:
     ENFORCEMENTS[e[0].lower()] = e[2].lower()
+
+week_days = ('SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY','THURSDAY', 'FRIDAY', 'SATURDAY')
+occurrences = ('FIRST', 'SECOND', 'THIRD', 'FOURTH', 'LAST')
+months = ('JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER',
+          'NOVEMBER', 'DECEMBER')
+
+
+def get_cron_week_day(text):   # type: (Optional[str]) -> Optional[int]
+    if isinstance(text, str):
+        try:
+            return week_days.index(text.upper())
+        except:
+            pass
+
+
+def get_cron_occurrence(text):  # type: (Optional[str]) -> Optional[int]
+    if isinstance(text, str):
+        try:
+            idx = occurrences.index(text.upper())
+            idx += 1
+            if idx > 4:
+                idx = 4
+            return idx
+        except:
+            pass
+
+
+def get_cron_month(text):  # type: (Optional[str]) -> Optional[int]
+    if isinstance(text, str):
+        try:
+            m = months.index(text.upper())
+            return m + 1
+        except:
+            pass
+
+
+def get_cron_month_day(text):  # type: (Optional[str]) -> Optional[int]
+    if isinstance(text, str) and text.isnumeric():
+        day = int(text)
+        if day < 1:
+            day = 1
+        elif day > 28:
+            day = 28
+        return day
+
 
 # OS dependent constants
 if sys.platform.startswith('win'):

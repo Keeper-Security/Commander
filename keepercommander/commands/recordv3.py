@@ -22,7 +22,6 @@ from Cryptodome.Cipher import AES
 
 from . import recordv2 as recordv2
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
-from .register import FileReportCommand
 from .. import api, crypto, generator
 from .. import recordv3, loginv3
 from ..display import bcolors
@@ -39,7 +38,6 @@ def register_commands(commands):
     commands['edit'] = RecordEditCommand()
     commands['record-type-info'] = RecordTypeInfo()
     commands['record-type'] = RecordRecordType()
-    commands['file-report'] = RecordFileReportCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -47,7 +45,7 @@ def register_command_info(aliases, command_info):
     aliases['rti'] = 'record-type-info'
     aliases['rt'] = 'record-type'
 
-    for p in [record_type_info_parser, record_type_parser, file_report_parser]:
+    for p in [record_type_info_parser, record_type_parser]:
         command_info[p.prog] = p.description
 
 
@@ -135,14 +133,6 @@ record_type_parser.add_argument('-a', '--action', dest='action', action='store',
 # command_group.add_argument('-r', '--remove-type', dest='remove_type', action='store_true', help='delete custom record type')
 record_type_parser.error = raise_parse_exception
 record_type_parser.exit = suppress_exit
-
-
-file_report_parser = argparse.ArgumentParser(prog='file-report', description='List records with file attachments')
-file_report_parser.add_argument('-d', '--try-download', dest='try_download', action='store_true',
-                                help='Try downloading every attachment you have access to')
-file_report_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
-file_report_parser.error = raise_parse_exception
-file_report_parser.exit = suppress_exit
 
 
 def get_password_from_rules(generate_rules, generate_length):
@@ -329,7 +319,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                 }
                 file['data_unencrypted'] = file_data
                 rdata = json.dumps(file_data).encode('utf-8')
-                rdata = api.encrypt_aes_plain(rdata, file['record_key'])
+                rdata = crypto.encrypt_aes_v2(rdata, file['record_key'])
                 file['data'] = rdata
                 files.append(file)
             else:
@@ -341,7 +331,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             def IV_LEN(): return 12
             def GCM_TAG_LEN(): return 16
             encrypted_file_size = IV_LEN() + file['size'] + GCM_TAG_LEN() # size of the encrypted file, not original file
-            attachment_record_key = api.encrypt_aes_plain(file['record_key'], params.data_key)
+            attachment_record_key = crypto.encrypt_aes_v2(file['record_key'], params.data_key)
             record_link_key = crypto.encrypt_aes_v2(file['record_key'], record_key)
 
             rf = records.File()
@@ -436,7 +426,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
 
             sh_uid = folder.uid if folder.type == BaseFolderNode.SharedFolderType else folder.shared_folder_uid
             sf = params.shared_folder_cache[sh_uid]
-            rq['folder_key'] = api.encrypt_aes_plain(record_key, sf['shared_folder_key_unencrypted'])
+            rq['folder_key'] = crypto.encrypt_aes_v2(record_key, sf['shared_folder_key_unencrypted'])
             if 'key_type' not in sf:
                 if 'teams' in sf:
                     for team in sf['teams']:
@@ -786,15 +776,17 @@ class RecordTypeInfo(Command):
     def get_parser(self):
         return record_type_info_parser
 
-    def resolve_record_type(self, params, record_type_id):
+    @staticmethod
+    def resolve_record_type(params, record_type_id):
         record_type_info = {}
         if params.record_type_cache and record_type_id in params.record_type_cache:
             record_type_info = { record_type_id: params.record_type_cache.get(record_type_id) }
 
         return record_type_info
 
-    def resolve_record_types(self, params, record_type_id):
-        records = [] # (count, category, recordTypeId, content)
+    @staticmethod
+    def resolve_record_types(params, record_type_id):
+        records = []  # (count, category, recordTypeId, content)
         if params.record_type_cache:
             if record_type_id and (type(record_type_id) == int or record_type_id.isdigit()):
                 record_type_id = int(record_type_id)
@@ -822,7 +814,8 @@ class RecordTypeInfo(Command):
 
         return records
 
-    def resolve_categories(self, params, category):
+    @staticmethod
+    def resolve_categories(params, category):
         categories = [] # count, category, recordTypeId, content
         should_resolve_all = not category or category.isspace() or category == '*'
         if params.record_type_cache:
@@ -922,7 +915,7 @@ class RecordTypeInfo(Command):
         #     return
         # 2021-06-07 if no record_name or field_name specified - list all record types
         has_categories_only = False
-        row_data = self.resolve_record_types(params, lrid)
+        row_data = RecordTypeInfo.resolve_record_types(params, lrid)
 
         rows = []
         for count, cat, rtid, content in row_data:
@@ -1083,90 +1076,6 @@ class RecordRecordType(Command):
             api.sync_down(params, record_types=True)
         else:
             logging.error('Unknown argument "' + action + '" for -a/--action (choose from "add", "update", "remove")')
-
-
-class RecordFileReportCommand(Command):
-    def get_parser(self):
-        return file_report_parser
-
-    def execute(self, params, **kwargs):
-        is_v2 = bool(kwargs.get('legacy'))
-        if is_v2:
-            FileReportCommand().execute(params, **kwargs)
-            return
-
-        v3_enabled = params.settings.get('record_types_enabled') if params.settings and isinstance(params.settings.get('record_types_enabled'), bool) else False
-        if v3_enabled:
-            print('Legacy records attachments:')
-
-        FileReportCommand().execute(params, **kwargs)
-
-        if not v3_enabled:
-            return
-
-        print('Record types attachments:')
-        headers = ['#', 'Title', 'Record UID', 'File ID', 'Downloadable', 'File Size', 'File Name']
-        table = []
-        for record_uid in params.record_cache:
-            r = api.get_record(params, record_uid)
-            record_uids = []
-            cached_rec = params.record_cache[record_uid] if params.record_cache and record_uid in params.record_cache else {}
-            if (cached_rec and cached_rec.get('version') == 3):
-                data = cached_rec.get('data_unencrypted') or '{}'
-                data = json.loads(data)
-
-                fields = data.get('fields') or []
-                fields.extend(data.get('custom') or [])
-                for fr in (ft for ft in fields if ft['type'] == 'fileRef'):
-                    if fr and 'value' in fr:
-                        fuid = fr.get('value')
-                        if fuid:
-                            record_uids.extend(fuid)
-
-            if not record_uids:
-                continue
-
-            file_info = dict.fromkeys(record_uids, {})
-            for fuid in file_info:
-                file_rec = params.record_cache[fuid] if params.record_cache and fuid in params.record_cache else {}
-                file_data = file_rec.get('data_unencrypted') or '{}'
-                file_data = json.loads(file_data)
-                file_info[fuid] = {
-                    'size': recordv3.HumanBytes.format(file_data.get('size') or 0),
-                    'name': file_data.get('name') or '',
-                    'status': '-',
-                    'url': ''
-                }
-            if kwargs.get('try_download'):
-                # api.resolve_record_access_path(params, r.record_uid, path=rq)
-                logging.info('Downloading attachments for record: %s', r.title)
-                try:
-                    ruids = [ruid for ruid in file_info]
-                    ruids = [loginv3.CommonHelperMethods.url_safe_str_to_bytes(ruid) if type(ruid) == str else ruid for ruid in ruids]
-                    rq = records.FilesGetRequest()
-                    rq.record_uids.extend(ruids)
-                    rq.for_thumbnails = False
-                    rs = api.communicate_rest(params, rq, 'vault/files_download')
-                    files_get_rs = records.FilesGetResponse()
-                    files_get_rs.ParseFromString(rs)
-                    for f in files_get_rs.files:
-                        # success = (f.status == records.FileGetResult.DESCRIPTOR.values_by_name['FG_SUCCESS'].number)
-                        ruid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(f.record_uid)
-                        if f.url and f.url.strip():
-                            opt_rs = requests.get(f.url, proxies=params.rest_context.proxies, headers={"Range": "bytes=0-1"})
-                            file_info[ruid]['status'] = 'OK' if opt_rs.status_code in {200, 206} else str(opt_rs.status_code)
-                except Exception as e:
-                    logging.debug(e)
-
-            for file_id in file_info:
-                row = [len(table) + 1, r.title, r.record_uid, file_id, file_info[file_id]['status'], file_info[file_id]['size'], file_info[file_id]['name']]
-                table.append(row)
-
-        if not kwargs.get('try_download'):
-            del headers[4] # remove downloadable status column
-            for row in table:
-                del row[4] 
-        return dump_report_data(table, headers)
 
 
 def get_record(params, record_uid):

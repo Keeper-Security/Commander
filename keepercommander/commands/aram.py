@@ -23,7 +23,7 @@ import platform
 import re
 from functools import partial
 
-from typing import Optional, List, Union, Any
+from typing import Optional, List, Union
 
 import requests
 import socket
@@ -43,10 +43,10 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from ..constants import EMAIL_PATTERN
-from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name
+from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name, \
+    get_compliance_data, get_node_id
 from ..sox.sox_data import RebuildTask
 from ..sox.storage_types import StorageRecordAging
-from typing import Dict, Callable
 
 audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
@@ -72,19 +72,21 @@ audit_report_parser.add_argument('--created', dest='created', action='store',
                                  help='Filter: Created date. Predefined filters: '
                                       'today, yesterday, last_7_days, last_30_days, month_to_date, last_month, '
                                       'year_to_date, last_year')
-audit_report_parser.add_argument('--event-type', dest='event_type', action='store',
+audit_report_parser.add_argument('--event-type', dest='event_type', action='append',
                                  help='Filter: Audit Event Type')
-audit_report_parser.add_argument('--username', dest='username', action='store',
+audit_report_parser.add_argument('--username', dest='username', action='append',
                                  help='Filter: Username of event originator')
-audit_report_parser.add_argument('--to-username', dest='to_username', action='store',
+audit_report_parser.add_argument('--to-username', dest='to_username', action='append',
                                  help='Filter: Username of event target')
 audit_report_parser.add_argument('--geo-location', dest='geo_location', action='store',
                                  help='Filter: Geo location')
+audit_report_parser.add_argument('--ip-address', dest='ip_address', action='append',
+                                 help='Filter: IP Address(es)')
 audit_report_parser.add_argument('--device-type', dest='device_type', action='store',
                                  help='Filter: Device type')
-audit_report_parser.add_argument('--record-uid', dest='record_uid', action='store',
+audit_report_parser.add_argument('--record-uid', dest='record_uid', action='append',
                                  help='Filter: Record UID')
-audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='store',
+audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='append',
                                  help='Filter: Shared Folder UID')
 min_opt_help = 'limit report to event-specific and local data (skips retrieval of compliance data if not in cache)'
 audit_report_parser.add_argument('--minimal', action='store_true', help=min_opt_help)
@@ -111,8 +113,8 @@ aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
                                  help='Delete local record database')
 aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='store_true',
                                  help='remove any local non-memory storage of data upon command completion')
-aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['owner', 'title', 'last_changed'],
-                                 help='sort output')
+aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', default='last_changed',
+                                 choices=['owner', 'title', 'last_changed', 'shared'], help='sort output')
 aging_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                  default='table', help='output format.')
 aging_report_parser.add_argument('--output', dest='output', action='store',
@@ -121,6 +123,8 @@ aging_report_parser.add_argument('--period', dest='period', action='store',
                                  help='Period the password has not been modified')
 aging_report_parser.add_argument('--username', dest='username', action='store',
                                  help='Report expired passwords for user')
+aging_report_parser.add_argument('--exclude-deleted', action='store_true', help='Exclude deleted records from report')
+
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
@@ -293,6 +297,7 @@ class AuditLogBaseExport(abc.ABC):
                 field.value = [value]
             else:
                 record.custom.append(vault.TypedField.new_field('text', value, name))
+
 
 class AuditLogSplunkExport(AuditLogBaseExport):
     def __init__(self):
@@ -915,9 +920,10 @@ Filters                 Supported: '=', '>', '<', '>=', '<=', 'IN(<>,<>,<>)'. De
 --shared-folder-uid     Shared Folder UID
 --event-type            Audit Event Type.  Value is event type id or event type name
                         audit-report --report-type=dim --columns=audit_event_type
---geo-location          Geo location. 
+--geo-location          Geo location 
                         Example: "El Dorado Hills, California, US", "CH", "Munich,Bayern,DE"
                         audit-report --report-type=dim --columns=geo_location
+--ip-address            IP Address
 --device-type           Keeper device/application and optional version
                         Example: "Commander", "Web App, 16.3.4"    
                         audit-report --report-type=dim --columns=device_type                     
@@ -1263,17 +1269,56 @@ class AuditReportCommand(Command):
             audit_filter['created'] = 'last_30_days'
 
         if 'event_type' in kwargs and kwargs['event_type']:
-            audit_filter['audit_event_type'] = self.get_filter(kwargs['event_type'], AuditReportCommand.convert_str_or_int)
+            event_types = []
+            for event_type in kwargs['event_type']:
+                event_type_filter = self.get_filter(event_type, AuditReportCommand.convert_str_or_int)
+                if isinstance(event_type_filter, list):
+                    event_types.extend(event_type_filter)
+                else:
+                    event_types.append(event_type_filter)
+            audit_filter['audit_event_type'] = event_types
         if 'username' in kwargs and kwargs['username']:
-            audit_filter['username'] = self.get_filter(kwargs['username'], AuditReportCommand.convert_str)
+            usernames = set()
+            for un in kwargs['username']:
+                uns = self.get_filter(un, AuditReportCommand.convert_str)
+                if isinstance(uns, list):
+                    usernames.update(uns)
+                elif isinstance(uns, str):
+                    usernames.add(uns)
+            if len(usernames) > 0:
+                audit_filter['username'] = list(usernames)
         if 'to_username' in kwargs and kwargs['to_username']:
-            audit_filter['to_username'] = self.get_filter(kwargs['to_username'], AuditReportCommand.convert_str)
+            to_usernames = set()
+            for to_un in kwargs['to_username']:
+                to_uns = self.get_filter(to_un, AuditReportCommand.convert_str)
+                if isinstance(to_uns, list):
+                    to_usernames.update(to_uns)
+                elif isinstance(to_uns, str):
+                    to_usernames.add(to_uns)
+            if len(to_usernames) > 0:
+                audit_filter['to_username'] = list(to_usernames)
         if 'record_uid' in kwargs and kwargs['record_uid']:
-            audit_filter['record_uid'] = self.get_filter(kwargs['record_uid'], AuditReportCommand.convert_str)
+            record_uids = set()
+            for r_uid in kwargs['record_uid']:
+                r_uids = self.get_filter(r_uid, AuditReportCommand.convert_str)
+                if isinstance(r_uids, list):
+                    record_uids.update(r_uids)
+                elif isinstance(r_uids, str):
+                    record_uids.add(r_uids)
+            if len(record_uids) > 0:
+                audit_filter['record_uid'] = list(record_uids)
         if 'shared_folder_uid' in kwargs and kwargs['shared_folder_uid']:
-            audit_filter['shared_folder_uid'] = self.get_filter(kwargs['shared_folder_uid'], AuditReportCommand.convert_str)
+            shared_uids = set()
+            for sf_uid in kwargs['shared_folder_uid']:
+                sf_uids = self.get_filter(sf_uid, AuditReportCommand.convert_str)
+                if isinstance(sf_uids, list):
+                    shared_uids.update(sf_uids)
+                elif isinstance(sf_uids, str):
+                    shared_uids.add(sf_uids)
+            if len(shared_uids) > 0:
+                audit_filter['shared_folder_uid'] = list(shared_uids)
+        ip_filter = set()
         if 'geo_location' in kwargs and kwargs['geo_location']:
-            ip_filter = set()
             geo_location_comps = kwargs['geo_location'].split(',')
             country = (geo_location_comps.pop() if geo_location_comps else '').strip().lower()
             if not country:
@@ -1292,7 +1337,15 @@ class AuditReportCommand(Command):
                         continue
                 ip_filter.update(geo.get('ip_addresses'))
             if len(ip_filter) == 0:
-                raise CommandError('audit-report', "'geo_location' filter: no events")
+                raise CommandError('audit-report', "'geo_location' filter: invalid GEO location")
+        if 'ip_address' in kwargs and kwargs['ip_address']:
+            for ip_address in kwargs['ip_address']:
+                ip_addr = self.get_filter(ip_address, AuditReportCommand.convert_str)
+                if isinstance(ip_addr, list):
+                    ip_filter.update(ip_addr)
+                elif isinstance(ip_addr, str):
+                    ip_filter.add(ip_addr)
+        if len(ip_filter) > 0:
             audit_filter['ip_address'] = list(ip_filter)
         if 'device_type' in kwargs and kwargs['device_type']:
             version_filter = set()
@@ -1530,9 +1583,16 @@ class AgingReportCommand(Command):
             return
         period_min_ts = int(dt.timestamp())
 
-        from ..sox import get_prelim_data
-        sd = get_prelim_data(params, enterprise_id, rebuild=kwargs.get('rebuild'), min_updated=period_min_ts)
-        AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts)
+        rebuild = kwargs.get('rebuild')
+        exclude_deleted = kwargs.get('exclude_deleted')
+        node_id = get_node_id(params, enterprise_id)
+
+        get_sox_data_fn = get_compliance_data if exclude_deleted else get_prelim_data
+        sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted \
+            else [params, enterprise_id, rebuild]
+        sd_kwargs = {'min_updated': period_min_ts}
+        sd = get_sox_data_fn(*sd_args, **sd_kwargs)
+        AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts, rebuild=rebuild)
 
         def clean_up():
             if kwargs.get('no_cache') and sd:
@@ -1558,7 +1618,7 @@ class AgingReportCommand(Command):
             change_ts = ur.record.last_pw_change
             created_after_date = created_ts and (created_ts >= date_ts)
             pw_changed_after_date = change_ts and (change_ts >= date_ts)
-            if created_after_date or pw_changed_after_date:
+            if created_after_date or pw_changed_after_date or exclude_deleted and ur.record.in_trash:
                 continue
             else:
                 email = sd.get_user(ur.user_uid).email
@@ -1569,22 +1629,13 @@ class AgingReportCommand(Command):
                 table.append(row)
         clean_up()
 
-        sort_column = None
-        sort_desc = False
-        sort_by = kwargs.get('sort_by')
-        if sort_by:
-            key_fn = None    # type: Optional[Callable[[Any], Any]]
-            if sort_by == 'owner':
-                sort_column = 0
-            elif sort_by == 'title':
-                sort_column = 1
-            elif sort_by == 'last_changed':
-                sort_desc = True
-                sort_column = 2
-            elif sort_by == 'shared':
-                sort_desc = True
-                sort_column = 3
-        return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'),
+        sort_by = kwargs.get('sort_by', 'last_changed')
+        sort_keys = ['owner', 'title', 'last_changed', 'shared']
+        column_lookup = {value: index for index, value in enumerate(sort_keys)}
+        sort_column = column_lookup.get(sort_by)
+        sort_desc = sort_by in ('last_changed', 'shared')
+        title = f'Aging Report: Records With Passwords Last Modified Before {dt.strftime("%Y/%m/%d %H:%M:%S")}'
+        return dump_report_data(table, columns, fmt=output_format, filename=kwargs.get('output'), title=title,
                                 sort_by=sort_column, sort_desc=sort_desc)
 
     @staticmethod
@@ -1592,7 +1643,10 @@ class AgingReportCommand(Command):
         pass
 
     @staticmethod
-    def update_aging_data(params, sox, period_start_ts):   # type: (KeeperParams, sox_data.SoxData, int) -> None
+    def update_aging_data(params, sox, period_start_ts, rebuild=False):
+        # type: (KeeperParams, sox_data.SoxData, int, Optional[bool]) -> None
+        if rebuild:
+            sox.storage.clear_aging_data()
         from_date = min(sox.storage.records_dated, sox.storage.last_pw_audit)
         if from_date > period_start_ts:
             return
@@ -1600,10 +1654,12 @@ class AgingReportCommand(Command):
             min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
             from_date = int(min_dt.timestamp())
 
+        filter_period = {'min': from_date}
         audit_filter = {
-            'audit_event_type': ['record_add', 'record_password_change'],
-            'created': {'min': 0}
+            'audit_event_type': ['record_add', 'record_password_change', 'folder_add_record'],
+            'created': filter_period
         }
+        limit = API_EVENT_RAW_ROW_LIMIT
         rq = {
             'command':      'get_audit_event_reports',
             'scope':        'enterprise',
@@ -1611,55 +1667,60 @@ class AgingReportCommand(Command):
             'columns':      ['record_uid', 'audit_event_type'],
             'aggregate':    ['last_created'],
             'filter':       audit_filter,
-            'order':        'ascending',
-            'limit':        API_EVENT_SUMMARY_ROW_LIMIT
+            'limit':        limit
         }
-        changed_records = {}    # type: Dict[str, StorageRecordAging]
-        last_added = 0
-        last_password_change = 0
-        done = False
+
+        rec_lookup = sox.get_records()
         logging.info('Loading record password change information...')
+        folder_add_lookup = {}
+        created_lookup = {}
+        pw_change_lookup = {}
+        done = False
         while not done:
-            audit_filter['created']['min'] = from_date
             rs = api.communicate(params, rq)
             events = rs['audit_event_overview_report_rows']
-            done = len(events) < API_EVENT_SUMMARY_ROW_LIMIT - 100
-            if not done:
-                from_date = events[-1]['last_created']
-                if events[0]['last_created'] == from_date:
-                    from_date += 1
+            done = len(events) < limit
+            if not done and events:
+                filter_period['max'] = int(events[-1].get('last_created')) + 1
+
             for event in events:
                 record_uid = event['record_uid']
-                ra = None    # type: Optional[StorageRecordAging]
-                if record_uid not in changed_records:
-                    if record_uid in sox.get_records():
-                        ra = sox.storage.record_aging.get_entity(record_uid)
-                        if ra is None:
-                            ra = StorageRecordAging(record_uid=record_uid)
-                            changed_records[record_uid] = ra
-                else:
-                    ra = changed_records[record_uid]
-                event_type = event['audit_event_type']
-                created = event['last_created']
-                if event_type == 'record_add':
-                    if ra:
-                        ra.created = created
-                    last_added = created
-                elif event_type == 'record_password_change':
-                    if ra:
-                        ra.last_pw_change = created
-                    last_password_change = created
-        if len(changed_records) > 0:
-            sox.storage.record_aging.put_entities(changed_records.values())
+                record = rec_lookup.get(record_uid)
+                if not record:
+                    logging.debug(f'record-aging: record {record_uid} does not exist')
+                    continue
+                event_type = event.get('audit_event_type')
+                event_ts = int(event.get('last_created'))
+                aging_obj = {record_uid: event_ts}
+                if event_type in ('record_add', 'folder_add_record'):
+                    lookup = created_lookup if event_type == 'record_add' else folder_add_lookup
+                    if record_uid not in created_lookup:
+                        lookup.update(aging_obj)
+                elif event_type == 'record_password_change' and event_ts > record.last_pw_change and record_uid not in pw_change_lookup:
+                    pw_change_lookup.update(aging_obj)
+        created_lookup.update({r_uid: ts for r_uid, ts in folder_add_lookup.items() if r_uid not in created_lookup})
+        records_to_update = {
+            'created': created_lookup,
+            'last_pw_change': pw_change_lookup
+        }
+
+        sox.storage.set_last_pw_audit()
+        sox.storage.set_records_dated()
+
+        aging_entities = {}
+        for attr in records_to_update:
+            aging_objs = records_to_update.get(attr)
+            for uid, event_ts in aging_objs.items():
+                ra = aging_entities.get(uid) or sox.storage.record_aging.get_entity(uid) or StorageRecordAging(uid)
+                setattr(ra, attr, event_ts)
+                aging_entities[uid] = ra
+
+        # Save updated record-aging entities and re-load local SOX data
+        if aging_entities:
+            sox.storage.record_aging.put_entities(aging_entities.values())
             rebuild_task = RebuildTask(False)
-            rebuild_task.update_records(changed_records.keys())
+            rebuild_task.update_records(aging_entities.keys())
             sox.rebuild_data(rebuild_task)
-
-        if last_added > 0:
-            sox.storage.set_records_dated(last_added)
-
-        if last_password_change > 0:
-            sox.storage.set_last_pw_audit(last_password_change)
 
 
 class ActionReportCommand(EnterpriseCommand):
@@ -1736,28 +1797,23 @@ class ActionReportCommand(EnterpriseCommand):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
 
         def batch_apply_cmd(users, api_cmd_rq=None, dryrun=False, userid_field='enterprise_user_id'):
+            user_ids = [user.get(userid_field) for user in users]
             cmd_status = 'aborted' if api_cmd_rq else 'n/a'
             affected = 0
             server_msg = 'n/a'
             cmd = 'NONE (No action specified)' if api_cmd_rq is None else api_cmd_rq.get('command')
             if api_cmd_rq is not None and len(users):
-                cmd_rqs = [{**api_cmd_rq, userid_field: user[userid_field]} for user in users]
-                rq = cmd_rq('execute', requests=cmd_rqs)
+                cmd_rqs = [{**api_cmd_rq, userid_field: user_id} for user_id in user_ids]
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
-                    rs = api.communicate(params, rq)
-                    cmd_status = rs.get('result')
-                    server_msg = rs.get('message')
-                    affected = len(users)
-                    if cmd_status == 'success':
-                        results = rs.get('results')
-                        fails = [result for result in results if result.get('result') != 'success']
-                        if any(fails):
-                            fail = fails[0]
-                            cmd_status = 'incomplete'
-                            affected = len(users) - len(fails)
-                            server_msg = fail.get('message')
+                    responses = api.execute_batch(params, cmd_rqs)
+                    fails = [rs for rs in responses if rs.get('result') != 'success']
+                    affected = len(users) - len(fails)
+                    cmd_status = 'fail' if not responses \
+                        else 'incomplete' if any(fails) \
+                        else 'success'
+                    server_msg = '\n\t\t\t'.join(fail.get('message') for fail in fails)
 
             return get_action_results_text(cmd, cmd_status, server_msg, affected)
 
@@ -1861,6 +1917,12 @@ class ActionReportCommand(EnterpriseCommand):
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
+
+        # Sync local enterprise data if changes were made
+        if admin_action != 'none' and not dry_run:
+            from keepercommander.commands.enterprise import GetEnterpriseDataCommand
+            get_enterprise_data_cmd = GetEnterpriseDataCommand()
+            get_enterprise_data_cmd.execute(params)
 
         title = f'Admin Action Taken:\n{action_msg}\n'
         title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '

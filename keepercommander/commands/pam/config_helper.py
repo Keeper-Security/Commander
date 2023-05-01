@@ -1,20 +1,15 @@
 import base64
 import json
+import logging
 import os
 
 from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string
 
 from ..folder import FolderMoveCommand
 from ..record import RecordRemoveCommand
-from ...api import encrypt_aes_plain, pad_aes_gcm, communicate_rest, sync_down
-from ...display import bcolors
-from ...loginv3 import CommonHelperMethods
-from ...proto import pam_pb2
-from ...proto.pam_pb2 import (
-    PAMConfigurationController, PAMDataOperation, PAMOperationType, PAMModifyRequest, ConfigurationAddRequest
-)
-from ...proto.router_pb2 import RouterRotationInfo
-from ... import api, crypto, utils
+from ... import api, crypto, utils, vault, vault_extensions
+from ...params import KeeperParams
+from ...proto import pam_pb2, router_pb2
 
 
 def pam_decrypt_configuration_data(pam_config_v6_record):
@@ -71,48 +66,66 @@ def pam_configuration_get_field(unencrypted_record, field_identifier):
             return field
 
 
-def pam_configuration_create_record_v6(params, data, controller_uid, folder_uid_urlsafe):
+def pam_configuration_create_record_v6(params, record, folder_uid):
+    # type: (KeeperParams, vault.TypedRecord, str, str) -> None
+    if not record.record_uid:
+        record.record_uid = utils.generate_uid()
 
-    data_json = json.dumps(data)
-    record_key_unencrypted = os.urandom(32)
-    record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
+    if not record.record_key:
+        record.record_key = utils.generate_aes_key()
 
-    config_v6_record_uid_str = api.generate_record_uid()
-    config_v6_record_uid = CommonHelperMethods.url_safe_str_to_bytes(config_v6_record_uid_str)
+    record_data = vault_extensions.extract_typed_record_data(record)
+    json_data = api.get_record_data_json_bytes(record_data)
 
-    data = data_json.decode('utf-8') if isinstance(data_json, bytes) else data_json
-    data = pad_aes_gcm(data)
+    car = pam_pb2.ConfigurationAddRequest()
+    car.configurationUid = utils.base64_url_decode(record.record_uid)
+    car.recordKey = crypto.encrypt_aes_v2(record.record_key, params.data_key)
+    car.data = crypto.encrypt_aes_v2(json_data, record.record_key)
 
-    rdata = bytes(data, 'utf-8')
-    rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
-    rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
-    rdata = CommonHelperMethods.url_safe_str_to_bytes(rdata)
+    api.communicate_rest(params, car, 'pam/add_configuration_record')
 
-    car = ConfigurationAddRequest()
-    car.configurationUid = config_v6_record_uid
-    car.recordKey = record_key_encrypted
-    car.data = rdata
-
-    params.revision = 0
-    rs = communicate_rest(params, car, 'pam/add_configuration_record')
-
-    pcc = PAMConfigurationController()
-    pcc.configurationUid = config_v6_record_uid
-    pcc.controllerUid = CommonHelperMethods.url_safe_str_to_bytes(controller_uid)
-    rs = communicate_rest(params, pcc, 'pam/set_configuration_controller')
-
-    # Moving v6 record into the folder
-    sync_down(params)
-
-    FolderMoveCommand().execute(params, src=config_v6_record_uid_str, dst=folder_uid_urlsafe)
-
-    print(bcolors.OKGREEN + "Configuration was successfully added. UID " + config_v6_record_uid_str + bcolors.ENDC)
+# def pam_configuration_create_record_v6_orginal(params, data, controller_uid, folder_uid_urlsafe):
+#
+#     data_json = json.dumps(data)
+#     record_key_unencrypted = os.urandom(32)
+#     record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
+#
+#     config_v6_record_uid_str = api.generate_record_uid()
+#     config_v6_record_uid = CommonHelperMethods.url_safe_str_to_bytes(config_v6_record_uid_str)
+#
+#     data = data_json.decode('utf-8') if isinstance(data_json, bytes) else data_json
+#     data = pad_aes_gcm(data)
+#
+#     rdata = bytes(data, 'utf-8')
+#     rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
+#     rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
+#     rdata = CommonHelperMethods.url_safe_str_to_bytes(rdata)
+#
+#     car = ConfigurationAddRequest()
+#     car.configurationUid = config_v6_record_uid
+#     car.recordKey = record_key_encrypted
+#     car.data = rdata
+#
+#     params.revision = 0
+#     rs = communicate_rest(params, car, 'pam/add_configuration_record')
+#
+#     pcc = PAMConfigurationController()
+#     pcc.configurationUid = config_v6_record_uid
+#     pcc.controllerUid = CommonHelperMethods.url_safe_str_to_bytes(controller_uid)
+#     rs = communicate_rest(params, pcc, 'pam/set_configuration_controller')
+#
+#     # Moving v6 record into the folder
+#     sync_down(params)
+#
+#     FolderMoveCommand().execute(params, src=config_v6_record_uid_str, dst=folder_uid_urlsafe)
+#
+#     print(bcolors.OKGREEN + "Configuration was successfully added. UID " + config_v6_record_uid_str + bcolors.ENDC)
 
 
 def pam_configuration_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):
 
-    config_operation = PAMDataOperation()
-    config_operation.operationType = PAMOperationType.ADD
+    config_operation = pam_pb2.PAMDataOperation()
+    config_operation.operationType = pam_pb2.PAMOperationType.ADD
 
     top_config_uid = os.urandom(16)
 
@@ -120,14 +133,14 @@ def pam_configuration_create(params, gateway_uid_bytes, config_json_str, child_c
         # Root node
         config_operation.configuration.configurationUid = top_config_uid
         config_operation.configuration.controllerUid = gateway_uid_bytes
-        config_operation.configuration.data = string_to_bytes(config_json_str) # DATA size is between 16 and 516
+        config_operation.configuration.data = string_to_bytes(config_json_str)    # DATA size is between 16 and 516
     else:
         # Child node
         config_operation.element.elementUid = top_config_uid
         config_operation.element.parentUid = parent_uid_bytes
         config_operation.element.data = string_to_bytes(config_json_str)
 
-    rq = PAMModifyRequest()
+    rq = pam_pb2.PAMModifyRequest()
     rq.operations.append(config_operation)
 
     child_generated_uids = []
@@ -138,8 +151,8 @@ def pam_configuration_create(params, gateway_uid_bytes, config_json_str, child_c
             child_generated_uid = os.urandom(16)
             child_generated_uids.append(child_generated_uid)
 
-            child_config_operation = PAMDataOperation()
-            child_config_operation.operationType = PAMOperationType.ADD
+            child_config_operation = pam_pb2.PAMDataOperation()
+            child_config_operation.operationType = pam_pb2.PAMOperationType.ADD
             child_config_operation.element.elementUid = child_generated_uid
             child_config_operation.element.parentUid = top_config_uid
             child_config_operation.element.data = string_to_bytes(child_config_json_string)
@@ -183,16 +196,13 @@ def pam_configurations_get_all(params):
 
 
 def pam_configuration_remove(params, configuration_uid):
-
     # TODO: Check if there are record rotations associated with this config and warn user about that before removing.
-
     RecordRemoveCommand().execute(params, record=configuration_uid, force=True)
 
     if configuration_uid in params.record_cache:
         del params.record_cache[configuration_uid]
 
-    # SyncDownCommand().execute(params, force=True)
-    print(f'{bcolors.OKGREEN}PAM Configuration was removed successfully{bcolors.ENDC}')
+    logging.info('PAM Configuration was removed successfully.')
 
     # raise Exception("Not implemented yet...")
     # # just do the regular record deletion
@@ -215,12 +225,12 @@ def pam_configuration_remove(params, configuration_uid):
     #         print(f'{bcolors.WARNING}Error code: {ex.result_code}. {ex.message}{bcolors.ENDC}')
 
 
-def record_rotation_get(params, record_uid_bytes):
+def record_rotation_get(params, record_uid_bytes):  # type: (KeeperParams, bytes) -> router_pb2.RouterRotationInfo
 
     rq = pam_pb2.PAMGenericUidRequest()
     rq.uid = record_uid_bytes
 
-    rotation_info_rs = api.communicate_rest(params, rq, 'pam/get_rotation_info', rs_type=RouterRotationInfo)
+    rotation_info_rs = api.communicate_rest(params, rq, 'pam/get_rotation_info', rs_type=router_pb2.RouterRotationInfo)
 
     return rotation_info_rs
 

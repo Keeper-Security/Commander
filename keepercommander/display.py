@@ -8,6 +8,7 @@
 # Contact: ops@keepersecurity.com
 #
 import json
+import re
 import shutil
 from collections import OrderedDict as OD
 from typing import Tuple, List, Union
@@ -16,8 +17,9 @@ from asciitree import LeftAligned
 from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
-from keepercommander import __version__
-from .subfolder import BaseFolderNode, SharedFolderNode, get_contained_records
+from keepercommander import __version__, api
+from .record import Record
+from .subfolder import BaseFolderNode, SharedFolderNode, get_contained_record_uids
 
 init()
 
@@ -188,9 +190,6 @@ def formatted_folders(folders):
 
 
 def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
-    if show_records:
-        from .recordv3 import RecordV3
-
     def print_share_permissions_key():
         perms_key = 'Share Permissions Key:\n' \
                '======================\n' \
@@ -229,6 +228,7 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
                 info.append(f'[{name}:{",".join(privs)}]')
             return 'teams:' + ','.join(info) if info else ''
 
+        result = ''
         if isinstance(node, SharedFolderNode):
             sf = params.shared_folder_cache.get(node.uid)
             teams_info = get_teams_info(sf.get('teams', []))
@@ -239,54 +239,52 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             user_perms = 'user:' + ','.join(user_perms)
             perms = [default_perms, user_perms, teams_info, users_info]
             perms = [p for p in perms if p]
-            return f'({"; ".join(perms)})'
+            result = f' ({"; ".join(perms)})' if shares else ''
+
+        return result
 
     def tree_node(node):
-        if isinstance(node, dict):
-            name = Style.DIM + RecordV3.get_title(node)
-            if verbose:
-                name += f' ({node.get("record_uid")})'
-            name += ' [Record]' + Style.NORMAL
-            return name, {}
+        node_uid = node.record_uid if isinstance(node, Record) else node.uid or ''
+        node_name = node.title if isinstance(node, Record) else node.name
+        node_name = f'{node_name} ({node_uid})'
+        share_info = get_share_info(node) if isinstance(node, SharedFolderNode) and shares else ''
+        node_name = f'{Style.DIM}{node_name} [Record]{Style.NORMAL}' if isinstance(node, Record) \
+            else f'{node_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_info}' if isinstance(node, SharedFolderNode)\
+            else node_name
 
-        if verbose and node.uid:
-            name = f'{node.name} ({node.uid})'
-        else:
-            name = node.name
-
-        if isinstance(node, SharedFolderNode):
-            name += ' ' + Style.BRIGHT + '[Shared]' + Style.NORMAL
-            if shares:
-                name += ' ' + get_share_info(node)
-
-        sfs = [params.folder_cache[sfuid] for sfuid in node.subfolders]
-        rns = set()
-        if show_records:
+        dir_nodes = [] if isinstance(node, Record) \
+            else [params.folder_cache.get(fuid) for fuid in node.subfolders]
+        rec_nodes = []
+        if show_records and isinstance(node, BaseFolderNode):
             node_uid = '' if node.type == '/' else node.uid
-            recs = get_contained_records(params, node_uid).get(node_uid)
-            rns.update(recs)
+            rec_uids = get_contained_record_uids(params, node_uid).get(node_uid)
+            records = [api.get_record(params, rec_uid) for rec_uid in rec_uids]
+            records = [r for r in records if isinstance(r, Record)]
+            rec_nodes.extend(records)
 
-        if len(sfs) + len(rns) == 0:
-            return name, {}
+        dir_nodes.sort(key=lambda f: f.name.lower(), reverse=False)
+        rec_nodes.sort(key=lambda r: r.title.lower(), reverse=False)
+        child_nodes = dir_nodes + rec_nodes
 
-        sfs.sort(key=lambda f: f.name.lower(), reverse=False)
-        rns = [params.record_cache.get(r) for r in rns]
-        rns.sort(key=lambda r: RecordV3.get_title(r).lower(), reverse=False)
-        nodes = sfs + rns
+        tns = [tree_node(n) for n in child_nodes]
+        return node_name, OD(tns)
 
-        tns = [tree_node(n) for n in nodes]
-        return name, OD(tns)
-
-    t = tree_node(folder)
-    tree = {
-        t[0]: t[1]
-    }
+    root, branches = tree_node(folder)
+    tree = {root: branches}
     tr = LeftAligned()
     if shares and not hide_shares_key:
         print_share_permissions_key()
     if title:
         print(title)
-    print(tr(tree))
+    tree_txt = str(tr(tree))
+    tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
+    if not verbose:
+        lines = tree_txt.splitlines()
+        for idx, line in enumerate(lines):
+            line = re.sub(r'\s+\(.+?\)', '', line, count=1)
+            lines[idx] = line
+        tree_txt = '\n'.join(lines)
+    print(tree_txt)
     print('')
 
 

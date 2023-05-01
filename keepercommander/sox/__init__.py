@@ -59,20 +59,22 @@ def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -
     return os.path.join(path, f'sox_{enterprise_id}.db')
 
 
-def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False):
-    # type: (KeeperParams, int, bool, int, bool, bool) -> sox_data.SoxData
+def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False, shared_only=False):
+    # type: (KeeperParams, int, bool, int, bool, bool, bool) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
         def to_storage_types(user_data, username_lookup):
             def to_record_entity(record):
-                entity = StorageRecord()
-                entity.record_uid_bytes = record.recordUid
-                entity.record_uid = utils.base64_url_encode(record.recordUid)
+                record_uid_bytes = record.recordUid
+                record_uid = utils.base64_url_encode(record_uid_bytes)
+                entity = store.get_records().get_entity(record_uid) or StorageRecord()
+                entity.record_uid_bytes = record_uid_bytes
+                entity.record_uid = record_uid
                 entity.encrypted_data = record.encryptedData
                 entity.shared = record.shared
                 return entity
 
             def to_user_entity(user, email_lookup):
-                entity = StorageUser()
+                entity = store.get_users().get_entity(user.enterpriseUserId) or StorageUser()
                 entity.status = user.status
                 entity.user_uid = user.enterpriseUserId
                 entity.email = email_lookup.get(entity.user_uid)
@@ -101,7 +103,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
                 rq = enterprise_pb2.PreliminaryComplianceDataRequest()
                 rq.enterpriseUserIds.extend(chunk)
-                rq.includeNonShared = True
+                rq.includeNonShared = not shared_only
                 has_more = True
                 while has_more:
                     rq.continuationToken = token or rq.continuationToken
@@ -133,14 +135,17 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         get_connection=lambda: sqlite3.connect(database_name), owner=params.user, database_name=database_name
     )
     last_updated = storage.last_prelim_data_update
-    refresh_data = rebuild or not last_updated or min_updated > last_updated
+    only_shared_cached = storage.shared_records_only
+    refresh_data = rebuild or not last_updated or min_updated > last_updated or only_shared_cached and not shared_only
     if refresh_data and not cache_only:
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
+        storage.clear_non_aging_data()
         sync_down(user_lookup, storage)
+        storage.set_shared_records_only(shared_only)
     return sox_data.SoxData(ec_private_key=key, storage=storage, no_cache=no_cache)
 
 
-def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False):
+def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
         def run_sync_tasks():
             async def do_tasks(return_exceptions=False):
@@ -198,6 +203,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 report_run.records.extend(raw_ruids)
                 caf = report_run.reportCriteriaAndFilter
                 caf.nodeId = node_uid
+                caf.criteria.includeNonShared = not shared_only
                 endpoint = 'enterprise/run_compliance_report'
                 return api.communicate_rest(params, rq, endpoint, rs_type=enterprise_pb2.ComplianceReportResponse)
 
@@ -325,7 +331,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
 
         run_sync_tasks()
 
-    sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated)
+    sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only)
     last_compliance_data_update = sd.storage.last_compliance_data_update
     refresh_data = rebuild or min_updated > last_compliance_data_update
     if refresh_data:
@@ -335,3 +341,15 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
     rebuild_task = sox_data.RebuildTask(is_full_sync=False, load_compliance_data=True)
     sd.rebuild_data(rebuild_task, no_cache=no_cache)
     return sd
+
+
+def get_node_id(params, name):
+    name = int(name) if isinstance(name, str) and name.isdecimal() else name
+    nodes = params.enterprise['nodes']
+    root_node_id = nodes[0].get('node_id', 0)
+    node_ids = (n.get('node_id') for n in nodes)
+    node_id_lookup = {n.get('data').get('displayname'): n.get('node_id') for n in nodes}
+    node_id = node_id_lookup.get(name) if name in node_id_lookup \
+        else name if name in node_ids \
+        else root_node_id
+    return node_id

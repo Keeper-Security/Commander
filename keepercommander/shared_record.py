@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict
+from typing import Dict, List
 
 from keepercommander import api, utils
 from keepercommander.proto import enterprise_pb2
@@ -61,6 +61,7 @@ def get_shared_records(params, record_uids):
         members = no_share_users.union(no_share_teams).union(no_share_team_members)
         return members
 
+    api.get_record_shares(params, record_uids)
     sf_teams = [shared_folder.get('teams', []) for shared_folder in params.shared_folder_cache.values()]
     sf_share_admins = fetch_sf_admins()
     team_uids = {t.get('team_uid') for teams in sf_teams for t in teams}
@@ -69,11 +70,14 @@ def get_shared_records(params, record_uids):
     restricted_role_members = get_restricted_role_members(username_lookup)
     team_members = get_cached_team_members(team_uids, username_lookup) if params.enterprise \
         else fetch_team_members(team_uids)
-    return {uid: SharedRecord(params, uid, sf_share_admins, team_members, restricted_role_members) for uid in record_uids}
+    records = [api.get_record(params, uid) for uid in record_uids]  # type: List[Record or None]
+    records = [r for r in records if r]
+    shared_records = [SharedRecord(params, r, sf_share_admins, team_members, restricted_role_members) for r in records]
+    return {shared_record.uid: shared_record for shared_record in shared_records}
 
 
 class SharePermissions:
-    SharePermissionsType = Enum('SharePermissionsType', ['TEAM', 'USER', 'SF_USER', 'TEAM_USER'])
+    SharePermissionsType = Enum('SharePermissionsType', ['USER', 'SF_USER', 'TEAM', 'TEAM_USER'])
     bits_text_lookup = {(1 << 0): 'Edit', (1 << 1): 'Share'}
 
     def __init__(self, sp_types=None):
@@ -142,10 +146,10 @@ class SharePermissions:
 class SharedRecord:
     """Defines a Keeper Shared Record (shared either via Direct-Share or as a child of a Shared-Folder node)"""
 
-    def __init__(self, params, uid, sf_sharing_admins, team_members, role_restricted_members):
+    def __init__(self, params, record, sf_sharing_admins, team_members, role_restricted_members):
         self.owner = ''
-        self.uid = uid
-        self.name = ''
+        self.uid = record.record_uid
+        self.name = record.title
         self.shared_folders = None
         self.sf_shares = {}
         self.permissions: Dict[str, SharePermissions] = {}
@@ -153,11 +157,11 @@ class SharedRecord:
         self.user_permissions: Dict[str, SharePermissions] = {}
         self.revision = None
         self.params = params
-        self.folder_uids = list(find_folders(params, uid))
+        self.folder_uids = list(find_folders(params, record.record_uid))
         self.folder_paths = [get_folder_path(params, fuid) for fuid in self.folder_uids]
         self.team_members = team_members
 
-        self.load(params, uid, sf_sharing_admins, team_members, role_restricted_members)
+        self.load(params, sf_sharing_admins, team_members, role_restricted_members)
 
     def get_ordered_permissions(self):
         ordered = list(self.permissions.values())
@@ -189,7 +193,7 @@ class SharedRecord:
         self.team_permissions[team_uid] = new_perms
         return new_perms
 
-    def load(self, params, uid, sf_sharing_admins, team_members, role_restricted_members):
+    def load(self, params, sf_sharing_admins, team_members, role_restricted_members):
         def apply_team_restrictions(team_perms):
             if not params.enterprise:
                 return team_perms
@@ -245,16 +249,13 @@ class SharedRecord:
                 load_user_permissions(ups, sf_uid, SharePermissions.SharePermissionsType.TEAM_USER)
                 merged.team_members.update({t_username: self.permissions.get(t_username) for t_username in t_users})
 
-        record: Record = api.get_record(params, record_uid=uid)
-        self.name = record.title
-        self.uid = record.record_uid
-
-        rec_cached = params.record_cache.get(uid)
+        rec_cached = params.record_cache.get(self.uid)
         shares = rec_cached.get('shares', dict())
 
         user_perms = list(shares.get('user_permissions', []))
-        self.owner = next(up.get('username') for up in user_perms if up.get('owner'))
-        load_user_permissions(user_perms)
+        if len(user_perms) > 0:
+            self.owner = next((up.get('username') for up in user_perms if up.get('owner')), '')
+            load_user_permissions(user_perms)
 
         sf_perms = shares.get('shared_folder_permissions', [])
         SF_UID = 'shared_folder_uid'
@@ -272,4 +273,3 @@ class SharedRecord:
             load_team_permissions(teams, sf_uid)
 
         apply_role_restrictions()
-

@@ -27,7 +27,7 @@ from .vault import KeeperRecord, PasswordRecord, TypedRecord, FileRecord, Attach
 
 
 def prepare_attachment_download(params, record_uid, attachment_name=None):
-    # type: (KeeperParams, str, Optional[str]) -> Iterator['AttachmentDownloadRequest']
+    # type: (KeeperParams, str, Optional[str]) -> Iterator[AttachmentDownloadRequest]
     record = KeeperRecord.load(params, record_uid)
     if not record:
         logging.warning('Record UID \"%s\" not found.', record_uid)
@@ -57,6 +57,7 @@ def prepare_attachment_download(params, record_uid, attachment_name=None):
                     file_record = KeeperRecord.load(params, file_uid)
                     if isinstance(file_record, FileRecord):
                         adr = AttachmentDownloadRequest()
+                        adr.file_id = file_uid
                         adr.url = file_status.url
                         adr.success_status_code = file_status.success_status_code
                         adr.encryption_key = file_record.record_key
@@ -86,6 +87,7 @@ def prepare_attachment_download(params, record_uid, attachment_name=None):
                 for attachment, dl in zip(attachments, rs['downloads']):
                     if 'url' in dl:
                         adr = AttachmentDownloadRequest()
+                        adr.file_id = attachment.id
                         adr.title = attachment.title if attachment.title else attachment.name
                         adr.url = dl['url']
                         adr.encryption_key = utils.base64_url_decode(attachment.key)
@@ -95,6 +97,7 @@ def prepare_attachment_download(params, record_uid, attachment_name=None):
 
 class AttachmentDownloadRequest:
     def __init__(self):
+        self.file_id = ''
         self.url = ''
         self.encryption_key = b''
         self.title = ''

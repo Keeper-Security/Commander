@@ -17,12 +17,13 @@ import os
 import re
 from typing import Any, Dict, Set
 
-from ..params import KeeperParams
 from .enterprise_common import EnterpriseCommand
+from .. import generator, api, utils, crypto, vault_extensions
 from ..error import CommandError
-from .. import generator, vault, api, utils, crypto, vault_extensions
+from ..importer import import_utils
+from ..importer.json.json import KeeperJsonMixin
+from ..params import KeeperParams
 from ..proto import record_pb2
-
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')
@@ -32,8 +33,23 @@ enterprise_push_parser.add_argument('file', nargs='?', type=str, action='store',
 
 
 enterprise_push_description = '''
-Template record file example:
+"enterprise-push" command uses Keeper JSON record import format.
+https://docs.keeper.io/secrets-manager/commander-cli/import-and-export-commands/json-import
 
+To create template records use the Web Vault or any other Keeper client.
+1. Create an empty folder for storing templates. e.g. "Templates"
+2. Create records in that folder
+3. export the folder as JSON
+My Vault> export --format=json --folder=Templates templates.json
+4. Optional: edit JSON file to delete the following properties: 
+   "uid", "schema", "folders" not used by "enterprise-push" command
+
+
+The template JSON file should be either array of records or 
+an object that contains property "records" of array of records
+
+Template record file examples:
+1.   Array of records
 [
     {
         "title": "Record For ${user_name}",
@@ -47,6 +63,15 @@ Template record file example:
         }
     }
 ]
+
+2. Object that holds "records" property
+{
+    "records": [
+        {
+            "title": "Record For ${user_name}",
+        }
+    ]
+}
 
 
 Supported template parameters:
@@ -137,6 +162,10 @@ class EnterprisePushCommand(EnterpriseCommand):
                 template_records = json.load(f)
         else:
             raise CommandError('enterprise-push', f'File {name} does not exists')
+        if isinstance(template_records, dict):
+            if 'records' in template_records:
+                template_records = template_records['records']
+
         if not isinstance(template_records, list) or len(template_records) == 0:
             raise CommandError('enterprise-push', f'File {name} does not contain record templates')
 
@@ -151,7 +180,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                 logging.warning('User \"%s\" public key cannot be loaded. Skipping', email)
 
         record_keys = {}   # type: Dict[str, Dict[str, bytes]]
-        login_facade = vault_extensions.LoginFacade()
+
         for email in emails:
             user_key = params.key_cache.get(email)
             if user_key is None:
@@ -168,49 +197,41 @@ class EnterprisePushCommand(EnterpriseCommand):
                 logging.warning('User \"%s\" public key cannot be loaded. Skipping', email)
                 continue
 
+            user_records = []
+            for r in template_records:
+                record = copy.deepcopy(r)
+                EnterprisePushCommand.substitute_record_params(params, email, record)
+                import_record = KeeperJsonMixin.json_to_record(record)
+                if import_record:
+                    user_records.append(import_record)
+
+            typed_records = list(import_utils.import_to_typed_records(params, user_records))
+
             record_keys[email] = {}
             rq = record_pb2.RecordsAddRequest()
             rq.client_time = utils.current_milli_time()
 
-            for r in template_records:
-                record = copy.deepcopy(r)
-                EnterprisePushCommand.substitute_record_params(params, email, record)
-
-                record_uid = api.generate_record_uid()
-                record_key = api.generate_aes_key()
+            for record in typed_records:
+                record.record_uid = api.generate_record_uid()
+                record.record_key = api.generate_aes_key()
                 if user_ec_key:
-                    encrypted_record_key = crypto.encrypt_ec(record_key, user_ec_key)
+                    encrypted_record_key = crypto.encrypt_ec(record.record_key, user_ec_key)
                 else:
-                    encrypted_record_key = crypto.encrypt_rsa(record_key, user_rsa_key)
-                record_keys[email][record_uid] = encrypted_record_key
-
-                r = vault.TypedRecord()
-                r.record_uid = record_uid
-                login_facade.assign_record(r)
-                login_facade.title = record.get('title') or ''
-                login_facade.login = record.get('login') or ''
-                login_facade.password = record.get('password') or ''
-                login_facade.url = record.get('login_url') or ''
-                login_facade.notes = record.get('notes') or ''
-                if 'custom_fields' in record:
-                    custom_fields = record['custom_fields']
-                    if isinstance(custom_fields, dict):
-                        for key, value in custom_fields.items():
-                            if value:
-                                r.custom.append(vault.TypedField.new_field('text', value, key))
+                    encrypted_record_key = crypto.encrypt_rsa(record.record_key, user_rsa_key)
+                record_keys[email][record.record_uid] = encrypted_record_key
 
                 add_record = record_pb2.RecordAdd()
-                add_record.record_uid = utils.base64_url_decode(r.record_uid)
-                add_record.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
+                add_record.record_uid = utils.base64_url_decode(record.record_uid)
+                add_record.record_key = crypto.encrypt_aes_v2(record.record_key, params.data_key)
                 add_record.client_modified_time = utils.current_milli_time()
                 add_record.folder_type = record_pb2.user_folder
 
-                data = vault_extensions.extract_typed_record_data(r)
+                data = vault_extensions.extract_typed_record_data(record)
                 json_data = api.get_record_data_json_bytes(data)
-                add_record.data = crypto.encrypt_aes_v2(json_data, record_key)
+                add_record.data = crypto.encrypt_aes_v2(json_data, record.record_key)
 
                 if params.enterprise_ec_key:
-                    audit_data = vault_extensions.extract_audit_data(r)
+                    audit_data = vault_extensions.extract_audit_data(record)
                     if audit_data:
                         add_record.audit.version = 0
                         add_record.audit.data = crypto.encrypt_ec(

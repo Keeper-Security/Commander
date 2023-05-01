@@ -115,7 +115,7 @@ class _EnterpriseLoader(object):
             params.enterprise = {}
             self._continuationToken = b''
 
-        if not self._enterprise.tree_key:
+        if not self._enterprise.tree_key or not self._continuationToken:
             rq = proto.GetEnterpriseDataKeysRequest()
             rs = api.communicate_rest(params, rq, 'enterprise/get_enterprise_data_keys',
                                       rs_type=proto.GetEnterpriseDataKeysResponse)
@@ -127,14 +127,14 @@ class _EnterpriseLoader(object):
                     if len(encrypted_tree_key) == 60:
                         self._enterprise._tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, params.msp_tree_key)
                     else:
-                        self._enterprise._tree_key = api.decrypt_rsa(rs.treeKey.treeKey, params.rsa_key)
+                        self._enterprise._tree_key = crypto.decrypt_rsa(encrypted_tree_key, params.rsa_key2)
                 params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
 
             keys = {}    # type: Dict[str, str]
             if rs.enterpriseKeys:
                 if rs.enterpriseKeys.rsaEncryptedPrivateKey:
                     self._enterprise._rsa_key = \
-                        api.decrypt_aes_plain(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
+                        crypto.decrypt_aes_v2(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
                     keys['rsa_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.rsaPublicKey)
                     keys['rsa_encrypted_private_key'] = \
                         utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
@@ -181,6 +181,7 @@ class _EnterpriseLoader(object):
             if rs.cacheStatus == proto.CLEAR:
                 for d in self._data_types.values():
                     d.clear(params)
+                self._enterprise._enterprise_name = ''
 
             if not self._enterprise.enterprise_name and rs.generalData:
                 self._enterprise._enterprise_name = rs.generalData.enterpriseName
@@ -293,7 +294,7 @@ class _EnterpriseEntity(_EnterpriseDataParser):
         pass
 
     @staticmethod
-    def fix_data(d):
+    def fix_data(d):  # type: (bytes) -> bytes
         idx = d.rfind(b'}')
         if idx < len(d) - 1:
             d = d[:idx+1]
@@ -419,7 +420,8 @@ class _EnterpriseNodeEntity(_EnterpriseEntity):
         data = {}
         if 'encrypted_data' in keeper_entity:
             try:
-                data_json = api.decrypt_data(keeper_entity['encrypted_data'], self.enterprise.tree_key)
+                encrypted_data = utils.base64_url_decode(keeper_entity['encrypted_data'])
+                data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
                 data_json = self.fix_data(data_json)
                 data.update(json.loads(data_json.decode('utf-8')))
             except Exception as e:
@@ -462,7 +464,8 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
                 data['displayname'] = encrypted_data
             else:
                 try:
-                    data_json = api.decrypt_data(encrypted_data, self.enterprise.tree_key)
+                    encrypted_data = utils.base64_url_decode(keeper_entity['encrypted_data'])
+                    data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
                     data_json = self.fix_data(data_json)
                     data.update(json.loads(data_json.decode('utf-8')))
                 except Exception as e:
@@ -521,7 +524,8 @@ class _EnterpriseRoleEntity(_EnterpriseEntity):
         encrypted_data = keeper_entity.get('encrypted_data')
         if encrypted_data:
             try:
-                data_json = api.decrypt_data(encrypted_data, self.enterprise.tree_key)
+                encrypted_data = utils.base64_url_decode(keeper_entity['encrypted_data'])
+                data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
                 data_json = self.fix_data(data_json)
                 data.update(json.loads(data_json.decode('utf-8')))
                 if proto_entity.roleType == "pool_manager":

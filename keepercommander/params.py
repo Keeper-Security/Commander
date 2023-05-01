@@ -10,7 +10,7 @@
 
 import warnings
 from datetime import datetime
-from typing import Dict, NamedTuple
+from typing import Dict, NamedTuple, Optional
 from urllib.parse import urlparse, urlunparse
 
 from urllib3.exceptions import InsecureRequestWarning
@@ -28,16 +28,15 @@ class PublicKeys(NamedTuple):
 
 
 class RestApiContext:
-    def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US', device_id=None):
+    def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US'):
         self.server_base = server
         self.transmission_key = None
         self.__server_key_id = 7
         self.locale = locale
-        self.__device_id = device_id
         self.__store_server_key = False
         self.proxies = None
         self._certificate_check = True
-        self._fail_on_throttle = False
+        self.fail_on_throttle = False
 
     def __get_server_base(self):
         return self.__server_base
@@ -55,13 +54,6 @@ class RestApiContext:
         self.__server_key_id = key_id
         self.__store_server_key = True
 
-    def __get_device_id(self):
-        return self.__device_id
-
-    def __set_device_id(self, device_id):
-        self.__device_id = device_id
-        self.__store_server_key = True
-
     def __get_store_server_key(self):
         return self.__store_server_key
 
@@ -74,10 +66,12 @@ class RestApiContext:
         else:
             self.proxies = None
 
-    def get_certificate_check(self):
+    @property
+    def certificate_check(self):
         return self._certificate_check
 
-    def set_certificate_check(self, value):
+    @certificate_check.setter
+    def certificate_check(self, value):
         if isinstance(value, bool):
             self._certificate_check = value
             if value:
@@ -85,29 +79,21 @@ class RestApiContext:
             else:
                 warnings.simplefilter('ignore', InsecureRequestWarning)
 
-    def get_fail_on_throttle(self):
-        return self._fail_on_throttle
-
     server_base = property(__get_server_base, __set_server_base)
-    device_id = property(__get_device_id, __set_device_id)
     server_key_id = property(__get_server_key_id, __set_server_key_id)
     store_server_key = property(__get_store_server_key)
-    certificate_check = property(get_certificate_check, set_certificate_check)
-    fail_on_throttle = property(get_fail_on_throttle)
 
 
 class KeeperParams:
     """ Global storage of data during the session """
 
-    def __init__(self, config_filename='', config=None, server='keepersecurity.com', device_id=None):
+    def __init__(self, config_filename='', config=None, server='keepersecurity.com'):
         self.config_filename = config_filename
         self.config = config or {}
         self.auth_verifier = None
         self.__server = server
         self.user = ''
         self.password = ''
-        self.mfa_token = ''
-        self.mfa_type = 'device_token'
         self.commands = []
         self.plugins = []
         self.session_token = None
@@ -116,16 +102,21 @@ class KeeperParams:
         self.data_key = None
         self.client_key = None
         self.rsa_key = None
+        self.rsa_key2 = None
         self.ecc_key = None
         self.enterprise_ec_key = None
         self.enterprise_rsa_key = None
         self.revision = 0
+        self.sync_down_token = None    # type: Optional[bytes]
         self.record_cache = {}
         self.meta_data_cache = {}
+        self.non_shared_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
+        self.record_link_cache = {}
         self.key_cache = {}    # type: Dict[str, PublicKeys]
         self.available_team_cache = None
+        self.user_cache = {}
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}
         self.root_folder = None
@@ -144,7 +135,7 @@ class KeeperParams:
         self.msp_tree_key = None
         self.prepare_commands = False
         self.batch_mode = False
-        self.__rest_context = RestApiContext(server=server, device_id=device_id)
+        self.__rest_context = RestApiContext(server=server)
         self.pending_share_requests = set()
         self.environment_variables = {}
         self.record_history = {}        # type: dict[str, (list[dict], int)]
@@ -168,8 +159,6 @@ class KeeperParams:
         self.auth_verifier = None
         self.user = ''
         self.password = ''
-        self.mfa_type = 'device_token'
-        self.mfa_token = ''
         self.commands.clear()
         self.session_token = None
         self.salt = None
@@ -177,20 +166,25 @@ class KeeperParams:
         self.data_key = None
         self.client_key = None
         self.rsa_key = None
+        self.rsa_key2 = None
         self.ecc_key = None
         self.enterprise_ec_key = None
         self.enterprise_rsa_key = None
         self.revision = 0
+        self.sync_down_token = None
         self.record_cache.clear()
         self.meta_data_cache.clear()
+        self.non_shared_data_cache.clear()
         self.shared_folder_cache.clear()
         self.team_cache.clear()
+        self.record_link_cache.clear()
         self.available_team_cache = None
         self.key_cache.clear()
         self.subfolder_cache .clear()
         self.subfolder_record_cache.clear()
         if self.folder_cache:
             self.folder_cache.clear()
+        self.user_cache.clear()
 
         self.root_folder = None
         self.current_folder = None
@@ -219,7 +213,6 @@ class KeeperParams:
         self.breach_watch = None
         self.breach_watch_records = None
         self.sso_login_info = None
-        self.unmask_all = False
         self.ws = None
         if self.ssh_agent:
             self.ssh_agent.close()

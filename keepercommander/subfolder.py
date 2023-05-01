@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
-from typing import Optional, Tuple, Dict, Iterable
+from typing import Optional, Tuple, Dict, Iterable, List, Set, Union
 
 from .params import KeeperParams
 
@@ -29,11 +29,21 @@ def get_folder_path(params, folder_uid, delimiter='/'):
     return path
 
 
-def find_folders(params, record_uid):
+def find_folders(params, record_uid):   # type: (KeeperParams, str) -> Iterable[str]
     for fuid in params.subfolder_record_cache:
         if record_uid in params.subfolder_record_cache[fuid]:
             if fuid:
                 yield fuid
+
+
+def find_all_folders(params, record_uid):   # type: (KeeperParams, str) -> Iterable[BaseFolderNode]
+    for fuid in params.subfolder_record_cache:
+        if record_uid in params.subfolder_record_cache[fuid]:
+            if fuid:
+                if fuid in params.folder_cache:
+                    yield params.folder_cache[fuid]
+            else:
+                yield params.root_folder
 
 
 def find_parent_top_folder(params, record_uid):
@@ -74,38 +84,35 @@ def find_parent_top_folder(params, record_uid):
     return shared_folders_containing_record
 
 
-def contained_folder(params, folder, component):
-    """Return the folder of component within parent folder 'folder' - or None if not present."""
-    if component == '.':
-        return folder
-    if component == '..':
-        if folder.parent_uid is None:
-            return params.root_folder
-        return params.folder_cache[folder.parent_uid]
-    if component in params.folder_cache:
-        return params.folder_cache[component]
-    for subfolder_uid in folder.subfolders:
-        subfolder = params.folder_cache[subfolder_uid]
-        if subfolder.name == component:
-            return subfolder
-    return None
+def contained_folders(params, folders, component):
+    # type: (KeeperParams, List[Optional[BaseFolderNode]], str) -> List[Optional[BaseFolderNode]]
+    """Return list of folders (empty if component not present) containing component within parent folder 'folder'"""
+    get_folder_by_id = lambda uid: params.folder_cache.get(uid)
+    get_folder_ids = lambda: params.folder_cache.keys()
+    result = folders if component in ('.', '') \
+        else [(f if f.parent_uid else params.root_folder) for f in folders] if component == '..' \
+        else [get_folder_by_id(component)] if component in get_folder_ids() \
+        else [get_folder_by_id(uid) for f in folders for uid in f.subfolders if get_folder_by_id(uid).name == component]
+    return result
 
 
 def lookup_path(params, folder, components):
+    # type: (KeeperParams, BaseFolderNode, List[Optional[str]]) -> Tuple[int, List[Optional[BaseFolderNode]]]
     """
-    Lookup a path of components within the folder cache.
+    Lookup path of components within the folder cache.
 
-    Get all the folders starting from the left end of component, plus the index of the first component that isn't present in the
-    folder cache.
+    Get all the folders starting from the left end of component, plus the index of the first component that isn't
+    present in the folder cache.
     """
     remainder = 0
+    folders = [folder]
     for index, component in enumerate(components):
-        temp_folder = contained_folder(params, folder, component)
-        if temp_folder is None:
+        child_folders = contained_folders(params, folders, component)
+        if not child_folders:
             break
-        folder = temp_folder
+        folders = child_folders
         remainder = index + 1
-    return remainder, folder
+    return remainder, folders
 
 
 def is_abs_path(path_string):
@@ -123,13 +130,14 @@ def path_split(params, folder, path_string):
     return folder, components
 
 
-def try_resolve_path(params, path):
-    # type: (KeeperParams, str) -> Optional[Tuple[BaseFolderNode, Optional[str]]]
+def try_resolve_path(params, path, find_all_matches=False):
+    # type: (KeeperParams, str, bool) -> Tuple[Union[List[BaseFolderNode], BaseFolderNode, None], Optional[str]]
     """
     Look up the final keepercommander.subfolder.UserFolderNode and name of the final component(s).
+    Set find_all_matches = True to get a list of folders and component path
 
     If a record, the final component is the record.
-    If an existent folder, the final component is ''.
+    If existent folder(s), the final component is ''.
     If a non-existent folder, the final component is the folders, joined with /, that do not (yet) exist..
     """
     if type(path) is not str:
@@ -143,36 +151,36 @@ def try_resolve_path(params, path):
 
     folder, components = path_split(params, folder, path)
 
-    remainder, folder = lookup_path(params, folder, components)
+    remainder, folders = lookup_path(params, folder, components)
 
     tail = components[remainder:]
 
     path = '/'.join(component.replace('/', '//') for component in tail)
 
-    # Return a 2-tuple of keepercommander.subfolder.UserFolderNode, str
-    # The first is the folder containing the second, or the folder of the last component if the second is ''.
+    # Return a 2-tuple of BaseFolderNode (or List[BaseFolderNode] if find_all_matches set to True), str
+    # The first is the folder/s containing the second, or the folder of the last component if the second is ''.
     # The second is the final component of the path we're passed as an argument to this function. It could be a record, or
     # a not-yet-existent directory.
-    return (folder, path)
+    return (folders, path) if find_all_matches \
+        else (next(iter(folders)) if folders else None, path)
 
 
-def get_folder_uid(params, name):   # type: (KeeperParams, str) -> str
-    uid = None
+def get_folder_uids(params, name):  # type: (KeeperParams, str or None) -> Set[Optional[str]]
+    uids = set()
     if name in params.folder_cache or name == '':
-        uid = name
+        uids.add(name)
     else:
-        rs = try_resolve_path(params, name)
+        rs = try_resolve_path(params, name, find_all_matches=True)
         if rs is not None:
-            folder, pattern = rs
+            folders, pattern = rs
             if len(pattern) == 0:
-                uid = folder.uid
-    return uid
+                uids.update([folder.uid for folder in folders])
+    return uids
 
 
-def get_contained_records(params, name, children_only=True):
+def get_contained_record_uids(params, name, children_only=True):
     # type: (KeeperParams, str, bool) -> Dict[str, Iterable[str]]
-    uid = get_folder_uid(params, name)
-
+    from keepercommander.commands.base import FolderMixin
     recs_by_folder = dict()
 
     def add_child_recs(f_uid):
@@ -183,11 +191,11 @@ def get_contained_records(params, name, children_only=True):
         if f.uid in params. subfolder_record_cache:
             add_child_recs(f.uid)
 
-    if children_only:
-        add_child_recs(uid)
-    else:
-        from keepercommander.commands import base
-        base.FolderMixin.traverse_folder_tree(params, uid, on_folder)
+    for uid in get_folder_uids(params, name):
+        if children_only:
+            add_child_recs(uid)
+        else:
+            FolderMixin.traverse_folder_tree(params, uid, on_folder)
     return recs_by_folder
 
 
@@ -209,7 +217,7 @@ class BaseFolderNode:
         if self.type == BaseFolderNode.RootFolderType:
             return 'Root'
         elif self.type == BaseFolderNode.UserFolderType:
-            return 'Regular Folder'
+            return 'Personal Folder'
         elif self.type == BaseFolderNode.SharedFolderType:
             return 'Shared Folder'
         elif self.type == BaseFolderNode.SharedFolderFolderType:

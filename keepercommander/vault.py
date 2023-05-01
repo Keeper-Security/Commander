@@ -17,7 +17,7 @@ from typing import Optional, List, Tuple, Iterable, Type, Union, Dict, Any
 import itertools
 
 from .params import KeeperParams
-from . import record_types
+from . import record_types, constants
 
 
 class KeeperRecord(abc.ABC):
@@ -96,12 +96,14 @@ class KeeperRecord(abc.ABC):
         if version == 2:
             keeper_record = PasswordRecord()
         elif version == 3:
-            keeper_record = TypedRecord()
+            keeper_record = TypedRecord(version=3)
         elif version == 4:
             keeper_record = FileRecord()
             keeper_record.storage_size = record.get('file_size')
         elif version == 5:
             keeper_record = ApplicationRecord()
+        elif version == 6:
+            keeper_record = TypedRecord(version=6)
         else:
             return
         keeper_record.record_uid = record['record_uid']
@@ -418,6 +420,50 @@ class TypedField(object):
             return value.get('privateKey', '')
 
     @staticmethod
+    def export_schedule_field(value):   # type: (dict) -> Optional[str]
+        if isinstance(value, dict):
+            schedule_type = value.get('type')
+            hour = '0'
+            minute = '0'
+            day = '*'
+            month = '*'
+            week_day = '*'
+            utc_time = value.get('utcTime') or ''
+            if utc_time:
+                comps = utc_time.split(':')
+                if len(comps) == 2:
+                    if comps[0].isnumeric():
+                        h = int(comps[0])
+                        if 0 <= h <= 23:
+                            hour = str(h)
+                    if comps[1].isnumeric():
+                        m = int(comps[1])
+                        if 0 <= m <= 59:
+                            minute = str(m)
+
+            if schedule_type == 'DAILY':
+                interval = value.get('intervalCount') or 0
+                if interval > 1:
+                    if interval > 28:
+                        interval = 28
+                    day = f'*/{interval}'
+            elif schedule_type == 'WEEKLY':
+                week_day = constants.get_cron_week_day(value.get('weekday')) or 1
+            elif schedule_type == 'MONTHLY_BY_DAY':
+                day = constants.get_cron_month_day(value.get('monthDay')) or 1
+            elif schedule_type == 'MONTHLY_BY_WEEKDAY':
+                wd = constants.get_cron_week_day(value.get('weekday')) or 1
+                occ = constants.get_cron_occurrence(value.get('occurrence'))
+                week_day = f'{wd}#{occ}'
+            elif schedule_type == 'YEARLY':
+                month = constants.get_cron_month(value.get('month')) or 1
+                day = constants.get_cron_month_day(value.get('monthDay')) or 1
+            else:
+                return ''
+
+            return f'{minute} {hour} {day} {month} {week_day}'
+
+    @staticmethod
     def import_host_field(value):    # type: (str) -> Optional[dict]
         if isinstance(value, str):
             host, _, port = value.partition(':')
@@ -581,6 +627,82 @@ class TypedField(object):
             }
 
     @staticmethod
+    def import_schedule_field(value):   # type: (str) -> Optional[dict]
+        if isinstance(value, str) and len(value) > 0:
+            comps = value.split(' ')
+            if len(comps) >= 3:
+                schedule = None
+                if len(comps) < 4:
+                    comps.insert(0, '0')
+                if len(comps) < 5:
+                    comps.insert(0, '0')
+                minute = int(comps[0]) if comps[0].isnumeric() else 0
+                if minute < 0 or minute > 59:
+                    minute = 0
+                hour = int(comps[1]) if comps[1].isnumeric() else 0
+                if hour < 0 or hour > 23:
+                    hour = 0
+                utc_time = f'{hour:02}:{minute:02}'
+                if comps[3] == '*' and comps[4] == '*':  # daily
+                    if comps[2].isnumeric():
+                        schedule = {
+                            'type': 'MONTHLY_BY_DAY',
+                            'utcTime': utc_time,
+                            'monthDay': int(comps[2])
+                        }
+                    else:
+                        interval = 1
+                        if comps[2].startswith('*/'):
+                            intr = comps[2][2:]
+                            if intr.isnumeric():
+                                interval = int(intr)
+                        schedule = {
+                            'type': 'DAILY',
+                            'utcTime': utc_time,
+                            'intervalCount': interval
+                        }
+                elif comps[4] != '*':  # day of week
+                    if comps[4].isnumeric():
+                        wd = int(comps[4])
+                        if wd < 0 or wd > len(constants.week_days):
+                            wd = 1
+                        schedule = {
+                            'type': 'WEEKLY',
+                            'utcTime': utc_time,
+                            'weekday': constants.week_days[wd]
+                        }
+                    else:
+                        wd_comps = comps[4].split('#')
+                        if len(wd_comps) == 2 and wd_comps[0].isnumeric() and wd_comps[1].isnumeric():
+                            wd = int(wd_comps[0])
+                            if wd < 0 or wd > len(constants.week_days):
+                                wd = 1
+                            occ = int(wd_comps[1])
+                            if occ < 0 or occ >= len(constants.occurrences):
+                                occ = 0
+                            schedule = {
+                                'type': 'MONTHLY_BY_WEEKDAY',
+                                'utcTime': utc_time,
+                                'weekday': constants.week_days[wd],
+                                'occurrence': constants.occurrences[occ]
+                            }
+                elif comps[2].isnumeric() and comps[3].isnumeric():  # day of year
+                    mm = int(comps[4])
+                    if mm > 0:
+                        mm -= 1
+                        if mm >= len(constants.months):
+                            mm = len(constants.months) - 1
+                    else:
+                        mm = 0
+                    schedule = {
+                        'type': 'YEARLY',
+                        'utcTime': utc_time,
+                        'month': constants.months[mm],
+                        'monthday': int(comps[3])
+                    }
+                return schedule
+
+    @staticmethod
     def get_exported_value(field_type, field_value):
         # type: (str, Any) -> Iterable[str]
         if not field_value:
@@ -621,6 +743,8 @@ class TypedField(object):
                     yield TypedField.export_account_field(field_value)
                 elif ft.name == 'privateKey':
                     yield TypedField.export_ssh_key_field(field_value)
+                elif ft.name == 'schedule':
+                    yield TypedField.export_schedule_field(field_value)
 
     def get_external_value(self):   # type: () -> Iterable[str]
         for value in self.get_exported_value(self.type, self.value):
@@ -629,8 +753,9 @@ class TypedField(object):
 
 
 class TypedRecord(KeeperRecord):
-    def __init__(self):
+    def __init__(self, version=3):
         super(TypedRecord, self).__init__()
+        self._version = version
         self.type_name = ''
         self.notes = ''
         self.fields = []         # type: List[TypedField]
@@ -638,7 +763,7 @@ class TypedRecord(KeeperRecord):
         self.linked_keys = None  # type: Optional[Dict[str, bytes]]
 
     def get_version(self):  # type: () -> int
-        return 3
+        return self._version
 
     def get_record_type(self):
         return self.type_name

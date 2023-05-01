@@ -16,13 +16,14 @@ import logging
 import os
 from urllib.parse import urlparse, urlunparse
 
-from .base import user_choice, dump_report_data, GroupCommand
+from .base import user_choice, dump_report_data, report_output_parser, field_to_title, GroupCommand
 from .enterprise import EnterpriseCommand
 from .. import api
 from ..display import bcolors
 from ..params import KeeperParams
 
-scim_list_parser = argparse.ArgumentParser(prog='scim-list', description='Display a list of available SCIM endpoints.')
+scim_list_parser = argparse.ArgumentParser(prog='scim-list', parents=[report_output_parser],
+                                           description='Display a list of available SCIM endpoints.')
 
 scim_view_parser = argparse.ArgumentParser(prog='scim-view', description='Display a SCIM endpoint details.')
 scim_view_parser.add_argument('target', help='SCIM ID')
@@ -70,12 +71,16 @@ class ScimCommand(GroupCommand):
 
 
 class ScimListCommand(EnterpriseCommand):
-    def get_parser(self):  # type: () -> argparse.ArgumentParser | None
+    def get_parser(self):
         return scim_list_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
+    def execute(self, params, **kwargs):
+        fmt = kwargs.get('format') or ''
+        headers = ['scim_id', 'node_name', 'node_id', 'prefix', 'status', 'last_synced']
+        if fmt != 'json':
+            headers = [field_to_title(x) for x in headers]
+
         table = []
-        headers = ['SCIM ID', 'Node Name', 'Node ID', 'Prefix', 'Status', 'Last Synced']
         if params.enterprise and 'scims' in params.enterprise:
             for info in params.enterprise['scims']:
                 node_id = info['node_id']
@@ -88,7 +93,7 @@ class ScimListCommand(EnterpriseCommand):
                 row = [info['scim_id'], self.get_node_path(params, node_id), node_id,
                        info.get('role_prefix') or '', info['status'], last_synced]
                 table.append(row)
-        dump_report_data(table, headers=headers)
+        return dump_report_data(table, headers=headers, fmt=fmt, filename=kwargs.get('output'))
 
 
 class ScimCreateCommand(EnterpriseCommand):

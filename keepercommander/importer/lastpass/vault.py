@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 from tempfile import mkdtemp
+from typing import Optional
 
 from . import fetcher
 from . import parser
@@ -19,15 +20,12 @@ class Vault(object):
     @classmethod
     def open_remote(cls, username, password, multifactor_password=None, client_id=None, **kwargs):
         """Fetches a blob from the server and creates a vault"""
-        session = fetcher.login(username, password, multifactor_password, client_id)
-        blob = fetcher.fetch(session)
+        session = fetcher.login(username, password, multifactor_password, client_id, **kwargs)
+        blob = fetcher.fetch(session, **kwargs)
         encryption_key = blob.encryption_key(username, password)
-        vault = cls(
-            blob, encryption_key, session, tmpdir=kwargs.get('tmpdir'),
-            shared_folder_details=kwargs.get('users_only') or False
-        )
+        vault = cls(blob, encryption_key, session, **kwargs)
 
-        fetcher.logout(session)
+        fetcher.logout(session, **kwargs)
         return vault
 
     @classmethod
@@ -36,7 +34,8 @@ class Vault(object):
         # TODO: read the blob here
         raise NotImplementedError()
 
-    def __init__(self, blob, encryption_key, session, tmpdir=None, shared_folder_details=False, get_attachments=True):
+    def __init__(self, blob, encryption_key, session, tmpdir=None, shared_folder_details=False, get_attachments=True,
+                 **kwargs):
         """This more of an internal method, use one of the static constructors instead"""
         chunks = parser.extract_chunks(blob)
 
@@ -48,14 +47,17 @@ class Vault(object):
         self.attachments = []
         self.accounts = self.parse_accounts(chunks, encryption_key)
         self.tmpdir = None
+        self.proxies = kwargs.get('proxies')
+        self.certificate_check = kwargs.get('certificate_check')
 
         if get_attachments:
-            self.process_attachments(session, tmpdir)
+            self.process_attachments(session, tmpdir, proxies=self.proxies, certificate_check=self.certificate_check)
 
         try:
             if self.shared_folders and shared_folder_details:
                 for shared_folder in self.shared_folders:
-                    members, teams, error = fetcher.fetch_shared_folder_members(session, shared_folder.id)
+                    members, teams, error = fetcher.fetch_shared_folder_members(
+                        session, shared_folder.id, proxies=self.proxies, certificate_check=self.certificate_check)
                     if error:
                         self.errors.add(error)
                         break
@@ -72,7 +74,7 @@ class Vault(object):
         accounts = []
 
         key = encryption_key
-        rsa_private_key = None
+        rsa_private_key = None   # type: Optional[bytes]
         shared_folder = None
 
         for i in chunks:
@@ -105,7 +107,7 @@ class Vault(object):
         if self.tmpdir:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def process_attachments(self, session, tmpdir=None):
+    def process_attachments(self, session, tmpdir=None, **kwargs):
         skip_bad_attachments = []
         attach_cnt = len(self.attachments)
         if tmpdir is None:
@@ -131,7 +133,7 @@ class Vault(object):
             if os.path.isfile(attachment.tmpfile) and os.path.getsize(attachment.tmpfile) == attachment.lastpass_size:
                 print(f'{i + 1}. Found {attachment.name}')
             else:
-                attachment_stream = fetcher.stream_attachment(session, attachment)
+                attachment_stream = fetcher.stream_attachment(session, attachment, **kwargs)
                 if attachment_stream:
                     try:
                         with attachment_stream as r:

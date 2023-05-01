@@ -31,18 +31,18 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from . import aram, base, audit_alerts
+from . import aram, audit_alerts
 from . import compliance
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .register import ShareRecordCommand, ShareFolderCommand
 from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
-from .. import api, rest_api, crypto, utils, constants
+from .. import api, crypto, utils, constants
 from ..display import bcolors
-from ..error import CommandError, KeeperApiError
+from ..error import CommandError, KeeperApiError, Error
 from ..params import KeeperParams
 from ..proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ..sox.sox_types import RecordPermissions
@@ -103,8 +103,9 @@ SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'use
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
+enterprise_data_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
-enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info',
+enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info', parents=[report_output_parser],
                                                  description='Display a tree structure of your enterprise.',
                                                  formatter_class=RawTextHelpFormatter)
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
@@ -113,10 +114,6 @@ enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
-enterprise_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                    default='table', help='output format. applicable to users, teams, and roles.')
-enterprise_info_parser.add_argument('--output', dest='output', action='store',
-                                    help='output file name. (ignored for table format)')
 enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                     help='comma-separated list of available columns per argument:' +
                                          '\n for `nodes` (%s)' % ', '.join(SUPPORTED_NODE_COLUMNS) +
@@ -124,11 +121,8 @@ enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                          '\n for `teams` (%s)' % ', '.join(SUPPORTED_TEAM_COLUMNS) +
                                          '\n for `roles` (%s)' % ', '.join(SUPPORTED_ROLE_COLUMNS)
                                     )
-
 enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
                                     help='search pattern. applicable to users, teams, and roles.')
-enterprise_info_parser.error = raise_parse_exception
-enterprise_info_parser.exit = suppress_exit
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node(s).')
@@ -166,10 +160,10 @@ enterprise_user_parser.add_argument('--add-team', dest='add_team', action='appen
 enterprise_user_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-team only')
 enterprise_user_parser.add_argument('--remove-team', dest='remove_team', action='append', help='team name or team UID')
-# enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL",
-#                                     help='new email alias for a user')
-# enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL",
-#                                     help='delete email alias')
+enterprise_user_parser.add_argument('--add-alias', dest='add_alias', action='store', metavar="EMAIL",
+                                    help='new email alias for a user')
+enterprise_user_parser.add_argument('--delete-alias', dest='delete_alias', action='store', metavar="EMAIL",
+                                    help='delete email alias')
 enterprise_user_parser.add_argument('email', type=str, nargs='+', help='User Email or ID. Can be repeated.')
 enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
@@ -221,33 +215,40 @@ enterprise_team_parser.add_argument('-ar', '--add-role', action='append', help='
 enterprise_team_parser.add_argument('-rr', '--remove-role', action='append', help='remove user from team')
 enterprise_team_parser.add_argument('-hsf', '--hide-shared-folders', dest='hide_shared_folders', action='store',
                                     choices=['on', 'off'], help='User does not see shared folders. --add-user only')
-enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
-enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
-enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
+enterprise_team_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store',
+                                    help='disable record edits')
+enterprise_team_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store',
+                                    help='disable record re-shares')
+enterprise_team_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store',
+                                    help='disable view/copy passwords')
 enterprise_team_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 enterprise_team_parser.add_argument('--name', dest='name', action='store', help='team\'s new name')
 enterprise_team_parser.add_argument('team', type=str, nargs='+', help='Team Name or UID')
 enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
-team_approve_parser = argparse.ArgumentParser(prog='team-approve', description='Enable or disable automated team and user approval.')
+team_approve_parser = argparse.ArgumentParser(prog='team-approve', parents=[report_output_parser],
+                                              description='Enable or disable automated team and user approval.')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
 team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
-team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store', help='disable record edits')
-team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store', help='disable record re-shares')
-team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store', help='disable view/copy passwords')
-team_approve_parser.error = raise_parse_exception
-team_approve_parser.exit = suppress_exit
+team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store',
+                                 help='disable record edits')
+team_approve_parser.add_argument('--restrict-share', dest='restrict_share', choices=['on', 'off'], action='store',
+                                 help='disable record re-shares')
+team_approve_parser.add_argument('--restrict-view', dest='restrict_view', choices=['on', 'off'], action='store',
+                                 help='disable view/copy passwords')
+team_approve_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                                 help='Report on run approval commands only. Do not run.')
 
-device_approve_parser = argparse.ArgumentParser(prog='device-approve', description='Approve Cloud SSO Devices.')
-device_approve_parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='reload list of pending approval requests')
-device_approve_parser.add_argument('--approve', '-a', dest='approve', action='store_true', help='approve user devices')
+device_approve_parser = argparse.ArgumentParser(prog='device-approve', parents=[report_output_parser],
+                                                description='Approve Cloud SSO Devices.')
+device_approve_parser.add_argument('--reload', '-r', dest='reload', action='store_true',
+                                   help='reload list of pending approval requests')
+device_approve_parser.add_argument('--approve', '-a', dest='approve', action='store_true',
+                                   help='approve user devices')
 device_approve_parser.add_argument('--deny', '-d', dest='deny', action='store_true', help='deny user devices')
-device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true', help='approve only devices coming from a trusted IP address')
-device_approve_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                    default='table', help='Output format. Applicable to list of devices in the queue.')
-device_approve_parser.add_argument('--output', dest='output', action='store',
-                                    help='Output file name (ignored for table format)')
+device_approve_parser.add_argument('--trusted-ip', dest='check_ip', action='store_true',
+                                   help='approve only devices coming from a trusted IP address')
 device_approve_parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
 device_approve_parser.error = raise_parse_exception
 device_approve_parser.exit = suppress_exit
@@ -273,6 +274,7 @@ security_audit_report_parser.add_argument('-b', '--breachwatch', dest='breachwat
 save_help = 'save updated security audit reports'
 security_audit_report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
 security_audit_report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
+security_audit_report_parser.add_argument('-st', '--score-type', action='store', choices=['strong_passwords', 'default'], default='default', help='define how score is calculated')
 security_audit_report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format.')
 security_audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 security_audit_report_parser.error = raise_parse_exception
@@ -335,7 +337,7 @@ class GetEnterpriseDataCommand(Command):
         return enterprise_data_parser
 
     def execute(self, params, **kwargs):
-        api.query_enterprise(params)
+        api.query_enterprise(params, kwargs.get('force') or False)
 
 
 class EnterpriseInfoCommand(EnterpriseCommand):
@@ -946,13 +948,13 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         break
 
             for node_name in unmatched_nodes:
-                dt = {'displayname': node_name}
-                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                dt = json.dumps({'displayname': node_name})
+                encrypted_data = crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key'])
                 rq = {
                     'command': 'node_add',
                     'node_id': self.get_enterprise_id(params),
                     'parent_id': parent_id,
-                    'encrypted_data': encrypted_data
+                    'encrypted_data': utils.base64_url_encode(encrypted_data)
                 }
                 request_batch.append(rq)
         elif kwargs.get('toggle_isolated'):
@@ -1213,8 +1215,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         encrypted_data = node['encrypted_data']
                         if kwargs.get('name'):
                             dt = node['data']
-                            dt['dsplayname'] = kwargs.get('name')
-                            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                            dt['displayname'] = kwargs.get('name')
+                            data = json.dumps(dt)
+                            encrypted_data = utils.base64_url_encode(
+                                crypto.encrypt_aes_v1(data.encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                         if parent_id:
                             if is_in_chain(parent_id, node['node_id']):
                                 logging.warning('Cannot move node to itself or its children')
@@ -1340,7 +1344,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 if user_name:
                     dt['displayname'] = user_name
 
-                encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                encrypted_data = utils.base64_url_encode(
+                    crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                 rq = {
                     'command': 'enterprise_user_add',
                     'enterprise_user_id': self.get_enterprise_id(params),
@@ -1511,17 +1516,18 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     for rk2 in params.enterprise['role_keys2']:
                                         if rk2['role_id'] == role_id:
                                             encrypted_key_decoded = base64.urlsafe_b64decode(rk2['role_key'] + '==')
-                                            role_key = rest_api.decrypt_aes(encrypted_key_decoded,
-                                                                            params.enterprise['unencrypted_tree_key'])
+                                            role_key = crypto.decrypt_aes_v2(
+                                                encrypted_key_decoded, params.enterprise['unencrypted_tree_key'])
                                             break
 
                                 if 'role_keys' in params.enterprise and role_key is None:
                                     for rk in params.enterprise['role_keys']:
                                         if rk['role_id'] == role_id:
+                                            encrypted_key = utils.base64_url_decode(rk['encrypted_key'])
                                             if rk['key_type'] == 'encrypted_by_data_key':
-                                                role_key = api.decrypt_data(rk['encrypted_key'], params.data_key)
+                                                role_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                                             elif rk['key_type'] == 'encrypted_by_public_key':
-                                                role_key = api.decrypt_rsa(rk['encrypted_key'], params.rsa_key)
+                                                role_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
                                             break
 
                             user_pkeys = {}
@@ -1633,7 +1639,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             dt = {
                                 'displayname': user_name or user['data'].get('displayname') or ''
                             }
-                            encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                            encrypted_data = utils.base64_url_encode(
+                                crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                         rq = {
                             'command': 'enterprise_user_update',
                             'enterprise_user_id': user['enterprise_user_id'],
@@ -1891,6 +1898,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             if not role_names:
                 return
 
+            tree_key = params.enterprise['unencrypted_tree_key']
             if node_id is None:
                 root_nodes = list(self.get_user_root_nodes(params))
                 if len(root_nodes) == 0:
@@ -1898,12 +1906,12 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 node_id = root_nodes[0]
 
             for role_name in role_names:
-                dt = { "displayname": role_name }
+                data = json.dumps({ "displayname": role_name }).encode('utf-8')
                 rq = {
                     "command": "role_add",
                     "role_id": self.get_enterprise_id(params),
                     "node_id": node_id,
-                    "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    "encrypted_data": utils.base64_url_encode(crypto.encrypt_aes_v1(data, tree_key)),
                     "visible_below": (kwargs.get('visible_below') == 'on') or False,
                     "new_user_inherit": (kwargs.get('new_user') == 'on') or False
                 }
@@ -2232,13 +2240,14 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     role_name = role['data'].get('displayname')
                 if not node_id:
                     node_id = role['node_id']
-                dt = { "displayname": role_name }
+                dt = json.dumps({ "displayname": role_name })
                 role_id = self.get_enterprise_id(params)
                 rq = {
                     "command": "role_add",
                     "role_id": role_id,
                     "node_id": node_id,
-                    "encrypted_data": api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']),
+                    "encrypted_data": utils.base64_url_encode(
+                        crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key'])),
                     "visible_below": role.get('visible_below') or False,
                     "new_user_inherit": role.get('new_user_inherit') or False
                 }
@@ -2301,8 +2310,9 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     encrypted_data = role['encrypted_data']
                     if kwargs.get('name'):
                         role_name = kwargs.get('name').strip()
-                        dt = { "displayname": role_name }
-                        encrypted_data = api.encrypt_aes(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key'])
+                        dt = json.dumps({ "displayname": role_name })
+                        encrypted_data = utils.base64_url_encode(
+                            crypto.encrypt_aes_v1(dt.encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                     rq = {
                         "command": "role_update",
                         "role_id": role['role_id'],
@@ -2704,7 +2714,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 team_node_id = node_id if is_new_team else item['node_id']
                 team_uid = api.generate_record_uid() if is_new_team else item['team_uid']
                 team_key = api.generate_aes_key()
-                encrypted_team_key = rest_api.encrypt_aes(team_key, params.enterprise['unencrypted_tree_key'])
+                encrypted_team_key = crypto.encrypt_aes_v2(team_key, params.enterprise['unencrypted_tree_key'])
 
                 private_key, public_key = crypto.generate_rsa_key()
                 encrypted_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(private_key), team_key)
@@ -2960,7 +2970,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
     def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
         if not self.enterprise_private_rsa_key:
             tree_key = params.enterprise['unencrypted_tree_key']
-            key = rest_api.decrypt_aes(enterprise_priv_key, tree_key)
+            key = crypto.decrypt_aes_v2(enterprise_priv_key, tree_key)
             key = crypto.load_rsa_private_key(key)
             self.enterprise_private_rsa_key = key
         return self.enterprise_private_rsa_key
@@ -2968,8 +2978,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
     def get_parser(self):
         return security_audit_report_parser
 
+    def get_strong_by_total(self, total, strong):
+        return 0 if (total == 0) else (strong / total)
+
     def get_security_score(self, total, strong, unique, twoFactorOn, masterPassword):
-        strongByTotal = 0 if (total == 0) else (strong / total)
+        strongByTotal = self.get_strong_by_total(total, strong)
         uniqueByTotal = 0 if (total == 0) else (unique / total)
         twoFactorOnVal = 1 if (twoFactorOn is True) else 0
         score = (strongByTotal + uniqueByTotal + masterPassword + twoFactorOnVal) / 4
@@ -3010,6 +3023,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
+        score_type = kwargs.get('score_type', 'default')
         save_report = kwargs.get('save')
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
@@ -3034,9 +3048,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
                 twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
                 row = {
-                    'username': user,
+                    'name': user,
                     'email': email,
-                    'node_path': node_path,
+                    'node': node_path,
                     'total': 0,
                     'weak': 0,
                     'medium': 0,
@@ -3052,7 +3066,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 master_pw_strength = 1
 
                 if sr.encryptedReportData:
-                    sri = rest_api.decrypt_aes(sr.encryptedReportData, tree_key)
+                    sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
                     data = json.loads(sri)
                 else:
                     data = {dk: 0 for dk in self.score_data_keys}
@@ -3065,28 +3079,34 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     updated_sr.revision = security_report_data_rs.asOfRevision
                     updated_sr.enterpriseUserId = sr.enterpriseUserId
                     report = json.dumps(data).encode('utf-8')
-                    updated_sr.encryptedReportData = rest_api.encrypt_aes(report, tree_key)
+                    updated_sr.encryptedReportData = crypto.encrypt_aes_v2(report, tree_key)
                     updated_security_reports.append(updated_sr)
 
                 if 'weak_record_passwords' in data:
-                    row['weak'] = data['weak_record_passwords']
+                    row['weak'] = data.get('weak_record_passwords') or 0
                 if 'strong_record_passwords' in data:
-                    row['strong'] = data['strong_record_passwords']
+                    row['strong'] = data.get('strong_record_passwords') or 0
                 if 'total_record_passwords' in data:
-                    row['total'] = data['total_record_passwords']
+                    row['total'] = data.get('total_record_passwords') or 0
                 if 'passed_records' in data:
-                    row['passed'] = data['passed_records']
+                    row['passed'] = data.get('passed_records') or 0
                 if 'at_risk_records' in data:
-                    row['at_risk'] = data['at_risk_records']
+                    row['at_risk'] = data.get('at_risk_records') or 0
                 if 'ignored_records' in data:
-                    row['ignored'] = data['ignored_records']
+                    row['ignored'] = data.get('ignored_records') or 0
 
                 row['medium'] = row['total'] - row['weak'] - row['strong']
                 row['unique'] = row['total'] - row['reused']
 
-                score = self.get_security_score(row['total'], row['strong'], row['unique'], twofa_on,
-                                                master_pw_strength)
-                score = int(100 * round(score, 2))
+                strong = row.get('strong')
+                total = row.get('total')
+                unique = row.get('unique')
+                score = self.get_strong_by_total(total, strong) if score_type == 'strong_passwords' \
+                    else self.get_security_score(total, strong, unique, twofa_on, master_pw_strength)
+
+                # Match vault's score format (truncated, not rounded, to nearest whole %) if score_type specified
+                score = int(100 * score) if score_type == 'strong_passwords' \
+                    else int(100 * round(score, 2))
                 row['securityScore'] = score
 
                 rows.append(row)
@@ -3094,13 +3114,13 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
 
-        fields = ('username', 'email', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
-            ('username', 'email', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel', 'node_path')
+        fields = ('email', 'name', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
+            ('email', 'name', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel', 'node')
         field_descriptions = fields
 
         fmt = kwargs.get('format', 'table')
         if fmt == 'table':
-            field_descriptions = (self.get_title_for_field(x) for x in fields)
+            field_descriptions = (field_to_title(x) for x in fields)
 
         table = []
         for raw in rows:
@@ -3354,7 +3374,7 @@ class UserReportCommand(EnterpriseCommand):
             rows.append(row_basic if last_login_report else row_extra)
 
         if kwargs.get('format') != 'json':
-            headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+            headers = [field_to_title(x) for x in headers]
         return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
@@ -3385,7 +3405,7 @@ class ExternalSharesReportCommand(EnterpriseCommand):
             node_id = params.enterprise['nodes'][0].get('node_id', 0)
             enterprise_id = node_id >> 32
             now_ts = datetime.datetime.now().timestamp()
-            self.sox_data = get_compliance_data(params, node_id, enterprise_id, True, now_ts)
+            self.sox_data = get_compliance_data(params, node_id, enterprise_id, True, now_ts, False, True)
         return self.sox_data
 
     def get_parser(self):
@@ -3420,7 +3440,7 @@ class ExternalSharesReportCommand(EnterpriseCommand):
             logging.info(bcolors.FAIL + bcolors.BOLD + '\nALERT!' + bcolors.ENDC)
             logging.info('You are about to delete the following shares:')
             generate_report('simple')
-            answer = base.user_choice('\nDo you wish to proceed?', 'yn', 'n')
+            answer = user_choice('\nDo you wish to proceed?', 'yn', 'n')
             if answer.lower() in {'y', 'yes'}:
                 remove_shares()
             else:
@@ -3431,12 +3451,18 @@ class ExternalSharesReportCommand(EnterpriseCommand):
                 cmd = ShareRecordCommand()
                 for rec_uid, user_uids in get_direct_shares().items():
                     emails = [external_users.get(user_uid).email for user_uid in user_uids]
-                    cmd.execute(params, email=emails, action='revoke', record=rec_uid)
+                    try:
+                        cmd.execute(params, email=emails, action='revoke', record=rec_uid)
+                    except Error:
+                        pass
             if share_type in ('shared-folder', 'all'):
                 cmd = ShareFolderCommand()
                 for sf_uid, user_uids in get_sf_shares().items():
                     emails = [external_users.get(user_uid).email for user_uid in user_uids]
-                    cmd.execute(params, user=emails, action='remove', folder=sf_uid)
+                    try:
+                        cmd.execute(params, user=emails, action='remove', folder=sf_uid)
+                    except Error:
+                        pass
 
         def apply_action():
             if action == 'remove':
@@ -3466,7 +3492,7 @@ class ExternalSharesReportCommand(EnterpriseCommand):
             rep_out = output if report_type == 'standard' else None
             title = 'External Shares Report' if report_type == 'standard' else None
             if rep_fmt != 'json':
-                headers = [base.field_to_title(field) for field in headers]
+                headers = [field_to_title(field) for field in headers]
             table = []
             if share_type in ('direct', 'all'):
                 table = fill_rows(table, get_direct_shares(), 'Direct')
@@ -3486,6 +3512,8 @@ class TeamApproveCommand(EnterpriseCommand):
         return team_approve_parser
 
     def execute(self, params, **kwargs):
+        table = []
+
         approve_teams = True
         approve_users = True
         if kwargs.get('team') or kwargs.get('user'):
@@ -3521,19 +3549,23 @@ class TeamApproveCommand(EnterpriseCommand):
                 }
                 request_batch.append(rq)
             if request_batch:
-                rs = api.execute_batch(params, request_batch)
-                if rs:
-                    success = 0
-                    failure = 0
-                    for status in rs:
-                        if 'result' in status:
-                            if status['result'] == 'success':
-                                success += 1
-                            else:
-                                failure += 1
-                    if success or failure:
-                        logging.info('Team approval: success %s; failure %s', success, failure)
-                api.query_enterprise(params)
+                if not kwargs.get('dry_run'):
+                    rs = api.execute_batch(params, request_batch)
+                    if rs:
+                        success = 0
+                        failure = 0
+                        for status in rs:
+                            if 'result' in status:
+                                if status['result'] == 'success':
+                                    success += 1
+                                else:
+                                    failure += 1
+                        if success or failure:
+                            logging.info('Team approval: success %s; failure %s', success, failure)
+                    api.query_enterprise(params)
+                else:
+                    for rq in request_batch:
+                        table.append(['Approve Team', rq['team_name'], ''])
 
         request_batch.clear()
         if approve_users and 'queued_team_users' in params.enterprise and \
@@ -3567,19 +3599,37 @@ class TeamApproveCommand(EnterpriseCommand):
                                 rq['user_type'] = 0
                                 request_batch.append(rq)
             if request_batch:
-                rs = api.execute_batch(params, request_batch)
-                if rs:
-                    success = 0
-                    failure = 0
-                    for status in rs:
-                        if 'result' in status:
-                            if status['result'] == 'success':
-                                success += 1
-                            else:
-                                failure += 1
-                    if success or failure:
-                        logging.info('Team User approval: success %s; failure %s', success, failure)
-                api.query_enterprise(params)
+                if not kwargs.get('dry_run'):
+                    rs = api.execute_batch(params, request_batch)
+                    if rs:
+                        success = 0
+                        failure = 0
+                        for status in rs:
+                            if 'result' in status:
+                                if status['result'] == 'success':
+                                    success += 1
+                                else:
+                                    failure += 1
+                        if success or failure:
+                            logging.info('Team User approval: success %s; failure %s', success, failure)
+                    api.query_enterprise(params)
+                else:
+                    for rq in request_batch:
+                        team_uid = rq['team_uid']
+                        team_name = team_uid
+                        if team_uid in teams:
+                            if 'name' in teams['team_uid']:
+                                team_name = teams['team_uid']['name']
+                        user_id = rq['enterprise_user_id']
+                        username = user_id
+                        if user_id in active_users:
+                            username = active_users[user_id]
+
+                        table.append(['Approve User', team_name, username])
+
+        if kwargs.get('dry_run') and len(table) > 0:
+            headers = ['Action', 'Team', 'User']
+            return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
 
 class DeviceApproveCommand(EnterpriseCommand):
@@ -3703,7 +3753,8 @@ class DeviceApproveCommand(EnterpriseCommand):
                             keys = params.enterprise['keys']
                             try:
                                 ecc_private_key_data = utils.base64_url_decode(keys['ecc_encrypted_private_key'])
-                                ecc_private_key_data = api.decrypt_aes_plain(ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
+                                ecc_private_key_data = crypto.decrypt_aes_v2(
+                                    ecc_private_key_data, params.enterprise['unencrypted_tree_key'])
                                 private_value = int.from_bytes(ecc_private_key_data, byteorder='big', signed=False)
                                 ecc_private_key = ec.derive_private_key(private_value, curve, default_backend())
                             except Exception as e:
@@ -3723,7 +3774,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                                     digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                                     digest.update(shared_key)
                                     enc_key = digest.finalize()
-                                    data_key = api.decrypt_aes_plain(enc_data_key[65:], enc_key)
+                                    data_key = crypto.decrypt_aes_v2(enc_data_key[65:], enc_key)
                                     data_keys[key.enterpriseUserId] = data_key
                                 except Exception as e:
                                     logging.debug(e)
@@ -3749,12 +3800,13 @@ class DeviceApproveCommand(EnterpriseCommand):
                     if data_key_rs.userDataKeys:
                         for dk in data_key_rs.userDataKeys:
                             try:
-                                role_key = rest_api.decrypt_aes(dk.roleKey, params.enterprise['unencrypted_tree_key'])
-                                private_key = api.decrypt_rsa_key(dk.privateKey, role_key)
+                                role_key = crypto.decrypt_aes_v2(dk.roleKey, params.enterprise['unencrypted_tree_key'])
+                                encrypted_private_key = utils.base64_url_decode(dk.privateKey)
+                                decrypted_private_key = crypto.decrypt_aes_v1(encrypted_private_key, role_key)
+                                private_key = crypto.load_rsa_private_key(decrypted_private_key)
                                 for user_dk in dk.enterpriseUserIdDataKeyPairs:
                                     if user_dk.enterpriseUserId not in data_keys:
-                                        data_key_str = base64.urlsafe_b64encode(user_dk.encryptedDataKey).strip(b'=').decode()
-                                        data_key = api.decrypt_rsa(data_key_str, private_key)
+                                        data_key = crypto.decrypt_rsa(user_dk.encryptedDataKey, private_key)
                                         data_keys[user_dk.enterpriseUserId] = data_key
                             except Exception as ex:
                                 logging.debug(ex)
@@ -3780,7 +3832,7 @@ class DeviceApproveCommand(EnterpriseCommand):
                         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
                         digest.update(shared_key)
                         enc_key = digest.finalize()
-                        encrypted_data_key = rest_api.encrypt_aes(data_key, enc_key)
+                        encrypted_data_key = crypto.encrypt_aes_v2(data_key, enc_key)
                         eph_public_key = ephemeral_key.public_key().public_bytes(
                             serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
                         device_rq.encryptedDeviceDataKey = eph_public_key + encrypted_data_key

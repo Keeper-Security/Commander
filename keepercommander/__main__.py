@@ -11,111 +11,70 @@
 #
 
 
-import re
-import sys
-import os
 import argparse
-import shlex
 import json
 import logging
-import base64
+import os
+import re
+import shlex
+import sys
 from pathlib import Path
 
 from . import __version__
-from .params import KeeperParams
-
 from . import cli
+from .params import KeeperParams
+from .config_storage import loader
 
 
-def get_params_from_config(config_filename):
-    params = KeeperParams()
-
+def get_params_from_config(config_filename, launched_with_shortcut=False):
     if os.getenv("KEEPER_COMMANDER_DEBUG"):
         logging.getLogger().setLevel(logging.DEBUG)
         logging.info('Debug ON')
 
-    opts, flags = parser.parse_known_args(sys.argv[1:])
-
     def get_env_config():
         path = os.getenv('KEEPER_CONFIG_FILE')
-        path and logging.debug(f'Setting config file from KEEPER_CONFIG_FILE env variable {path}')
+        if path:
+            logging.debug(f'Setting config file from KEEPER_CONFIG_FILE env variable {path}')
         return path
 
     def get_shortcut_config():
         path = None
-        if opts.launched_with_shortcut:
+        if launched_with_shortcut:
             launcher_keeper_folder_path = Path.home().joinpath('.keeper')
             launcher_keeper_folder_path.mkdir(parents=True, exist_ok=True)
             path = str(launcher_keeper_folder_path.joinpath('config.json'))
         return path
 
-    params.config_filename = config_filename or get_env_config() or get_shortcut_config() or 'config.json'
-    if os.path.exists(params.config_filename):
+    config_filename = config_filename or get_env_config() or get_shortcut_config() or 'config.json'
+    config_filename = os.path.expanduser(config_filename)
+
+    params = KeeperParams()
+    params.config_filename = config_filename
+    if os.path.exists(config_filename):
         try:
             try:
                 with open(params.config_filename) as config_file:
                     params.config = json.load(config_file)
-
-                    if 'user' in params.config:
-                        params.user = params.config['user'].lower()
-
-                    if 'server' in params.config:
-                        params.server = params.config['server']
-
-                    if 'password' in params.config:
-                        params.password = params.config['password']
-
-                    if 'timedelay' in params.config:
-                        params.timedelay = params.config['timedelay']
-
-                    if 'mfa_token' in params.config:
-                        params.mfa_token = params.config['mfa_token']
-
-                    if 'mfa_type' in params.config:
-                        params.mfa_type = params.config['mfa_type']
-
+                    loader.load_config_properties(params)
+                    if 'fail_on_throttle' in params.config:
+                        params.rest_context.fail_on_throttle = params.config['fail_on_throttle'] is True
+                    if 'certificate_check' in params.config:
+                        params.rest_context.certificate_check = params.config['certificate_check'] is True
                     if 'commands' in params.config:
                         if params.config['commands']:
                             params.commands.extend(params.config['commands'])
-
                     if 'plugins' in params.config:
                         params.plugins = params.config['plugins']
-
-                    if 'debug' in params.config:
-                        params.debug = params.config['debug']
-
-                    if 'batch_mode' in params.config:
-                        params.batch_mode = params.config['batch_mode'] is True
-
-                    if 'device_id' in params.config:
-                        device_id = base64.urlsafe_b64decode(params.config['device_id'] + '==')
-                        params.rest_context.device_id = device_id
-
-                    if 'logout_timer' in params.config:
-                        params.logout_timer = params.config['logout_timer']
-
-                    if 'private_key' in params.config:
-                        params.device_private_key = params.config['private_key']
-
-                    if 'proxy' in params.config:
-                        params.proxy = params.config['proxy']
-
-                    if 'certificate_check' in params.config:
-                        check = params.config['certificate_check']
-                        if isinstance(check, bool):
-                            params.rest_context.certificate_check = check
-
-                    if 'fail_on_throttle' in params.config:
-                        on_throttle = params.config['fail_on_throttle']
-                        if isinstance(on_throttle, bool):
-                            params.rest_context._fail_on_throttle = on_throttle
-
-                    unmask_all = params.config.get('unmask_all')
-                    if isinstance(unmask_all, bool):
-                        params.unmask_all = unmask_all
-
+            except loader.SecureStorageException as sse:
+                logging.error('Unable to load configuration from secure storage:\n%s',
+                              '\033[1m' + str(sse) + '\033[0m')
+                logging.error('Please check configuration file "%s" to make sure "%s" property is valid or deleted it.',
+                              os.path.abspath(params.config_filename),
+                              loader.CONFIG_STORAGE_URL)
+                input('Press <Enter> to close Keeper Commander')
+                sys.exit(1)
             except Exception as e:
-                logging.error('Unable to parse JSON configuration file "%s"', params.config_filename)
+                logging.error('Unable to parse JSON configuration file "%s"', os.path.abspath(params.config_filename))
                 answer = input('Do you want to delete it (y/N): ')
                 if answer in ['y', 'Y']:
                     os.remove(params.config_filename)
@@ -148,7 +107,7 @@ parser.add_argument('--batch-mode', dest='batch_mode', action='store_true', help
 parser.add_argument('--launched-with-shortcut', '-lwsc', dest='launched_with_shortcut', action='store',
                     help='Indicates that the app was launched using a shortcut, for example using Mac App or from '
                          'Windows Start Menu.')
-parser.add_argument('--proxy', dest='proxy', action='store', help='Proxy server..')
+parser.add_argument('--proxy', dest='proxy', action='store', help='Proxy server')
 unmask_help = 'Disable default masking of sensitive information (e.g., passwords) in output'
 parser.add_argument('--unmask-all', action='store_true', help=unmask_help)
 fail_on_throttle_help = 'Disable default client-side pausing of command execution and re-sending of requests upon ' \
@@ -167,6 +126,7 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
 
 
 def main(from_package=False):
+    logging.basicConfig(format='%(message)s')
 
     set_working_dir()
 
@@ -178,7 +138,7 @@ def main(from_package=False):
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
 
     opts, flags = parser.parse_known_args(sys.argv[1:])
-    params = get_params_from_config(opts.config)
+    params = get_params_from_config(opts.config, opts.launched_with_shortcut)
 
     if opts.batch_mode:
         params.batch_mode = True
@@ -186,7 +146,7 @@ def main(from_package=False):
     if opts.debug:
         params.debug = opts.debug
 
-    logging.basicConfig(level=logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO, format='%(message)s')
+    logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
 
     if opts.proxy:
         params.proxy = opts.proxy
@@ -201,7 +161,7 @@ def main(from_package=False):
         params.unmask_all = opts.unmask_all
 
     if opts.fail_on_throttle:
-        params.rest_context._fail_on_throttle = opts.fail_on_throttle
+        params.rest_context.fail_on_throttle = opts.fail_on_throttle
 
     if opts.password:
         params.password = opts.password
@@ -226,7 +186,7 @@ def main(from_package=False):
     if not opts.command and from_package:
         opts.command = 'shell'
 
-    if params.timedelay >= 1 and params.commands:
+    if isinstance(params.timedelay, int) and params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
     else:
         if opts.command in {'shell', '-'}:
