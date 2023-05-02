@@ -1298,6 +1298,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.salt = params.salt
     mc_params.iterations = params.iterations
     mc_params.user = params.user
+    mc_params.account_uid_bytes = params.account_uid_bytes
     mc_params.password = params.password
     mc_params.enterprise_id = mc_id
     mc_params.session_token = params.session_token
@@ -1323,6 +1324,7 @@ def login_and_get_mc_params(params, mc_id):
     mc_params.iterations = params.iterations
     mc_params.user = params.user
     mc_params.password = params.password
+    mc_params.account_uid_bytes = params.account_uid_bytes
     mc_params.enterprise_id = mc_id
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
     mc_params.session_token = None

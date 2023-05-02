@@ -26,7 +26,7 @@ from .. import api, vault, record_types, generator, crypto, attachment, record_f
 from ..commands import recordv3
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
-from ..subfolder import try_resolve_path
+from ..subfolder import try_resolve_path, find_folders, get_folder_path
 
 record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder')
 record_add_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
@@ -66,8 +66,11 @@ delete_attachment_parser.add_argument('record', action='store', help='record pat
 download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
 download_parser.add_argument('-r', '--recursive', dest='recursive', action='store_true',
                              help='Download recursively through subfolders')
-download_parser.add_argument('--out-dir', dest='out_dir', action='store',
-                             help='Local folder for downloaded files')
+download_parser.add_argument('--out-dir', dest='out_dir', action='store', help='Local folder for downloaded files')
+download_parser.add_argument('--preserve-dir', dest='preserve_dir', action='store_true',
+                             help='Preserve vault folder structure')
+download_parser.add_argument('--record-title', dest='record_title', action='store_true',
+                             help='Add record title to attachment file.')
 download_parser.add_argument('records', nargs='*', help='Record/Folder path or UID')
 
 
@@ -680,62 +683,6 @@ class RecordEditMixin:
                 if isinstance(j_rt, dict):
                     return j_rt.get('fields')
 
-    @staticmethod
-    def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
-        new_fields = []
-        old_fields = list(record.fields)
-        custom = list(record.custom)
-        should_rebuild = False
-        for typed_field in typed_fields:
-            if not isinstance(typed_field, dict):
-                return
-            field_type = typed_field.get('$ref')
-            if not field_type:
-                return
-            field_label = typed_field.get('label') or ''
-            required = typed_field.get('required')
-            rf = record_types.RecordFields.get(field_type)
-            ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
-
-            field = next((x for x in old_fields if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                new_fields.append(field)
-                old_fields.remove(field)
-                if field.label != field_label:
-                    field.label = field_label
-                    should_rebuild = True
-                continue
-
-            field = next((x for x in custom if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                field.required = required
-                new_fields.append(field)
-                custom.remove(field)
-                should_rebuild = True
-                continue
-
-            field = vault.TypedField.new_field(field_type, None, field_label)
-            field.required = required
-            new_fields.append(field)
-            should_rebuild = True
-
-        if len(old_fields) > 0:
-            custom.extend(old_fields)
-            should_rebuild = True
-
-        if not should_rebuild:
-            should_rebuild = any(x for x in custom if not x.value)
-
-        if should_rebuild:
-            record.fields.clear()
-            record.fields.extend(new_fields)
-            record.custom.clear()
-            record.custom.extend((x for x in custom if x.value))
-
-        return should_rebuild
-
 
 class RecordAddCommand(Command, RecordEditMixin):
     def __init__(self):
@@ -1024,18 +971,18 @@ class RecordDownloadAttachmentCommand(Command):
 
         record_uids = set()
         for record in records:
-            folder_uid = None
+            folder = None
             if record in params.record_cache:
                 record_uids.add(record)
             elif record in params.folder_cache:
-                folder_uid = record
+                folder = params.folder_cache[record]
             else:
                 rs = try_resolve_path(params, record)
                 if rs is not None:
-                    folder, name = rs
-                    if folder is not None:
+                    fol, name = rs
+                    if fol is not None:
                         if name:
-                            f_uid = folder.uid or ''
+                            f_uid = fol.uid or ''
                             if f_uid in params.subfolder_record_cache:
                                 for uid in params.subfolder_record_cache[f_uid]:
                                     r = vault.KeeperRecord.load(params, uid)
@@ -1043,9 +990,10 @@ class RecordDownloadAttachmentCommand(Command):
                                         if r.title.lower() == name.lower():
                                             record_uids.add(r.record_uid)
                         else:
-                            folder_uid = folder.uid
-            if folder_uid:
+                            folder = fol
+            if folder:
                 folders = set()
+                folder_uid = folder.uid or ''
                 folders.add(folder_uid)
                 if kwargs.get('recursive') is True:
                     FolderMixin.traverse_folder_tree(
@@ -1066,12 +1014,45 @@ class RecordDownloadAttachmentCommand(Command):
             output_dir = os.getcwd()
         if not os.path.isdir(output_dir):
             os.makedirs(output_dir)
+
+        preserve_dir = kwargs.get('preserve_dir') is True
+        record_title = kwargs.get('record_title') is True
         for record_uid in record_uids:
             attachments = list(attachment.prepare_attachment_download(params, record_uid))
+            if len(attachments) == 0:
+                continue
+
+            subfolder_path = ''
+            if preserve_dir:
+                folder_uid = next((x for x in find_folders(params, record_uid)), None)
+                if folder_uid:
+                    subfolder_path = get_folder_path(params, folder_uid, os.sep)
+                    subfolder_path = ''.join(x for x in subfolder_path if x.isalnum() or x == os.sep)
+                    subfolder_path = subfolder_path.replace(2*os.sep, os.sep)
+            if subfolder_path:
+                subfolder_path = os.path.join(output_dir, subfolder_path)
+                if not os.path.isdir(subfolder_path):
+                    os.makedirs(subfolder_path)
+            else:
+                subfolder_path = output_dir
+
+            title = ''
+            if record_title:
+                record = vault.KeeperRecord.load(params, record_uid)
+                title = record.title
+                title = ''.join(x for x in title if x.isalnum() or x.isspace())
+
             for atta in attachments:
-                name = os.path.join(output_dir, atta.title)
+                file_name = atta.title
+                if title:
+                    file_name = f'{title}-{atta.title}'
+                name = os.path.join(subfolder_path, file_name)
                 if os.path.isfile(name):
-                    name = os.path.join(output_dir, f'({atta.file_id}) {atta.title}')
+                    base_name, ext = os.path.splitext(file_name)
+                    name = os.path.join(subfolder_path, f'{base_name}({record_uid}){ext}')
+                if os.path.isfile(name):
+                    base_name, ext = os.path.splitext(file_name)
+                    name = os.path.join(subfolder_path, f'{base_name}({atta.file_id}){ext}')
                 atta.download_to_file(params, name)
 
 
