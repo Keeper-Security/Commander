@@ -84,43 +84,6 @@ def pam_configuration_create_record_v6(params, record, folder_uid):
 
     api.communicate_rest(params, car, 'pam/add_configuration_record')
 
-# def pam_configuration_create_record_v6_orginal(params, data, controller_uid, folder_uid_urlsafe):
-#
-#     data_json = json.dumps(data)
-#     record_key_unencrypted = os.urandom(32)
-#     record_key_encrypted = encrypt_aes_plain(record_key_unencrypted, params.data_key)
-#
-#     config_v6_record_uid_str = api.generate_record_uid()
-#     config_v6_record_uid = CommonHelperMethods.url_safe_str_to_bytes(config_v6_record_uid_str)
-#
-#     data = data_json.decode('utf-8') if isinstance(data_json, bytes) else data_json
-#     data = pad_aes_gcm(data)
-#
-#     rdata = bytes(data, 'utf-8')
-#     rdata = encrypt_aes_plain(rdata, record_key_unencrypted)
-#     rdata = base64.urlsafe_b64encode(rdata).decode('utf-8')
-#     rdata = CommonHelperMethods.url_safe_str_to_bytes(rdata)
-#
-#     car = ConfigurationAddRequest()
-#     car.configurationUid = config_v6_record_uid
-#     car.recordKey = record_key_encrypted
-#     car.data = rdata
-#
-#     params.revision = 0
-#     rs = communicate_rest(params, car, 'pam/add_configuration_record')
-#
-#     pcc = PAMConfigurationController()
-#     pcc.configurationUid = config_v6_record_uid
-#     pcc.controllerUid = CommonHelperMethods.url_safe_str_to_bytes(controller_uid)
-#     rs = communicate_rest(params, pcc, 'pam/set_configuration_controller')
-#
-#     # Moving v6 record into the folder
-#     sync_down(params)
-#
-#     FolderMoveCommand().execute(params, src=config_v6_record_uid_str, dst=folder_uid_urlsafe)
-#
-#     print(bcolors.OKGREEN + "Configuration was successfully added. UID " + config_v6_record_uid_str + bcolors.ENDC)
-
 
 def pam_configuration_create(params, gateway_uid_bytes, config_json_str, child_config_json_strings=None, parent_uid_bytes=None):
 
