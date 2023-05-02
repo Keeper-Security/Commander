@@ -8,7 +8,6 @@
 # Copyright 2023 Keeper Security Inc.
 # Contact: sm@keepersecurity.com
 #
-
 import argparse
 import json
 import logging
@@ -25,7 +24,7 @@ from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
 from .pam.config_helper import pam_configurations_get_all, pam_configuration_get_one, \
     pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
-    pam_configuration_get_single_value_from_field_by_id, pam_decrypt_configuration_data
+    pam_decrypt_configuration_data, pam_configuration_get_single_value_from_field
 from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
     GatewayActionRotate, \
     GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs, \
@@ -196,7 +195,7 @@ class PAMCreateRecordRotationCommand(Command):
         # 3. Resource record check
 
         pam_config = pam_configuration_get_one(params, config_uid)
-        pamResourcesField = pam_configuration_get_single_value_from_field_by_id(pam_config.get('data_decrypted'), 'pamresources')
+        pamResourcesField = pam_configuration_get_single_value_from_field(pam_config.get('data_decrypted'), 'pamResources')
         resources = pamResourcesField.get('resourceRef')
 
         if len(resources) > 1 and resource_uid is None:
@@ -597,7 +596,8 @@ common_parser.add_argument('--config-type', '-ct', dest='config_type', action='s
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder', action='store',
-                           help='Share Folder where this PAM Configuration is stored')
+                           help='Share Folder where this PAM Configuration is stored. Should be one of the folders to '
+                                'which the gateway has access to.')
 common_parser.add_argument('--resource-record', '-rr', dest='resource_records', action='append',
                            help='Resource Record UID')
 common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store', help='Default Schedule')
@@ -1084,6 +1084,8 @@ class PAMGatewayActionRotateCommand(Command):
         ri_pwd_complexity_encrypted = ri.pwdComplexity
 
         ri_rotation_setting_uid = utils.base64_url_encode(ri.configurationUid)  # Configuration on the UI is "Rotation Setting"
+        resource_uid = utils.base64_url_encode(ri.resourceUid)
+
         pam_config = vault.KeeperRecord.load(params, ri_rotation_setting_uid)
         if not isinstance(pam_config, vault.TypedRecord):
             print(f'{bcolors.FAIL}PAM Configuration [{ri_rotation_setting_uid}] is not available.{bcolors.ENDC}')
@@ -1129,8 +1131,11 @@ class PAMGatewayActionRotateCommand(Command):
         #     return
 
         action_inputs = GatewayActionRotateInputs(
-            record_uid=record_uid, configuration_uid=ri_rotation_setting_uid,
-            pwd_complexity_encrypted=ri_pwd_complexity_encrypted)
+            record_uid=record_uid,
+            configuration_uid=ri_rotation_setting_uid,
+            pwd_complexity_encrypted=ri_pwd_complexity_encrypted,
+            resource_uid=resource_uid
+        )
 
         conversation_id = GatewayAction.generate_conversation_id()
 
