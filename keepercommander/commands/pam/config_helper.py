@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -25,8 +26,8 @@ def pam_decrypt_configuration_data(pam_config_v6_record):
     return data_unencrypted_dict
 
 
-def pam_configuration_get_single_value_from_field_by_id(decrypted_record_dict, field_id):
-    values = pam_configuration_get_all_values_from_field_by_id(decrypted_record_dict, field_id)
+def pam_configuration_get_single_value_from_field(decrypted_record_dict, field_id):
+    values = pam_configuration_get_all_values_from_field(decrypted_record_dict, field_id)
     if not values:
         return None
 
@@ -36,24 +37,33 @@ def pam_configuration_get_single_value_from_field_by_id(decrypted_record_dict, f
     return None
 
 
-def pam_configuration_get_all_values_from_field_by_id(decrypted_record_dict, field_id):
-    field = pam_configuration_get_field_by_id(decrypted_record_dict, field_id)
+def pam_configuration_get_all_values_from_field(decrypted_record_dict, field_id):
+    field = pam_configuration_get_field(decrypted_record_dict, field_id)
     if not field:
         return None
 
     return field.get('value')
 
 
-def pam_configuration_get_field_by_id(decrypted_record_dict, field_id):
+def pam_configuration_get_field(unencrypted_record, field_identifier):
 
-    fields = decrypted_record_dict.get('fields')
+    if unencrypted_record is str:
+        unencrypted_record = json.loads(unencrypted_record)
+
+    fields = unencrypted_record.get('fields')
 
     if not fields:
         return None
 
-    found_field = next((item for item in fields if 'id' in item and item['id'] == field_id), None)
+    for field in fields:
+        if field.get('id') == field_identifier:
+            return field
 
-    return found_field
+        if field.get('type') == field_identifier:
+            return field
+
+        if field.get('label') == field_identifier:
+            return field
 
 
 def pam_configuration_create_record_v6(params, record, folder_uid):
