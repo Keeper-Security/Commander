@@ -1084,6 +1084,8 @@ class PAMGatewayActionRotateCommand(Command):
         ri_pwd_complexity_encrypted = ri.pwdComplexity
 
         ri_rotation_setting_uid = utils.base64_url_encode(ri.configurationUid)  # Configuration on the UI is "Rotation Setting"
+        resource_uid = utils.base64_url_encode(ri.resourceUid)
+
         pam_config = vault.KeeperRecord.load(params, ri_rotation_setting_uid)
         if not isinstance(pam_config, vault.TypedRecord):
             print(f'{bcolors.FAIL}PAM Configuration [{ri_rotation_setting_uid}] is not available.{bcolors.ENDC}')
@@ -1131,7 +1133,9 @@ class PAMGatewayActionRotateCommand(Command):
         action_inputs = GatewayActionRotateInputs(
             record_uid=record_uid,
             configuration_uid=ri_rotation_setting_uid,
-            pwd_complexity_encrypted=ri_pwd_complexity_encrypted)
+            pwd_complexity_encrypted=ri_pwd_complexity_encrypted,
+            resource_uid=resource_uid
+        )
 
         conversation_id = GatewayAction.generate_conversation_id()
 
