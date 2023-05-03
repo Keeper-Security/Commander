@@ -68,11 +68,14 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     group = decode_aes256_plain_auto(read_item(io), encryption_key)
     url = decode_hex(read_item(io))
     notes = decode_aes256_plain_auto(read_item(io), encryption_key)
+    # fav, ?
     skip_item(io, 2)
     username = decode_aes256_plain_auto(read_item(io), encryption_key)
     password = decode_aes256_plain_auto(read_item(io), encryption_key)
+    # pwprotect, ?
     skip_item(io, 2)
     secure_note = read_item(io)
+    # last_touch, ...
     skip_item(io, 14)
 
     attach_key_encrypted = read_item(io)
@@ -81,8 +84,15 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
         attach_key = decode_hex(decode_aes256_base64_auto(attach_key_encrypted, encryption_key))
     else:
         attach_key = None
-
-    skip_item(io, 11)
+    skip_item(io, 3)
+    last_modified = 0
+    try:
+        lm = read_item(io).decode('utf-8')    # type: str
+        if lm.isnumeric():
+            last_modified = int(lm)
+    except:
+        pass
+    skip_item(io, 7)
     try:
         totp_secret = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8')
     except Exception:
@@ -104,7 +114,10 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
             username = parsed.get('username', username)
             password = parsed.get('password', password)
 
-    return Account(id, name, username, password, url, group, notes, shared_folder, attach_key, totp_secret, totp_url)
+    account = Account(id, name, username, password, url, group, notes, shared_folder, attach_key, totp_secret, totp_url)
+    if isinstance(last_modified, int) and last_modified > 0:
+        account.last_modified = last_modified
+    return account
 
 
 def parse_PRIK(chunk, encryption_key):

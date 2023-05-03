@@ -52,19 +52,20 @@ import_parser.add_argument('--display-json', '-dj', dest='display_json', action=
 import_parser.add_argument(
     '--format', choices=['json', 'csv', 'keepass', 'lastpass', 'myki', 'nordpass', 'manageengine', '1password',
                          'bitwarden', 'thycotic'],
-    required=True, help='file format'
-)
-import_parser.add_argument('--folder', dest='folder', action='store',
+    required=True, help='file format')
+import_parser.add_argument('--folder', dest='import_into', action='store',
                            help='import into a separate folder.')
 import_parser.add_argument('--filter-folder', dest='filter_folder', action='store',
                            help='Import data from the specific folder only.')
+import_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                           help='import folders as Keeper shared folders')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
                            help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
-import_parser.add_argument('--update',  dest='update',  action='store_true',
+import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
                            help='Update records with common login, url or title')
-import_parser.add_argument('--users',  dest='users',  action='store_true',
+import_parser.add_argument('--users',  dest='users_only',  action='store_true',
                            help='Update shared folder user permissions only')
 import_parser.add_argument('--record-type', dest='record_type', action='store',
                            help='Import legacy records as record type')
@@ -178,68 +179,71 @@ class RecordImportCommand(ImporterCommand):
             if restricted:
                 logging.warning('"import" is restricted by Keeper Administrator')
                 return
-        update_flag = kwargs['update'] if 'update' in kwargs else False
         import_format = kwargs['format'] if 'format' in kwargs else None
         import_name = kwargs['name'] if 'name' in kwargs else None
-        shared = kwargs.get('shared') or False
+        if not import_format:
+            logging.error('"--format" parameter is mandatory')
+            return
+        if not import_name:
+            logging.error('"name" parameter is mandatory')
+            return
+
         manage_users = False
         manage_records = False
         can_edit = False
         can_share = False
-        if import_format and import_name:
-            permissions = kwargs.get('permissions')
-            if shared and not permissions:
-                permissions = user_choice('Default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one', 'uresan', show_choice=False, multi_choice=True)
-            if permissions:
-                chars = set()
-                chars.update([x for x in permissions.lower()])
-                if 'a' in chars:
-                    manage_users = True
-                    manage_records = True
-                    can_edit = True
-                    can_share = True
-                else:
-                    if 'u' in chars:
-                        manage_users = True
-                    if 'r' in chars:
-                        manage_records = True
-                    if 'e' in chars:
-                        can_edit = True
-                    if 's' in chars:
-                        can_share = True
+        permissions = ''
+        if 'permissions' in kwargs:
+            permissions = kwargs.get('permissions') or ''
+            del kwargs['permissions']
 
-            logging.info('Processing... please wait.')
-            record_type = ''
-            if kwargs.get('login_type'):
-                record_type = 'login'
-            rt = kwargs.get('record_type')
-            if rt:
-                if record_type and record_type != rt:
+        if kwargs.get('shared') is True and not permissions:
+            permissions = user_choice('Default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one', 'uresan', show_choice=False, multi_choice=True)
+        if permissions:
+            chars = set()
+            chars.update([x for x in permissions.lower()])
+            if 'a' in chars:
+                manage_users = True
+                manage_records = True
+                can_edit = True
+                can_share = True
+            else:
+                if 'u' in chars:
+                    manage_users = True
+                if 'r' in chars:
+                    manage_records = True
+                if 'e' in chars:
+                    can_edit = True
+                if 's' in chars:
+                    can_share = True
+
+        if 'login_type' in kwargs:
+            if kwargs['login_type'] is True:
+                if 'record_type' in kwargs and kwargs['record_type']:
                     logging.warning('Options login-type and record-type are mutually exclusive.')
                     return
-                record_type = rt
-            if record_type:
-                rti = None
-                if params.record_type_cache:
-                    for rts in params.record_type_cache.values():
-                        try:
-                            rto = json.loads(rts)
-                            if rto.get('$id') == record_type:
-                                rti = rto
-                                break
-                        except:
-                            pass
-                if rti is None:
-                    logging.warning(f'Record type "{record_type}" not found.')
-                    return
+                kwargs['record_type'] = 'login'
+            del kwargs['login_type']
 
-            imp_exp._import(params, import_format, import_name, shared=shared, import_into=kwargs.get('folder'),
-                            manage_users=manage_users, manage_records=manage_records, users_only=kwargs.get('users') or False,
-                            can_edit=can_edit, can_share=can_share, update_flag=update_flag, tmpdir=kwargs.get('tmpdir'),
-                            old_domain=kwargs.get('old_domain'), new_domain=kwargs.get('new_domain'),
-                            record_type=record_type, filter_folder=kwargs.get('filter_folder'))
-        else:
-            logging.error('Missing argument')
+        record_type = kwargs.get('record_type') or ''
+        if record_type:
+            rti = None
+            if params.record_type_cache:
+                for rts in params.record_type_cache.values():
+                    try:
+                        rto = json.loads(rts)
+                        if rto.get('$id') == record_type:
+                            rti = rto
+                            break
+                    except:
+                        pass
+            if rti is None:
+                logging.warning(f'Record type "{record_type}" not found.')
+                return
+
+        logging.info('Processing... please wait.')
+        imp_exp._import(params, import_format, import_name, manage_users=manage_users, manage_records=manage_records,
+                        can_edit=can_edit, can_share=can_share, **kwargs)
 
 
 class RecordExportCommand(ImporterCommand):

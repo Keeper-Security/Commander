@@ -351,6 +351,15 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                     skip_ssh_key = False
 
             secret_id = secret['id']
+            if 'lastPasswordChangeAttempt' in secret:
+                try:
+                    lm = secret['lastPasswordChangeAttempt']
+                    if isinstance(lm, str) and lm.endswith('Z'):
+                        lm = lm[:-1]
+                        dt = datetime.datetime.fromisoformat(lm)
+                        record.last_modified = int(dt.timestamp())
+                except:
+                    pass
             file_items = [x for x in items.values() if x.get('isFile') is True]
             for item in file_items:
                 slug = item['slug']

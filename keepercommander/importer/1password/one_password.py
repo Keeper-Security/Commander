@@ -99,6 +99,9 @@ class OnePasswordImporter(BaseImporter):
                                 continue
                             record = Record()
                             record.uid = item.get('uuid') or utils.generate_uid()
+                            lm = item.get('updatedAt')
+                            if isinstance(lm, int) and lm > 0:
+                                record.last_modified = lm
                             category = item.get('categoryUuid', '')
                             if category in ('001', '005', '110', '112'):
                                 record.type = 'login'

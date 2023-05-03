@@ -33,6 +33,10 @@ class KeeperJsonMixin:
         record.password = j_record.get('password') or ''
         record.login_url = j_record.get('login_url') or ''
         record.notes = j_record.get('notes') or ''
+        if 'last_modified' in j_record:
+            lm = j_record['last_modified']
+            if isinstance(lm, int):
+                record.last_modified = lm
         custom_fields = j_record.get('custom_fields')
         if type(custom_fields) is dict:
             for name in custom_fields:
@@ -271,6 +275,8 @@ class KeeperJsonExporter(BaseExporter):
                 ro['$type'] = r.type
             if r.uid:
                 ro['uid'] = r.uid
+            if isinstance(r.last_modified, int) and r.last_modified > 0:
+                ro['last_modified'] = r.last_modified
 
             if r.fields:
                 ro['custom_fields'] = {}
@@ -404,7 +410,7 @@ class KeeperMembershipDownload(BaseDownloadMembership):
 
 
 class KeeperRecordTypeDownload(BaseDownloadRecordType):
-    def download_record_type(self, params):
+    def download_record_type(self, params, **kwargs):
         if params.record_type_cache:
             for rt_id, rts in params.record_type_cache.items():
                 if rt_id <= 1000:

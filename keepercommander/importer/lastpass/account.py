@@ -13,4 +13,5 @@ class Account(object):
         self.attach_key = attach_key
         self.totp_secret = totp_secret
         self.totp_url = totp_url
+        self.last_modified = 0
         self.attachments = []
