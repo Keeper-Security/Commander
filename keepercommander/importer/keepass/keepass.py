@@ -8,7 +8,7 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
+import datetime
 import getpass
 import io
 import logging
@@ -101,6 +101,10 @@ class KeepassImporter(BaseFileImporter):
                                 record.login_url = entry.url
                             if entry.notes:
                                 record.notes = entry.notes
+                            if hasattr(entry, 'ctime'):
+                                ctime = entry.ctime
+                                if isinstance(ctime, datetime.datetime):
+                                    record.last_modified = int(ctime.timestamp())
                             for key, value in entry.custom_properties.items():
                                 if key == '$type':
                                     record.type = value

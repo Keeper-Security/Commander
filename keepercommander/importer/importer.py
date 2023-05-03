@@ -231,6 +231,7 @@ class Record:
         self.password = None
         self.login_url = None
         self.notes = None
+        self.last_modified = 0
         self.fields = []         # type: List[RecordField]
         self.folders = None      # type: Optional[List[Folder]]
         self.attachments = None  # type: Optional[List[Attachment]]

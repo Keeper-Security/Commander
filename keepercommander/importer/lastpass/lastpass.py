@@ -132,6 +132,7 @@ class LastPassImporter(BaseImporter):
             logging.warning(warn_msg)
 
     def do_import(self, name, users_only=False, old_domain=None, new_domain=None, tmpdir=None, **kwargs):
+        dry_run = kwargs.get('dry_run') or False
         request_settings = {}
         params = kwargs.get('params')
         if isinstance(params, KeeperParams):
@@ -148,7 +149,7 @@ class LastPassImporter(BaseImporter):
 
         try:
             vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only,
-                                      tmpdir=tmpdir, **request_settings)
+                                      tmpdir=tmpdir, get_attachments=not dry_run, **request_settings)
         except LastPassUnknownError as lpe:
             logging.warning(lpe)
             return
@@ -210,6 +211,8 @@ class LastPassImporter(BaseImporter):
                 record.fields.append(
                     RecordField(type=FIELD_TYPE_ONE_TIME_CODE, value=account.totp_url)
                 )
+            if isinstance(account.last_modified, int) and account.last_modified > 0:
+                record.last_modified = account.last_modified
             if len(account.attachments) > 0:
                 if record.attachments is None:
                     record.attachments = []

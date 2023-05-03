@@ -8,7 +8,6 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-
 from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 
 """Import and export functionality."""
@@ -16,6 +15,7 @@ import abc
 import base64
 import collections
 import copy
+import datetime
 import hashlib
 import json
 import logging
@@ -25,6 +25,7 @@ import itertools
 import math
 import requests
 import time
+
 
 from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
@@ -147,6 +148,7 @@ def convert_keeper_record(record, has_attachments=False):
     rec.uid = record_uid
     rec.title = data.get('title') or ''
     rec.notes = data.get('notes') or ''
+    rec.last_modified = record.get('client_modified_time') or 0
     if version == 2:
         rec.login = data.get('secret1') or ''
         rec.password = data.get('secret2') or ''
@@ -548,11 +550,12 @@ def _import(params, file_format, filename, **kwargs):
     tmpdir = kwargs.get('tmpdir')
     record_type = kwargs.get('record_type')
     filter_folder = kwargs.get('filter_folder')
+    dry_run = kwargs.get('dry_run') is True
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
         import_into = import_into.replace(PathDelimiter, 2*PathDelimiter)
-    update_flag = kwargs['update_flag']
+    update_flag = kwargs.get('update_flag') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
 
@@ -565,7 +568,7 @@ def _import(params, file_format, filename, **kwargs):
     filter_folder_lower = filter_folder.lower() if isinstance(filter_folder, str) else ''
 
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
-                              old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir):
+                              old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, dry_run=dry_run):
         if isinstance(x, ImportRecord):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
@@ -679,13 +682,37 @@ def _import(params, file_format, filename, **kwargs):
         import_uids = {}
 
         records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records)
-
         reference_uids = set()
+
+        table = []
+        header = ['Folder', 'Title', 'Username', 'URL', 'Last Modified', 'Record UID']
         for import_record in records_to_import:
             existing_record = params.record_cache.get(import_record.uid)
+
+            if dry_run:
+                record_folder = ''
+                if isinstance(import_record.folders, list) and len(import_record.folders) > 0:
+                    f = import_record.folders[0]
+                    record_folder = f.domain or ''
+                    if f.path:
+                        if record_folder:
+                            record_folder += '\\'
+                        record_folder += f.path
+                modification_time = ''
+                if isinstance(import_record.last_modified, int) and import_record.last_modified > 0:
+                    ts = import_record.last_modified
+                    if ts > 2000000000:
+                        ts = int(ts / 1000)
+                    if 1000000000 < ts < 2000000000:
+                        dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+                        modification_time = dt.astimezone().strftime('%x %X')
+
+                table.append([record_folder, import_record.title, import_record.login, import_record.login_url,
+                              modification_time, existing_record.get('record_uid') if existing_record else ''])
+                continue
+
             record_key = existing_record['record_key_unencrypted'] if existing_record else utils.generate_aes_key()
             record_keys[import_record.uid] = record_key
-
             reference_uids.clear()
             if import_record.references:
                 for ref in import_record.references:
@@ -840,6 +867,10 @@ def _import(params, file_format, filename, **kwargs):
                     records_v2_to_add.append(v2_add_rq)
                     if params.enterprise_ec_key:
                         audit_uids.append(import_record.uid)
+
+        if dry_run:
+            base.dump_report_data(table, header)
+            return
 
         for v3_add_rq in records_v3_to_add:
             record_uid = utils.base64_url_encode(v3_add_rq.record_uid)
