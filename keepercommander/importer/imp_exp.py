@@ -1803,6 +1803,8 @@ def prepare_record_add_or_update(update_flag, params, records):
             for f in import_record.fields:
                 if not f.value:
                     continue
+                if not f.type:
+                    f.type = 'text'
                 if isinstance(f.value, str):
                     if len(f.value) > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
                         if import_record.attachments is None:

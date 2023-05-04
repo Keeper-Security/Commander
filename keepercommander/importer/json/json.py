@@ -276,7 +276,7 @@ class KeeperJsonExporter(BaseExporter):
             if r.uid:
                 ro['uid'] = r.uid
             if isinstance(r.last_modified, int) and r.last_modified > 0:
-                ro['last_modified'] = r.last_modified
+                ro['last_modified'] = int(r.last_modified / 1000)
 
             if r.fields:
                 ro['custom_fields'] = {}

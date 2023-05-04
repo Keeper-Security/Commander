@@ -16,6 +16,7 @@ import sys
 from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, RecordField, TWO_FACTOR_CODE,
                         FIELD_TYPE_ONE_TIME_CODE)
 from ...recordv3 import RecordV3
+from ... import record_types
 
 '''
 0 - folder
@@ -85,9 +86,9 @@ class KeeperCsvImporter(BaseFileImporter):
 
                                         field_type = ''
                                         if field.type:
-                                            t = RecordV3.get_field_type(field.type)
-                                            if isinstance(t, dict):
-                                                field_type = t.get('type', '')
+                                            t = record_types.RecordFields.get(field.type)
+                                            if t:
+                                                field_type = t.type
 
                                         field.value = KeeperCsvImporter.import_field(field_type, value)
                                         if field.value:

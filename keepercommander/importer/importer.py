@@ -16,12 +16,11 @@ import json
 import logging
 import os.path
 from contextlib import contextmanager
-from typing import List, Optional, Union, Dict, Iterable
+from typing import List, Optional, Union, Dict, Iterable, Type
 
-from .. import vault
+from .. import vault, record_types
 from ..error import CommandError
 from ..params import KeeperParams
-from ..recordv3 import RecordV3
 
 PathDelimiter = '\\'
 TWO_FACTOR_CODE = 'TFC:Keeper'
@@ -322,42 +321,55 @@ class BaseImporter(abc.ABC):
                 return int(field_value)
             except:
                 return None
-        if field_type == 'keyPair':
+        if field_type == 'privateKey':
             return vault.TypedField.import_ssh_key_field(field_value)
+        if field_type == 'checkbox':
+            return field_value.lower() in ('1', 't', 'true')
 
         str_values = field_value.split('\n')
         values = []
+        value_type = None     # type: Optional[Type]
+        if field_type in record_types.RecordFields:
+            rf = record_types.RecordFields[field_type]
+            if rf.type in record_types.FieldTypes:
+                ft = record_types.FieldTypes[rf.type]
+                value_type = type(ft.value)
         for str_value in str_values:
-            if field_type == 'host':
-                v = vault.TypedField.import_host_field(str_value)
-            elif field_type == 'phone':
-                v = vault.TypedField.import_phone_field(str_value)
-            elif field_type == 'name':
-                v = vault.TypedField.import_name_field(str_value)
-            elif field_type == 'address':
-                v = vault.TypedField.import_address_field(str_value)
-            elif field_type == 'securityQuestion':
-                v = vault.TypedField.import_q_and_a_field(str_value)
-            elif field_type == 'paymentCard':
-                v = vault.TypedField.import_card_field(str_value)
-            elif field_type == 'bankAccount':
-                v = vault.TypedField.import_account_field(str_value)
-            elif field_type == 'schedule':
-                v = vault.TypedField.import_schedule_field(str_value)
-            else:
-                v = str_value
-                if field_type in RecordV3.field_values:
-                    fv = RecordV3.field_values[field_type]
-                    if isinstance(fv.get('value'), dict):
+            v = None
+            if value_type == dict:
+                if len(str_value) >= 2:
+                    if str_value[0] == '{' and str_value[-1] == '}':
                         try:
                             v = json.loads(str_value)
                         except:
                             pass
-                    elif isinstance(fv.get('value'), int):
+            if not v:
+                if field_type == 'host':
+                    v = vault.TypedField.import_host_field(str_value)
+                elif field_type == 'phone':
+                    v = vault.TypedField.import_phone_field(str_value)
+                elif field_type == 'name':
+                    v = vault.TypedField.import_name_field(str_value)
+                elif field_type == 'address':
+                    v = vault.TypedField.import_address_field(str_value)
+                elif field_type == 'securityQuestion':
+                    v = vault.TypedField.import_q_and_a_field(str_value)
+                elif field_type == 'paymentCard':
+                    v = vault.TypedField.import_card_field(str_value)
+                elif field_type == 'bankAccount':
+                    v = vault.TypedField.import_account_field(str_value)
+                elif field_type == 'schedule':
+                    v = vault.TypedField.import_schedule_field(str_value)
+                else:
+                    if value_type == int:
                         try:
                             v = int(str_value)
                         except:
                             pass
+                    elif value_type == bool:
+                        v = str_value.lower() in ('1', 't', 'true')
+                    else:
+                        v = str_value
             if v:
                 values.append(v)
         if values:
