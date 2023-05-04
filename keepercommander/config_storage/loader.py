@@ -22,8 +22,9 @@ from .. import config_storage
 
 CONFIG_STORAGE_URL = 'config_storage'
 PROTECTED_PROPERTIES = [
-    'user', 'password', 'server', 'device_token', ('private_key', 'device_private_key'),
+    'user', 'server', 'device_token', ('private_key', 'device_private_key'),
     'clone_code']   # type: List[Union[str, Tuple[str, str]]]
+PROTECTED_READONLY_PROPERTIES = ['password']
 EDITABLE_PROPERTIES = ['proxy']
 BOOL_PROPERTIES = ['debug', 'batch_mode', 'unmask_all']
 INT_PROPERTIES = ['timedelay', 'logout_timer']
@@ -85,46 +86,34 @@ def store_config_properties(params):
     if not params.config_filename:
         params.config_filename = 'config.json'
 
-    should_store_file = False
-    if CONFIG_STORAGE_URL in params.config:
-        url = params.config[CONFIG_STORAGE_URL]
-        storage = _get_plugin(url)
-        conf = {}
-        for name in PROTECTED_PROPERTIES:
-            config_name, params_name = split_name(name)
-            if hasattr(params, params_name):
-                value = getattr(params, params_name)
-                if isinstance(value, str) and value:
-                    conf[config_name] = value
-        storage.store_configuration(url, conf)
-        for name in PROTECTED_PROPERTIES:
-            config_name, _ = split_name(name)
-            if config_name in params.config:
-                del params.config[config_name]
-                should_store_file = True
-    else:
-        should_store_file = True
-        for name in PROTECTED_PROPERTIES:
-            config_name, params_name = split_name(name)
-            if hasattr(params, params_name):
-                value = getattr(params, params_name)
-                if isinstance(value, str) and value:
-                    params.config[config_name] = value
-                else:
-                    if config_name in params.config:
-                        del params.config[config_name]
-
-    for name in EDITABLE_PROPERTIES:
+    # commit changes from params to config
+    for name in PROTECTED_PROPERTIES + EDITABLE_PROPERTIES:
         config_name, params_name = split_name(name)
         if hasattr(params, params_name):
-            value = getattr(params, params_name) or ''
-            config_value = params.config.get(config_name) or ''
-            if value != config_value:
+            value = getattr(params, params_name)
+            if value:
                 params.config[config_name] = value
+            elif config_name in params.config:
+                del params.config[config_name]
 
-    if should_store_file:
-        with open(params.config_filename, 'w') as fd:
-            json.dump(params.config, fd, ensure_ascii=False, indent=2)
+    config_json = params.config.copy()
+
+    if CONFIG_STORAGE_URL in config_json:
+        url = config_json[CONFIG_STORAGE_URL]
+        storage = _get_plugin(url)
+        conf_protected = {}
+        for name in PROTECTED_PROPERTIES + PROTECTED_READONLY_PROPERTIES:
+            config_name, _ = split_name(name)
+            if config_name in config_json:
+                value = config_json[config_name] or ''
+                if value:
+                    conf_protected[config_name] = value
+                del config_json[config_name]
+
+        storage.store_configuration(url, conf_protected)
+
+    with open(params.config_filename, 'w') as fd:
+        json.dump(config_json, fd, ensure_ascii=False, indent=2)
 
 
 def load_config_properties(params):
@@ -134,28 +123,25 @@ def load_config_properties(params):
     if not isinstance(params.config, dict):
         return
 
-    for name in EDITABLE_PROPERTIES:
-        config_name, params_name = split_name(name)
-        if hasattr(params, params_name):
-            value = params.config.get(config_name) or ''
-            setattr(params, params_name, value)
-
     if CONFIG_STORAGE_URL in params.config:
         url = params.config[CONFIG_STORAGE_URL]
         storage = _get_plugin(url)
         conf = storage.load_configuration(url)
         if isinstance(conf, dict):
-            for name in PROTECTED_PROPERTIES:
-                config_name, params_name = split_name(name)
-                if hasattr(params, params_name) and config_name in conf:
-                    setattr(params, params_name, conf[config_name] or '')
+            params.config.update(conf)
 
-    for name in PROTECTED_PROPERTIES:
+    for name in PROTECTED_PROPERTIES + PROTECTED_READONLY_PROPERTIES:
         config_name, params_name = split_name(name)
         if config_name in params.config:
             value = params.config.get(config_name) or ''
             if value and hasattr(params, params_name):
                 setattr(params, params_name, value)
+
+    for name in EDITABLE_PROPERTIES:
+        config_name, params_name = split_name(name)
+        if hasattr(params, params_name):
+            value = params.config.get(config_name) or ''
+            setattr(params, params_name, value)
 
     for name in BOOL_PROPERTIES:
         config_name, params_name = split_name(name)

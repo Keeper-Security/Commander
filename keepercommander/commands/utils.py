@@ -651,6 +651,11 @@ class LoginCommand(Command):
             return
 
         params.user = user.lower()
+        if not password and isinstance(params.config, dict):
+            if 'user' in params.config and 'password' in params.config:
+                if params.config['user'] == params.user:
+                    password = params.config['password']
+
         params.password = password
 
         try:

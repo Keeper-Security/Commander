@@ -1,37 +1,29 @@
 import base64
 import getpass
-import io
 import json
 import logging
 import os
-from typing import Optional
-
-import pyperclip
 import re
 import webbrowser
+from sys import platform as _platform
+from typing import Optional
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
-from Cryptodome.Math.Numbers import Integer
-from Cryptodome.PublicKey import RSA
-from Cryptodome.Util.asn1 import DerSequence
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives import serialization
+import pyperclip
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToJson
-from sys import platform as _platform
-from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
 from . import api, rest_api, utils, crypto, constants
 from .breachwatch import BreachWatch
+from .config_storage import loader
 from .display import bcolors
-from .humps import decamelize
 from .error import KeeperApiError
+from .humps import decamelize
 from .params import KeeperParams
 from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
 from .proto import breachwatch_pb2 as breachwatch_proto
 from .proto import ssocloud_pb2 as ssocloud
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse, DomainPasswordRulesRequest
-from .config_storage import loader
 
 install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
                                'Install fido2 package ' + bcolors.OKGREEN + \
