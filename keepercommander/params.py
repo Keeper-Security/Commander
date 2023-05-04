@@ -185,7 +185,6 @@ class KeeperParams:
         if self.folder_cache:
             self.folder_cache.clear()
         self.user_cache.clear()
-
         self.root_folder = None
         self.current_folder = None
         self.sync_data = True
@@ -198,15 +197,10 @@ class KeeperParams:
         self.enterprise_id = 0
         self.msp_tree_key = None
         self.prepare_commands = True
-        self.batch_mode = False
         self.pending_share_requests.clear()
         self.environment_variables.clear()
         self.record_history.clear()
         self.event_queue.clear()
-        self.logout_timer = self.config.get('logout_timer') or 0
-        self.clone_code = None
-        self.device_token = None
-        self.device_private_key = None
         self.account_uid_bytes = None
         self.session_token_bytes = None
         self.record_type_cache = {}
