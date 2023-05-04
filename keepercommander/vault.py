@@ -551,6 +551,10 @@ class TypedField(object):
             street1 = comps[0].strip() if len(comps) > 0 else ''
             city = comps[1].strip() if len(comps) > 1 else ''
             state, _, zip_code = comps[2].strip().partition(' ') if len(comps) > 2 else ('', '', '')
+            if state and not zip_code:
+                if state.isnumeric():
+                    zip_code = state
+                    state = ''
             country = comps[3].strip() if len(comps) > 3 else ''
 
             return {
