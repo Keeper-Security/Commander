@@ -56,27 +56,27 @@ import_parser.add_argument(
 import_parser.add_argument('--folder', dest='import_into', action='store',
                            help='import into a separate folder.')
 import_parser.add_argument('--filter-folder', dest='filter_folder', action='store',
-                           help='Import data from the specific folder only.')
+                           help='import data from the specific folder only.')
 import_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
-                           help='import folders as Keeper shared folders')
+                           help='display records to be imported without importing them')
 import_parser.add_argument('-s', '--shared', dest='shared', action='store_true',
                            help='import folders as Keeper shared folders')
 import_parser.add_argument('-p', '--permissions', dest='permissions', action='store',
                            help='default shared folder permissions: manage (U)sers, manage (R)ecords, can (E)dit, can (S)hare, or (A)ll, (N)one')
 import_parser.add_argument('--update',  dest='update_flag',  action='store_true',
-                           help='Update records with common login, url or title')
+                           help='update records with common login, url or title')
 import_parser.add_argument('--users',  dest='users_only',  action='store_true',
-                           help='Update shared folder user permissions only')
+                           help='update shared folder user permissions only')
 import_parser.add_argument('--record-type', dest='record_type', action='store',
                            help='Import legacy records as record type')
 import_parser.add_argument('--login-type', '-l', dest='login_type', action='store_true',
-                           help='Import legacy records as login record type')
+                           help='import legacy records as login record type')
 import_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',
                            help='old domain for changing user emails in permissions')
 import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',
                            help='new domain for changing user emails in permissions')
 import_parser.add_argument('--file-cache', dest='tmpdir', action='store',
-                           help='Temp directory used to cache encrypted attachment imports')
+                           help='temp directory used to cache encrypted attachment imports')
 import_parser.add_argument(
     'name', type=str, help='file name (json, csv, keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic)'
 )
