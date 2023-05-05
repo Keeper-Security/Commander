@@ -9,12 +9,15 @@
 #
 
 import abc
+import hashlib
 import logging
 import os
 import secrets
 import string
 from secrets import choice
 from typing import Optional, List
+
+from . import crypto
 
 from Cryptodome.Random.random import shuffle
 
@@ -139,3 +142,43 @@ class DicewarePasswordGenerator(PasswordGenerator):
         words = [secrets.choice(self._vocabulary) for _ in range(self._number_of_rolls)]
         shuffle(words)
         return ' '.join(words)
+
+
+class CryptoPassphraseGenerator(PasswordGenerator):
+    def __init__(self):
+        self._vocabulary = None    # type: Optional[List[str]]
+        dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'bip-39.english.txt')
+        if os.path.isfile(dice_path):
+            with open(dice_path, 'r') as dw:
+                self._vocabulary = []
+                for line in dw.readlines():
+                    if not line:
+                        continue
+                    if line.startswith('--'):
+                        continue
+                    words = [x.strip() for x in line.split()]
+                    word = words[1] if len(words) >= 2 else words[0]
+                    self._vocabulary.append(word)
+
+                unique_words = set((x.lower() for x in self._vocabulary))
+                if len(self._vocabulary) != len(unique_words):
+                    raise Exception(f'Word list file \"{dice_path}\" contains non-unique words.')
+                if len(unique_words) != 2 ** 11:
+                    raise Exception(f'Word list file \"{dice_path}\" is incorrect crypto dictionary.')
+        else:
+            raise Exception(f'Word list file \"{dice_path}\" not found.')
+
+    def generate(self):
+        key = crypto.get_random_bytes(32)
+        hasher = hashlib.sha256()
+        hasher.update(key)
+        digest = hasher.digest()
+        secret = int.from_bytes(key + digest[:1], byteorder='big')
+
+        words = []
+        for i in range(24):
+            words.append(secret & 0x07ff)
+            secret >>= 11
+
+        words.reverse()
+        return ' '.join((self._vocabulary[x] for x in words))

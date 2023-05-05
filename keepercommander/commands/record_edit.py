@@ -164,7 +164,7 @@ $<ACTION>[:<PARAMS>, <PARAMS>]   executes an action that returns a field value
 Value                   Field type         Description                      Example
 ====================    ===============    ===================              ==============
 $GEN:[alg],[n]          password           Generates a random password      $GEN:dice,5
-                                           Default algorith is rand         alg: [rand | dice]
+                                           Default algorith is rand         alg: [rand | dice | crypto]
                                            Optional: password length        
 $GEN                    oneTimeCode        Generates TOTP URL               
 $GEN:[alg,][enc]        privateKey         Generates a key pair and         $GEN:ec,enc
@@ -311,7 +311,7 @@ class RecordEditMixin:
     @staticmethod
     def generate_password(parameters=None):   # type: (Optional[Sequence[str]]) -> str
         if isinstance(parameters, (tuple, list, set)):
-            algorithm = next((x for x in parameters if x in ('rand', 'dice')), 'rand')
+            algorithm = next((x for x in parameters if x in ('rand', 'dice', 'crypto')), 'rand')
             length = next((x for x in parameters if x.isnumeric()), None)
             if isinstance(length, str) and len(length) > 0:
                 try:
@@ -322,7 +322,9 @@ class RecordEditMixin:
             algorithm = 'rand'
             length = None
 
-        if algorithm == 'dice':
+        if algorithm == 'crypto':
+            gen = generator.CryptoPassphraseGenerator()
+        elif algorithm == 'dice':
             if isinstance(length, int):
                 if length < 1:
                     length = 1
@@ -331,7 +333,6 @@ class RecordEditMixin:
             else:
                 length = 5
             gen = generator.DicewarePasswordGenerator(length)
-            return gen.generate()
         else:
             if isinstance(length, int):
                 if length < 4:
@@ -340,7 +341,8 @@ class RecordEditMixin:
                     length = 200
             else:
                 length = 20
-            return generator.generate(length)
+            gen = generator.KeeperPasswordGenerator(length=length)
+        return gen.generate()
 
     @staticmethod
     def generate_totp_url():
