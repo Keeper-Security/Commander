@@ -38,7 +38,7 @@ from .. import api, rest_api, loginv3, crypto, utils, constants
 from ..breachwatch import BreachWatch
 from ..display import bcolors
 from ..error import CommandError
-from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator
+from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2 as ssocloud, enterprise_pb2, APIRequest_pb2, client_pb2
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, Salt, MasterPasswordReentryRequest, UNMASK, \
@@ -214,12 +214,13 @@ random_group.add_argument(
 )
 
 dice_group = generate_parser.add_argument_group('Diceware')
-dice_group.add_argument(
-    '--dice-rolls', '-dr', type=int, dest='dice_rolls', action='store', help='Number of dice rolls'
-)
-dice_group.add_argument(
-    '--word-list',  dest='word_list', action='store', help='Optional. File path to word list'
-)
+dice_group.add_argument('--dice-rolls', '-dr', type=int, dest='dice_rolls', action='store',
+                        help='Number of dice rolls')
+dice_group.add_argument('--word-list',  dest='word_list', action='store',
+                        help='Optional. File path to word list')
+
+crypto_group = generate_parser.add_argument_group('Crypto')
+crypto_group.add_argument('--crypto', dest='crypto', action='store_true', help='Generate crypto wallet passphrase')
 
 reset_password_parser = argparse.ArgumentParser(prog='reset-password', description='Reset Master Password')
 reset_password_parser.add_argument('--delete-sso', dest='delete_alternate', action='store_true',
@@ -920,8 +921,10 @@ class GenerateCommand(Command):
             If True return tuple of password dict and formatted output string
         """
 
-        dice_rolls = kwargs.get('dice_rolls')
-        if isinstance(dice_rolls, int) and dice_rolls > 0:
+        if kwargs.get('crypto') is True:
+            kpg = CryptoPassphraseGenerator()
+        elif isinstance(kwargs.get('dice_rolls'), int):
+            dice_rolls = kwargs.get('dice_rolls')
             kpg = DicewarePasswordGenerator(dice_rolls, kwargs.get('word_list'))
         else:
             if rules and all(i is None for i in (symbols, digits, uppercase, lowercase)):
@@ -1219,4 +1222,3 @@ class SyncSecurityDataCommand(Command):
                             f'are synced while in "hard" sync mode'
             msg += hard_sync_msg if hard_sync and kwargs.get('record') else ''
             logging.info(msg)
-
