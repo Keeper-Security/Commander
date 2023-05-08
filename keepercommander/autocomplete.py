@@ -188,7 +188,7 @@ class CommandCompleter(Completer):
                             opts, _ = (cmd_parser or record_parser). parse_known_args(shlex.split(args))
                             if hasattr(opts, 'record'):
                                 extra['prefix'] = opts.record or ''
-                            if hasattr(opts, 'records'):
+                            elif hasattr(opts, 'records'):
                                 extra['prefix'] = ''
                                 if len(opts.records) > 0:
                                     if raw_input[-1] != ' ':
