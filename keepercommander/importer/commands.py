@@ -316,6 +316,7 @@ class DownloadMembershipCommand(Command):
         new_domain = kwargs.get('new_domain')
         import_into = kwargs.get('folder')
         if import_into:
+            import_into = import_into.strip()
             import_into = import_into.replace(PathDelimiter, 2 * PathDelimiter)
 
         override_users = None    # Optional[bool]
@@ -353,6 +354,7 @@ class DownloadMembershipCommand(Command):
 
         for obj in plugin.download_membership(params):
             if isinstance(obj, SharedFolder):
+                obj.path = obj.path.strip()
                 if import_into:
                     obj.path = f'{import_into}{PathDelimiter}{obj.path}'
                 if isinstance(obj.permissions, list):
