@@ -7,7 +7,7 @@ from keepercommander.record import Record
 from keepercommander.subfolder import find_folders, get_folder_path
 
 
-def get_shared_records(params, record_uids):
+def get_shared_records(params, record_uids, cache_only=False):
     def fetch_team_members(t_uids):
         members = {}
         if params.enterprise_ec_key:
@@ -23,10 +23,13 @@ def get_shared_records(params, record_uids):
         return members
 
     def get_cached_team_members(t_uids, uname_lookup):
+        members = {}
+        if not params.enterprise:
+            return members
+
         team_users = params.enterprise.get('team_users')
         team_users = [tu for tu in team_users if tu.get('user_type') != 2 and tu.get('team_uid') in t_uids]
 
-        members = {}
         for tu in team_users:
             user_id = tu.get('enterprise_user_id')
             username = uname_lookup.get(user_id)
@@ -63,12 +66,12 @@ def get_shared_records(params, record_uids):
 
     api.get_record_shares(params, record_uids)
     sf_teams = [shared_folder.get('teams', []) for shared_folder in params.shared_folder_cache.values()]
-    sf_share_admins = fetch_sf_admins()
+    sf_share_admins = fetch_sf_admins() if not cache_only else {}
     team_uids = {t.get('team_uid') for teams in sf_teams for t in teams}
     enterprise_users = params.enterprise.get('users') if params.enterprise else []
     username_lookup = {u.get('enterprise_user_id'): u.get('username') for u in enterprise_users}
     restricted_role_members = get_restricted_role_members(username_lookup)
-    team_members = get_cached_team_members(team_uids, username_lookup) if params.enterprise \
+    team_members = get_cached_team_members(team_uids, username_lookup) if cache_only or params.enterprise \
         else fetch_team_members(team_uids)
     records = [api.get_record(params, uid) for uid in record_uids]  # type: List[Record or None]
     records = [r for r in records if r]
@@ -113,7 +116,8 @@ class SharePermissions:
         prefix = ''.join(prefix_lookup.get(t) for t in self.types)
         return f'{prefix} {self.to_name}'
 
-    def get_permissions_text(self):
+    @property
+    def permissions_text(self):
         if not self.can_edit and not self.can_share:
             return 'Read Only' if self.can_view else 'Launch Only'
         else:
