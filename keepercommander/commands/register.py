@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import time
+import urllib.parse
 from typing import Optional, Dict, Iterable, Any, Set, List
 from urllib.parse import urlunparse
 
@@ -1757,6 +1758,8 @@ class FindDuplicateCommand(Command):
                     title = (not j or not by_title) and record.title or ''
                     login = (not j or not by_login) and record.login or ''
                     url = record.login_url or ''
+                    url = urllib.parse.urlparse(url.encode()).hostname
+                    url = url.decode()[:30] if url else ''
                     url = [url] if by_url else []
                     owner = shared_record.owner or params.meta_data_cache.get(record_uid).get('owner') and params.user
                     team_user_type = SharePermissions.SharePermissionsType.TEAM_USER
