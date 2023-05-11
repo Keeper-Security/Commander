@@ -93,6 +93,8 @@ class Vault(object):
                 share = parser.parse_SHAR(i, encryption_key, rsa_private_key)
                 key = share['encryption_key']
                 shareid = share['id'].decode('utf-8')
+                share_name = share['name'].decode('utf-8')
+                share_name = share_name.strip()
                 shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'))
                 self.shared_folders.append(shared_folder)
             elif i.id == b'ATTA':
