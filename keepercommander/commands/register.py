@@ -18,9 +18,10 @@ import json
 import logging
 import re
 import time
-from functools import partial
 from typing import Optional, Dict, Iterable, Any, Set, List
 from urllib.parse import urlunparse
+
+from tabulate import tabulate
 
 from . import base
 from .base import dump_report_data, field_to_title, raise_parse_exception, suppress_exit, Command, GroupCommand, FolderMixin
@@ -32,10 +33,11 @@ from ..display import bcolors
 from ..error import KeeperApiError, CommandError, Error
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
-from ..shared_record import SharePermissions
+from ..shared_record import SharePermissions, get_shared_records, SharedRecord
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
     get_folder_uids
 from ..loginv3 import LoginV3API
+from ..utils import confirm
 
 
 def register_commands(commands):
@@ -149,10 +151,18 @@ find_duplicate_parser.add_argument('--title', dest='title', action='store_true',
 find_duplicate_parser.add_argument('--login', dest='login', action='store_true', help='Match duplicates by login.')
 find_duplicate_parser.add_argument('--password', dest='password', action='store_true', help='Match duplicates by password.')
 find_duplicate_parser.add_argument('--url', dest='url', action='store_true', help='Match duplicates by URL.')
+find_duplicate_parser.add_argument('--shares', action='store_true', help='Match duplicates by share permissions')
 find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
-find_duplicate_parser.add_argument('-m', '--merge', action='store_true', help='Consolidate duplicate records')
+merge_help = 'Consolidate duplicate records (matched by all fields, including shares)'
+find_duplicate_parser.add_argument('-m', '--merge', action='store_true', help=merge_help)
 force_help = 'Delete duplicates w/o being prompted for confirmation (valid only w/ --merge option)'
 find_duplicate_parser.add_argument('-f', '--force', action='store_true', help=force_help)
+dry_run_help = 'Simulate removing duplicates (with this flog, no records are ever removed or modified). ' \
+               'Valid only w/ --merge flag'
+find_duplicate_parser.add_argument('-n', '--dry-run', action='store_true', help=dry_run_help)
+find_duplicate_parser.add_argument('-q', '--quiet', action='store_true',
+                                   help='Suppress screen output, valid only w/ --force flag')
+
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
 
@@ -1049,7 +1059,7 @@ class ShareReportCommand(Command):
                             is_direct_share = SharePermissions.SharePermissionsType.USER in p.types
                             share_date = self.get_date_for_share(share_events, p.to_name) if is_direct_share \
                                 else self.get_date_for_share_folder_record(share_events, next(iter(shared_record.sf_shares.keys())))
-                            share_info.append(f'{p.get_target(show_team_users)} => {p.get_permissions_text()}{share_date}')
+                            share_info.append(f'{p.get_target(show_team_users)} => {p.permissions_text}{share_date}')
                         share_info = '\n'.join(share_info)
 
                     table.append([shared_record.owner, shared_record.uid, shared_record.name, share_info, folder_paths])
@@ -1578,15 +1588,51 @@ class FindDuplicateCommand(Command):
         return find_duplicate_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
-        def remove_duplicates(get_dupe_info_fn, dupe_uids):
-            from prompt_toolkit.shortcuts import confirm
-            trash_msg = 'NOTE: Deleted records can be found in your trash bin via the `trash list` command'
-            confirm_msg = f'Are you sure you want to delete the following duplicate records: \n{get_dupe_info_fn()}' \
-                          f'\n{trash_msg}\n?'
-            if kwargs.get('force') or confirm(confirm_msg):
-                print(f'Deleting {len(dupe_uids)} records...')
-                rm_cmd = RecordRemoveCommand()
-                rm_cmd.execute(params, records=list(dupe_uids), force=True)
+        quiet = kwargs.get('quiet', False)
+        dry_run = kwargs.get('dry_run', False)
+        quiet = quiet and not dry_run
+        logging_fn = logging.info if not quiet else logging.debug
+
+        def partition_by_shares(duplicate_sets, shared_recs_lookup):
+            # type: (List[Set[str]], Dict[str, SharedRecord]) -> List[Set[str]]
+            result = []
+            for duplicates in duplicate_sets:
+                recs_by_hash = {}
+                for rec_uid in duplicates:
+                    h = hashlib.sha256()
+                    shared_rec = shared_recs_lookup.get(rec_uid)
+                    permissions = shared_rec.permissions
+                    tu_type = SharePermissions.SharePermissionsType.TEAM_USER
+                    permissions = {k: p for k, p in permissions.items() if tu_type not in p.types or len(p.types) > 1}
+                    permissions = {k: p for k, p in permissions.items() if p.to_name != shared_rec.owner}
+                    permissions_keys = list(permissions.keys())
+                    permissions_keys.sort()
+
+                    to_hash = ';'.join(f'{k}={permissions.get(k).permissions_text}' for k in permissions_keys)
+                    to_hash = to_hash or 'non-shared'
+                    h.update(to_hash.encode())
+                    h_val = h.hexdigest()
+                    r_uids = recs_by_hash.get(h_val, set())
+                    r_uids.add(rec_uid)
+                    recs_by_hash[h_val] = r_uids
+                result.extend([r for r in recs_by_hash.values() if len(r) > 1])
+            return result
+
+        def remove_duplicates(dupe_info, col_headers, dupe_uids):
+            # type: (List[List[str]], List[str], Set[str]) -> None
+            prompt_title = f'\nThe following duplicate {"records have" if len(dupe_uids) > 1 else "record has"}' \
+                    f' been marked for removal:\n'
+            indices = (idx + 1 for idx in range(len(dupe_info)))
+            prompt_report = prompt_title + '\n' + tabulate(dupe_info, col_headers, showindex=indices)
+            prompt_msg = prompt_report + '\n\nDo you wish to proceed?'
+
+            if kwargs.get('force') or confirm(prompt_msg):
+                logging_fn(f'Deleting {len(dupe_uids)} records...')
+                if not dry_run:
+                    rm_cmd = RecordRemoveCommand()
+                    rm_cmd.execute(params, records=list(dupe_uids), force=True)
+                else:
+                    logging.info('In dry-run mode: no actual records removed (exclude --dry-run flag to disable)')
             else:
                 print('Duplicate record removal aborted. No records removed.')
 
@@ -1595,12 +1641,17 @@ class FindDuplicateCommand(Command):
         by_password = kwargs.get('password', False)
         by_url = kwargs.get('url', False)
         by_custom = kwargs.get('full', False)
+        by_shares = kwargs.get('shares', False)
         consolidate = kwargs.get('merge', False)
+
+        by_custom = consolidate or by_custom
+
         if by_custom:
             by_title = True
             by_login = True
             by_password = True
             by_url = True
+            by_shares = True
         elif not by_title and not by_login and not by_password and not by_url:
             by_title = True
             by_login = True
@@ -1665,10 +1716,9 @@ class FindDuplicateCommand(Command):
 
             if non_empty > 0:
                 hash_value = hasher.hexdigest()
-                if hash_value in hashes:
-                    hashes[hash_value].append(record_uid)
-                else:
-                    hashes[hash_value] = [record_uid]
+                rec_uids = hashes.get(hash_value, set())
+                rec_uids.add(record_uid)
+                hashes[hash_value] = rec_uids
 
         fields = []
         if by_title:
@@ -1681,57 +1731,57 @@ class FindDuplicateCommand(Command):
             fields.append('Website Address')
         if by_custom:
             fields.append('Custom Fields')
+        if by_shares:
+            fields.append('Shares')
 
-        logging.info('Find duplicated records by: %s', ', '.join(fields))
-        duplicates = [x for x in hashes.values() if len(x) > 1]
-        if duplicates:
-            record_uids = []
-            for x in duplicates:
-                record_uids.extend(x)
-            api.get_record_shares(params, record_uids)
+        logging_fn('Find duplicated records by: %s', ', '.join(fields))
+        partitions = [rec_uids for rec_uids in hashes.values() if len(rec_uids) > 1]
 
+        r_uids = [rec_uid for duplicates in partitions for rec_uid in duplicates]
+        shared_records_lookup = get_shared_records(params, r_uids, cache_only=True)  # type: Dict[str, SharedRecord]
+        if by_shares:
+            partitions = partition_by_shares(partitions, shared_records_lookup)
+        if partitions:
             headers = ['#', 'Title', 'Login']
             if by_url:
                 headers.append('Website Address')
-            headers.extend(['UID', 'Record Owner'])
+            headers.extend(['UID', 'Record Owner', 'Shared To'])
             table_raw = []
             table = []
             to_remove = set()
-            for i in range(len(duplicates)):
-                owners = set()
-                duplicate = duplicates[i]
-                for j in range(len(duplicate)):
-                    record_uid = duplicate[j]
+            for i, partition in enumerate(partitions):
+                for j, record_uid in enumerate(partition):
+                    shared_record = shared_records_lookup.get(record_uid)
                     record = api.get_record(params, record_uid)
-                    raw_row = [record.title or '', record.login or '']
-                    row = [i+1 if j == 0 else None, record.title if j == 0 or not by_title else '', record.login if j == 0 or not by_login else '']
-                    if by_url:
-                        row.append(record.login_url if j == 0 else '')
-                    row.append(record_uid)
-                    raw_row.append(record_uid)
-                    rec = params.record_cache[record_uid]
-                    owner = params.user if rec.get('shared') is False else ''
-                    if 'shares' in rec:
-                        shares = rec['shares']
-                        if 'user_permissions' in shares:
-                            user_permissions = shares['user_permissions']
-                            un = next((x['username'] for x in user_permissions if x.get('owner')), None)
-                            if un:
-                                owner = un
-                    owners.add(owner)
-                    row.append(owner)
-                    raw_row.append(owner)
-                    if len(owners) == 1 and j != 0:
+                    row_no = not j and i + 1 or None
+                    title = (not j or not by_title) and record.title or ''
+                    login = (not j or not by_login) and record.login or ''
+                    url = record.login_url or ''
+                    url = [url] if by_url else []
+                    owner = shared_record.owner or params.meta_data_cache.get(record_uid).get('owner') and params.user
+                    team_user_type = SharePermissions.SharePermissionsType.TEAM_USER
+                    perms = {k: p for k, p in shared_record.permissions.items()}
+                    keys = list(perms.keys())
+                    keys.sort()
+                    perms = [perms.get(k) for k in keys]
+                    perms = [p for p in perms if team_user_type not in p.types or len(p.types) > 1]
+                    shares = '\n'.join([p.to_name for p in perms if owner != p.to_name])
+                    row = [row_no, title, login] + url + [record_uid, owner, shares]
+
+                    if j != 0:
+                        raw_row = [record.title, record.login] + url + [record_uid, owner, shares]
                         to_remove.add(record_uid)
+                        table_raw.append(raw_row)
                     table.append(row)
-                    table_raw.append(raw_row)
-            dump_report_data(table, headers=headers)
             if consolidate:
-                dup_info = [r for r in table_raw for rec_uid in to_remove if r[2] == rec_uid]
-                dump_removed_data_fn = lambda dupe_data: dump_report_data(dupe_data, headers, row_number=True)
-                remove_duplicates(partial(dump_removed_data_fn, dup_info), to_remove)
+                uid_txt = 'UID'
+                record_uid_index = headers.index(uid_txt) - 1 if uid_txt in headers else 0
+                dup_info = [r for r in table_raw for rec_uid in to_remove if r[record_uid_index] == rec_uid]
+                remove_duplicates(dup_info, headers, to_remove)
+            else:
+                return dump_report_data(table, headers=headers, title='Duplicates Found:')
         else:
-            logging.info('No duplicates found.')
+            logging_fn('No duplicates found')
 
 
 class OneTimeShareCommand(GroupCommand):

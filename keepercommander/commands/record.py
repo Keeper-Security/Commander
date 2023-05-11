@@ -1348,7 +1348,7 @@ class SharedRecordsReport(Command):
             for p in permissions:
                 sources = [t.value for t in p.types]
                 share_from = '\n'.join([shared_from_mapping.get(min(s, max(shared_from_mapping.keys())), 'Other Share') for s in sources])
-                row = [sr.uid, sr.name, share_from, p.get_target(show_team_users), p.get_permissions_text(), folder_paths]
+                row = [sr.uid, sr.name, share_from, p.get_target(show_team_users), p.permissions_text, folder_paths]
                 rows.append(row)
         rows.sort(key=lambda x: x[5], reverse=True)
         fields = ['record_uid', 'title', 'share_to', 'shared_from', 'permissions', 'folder_path']
