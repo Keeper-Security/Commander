@@ -569,15 +569,7 @@ class GroupCommand(CliCommand):
                 logging.warning('Invalid command: %s', verb)
 
         if print_help:
-            logging.info('%s command [--options]', kwargs.get('command'))
-            table = []
-            headers = ['Command', 'Description']
-            for verb in self._commands.keys():
-                row = [verb, self._command_info.get(verb) or '']
-                table.append(row)
-            print('')
-            dump_report_data(table, headers=headers)
-            print('')
+            self.print_help(**kwargs)
 
         if command:
             kwargs['action'] = verb
@@ -589,6 +581,17 @@ class GroupCommand(CliCommand):
                     return
 
             return command.execute_args(params, args, **kwargs)
+
+    def print_help(self, **kwargs):
+        print(f'{kwargs.get("command")} command [--options]')
+        table = []
+        headers = ['Command', 'Description']
+        for verb in self._commands.keys():
+            row = [verb, self._command_info.get(verb) or '']
+            table.append(row)
+        print('')
+        dump_report_data(table, headers=headers)
+        print('')
 
     def validate(self, params):  # type: (KeeperParams) -> None
         pass
