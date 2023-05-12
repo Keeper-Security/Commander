@@ -60,7 +60,7 @@ def get_shared_records(params, record_uids, cache_only=False):
         no_share_users = {uname_lookup.get(u.get('enterprise_user_id')) for u in r_users}
         no_share_teams = {t.get('team_uid') for t in r_teams}
         cached_team_members = get_cached_team_members(no_share_teams, uname_lookup)
-        no_share_team_members = {t for team_uid in no_share_teams for t in cached_team_members.get(team_uid)}
+        no_share_team_members = {t for team_uid in no_share_teams for t in cached_team_members.get(team_uid) or []}
         members = no_share_users.union(no_share_teams).union(no_share_team_members)
         return members
 
