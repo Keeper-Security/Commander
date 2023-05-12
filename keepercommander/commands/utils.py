@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
 
 from . import aliases, commands, enterprise_commands, msp_commands
-from .base import raise_parse_exception, suppress_exit, user_choice, Command, as_boolean
+from .base import raise_parse_exception, suppress_exit, user_choice, Command, GroupCommand, as_boolean
 from .helpers.record import get_record_uids as get_ruids
 from .helpers.timeout import (
     enforce_timeout_range, format_timeout, get_delta_from_timeout_setting, get_timeout_setting_from_delta, parse_timeout
@@ -831,15 +831,23 @@ class HelpCommand(Command):
                     cmd = ali[0]
                 else:
                     cmd = ali
-            parser = None       # type: argparse.ArgumentParser or None
+            parser = None
+
             if cmd in commands:
-                parser = commands[cmd].get_parser()
+                command = commands[cmd]
             elif cmd in enterprise_commands:
-                parser = enterprise_commands[cmd].get_parser()
+                command = enterprise_commands[cmd]
             elif cmd in msp_commands:
-                parser = msp_commands[cmd].get_parser()
-            if parser:
-                parser.print_help()
+                command = msp_commands[cmd]
+            else:
+                command = None
+
+            if isinstance(command, Command):
+                parser = command.get_parser()
+                if parser:
+                    parser.print_help()
+            elif isinstance(command, GroupCommand):
+                command.print_help(command=cmd)
 
     def is_authorised(self):
         return False
