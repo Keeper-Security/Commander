@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.ciphers.modes import CBC, GCM
 from cryptography.hazmat.primitives.hashes import Hash, SHA256, SHA512
 from cryptography.hazmat.primitives.hmac import HMAC
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.padding import PKCS7
 
 _CRYPTO_BACKEND = default_backend()
@@ -173,6 +174,11 @@ def hmac_sha512(key, data):
     hf = HMAC(key, SHA512(), backend=_CRYPTO_BACKEND)
     hf.update(data)
     return hf.finalize()
+
+
+def generate_hkdf_key(info, phrase):
+    hf = HKDF(SHA512(), length=32, salt=b'', info=info.encode('utf-8'), backend=_CRYPTO_BACKEND)
+    return hf.derive(phrase.encode('utf-8'))
 
 
 class _StreamCrypter(io.RawIOBase):

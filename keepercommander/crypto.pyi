@@ -39,6 +39,8 @@ def derive_keyhash_v2(domain: str, password: str, salt: bytes, iterations: int) 
 
 def hmac_sha512(key: bytes, data: bytes) -> bytes: ...
 
+def generate_hkdf_key(info: str, phrase: str) -> bytes: ...
+
 class StreamCrypter:
     key: bytes
     is_gcm: bool

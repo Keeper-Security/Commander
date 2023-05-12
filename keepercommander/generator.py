@@ -15,7 +15,7 @@ import os
 import secrets
 import string
 from secrets import choice
-from typing import Optional, List
+from typing import Optional, List, Iterator
 
 from . import crypto
 
@@ -167,6 +167,9 @@ class CryptoPassphraseGenerator(PasswordGenerator):
                     raise Exception(f'Word list file \"{dice_path}\" is incorrect crypto dictionary.')
         else:
             raise Exception(f'Word list file \"{dice_path}\" not found.')
+
+    def get_vocabulary(self):    # type: () -> Iterator[str]
+        return (x for x in self._vocabulary)
 
     def generate(self):
         key = crypto.get_random_bytes(32)

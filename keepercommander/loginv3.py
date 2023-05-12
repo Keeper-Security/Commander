@@ -1,4 +1,5 @@
 import base64
+import bisect
 import getpass
 import json
 import logging
@@ -6,14 +7,24 @@ import os
 import re
 import webbrowser
 from sys import platform as _platform
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import urlparse, urlencode, urlunparse, parse_qsl
 
 import pyperclip
+from prompt_toolkit.shortcuts import prompt
+from prompt_toolkit.lexers.base import Lexer
+from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.validation import Validator, ValidationError
+from prompt_toolkit.filters import completion_is_selected
+from prompt_toolkit.enums import EditingMode
+from prompt_toolkit.shortcuts import CompleteStyle
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToJson
 
-from . import api, rest_api, utils, crypto, constants
+from . import api, rest_api, utils, crypto, constants, generator
 from .breachwatch import BreachWatch
 from .config_storage import loader
 from .display import bcolors
@@ -135,38 +146,44 @@ class LoginV3Flow:
                 resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
             elif resp.loginState == proto.REQUIRES_AUTH_HASH:
-                if len(resp.salt) == 0:
-                    raise KeeperApiError('account-recovery-required',
-                                         'Your account requires account recovery in order to use a Master Password login method.\n' +
-                                         'Account recovery (Forgot Password) is available in the Web Vault or Enterprise Console.')
-                salt = api.get_correct_salt(resp.salt)
+                if len(resp.salt) > 0:
+                    salt = api.get_correct_salt(resp.salt)
 
-                salt_bytes = salt.salt
-                salt_iterations = salt.iterations
+                    salt_bytes = salt.salt
+                    salt_iterations = salt.iterations
+                    is_entered = False
 
-                while True:
-                    if not params.password and params.sso_login_info:
-                        if 'sso_password' in params.sso_login_info and params.sso_login_info['sso_password']:
-                            params.password = params.sso_login_info['sso_password'].pop()
+                    while True:
+                        if not params.password and params.sso_login_info:
+                            if 'sso_password' in params.sso_login_info and params.sso_login_info['sso_password']:
+                                params.password = params.sso_login_info['sso_password'].pop()
 
-                    CommonHelperMethods.fill_password_with_prompt_if_missing(params)
-                    if not params.password:
-                        return
+                        try:
+                            is_entered = CommonHelperMethods.fill_password_with_prompt_if_missing(params, is_entered)
+                        except NeedAccountRecovery:
+                            LoginV3API.handle_account_recovery(params, resp.encryptedLoginToken)
+                            return
 
-                    params.salt = salt_bytes
-                    params.iterations = salt_iterations
-                    params.auth_verifier = crypto.derive_keyhash_v1(params.password, salt_bytes, salt_iterations)
+                        if not params.password:
+                            return
 
-                    try:
-                        resp = LoginV3API.validateAuthHashMessage(params, resp.encryptedLoginToken)
-                        break
-                    except KeeperApiError as kae:
-                        if kae.result_code == 'auth_failed':
-                            params.password = None
-                            if not params.sso_login_info:
-                                logging.info(kae)
-                        else:
-                            raise kae
+                        params.salt = salt_bytes
+                        params.iterations = salt_iterations
+                        params.auth_verifier = crypto.derive_keyhash_v1(params.password, salt_bytes, salt_iterations)
+
+                        try:
+                            resp = LoginV3API.validateAuthHashMessage(params, resp.encryptedLoginToken)
+                            break
+                        except KeeperApiError as kae:
+                            if kae.result_code == 'auth_failed':
+                                params.password = None
+                                if not params.sso_login_info:
+                                    logging.info(kae)
+                            else:
+                                raise kae
+                else:
+                    LoginV3API.handle_account_recovery(params, resp.encryptedLoginToken)
+                    return
 
                 if LoginV3Flow.post_login_processing(params, resp):
                     return
@@ -221,6 +238,7 @@ class LoginV3Flow:
                 )
                 raise Exception(msg)
             elif resp.sessionTokenType == proto.ACCOUNT_RECOVERY:
+                print('Your Master Password has expired, you are required to change it before you can login.\n')
                 if LoginV3Flow.change_master_password(params):
                     return False
                 else:
@@ -292,47 +310,59 @@ class LoginV3Flow:
         return login_type_message
 
     @staticmethod
-    def change_master_password(params: KeeperParams):
+    def get_default_password_rules(params):  # type: (KeeperParams) -> (List[proto.PasswordRules], int)
+        rq = DomainPasswordRulesRequest()
+        rq.username = params.user
+        rs = api.communicate_rest(params, rq, 'authentication/get_domain_password_rules',
+                                  rs_type=proto.NewUserMinimumParams)
+        rules = []
+        for regexp, description in zip(rs.passwordMatchRegex, rs.passwordMatchDescription):
+            rule = proto.PasswordRules()
+            rule.match = True
+            rule.pattern = regexp
+            rule.description = description
+            rules.append(rule)
+
+        return rules, rs.minimumIterations
+
+    @staticmethod
+    def change_master_password(params, password_rules=None, min_iterations=None):
+        # type: (KeeperParams, Optional[List[proto.PasswordRules]], Optional[int]) -> bool
         """Change the master password when expired
 
         Return True if the master password is successfully changed and False otherwise.
         """
+        if password_rules is None:
+            password_rules, min_iterations = LoginV3Flow.get_default_password_rules(params)
 
-        rules_rq = DomainPasswordRulesRequest()
-        rules_rq.username = params.user
-        rules_rs = api.communicate_rest(params, rules_rq, 'authentication/get_domain_password_rules',
-                                        rs_type=proto.NewUserMinimumParams)
         try:
-            print('Your Master Password has expired, you are required to change it before you can login.')
-            print('')
             while True:
                 print('Please choose a new Master Password.')
-                password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'),
-                                           stream=None).strip()
+                password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'), stream=None).strip()
                 if not password:
                     raise KeyboardInterrupt()
-                password2 = getpass.getpass(prompt='... {0:>24}: '.format('Re-Enter Password'),
-                                            stream=None).strip()
+                password2 = getpass.getpass(prompt='... {0:>24}: '.format('Re-Enter Password'), stream=None).strip()
 
                 if password == password2:
                     failed_rules = []
-                    for i in range(len(rules_rs.passwordMatchRegex)):
-                        rule = rules_rs.passwordMatchRegex[i]
-                        pattern = re.compile(rule)
+                    for rule in password_rules:
+                        pattern = re.compile(rule.pattern)
                         if not re.match(pattern, password):
-                            failed_rules.append(rules_rs.passwordMatchDescription[i])
+                            failed_rules.append(rule.description)
                     if len(failed_rules) == 0:
-                        LoginV3API.change_master_password(params, password)
+                        LoginV3API.change_master_password(params, password, min_iterations)
                         logging.info('Password changed')
                         params.password = password
                         return True
                     else:
                         for description in failed_rules:
-                            logging.warning(f'    {description}')
+                            logging.warning(f'\t{description}')
                 else:
                     logging.warning('Passwords do not match.')
         except KeyboardInterrupt:
             logging.info('Canceled')
+        params.session_token = None
+        params.data_key = None
         return False
 
     @staticmethod
@@ -1005,6 +1035,74 @@ class LoginV3API:
                 raise KeeperApiError(rs['error'], err_msg)
 
     @staticmethod
+    def handle_account_recovery(params, encrypted_login_token_bytes):
+        logging.info('')
+        logging.info('Password Recovery')
+        rq = proto.MasterPasswordRecoveryVerificationRequest()
+        rq.encryptedLoginToken = encrypted_login_token_bytes
+        try:
+            api.communicate_rest(params, rq, 'authentication/master_password_recovery_verification_v2')
+        except KeeperApiError as kae:
+            if kae.result_code != 'bad_request' and not kae.message.startswith('Email has been sent.'):
+                raise kae
+
+        logging.info('Please check your email and enter the verification code below:')
+        verification_code = input('Verification Code: ')
+        if not verification_code:
+            return
+
+        rq = proto.GetSecurityQuestionV3Request()
+        rq.encryptedLoginToken = encrypted_login_token_bytes
+        rq.verificationCode = verification_code
+        rs = api.communicate_rest(params, rq, 'authentication/account_recovery_verify_code',
+                                  rs_type=proto.AccountRecoveryVerifyCodeResponse)
+
+        backup_type = rs.backupKeyType
+
+        if backup_type == proto.BKT_SEC_ANSWER:
+            print(f'Security Question: {rs.securityQuestion}')
+            answer = getpass.getpass(prompt='Answer: ', stream=None)
+            if not answer:
+                return
+            recovery_phrase = answer.lower()
+            auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
+        elif backup_type == proto.BKT_PASSPHRASE_HASH:
+            p = PassphrasePrompt()
+            if os.isatty(0):
+                phrase = prompt('Recovery Phrase: ', lexer=p, completer=p, key_bindings=p.kb, validator=p,
+                                validate_while_typing=False, editing_mode=EditingMode.VI, wrap_lines=True,
+                                complete_style=CompleteStyle.MULTI_COLUMN, complete_while_typing=True,
+                                bottom_toolbar=p.get_word_count_text)
+            else:
+                phrase = input('Recovery Phrase: ')
+            if not phrase:
+                return
+            words = [x.strip() for x in phrase.lower().split(' ') if x]
+            if len(words) != 24:
+                raise Exception('Recovery phrase should contain 24 words')
+            recovery_phrase = ' '.join(words)
+            auth_hash = crypto.generate_hkdf_key('recovery_auth_token', phrase)
+        else:
+            logging.info('Unsupported account recovery type')
+            return
+
+        rq = proto.GetDataKeyBackupV3Request()
+        rq.encryptedLoginToken = encrypted_login_token_bytes
+        rq.verificationCode = verification_code
+        rq.securityAnswerHash = auth_hash
+        rs = api.communicate_rest(params, rq, 'authentication/get_data_key_backup_v3', rs_type=proto.GetDataKeyBackupV3Response)
+        if backup_type == proto.BKT_SEC_ANSWER:
+            params.data_key = utils.decrypt_encryption_params(rs.dataKeyBackup, recovery_phrase)
+        else:
+            encryption_key = crypto.generate_hkdf_key('recovery_key_aes_gcm_256', recovery_phrase)
+            params.data_key = crypto.decrypt_aes_v2(rs.dataKeyBackup, encryption_key)
+        params.session_token = utils.base64_url_encode(rs.encryptedSessionToken)
+
+        success = LoginV3Flow.change_master_password(params, list(rs.passwordRules), rs.minimumPbkdf2Iterations)
+        if success:
+            LoginV3Flow.login(params)
+
+    @staticmethod
     def validateAuthHashMessage(params: KeeperParams, encrypted_login_token_bytes):
 
         rq = proto.ValidateAuthHashRequest()
@@ -1084,8 +1182,8 @@ class LoginV3API:
         api.communicate_rest(params, rq, 'authentication/update_device')
 
     @staticmethod
-    def change_master_password(params, password):  # type: (KeeperParams, str) -> None
-        iterations = max(params.iterations, constants.PBKDF2_ITERATIONS)
+    def change_master_password(params, password, iterations=0):  # type: (KeeperParams, str, int) -> None
+        iterations = max(iterations, params.iterations, constants.PBKDF2_ITERATIONS)
         auth_salt = os.urandom(16)
         auth_verifier = utils.create_auth_verifier(password, auth_salt, iterations)
         data_salt = os.urandom(16)
@@ -1233,18 +1331,143 @@ class CommonHelperMethods:
         return num_str.isdigit()
 
     @staticmethod
-    def fill_password_with_prompt_if_missing(params: KeeperParams):
+    def fill_password_with_prompt_if_missing(params: KeeperParams, ask_for_recovery=False) -> bool:
         while not params.user:
             params.user = getpass.getpass(prompt='User(Email): ', stream=None)
 
         if not params.password:
-            logging.info('\nEnter password for {0}'.format(params.user))
+            logging.info('')
+            if ask_for_recovery:
+                logging.info('Forgot password? Type "recover"<Enter>')
+            logging.info('Enter password for {0}'.format(params.user))
             try:
-                params.password = getpass.getpass(prompt='Password: ', stream=None)
+                password = getpass.getpass(prompt='Password: ', stream=None)
+                if password == 'recover':
+                    raise NeedAccountRecovery()
+                params.password = password
+                return True
             except KeyboardInterrupt:
                 print('')
             except EOFError:
-                return 0
+                print('')
+        return False
+
+
+class PassphrasePrompt(AutoSuggest, Completer, Lexer, Validator):
+    def __init__(self):
+        gen = generator.CryptoPassphraseGenerator()
+        self.words = list(gen.get_vocabulary())
+        self.words.sort()
+        self.word_count = 0
+        self.kb = KeyBindings()
+        decorator = self.kb.add('enter', filter=completion_is_selected)
+        decorator(PassphrasePrompt.hide_completion_on_enter)
+
+    @staticmethod
+    def hide_completion_on_enter(event):
+        event.current_buffer.complete_state = None
+        b = event.app.current_buffer
+        b.complete_state = None
+
+    def get_word_count_text(self):
+        left = 24 - self.word_count
+        if left > 0:
+            return FormattedText([('', f'{left} left')])
+        elif left == 0:
+            return FormattedText([('ansigreen', 'OK')])
+        else:
+            return FormattedText([('ansired', 'Extra')])
+
+    def get_word_index(self, word):   # type: (str) -> int
+        idx = bisect.bisect_left(self.words, word)
+        if 0 <= idx < len(self.words) and self.words[idx] == word:
+            return idx
+        return -1
+
+    def lex_document(self, document):
+        lines = document.lines
+
+        def highlight(lineno):
+            line = lines[lineno]
+            tokens = []
+            pos = 0
+            word_count = 0
+            while pos < len(line):
+                if line[pos].isspace():
+                    tokens.append(('', line[pos]))
+                    pos += 1
+                else:
+                    pos_space = line.find(' ', pos)
+                    if pos_space < 0:
+                        rest = line[pos:]
+                        if rest:
+                            word_count += 1
+                        tokens.append(('', rest))
+                        break
+                    else:
+                        word = line[pos:pos_space]
+                        idx = self.get_word_index(word)
+                        is_valid = 0 <= idx < len(self.words)
+                        tokens.append(('ansigreen' if is_valid else 'ansired bold', word))
+                        word_count += 1
+                    pos = pos_space
+            self.word_count = word_count
+            return tokens
+        return highlight
+
+    def get_suggestion(self, buffer, document):
+        if not document.is_cursor_at_the_end:
+            return
+        text = document.text
+        if not text:
+            return
+        if text[-1].isspace():
+            return
+        idx = text.rfind(' ')
+        if idx == -1:
+            word = text
+        else:
+            word = text[idx+1:]
+        if len(word) <= 2:
+            return
+        idx = bisect.bisect_left(self.words, word)
+        if idx < len(self.words):
+            if self.words[idx].startswith(word):
+                if idx < len(self.words) - 1:
+                    if self.words[idx+1].startswith(word):
+                        return
+                return Suggestion(self.words[idx][len(word):] + ' ')
+
+    def get_completions(self, document, complete_event):
+        if not document.is_cursor_at_the_end:
+            return
+
+        text = document.text
+        if not text:
+            return
+        if text[-1].isspace():
+            return
+        idx = text.rfind(' ')
+        if idx == -1:
+            word = text
+        else:
+            word = text[idx+1:]
+        if len(word) < 2:
+            return
+
+        idx = bisect.bisect_left(self.words, word)
+        while idx < len(self.words) and self.words[idx].startswith(word):
+            yield Completion(self.words[idx], display=self.words[idx] + ' ', start_position=-len(word))
+            idx += 1
+
+    def validate(self, document):
+        if self.word_count != 24:
+            error = f'Expected 24 passphrase words. Got {self.word_count}. Press Ctrl-C to cancel current input.'
+            raise ValidationError(cursor_position=document.cursor_position, message=error)
+
+
+class NeedAccountRecovery(Exception):
+    pass
 
 
 class InvalidDeviceToken(Exception):
