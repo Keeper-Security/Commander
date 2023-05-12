@@ -129,7 +129,7 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.')
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
+action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update', 'blocked']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
                                   help='user status to report on')
@@ -1784,6 +1784,12 @@ class ActionReportCommand(EnterpriseCommand):
             min_dt = now_dt - datetime.timedelta(days=days_since)
             start = int(min_dt.timestamp())
             end = int(now_dt.timestamp())
+
+            if 'accept_transfer' in event_types:
+                get_expiration_ts = lambda u: u.get('account_share_expiration', 0) / 1000
+                users = [user for user in candidates if get_expiration_ts(user) < start]
+                return users
+
             period = {'min': start, 'max': end}
             included = [candidate['username'] for candidate in candidates]
             query_filter = {
@@ -1860,7 +1866,8 @@ class ActionReportCommand(EnterpriseCommand):
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
                 'invited':      default_allowed,
-                'no-security-question-update': default_allowed
+                'no-security-question-update': default_allowed,
+                'blocked':      {*default_allowed, 'delete'}
             }
 
             actions_allowed = status_actions.get(target_status)
@@ -1888,21 +1895,26 @@ class ActionReportCommand(EnterpriseCommand):
             return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
         candidates = params.enterprise['users']
-        active = [user for user in candidates if user['status'] == 'active']
-        locked = [user for user in active if user['lock']]
-        enabled = [user for user in active if user not in locked]
-        invited = [user for user in candidates if user.get('status') == 'invited']
+        from keepercommander.commands.enterprise import get_user_status_dict
+        get_status_fn = lambda u: get_user_status_dict(u).get('acct_status')
+        get_xfer_status_fn = lambda u: get_user_status_dict(u).get('acct_transfer_status')
+        active = [u for u in candidates if get_status_fn(u) == 'Active']
+        locked = [u for u in candidates if get_status_fn(u) == 'Locked']
+        invited = [u for u in candidates if get_status_fn(u) == 'Invited']
+        blocked = [u for u in candidates if get_xfer_status_fn(u) == 'Blocked']
+
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
         if days is None:
             days = 90 if target_status == 'locked' else 30
 
         args_by_status = {
-            'no-logon': [enabled, days, ['login']],
-            'no-update': [enabled, days, ['record_add', 'record_update']],
+            'no-logon': [active, days, ['login']],
+            'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
             'invited': [invited, days, ['send_invitation'], 'email'],
-            'no-security-question-update': [enabled, days, ['change_security_question']]
+            'no-security-question-update': [active, days, ['change_security_question']],
+            'blocked': [blocked, days, ['accept_transfer']]
         }
         args = args_by_status.get(target_status)
 
