@@ -254,7 +254,7 @@ class ShareFolderCommand(Command):
             for u in (kwargs.get('user') or []):
                 if u == '*':
                     default_account = True
-                elif u == '@current':
+                elif u in ('@existing', '@current'):
                     all_users = True
                 else:
                     em = re.match(constants.EMAIL_PATTERN, u)
@@ -280,7 +280,7 @@ class ShareFolderCommand(Command):
             for r in records:
                 if r == '*':
                     default_record = True
-                elif r == '@current':
+                elif r in ('@existing', '@current'):
                     all_records = True
                 else:
                     r_uids = get_record_uids(params, r)
