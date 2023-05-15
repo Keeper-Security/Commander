@@ -468,12 +468,13 @@ class ShareFolderCommand(Command):
             rs = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3',
                                       rs_type=folder_pb2.SharedFolderUpdateV3Response)
             params.sync_data = True
+            team_cache = params.available_team_cache or []
             for attr in ('sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus', 'sharedFolderRemoveTeamStatus'):
                 if hasattr(rs, attr):
                     statuses = getattr(rs, attr)
                     for t in statuses:
                         team_uid = utils.base64_url_encode(t.teamUid)
-                        team = next((x for x in params.available_team_cache if x.get('team_uid') == team_uid), None)
+                        team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
                         if team:
                             status = t.status
                             if status == 'success':
