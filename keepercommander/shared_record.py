@@ -27,7 +27,7 @@ def get_shared_records(params, record_uids, cache_only=False):
         if not params.enterprise:
             return members
 
-        team_users = params.enterprise.get('team_users')
+        team_users = params.enterprise.get('team_users') or []
         team_users = [tu for tu in team_users if tu.get('user_type') != 2 and tu.get('team_uid') in t_uids]
 
         for tu in team_users:
