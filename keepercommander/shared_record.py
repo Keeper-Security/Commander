@@ -41,7 +41,6 @@ def get_shared_records(params, record_uids, cache_only=False):
         return members
 
     def fetch_sf_admins():
-        # todo: check if 'share_admins' data is already in params.shared_folder_cache (don't call KA endpoint if so)
         sf_uids = [uid for uid in params.shared_folder_cache]
         return {sf_uid: api.get_share_admins_for_shared_folder(params, sf_uid) for sf_uid in sf_uids}
 
