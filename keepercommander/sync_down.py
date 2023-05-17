@@ -19,6 +19,7 @@ from . import api, utils, crypto
 from .display import bcolors
 from .params import KeeperParams
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
+from .proto.SyncDown_pb2 import BreachWatchRecord
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode
 
 
@@ -62,6 +63,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     params.available_team_cache = None
 
+    resp_bw_recs = []   # type: List[BreachWatchRecord]
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
     full_sync = False
@@ -513,33 +515,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.pending_share_requests.update((x.username for x in response.shareInvitations))
 
         if len(response.breachWatchRecords) > 0:
-            if not params.breach_watch_records:
-                params.breach_watch_records = {}
-            for p_bwr in response.breachWatchRecords:
-                record_uid = utils.base64_url_encode(p_bwr.recordUid)
-                if not record_uid:
-                    continue
-                record = params.record_cache.get(record_uid)
-                if not record:
-                    continue
-                if 'record_key_unencrypted' not in record:
-                    continue
-                try:
-                    bwr = {
-                        'record_uid': utils.base64_url_encode(p_bwr.recordUid),
-                        'data': utils.base64_url_encode(p_bwr.data),
-                        'type': 'RECORD' if p_bwr.type == breachwatch_pb2.RECORD else 'ALTERNATE_PASSWORD',
-                        'revision': p_bwr.revision,
-                        'scanned_by_account_uid': utils.base64_url_encode(p_bwr.scannedByAccountUid or params.account_uid_bytes)
-                    }
-                    if len(p_bwr.data) > 0:
-                        data = crypto.decrypt_aes_v2(p_bwr.data, record['record_key_unencrypted'])
-                        data_obj = client_pb2.BreachWatchData()
-                        data_obj.ParseFromString(data)
-                        bwr['data_unencrypted'] = google.protobuf.json_format.MessageToDict(data_obj)
-                    params.breach_watch_records[record_uid] = bwr
-                except Exception as e:
-                    logging.debug('Decrypt bw data: %s', e)
+            resp_bw_recs.extend(response.breachWatchRecords)
 
         if len(response.removedUsers) > 0:
             for a_uid in response.removedUsers:
@@ -874,6 +850,34 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     logging.debug('Error decrypting shared folder folder %s data: %s', sf['folder_uid'], e)
 
     prepare_folder_tree(params)
+
+    # Populate BreachWatch records data
+    params.breach_watch_records = params.breach_watch_records or {}
+    for p_bwr in resp_bw_recs:
+        record_uid = utils.base64_url_encode(p_bwr.recordUid)
+        if not record_uid:
+            continue
+        record = params.record_cache.get(record_uid)
+        if not record:
+            continue
+        if 'record_key_unencrypted' not in record:
+            continue
+        try:
+            bwr = {
+                'record_uid': utils.base64_url_encode(p_bwr.recordUid),
+                'data': utils.base64_url_encode(p_bwr.data),
+                'type': 'RECORD' if p_bwr.type == breachwatch_pb2.RECORD else 'ALTERNATE_PASSWORD',
+                'revision': p_bwr.revision,
+                'scanned_by_account_uid': utils.base64_url_encode(p_bwr.scannedByAccountUid or params.account_uid_bytes)
+            }
+            if len(p_bwr.data) > 0:
+                data = crypto.decrypt_aes_v2(p_bwr.data, record['record_key_unencrypted'])
+                data_obj = client_pb2.BreachWatchData()
+                data_obj.ParseFromString(data)
+                bwr['data_unencrypted'] = google.protobuf.json_format.MessageToDict(data_obj)
+            params.breach_watch_records[record_uid] = bwr
+        except Exception as e:
+            logging.debug('Decrypt bw data: %s', e)
 
     if full_sync or record_types:
         # Record V3 types cache population
