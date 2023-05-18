@@ -70,10 +70,10 @@ def get_matching_records_from_folder(params, folder_uid, regex, url_regex, attac
     if folder_uid in params.subfolder_record_cache:
         for uid in params.subfolder_record_cache[folder_uid]:
             if not ignore_owner:
-                if uid not in params.meta_data_cache:
+                if uid not in params.record_owner_cache:
                     continue
-                md = params.meta_data_cache[uid]
-                if not md.get('owner', False):
+                own = params.record_owner_cache[uid]
+                if not own.owner is True:
                     continue
             if uid not in params.record_cache:
                 continue

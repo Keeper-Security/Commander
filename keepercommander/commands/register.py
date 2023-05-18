@@ -1762,7 +1762,9 @@ class FindDuplicateCommand(Command):
                     url = urllib.parse.urlparse(url.encode()).hostname
                     url = url.decode()[:30] if url else ''
                     url = [url] if by_url else []
-                    owner = shared_record.owner or params.meta_data_cache.get(record_uid).get('owner') and params.user
+                    owner = shared_record.owner
+                    if not owner:
+                        owner = record_uid in params.record_owner_cache and params.record_owner_cache[record_uid].owner
                     team_user_type = SharePermissions.SharePermissionsType.TEAM_USER
                     perms = {k: p for k, p in shared_record.permissions.items()}
                     keys = list(perms.keys())
