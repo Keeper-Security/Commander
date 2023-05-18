@@ -14,11 +14,11 @@ import importlib
 import json
 import logging
 import pkgutil
-from typing import Tuple, Union, List
+from typing import Tuple, Union, List, Optional
 
 from urllib.parse import urlparse
 from ..params import KeeperParams
-from .. import config_storage
+from .. import config_storage, utils
 
 CONFIG_STORAGE_URL = 'config_storage'
 PROTECTED_PROPERTIES = [
@@ -28,6 +28,7 @@ PROTECTED_READONLY_PROPERTIES = ['password']
 EDITABLE_PROPERTIES = ['proxy']
 BOOL_PROPERTIES = ['debug', 'batch_mode', 'unmask_all']
 INT_PROPERTIES = ['timedelay', 'logout_timer']
+ENCRYPTED_DATA = 'encrypted_data'
 
 
 class SecureStorageException(Exception):
@@ -36,11 +37,11 @@ class SecureStorageException(Exception):
 
 class SecureStorageBase(abc.ABC):
     @abc.abstractmethod
-    def load_configuration(self, url):   # type: (str) -> dict
+    def load_configuration(self, url, encrypted_data=None):   # type: (str, Optional[bytes]) -> dict
         pass
 
     @abc.abstractmethod
-    def store_configuration(self, url, configuration):   # type: (str, dict) -> None
+    def store_configuration(self, url, configuration):   # type: (str, dict) -> Optional[bytes]
         pass
 
 
@@ -110,7 +111,9 @@ def store_config_properties(params):
                     conf_protected[config_name] = value
                 del config_json[config_name]
 
-        storage.store_configuration(url, conf_protected)
+        encrypted_data = storage.store_configuration(url, conf_protected)
+        if isinstance(encrypted_data, bytes):
+            config_json[ENCRYPTED_DATA] = utils.base64_url_encode(encrypted_data)
 
     with open(params.config_filename, 'w') as fd:
         json.dump(config_json, fd, ensure_ascii=False, indent=2)
@@ -126,7 +129,12 @@ def load_config_properties(params):
     if CONFIG_STORAGE_URL in params.config:
         url = params.config[CONFIG_STORAGE_URL]
         storage = _get_plugin(url)
-        conf = storage.load_configuration(url)
+        encrypted_data = None
+        if ENCRYPTED_DATA in params.config:
+            ed = params.config[ENCRYPTED_DATA]
+            if isinstance(ed, str):
+                encrypted_data = utils.base64_url_decode(ed)
+        conf = storage.load_configuration(url, encrypted_data)
         if isinstance(conf, dict):
             params.config.update(conf)
 
