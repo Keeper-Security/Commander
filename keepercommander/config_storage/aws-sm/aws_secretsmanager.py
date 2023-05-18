@@ -13,16 +13,20 @@ logging.getLogger('botocore').setLevel(logging.WARNING)
 
 
 class SecretsManagerStorage(SecureStorageBase):
-    def load_configuration(self, url):    # type: (str) -> dict
+    @staticmethod
+    def get_endpoint(url):    # type: (str) -> Tuple[str, str]
         res = urlparse(url)
-        if res.scheme != 'aws':
-            raise ValueError(f'Invalid URL scheme. "aws" is expected.')
+        if res.scheme != 'aws-sm':
+            raise ValueError(f'Invalid URL scheme. "aws-sm" is expected.')
 
-        secret_name = res.path
-        if secret_name.startswith('/'):
-            secret_name = secret_name[1:]
+        secret_key = res.path
+        if secret_key.startswith('/'):
+            secret_key = secret_key[1:]
         region_name = res.netloc
+        return region_name, secret_key
 
+    def load_configuration(self, url, storage_value=None):
+        region_name, secret_name = SecretsManagerStorage.get_endpoint(url)
         try:
             session = boto3.session.Session()
             client = session.client(service_name='secretsmanager', region_name=region_name)
@@ -33,16 +37,8 @@ class SecretsManagerStorage(SecureStorageBase):
         except ClientError as e:
             raise SecureStorageException(str(e))
 
-    def store_configuration(self, url, configuration):  # type: (str, dict) -> None
-        res = urlparse(url)
-        if res.scheme != 'aws':
-            raise ValueError(f'Invalid URL scheme. "aws" is expected.')
-
-        secret_name = res.path
-        if secret_name.startswith('/'):
-            secret_name = secret_name[1:]
-        region_name = res.netloc
-
+    def store_configuration(self, url, configuration):
+        region_name, secret_name = SecretsManagerStorage.get_endpoint(url)
         try:
             session = boto3.session.Session()
             client = session.client(service_name='secretsmanager', region_name=region_name)
