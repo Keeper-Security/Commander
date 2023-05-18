@@ -859,9 +859,9 @@ class DeleteCorruptedCommand(Command):
         for record_uid in params.record_cache:
             record = params.record_cache[record_uid]
             if not record.get('data_unencrypted'):
-                if record_uid in params.meta_data_cache:
-                    meta_data = params.meta_data_cache[record_uid]
-                    if meta_data.get('owner'):
+                if record_uid in params.record_owner_cache:
+                    own = params.record_owner_cache[record_uid]
+                    if own.owner is True:
                         bad_records.add(record_uid)
         if len(bad_records) > 0:
             uc = user_choice('Do you want to delete {0} corrupted records?'.format(len(bad_records)), 'yn', default='n')

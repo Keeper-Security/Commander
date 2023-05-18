@@ -175,10 +175,9 @@ class BreachWatch(object):
 
         if params.enterprise_ec_key:
             api.sync_down(params)
-            rec_uids = params.record_cache.keys()
-            md_cache = params.meta_data_cache
-            owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
-            owned_recs = [api.get_record(params, ruid) for ruid in owned]
+            owned = [uid for uid, own in params.record_owner_cache.items()
+                              if own.owner is True and uid in params.record_cache]
+            owned_recs = [x for x in (api.get_record(params, ruid) for ruid in owned) if x]
             total_reused = get_reused_pw_count(owned_recs)
             save_rq = ReusedPasswordsRequest()
             save_rq.count = total_reused
@@ -269,10 +268,9 @@ class BreachWatch(object):
             if not record.password:
                 continue
             if owned:
-                if record_uid not in params.meta_data_cache:
+                if record_uid not in params.record_owner_cache:
                     continue
-                meta_data = params.meta_data_cache[record_uid]
-                if not meta_data.get('owner'):
+                if not params.record_owner_cache[record_uid].owner is True:
                     continue
             password_dict = None
             if params.breach_watch_records:

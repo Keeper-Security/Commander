@@ -1,6 +1,6 @@
 from unittest import TestCase, mock
 
-from data_vault import VaultEnvironment, get_connected_params, get_sync_down_response, get_synced_params
+from data_vault import VaultEnvironment, get_synced_params
 from keepercommander.api import sync_down, crypto, utils
 from keepercommander.proto import SyncDown_pb2
 
@@ -20,7 +20,7 @@ class TestSyncDown(TestCase):
         params = get_synced_params()
         len_before = len(params.record_cache)
 
-        records_to_delete = [x['record_uid'] for x in params.meta_data_cache.values() if x['owner']]
+        records_to_delete = [x for x, md in params.meta_data_cache.items() if md.get('owner') is True]
 
         with mock.patch('keepercommander.api.communicate_rest') as mock_comm:
             rs = SyncDown_pb2.SyncDownResponse()
