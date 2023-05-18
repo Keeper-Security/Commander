@@ -270,6 +270,8 @@ scim_parser.exit = suppress_exit
 
 security_audit_report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
 security_audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
+node_filter_help = 'name(s) or UID(s) of node(s) to filter results of the report by'
+security_audit_report_parser.add_argument('-n', '--node', action='append', help=node_filter_help)
 security_audit_report_parser.add_argument('-b', '--breachwatch', dest='breachwatch', action='store_true', help='display BreachWatch report')
 save_help = 'save updated security audit reports'
 security_audit_report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
@@ -3023,6 +3025,15 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
+        def get_node_id(name_or_id):
+            nodes = params.enterprise.get('nodes') or []
+            matches = [n for n in nodes if name_or_id in (str(n.get('node_id')), n.get('data', {}).get('displayname'))]
+            node = next(iter(matches)) if matches else {}
+            return node.get('node_id')
+
+        nodes = kwargs.get('node') or []
+        node_ids = [get_node_id(n) for n in nodes]
+        node_ids = [n for n in node_ids if n]
         score_type = kwargs.get('score_type', 'default')
         save_report = kwargs.get('save')
         show_updated = save_report or kwargs.get('show_updated')
@@ -3042,9 +3053,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
             for sr in security_report_data_rs.securityReport:
                 user_info = self.resolve_user_info(params, sr.enterpriseUserId)
+                node_id = user_info.get('node_id', 0)
+                if node_ids and node_id not in node_ids:
+                    continue
                 user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
                 email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
-                node_id = user_info.get('node_id', 0)
                 node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
                 twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
                 row = {
