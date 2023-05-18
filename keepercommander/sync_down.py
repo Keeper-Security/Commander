@@ -17,7 +17,7 @@ import google
 
 from . import api, utils, crypto
 from .display import bcolors
-from .params import KeeperParams
+from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
 from .proto.SyncDown_pb2 import BreachWatchRecord
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode
@@ -63,7 +63,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     params.available_team_cache = None
 
-    resp_bw_recs = []   # type: List[BreachWatchRecord]
+    resp_bw_recs = []       # type: List[BreachWatchRecord]
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
     full_sync = False
@@ -84,6 +84,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.subfolder_cache.clear()
             params.subfolder_record_cache.clear()
             params.record_history.clear()
+            params.record_owner_cache.clear()
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
@@ -215,7 +216,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     'record_key_type': rmd.recordKeyType,
                     'owner_account_uid': utils.base64_url_encode(rmd.ownerAccountUid or params.account_uid_bytes)
                 }  # type: dict
-                params.meta_data_cache[meta_data['record_uid']] = meta_data
+                record_uid = meta_data['record_uid']
+                params.meta_data_cache[record_uid] = meta_data
+                params.record_owner_cache[record_uid] = RecordOwner(meta_data['owner'], meta_data['owner_account_uid'])
 
         if len(response.records) > 0:
             logging.debug('Processing records')
@@ -392,13 +395,15 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     if 'records' not in sf:
                         sf['records'] = []
                     record_uid = utils.base64_url_encode(sfr.recordUid)
-                    sf_record = next((x for x in sf['records'] if x['record_uid'] == record_uid), None)
+                    sf_record = next((x for x in sf['records'] if x['record_uid'] == record_uid), None)  # type: Dict
                     if sf_record is None:
                         sf_record = {
                             'record_uid': record_uid
                         }
                         sf['records'].append(sf_record)
                     assign_shared_folder_record(sfr, sf_record)
+                    params.record_owner_cache[record_uid] = \
+                        RecordOwner(sf_record['owner'], sf_record['owner_account_uid'])
 
         if len(response.removedSharedFolderRecords) > 0:
             for rsfr in response.removedSharedFolderRecords:

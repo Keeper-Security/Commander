@@ -27,6 +27,11 @@ class PublicKeys(NamedTuple):
     aes: bytes = b''
 
 
+class RecordOwner(NamedTuple):
+    owner: bool
+    account_uid: str
+
+
 class RestApiContext:
     def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US'):
         self.server_base = server
@@ -114,7 +119,8 @@ class KeeperParams:
         self.shared_folder_cache = {}
         self.team_cache = {}
         self.record_link_cache = {}
-        self.key_cache = {}    # type: Dict[str, PublicKeys]
+        self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
+        self.key_cache = {}            # type: Dict[str, PublicKeys]
         self.available_team_cache = None
         self.user_cache = {}
         self.subfolder_cache = {}
@@ -178,6 +184,7 @@ class KeeperParams:
         self.shared_folder_cache.clear()
         self.team_cache.clear()
         self.record_link_cache.clear()
+        self.record_owner_cache.clear()
         self.available_team_cache = None
         self.key_cache.clear()
         self.subfolder_cache .clear()

@@ -37,16 +37,20 @@ def get_params_from_config(config_filename, launched_with_shortcut=False):
             logging.debug(f'Setting config file from KEEPER_CONFIG_FILE env variable {path}')
         return path
 
-    def get_shortcut_config():
-        path = None
-        if launched_with_shortcut:
-            launcher_keeper_folder_path = Path.home().joinpath('.keeper')
-            launcher_keeper_folder_path.mkdir(parents=True, exist_ok=True)
-            path = str(launcher_keeper_folder_path.joinpath('config.json'))
-        return path
+    def get_default_path():
+        default_path = Path.home().joinpath('.keeper')
+        default_path.mkdir(parents=True, exist_ok=True)
+        return default_path
 
-    config_filename = config_filename or get_env_config() or get_shortcut_config() or 'config.json'
-    config_filename = os.path.expanduser(config_filename)
+    config_filename = config_filename or get_env_config()
+    if not config_filename:
+        config_filename = 'config.json'
+        if launched_with_shortcut or not os.path.isfile(config_filename):
+            config_filename = os.path.join(get_default_path(), config_filename)
+        else:
+            config_filename = os.path.join(os.getcwd(), config_filename)
+    else:
+        config_filename = os.path.expanduser(config_filename)
 
     params = KeeperParams()
     params.config_filename = config_filename
@@ -128,16 +132,16 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
 def main(from_package=False):
     logging.basicConfig(format='%(message)s')
 
-    set_working_dir()
-
     errno = 0
 
     if from_package:
         sys.excepthook = handle_exceptions
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
-
     opts, flags = parser.parse_known_args(sys.argv[1:])
+    if opts.launched_with_shortcut:
+        os.chdir(Path.home())
+
     params = get_params_from_config(opts.config, opts.launched_with_shortcut)
 
     if opts.batch_mode:
@@ -211,14 +215,6 @@ def main(from_package=False):
         errno = cli.loop(params)
 
     sys.exit(errno)
-
-
-def set_working_dir():
-
-    opts, flags = parser.parse_known_args(sys.argv[1:])
-
-    if opts.launched_with_shortcut:
-        os.chdir(Path.home())
 
 
 if __name__ == '__main__':

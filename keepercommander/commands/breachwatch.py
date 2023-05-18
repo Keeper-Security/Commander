@@ -154,10 +154,8 @@ class BreachWatchResetCommand(Command):
         api.sync_down(params)
         params.sync_data = True
 
-        rec_uids = params.record_cache.keys()
-        md_cache = params.meta_data_cache
-        owned = [r for r in rec_uids if md_cache.get(r, {}).get('owner')]
-
+        owned = [uid for uid, own in params.record_owner_cache.items()
+                 if own.owner is True and uid in params.record_cache]
         for rec_uid in owned:
             rescan_and_reset_security_data(rec_uid)
 
