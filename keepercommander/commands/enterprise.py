@@ -1296,7 +1296,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
             for email in emails:
                 email = email.lower()
                 if email == '@all':
-                    if kwargs.get('unlock') or kwargs.get('extend'):
+                    if kwargs.get('unlock') or kwargs.get('extend') or kwargs.get('add_role'):
                         now = round(time.time() * 1000)
                         for u in params.enterprise['users'] if 'users' in params.enterprise else []:
                             if kwargs.get('unlock') and u.get('lock', 0) == 1:
@@ -1305,6 +1305,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                 if 'account_share_expiration' in u:
                                     if 0 < u['account_share_expiration'] < now:
                                         matched_users.append(u)
+                            if kwargs.get('add_role'):
+                                matched_users.append(u)
                     else:
                         logging.warning('@all pseudo-user can be used with \'unlock\' and \'extend\' actions only.')
                 else:
