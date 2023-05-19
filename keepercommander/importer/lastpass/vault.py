@@ -76,16 +76,16 @@ class Vault(object):
         key = encryption_key
         rsa_private_key = None   # type: Optional[bytes]
         shared_folder = None
-
+        last_account = None
         for i in chunks:
             if i.id == b'ACCT':
                 try:
-                    account = parser.parse_ACCT(i, key, shared_folder)
+                    last_account = parser.parse_ACCT(i, key, shared_folder)
                 except Exception as e:
                     logging.debug('Account parse error: %s', e)
-                    account = None
-                if account:
-                    accounts.append(account)
+                    last_account = None
+                if last_account:
+                    accounts.append(last_account)
             elif i.id == b'PRIK':
                 rsa_private_key = parser.parse_PRIK(i, encryption_key)
             elif i.id == b'SHAR':
@@ -101,6 +101,16 @@ class Vault(object):
                 attachment = parser.parse_ATTA(i, accounts)
                 if attachment:
                     self.attachments.append(attachment)
+            elif i.id in (b'ACFL', b'ACOF'):
+                if last_account:
+                    try:
+                        cf = parser.parse_ACFL(i, key)
+                        if cf:
+                            last_account.custom_fields.append(cf)
+                    except Exception as e:
+                        logging.debug('Error parsing custom field ID: %s: %s', i.id.decode(), e)
+            else:
+                pass
 
         return accounts
 

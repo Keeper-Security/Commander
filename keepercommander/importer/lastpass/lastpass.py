@@ -213,6 +213,21 @@ class LastPassImporter(BaseImporter):
                 )
             if isinstance(account.last_modified, int) and account.last_modified > 0:
                 record.last_modified = account.last_modified
+            if isinstance(account.custom_fields, list):
+                for cf in account.custom_fields:
+                    field_label = cf.name
+                    if cf.type == 'password':
+                        field_type = 'secret'
+                    elif cf.type == 'email':
+                        field_type = 'email'
+                    elif cf.type == 'textarea':
+                        field_type = 'multiline'
+                    elif cf.type == 'tel':
+                        field_type = 'phone'
+                    else:
+                        field_type = 'text'
+                    cf = RecordField(type=field_type, label=field_label, value=cf.value)
+                    record.fields.append(cf)
             if len(account.attachments) > 0:
                 if record.attachments is None:
                     record.attachments = []

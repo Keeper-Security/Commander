@@ -5,7 +5,7 @@ import re
 import struct
 from base64 import b64decode
 from io import BytesIO
-from typing import Any
+from typing import Any, Optional, Tuple
 from urllib.parse import urlunsplit, urlencode
 
 from cryptography.hazmat.backends import default_backend
@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.ciphers.algorithms import AES
 from cryptography.hazmat.primitives.ciphers.modes import CBC, ECB
 from cryptography.hazmat.primitives.hashes import SHA1
 
-from .account import Account
+from .account import Account, CustomField
 from .attachment import LastpassAttachment
 from .chunk import Chunk
 
@@ -181,6 +181,19 @@ def parse_ATTA(chunk, accounts):
             parent.attachments.append(attachment)
 
     return attachment
+
+
+def parse_ACFL(chunk, encryption_key):
+    io = BytesIO(chunk.payload)
+    field_name = read_item(io).decode('utf-8')
+    field_type = read_item(io).decode('utf-8')
+    if field_type in {'email', 'tel', 'text', 'password', 'textarea'}:
+        field_value = decode_aes256_plain_auto(read_item(io), encryption_key)
+    else:
+        field_value = read_item(io)
+    field_value = field_value.decode('utf-8')
+    checked = read_item(io).decode('utf-8')
+    return CustomField(field_name, field_type, field_value, checked == '1')
 
 
 def parse_secure_note_server(notes):
