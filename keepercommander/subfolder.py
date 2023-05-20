@@ -188,8 +188,10 @@ def get_contained_record_uids(params, name, children_only=True):
         recs_by_folder.update({f_uid: child_recs})
 
     def on_folder(f):  # type: (BaseFolderNode) -> None
-        if f.uid in params. subfolder_record_cache:
+        if f.uid in params.subfolder_record_cache:
             add_child_recs(f.uid)
+            for sf_uid in f.subfolders:
+                FolderMixin.traverse_folder_tree(params, sf_uid, on_folder)
 
     for uid in get_folder_uids(params, name):
         if children_only:
