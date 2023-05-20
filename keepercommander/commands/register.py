@@ -36,7 +36,7 @@ from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions, get_shared_records, SharedRecord
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
-    get_folder_uids
+    get_folder_uids, get_contained_record_uids
 from ..loginv3 import LoginV3API
 from ..utils import confirm
 
@@ -122,6 +122,8 @@ share_report_parser.add_argument('-f', '--folders', dest='folders', action='stor
                                  help='limit report to shared folders (excludes shared records)')
 tu_help = 'show shared-folder team members (to be used with "--folders"/ "-f" flag, ignored for non-admin accounts)'
 share_report_parser.add_argument('-tu', '--show-team-users', action='store_true', help=tu_help)
+container_filter_help = 'path(s) or UID(s) of container(s) by which to filter records'
+share_report_parser.add_argument('container', nargs='*', type=str, action='store', help=container_filter_help)
 share_report_parser.error = raise_parse_exception
 share_report_parser.exit = suppress_exit
 
@@ -920,6 +922,13 @@ class ShareReportCommand(Command):
             )
             return report
 
+        containers = kwargs.get('container') or []
+        containers = [get_folder_uids(params, container) for container in containers]
+        containers = [uid for uids in containers for uid in uids]
+        containers = [uid for uid in containers if uid]
+        recs_by_containers = {k: v for c in containers for k, v in get_contained_record_uids(params, c, False).items()}
+        contained_records = {r for k, recs in recs_by_containers.items() for r in recs}
+
         if kwargs.get('record'):
             records = kwargs.get('record') or []
             for r in records:
@@ -943,14 +952,16 @@ class ShareReportCommand(Command):
                     else:
                         raise CommandError('share-report', '\'{0}\' is not an existing record title or UID'.format(r))
 
-            record_uids = [x for x in record_filter]
+            record_uids = {x for x in record_filter}
         elif kwargs.get('user'):
             for u in kwargs['user']:
                 user_filter.add(u)
 
-            record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
+            record_uids = {x['record_uid'] for x in params.record_cache.values() if x['shared']}
         else:
-            record_uids = [x['record_uid'] for x in params.record_cache.values() if x['shared']]
+            record_uids = {x['record_uid'] for x in params.record_cache.values() if x['shared']}
+
+        record_uids = record_uids.intersection(contained_records) if contained_records else record_uids
 
         from keepercommander.shared_record import get_shared_records
         shared_records = get_shared_records(params, record_uids)
