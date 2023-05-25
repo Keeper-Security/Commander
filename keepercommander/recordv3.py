@@ -20,6 +20,7 @@ from typing import Dict, Any
 from .display import bcolors
 from .params import KeeperParams
 from .record import get_totp_code
+from . import record_types, vault
 
 
 class RecordV3:
@@ -1601,18 +1602,20 @@ class RecordV3:
             flds = c.get('value') or []
             fval = flds
             fkey = '{} ({})'.format(flab, ftyp)
-            if ftyp in ['securityQuestion', 'paymentCard', 'host', 'keyPair', 'bankAccount', 'phone']:
+
+            if ftyp in ['name', 'securityQuestion', 'paymentCard', 'host', 'keyPair', 'bankAccount', 'phone']:
                 if not isinstance(flds, list):
                     flds = [flds]
                 fval = []
                 for x in flds:
                     if isinstance(x, dict):
-                        if ftyp == 'securityQuestion':
-                            q = x.get('question') or ''
-                            if q and not q.endswith('?'):
-                                q += '?'
-                            a = x.get('answer', '') if unmask else '********'
-                            fval.append(f'{q} {a}')
+                        is_empty = not any(True for k in x.values() if k)
+                        if is_empty:
+                            continue
+                        if ftyp == 'name':
+                            fval.append(vault.TypedField.export_name_field(x))
+                        elif ftyp == 'securityQuestion':
+                            fval.append(vault.TypedField.export_q_and_a_field(x))
                         elif ftyp == 'paymentCard':
                             n = x.get('cardNumber') or ''
                             if n and not unmask:
@@ -1628,25 +1631,9 @@ class RecordV3:
                             if private_key:
                                 fval.append(private_key if unmask else '********')
                         elif ftyp == 'host':
-                            hostname = x.get('hostName') or ''
-                            port = x.get('port') or ''
-                            if port:
-                                hostname += f':{port}'
-                            if hostname:
-                                fval.append(hostname)
+                            fval.append(vault.TypedField.export_host_field(x))
                         elif ftyp == 'phone':
-                            number = ''
-                            phone_type = x.get('type') or ''
-                            if phone_type:
-                                number = f'{phone_type}: '
-                            region = x.get('region') or ''
-                            if region:
-                                number += f'{region} '
-                            number += x.get('number') or ''
-                            ext = x.get('ext') or ''
-                            if ext:
-                                number += f' ({ext})'
-                            fval.append(number)
+                            fval.append(vault.TypedField.export_phone_field(x))
                         elif ftyp == 'bankAccount':
                             account_type = x.get('accountType') or ''
                             routing_number = x.get('routingNumber') or ''
@@ -1669,7 +1656,10 @@ class RecordV3:
                 if isinstance(flds, list) and len(flds) == 1:
                     if not flds[0]: continue
                     if isinstance(flds[0], dict):
-                        fval = (' ' if ftyp.lower() == 'name' else ' | ').join((str(x) for x in flds[0].values()))
+                        if (ftyp not in record_types.RecordFields or ftyp in ('passkey')) and not unmask:
+                            fval = '********'
+                        else:
+                            fval = json.dumps(flds[0], indent=2)
                     elif RecordV3.get_field_type(ftyp).get('type') == 'date' and bool(
                             re.match('^[+-]?[0-9]+$', str(flds[0]).strip())):
                         dt = datetime.datetime.fromtimestamp(int(flds[0] / 1000), tz=datetime.timezone.utc)
@@ -1682,15 +1672,16 @@ class RecordV3:
                     if ftyp in ('fileRef', 'cardRef', 'addressRef'):
                         RecordV3.display_ref(ftyp, fval, **kwargs)
                     else:
-                        is_masked = ftyp in ['password', 'pinCode', 'secret', 'note', 'oneTimeCode'] and not unmask
+                        is_masked = (ftyp not in record_types.RecordFields or
+                                     ftyp in ['password', 'pinCode', 'secret', 'note', 'oneTimeCode']) and not unmask
                         if is_masked:
                             print('{0:>20s}: {1:<s}'.format(fkey, '********'))
                         else:
-                            if ftyp == 'multiline' and isinstance(fval, str):
+                            if isinstance(fval, str):
                                 lines = fval.split('\n')
-                                lines = [x.strip() for x in lines if x]
+                                lines = [x.rstrip() for x in lines if x]
                                 for i, line in enumerate(lines):
-                                    print('{0:>20s}: {1}'.format(fkey if i == 0 else '', line.strip()))
+                                    print('{0:>20s}: {1}'.format(fkey if i == 0 else '', line))
                             else:
                                 print('{0:>20s}: {1:<s}'.format(fkey, str(fval)))
 

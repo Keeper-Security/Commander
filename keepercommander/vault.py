@@ -279,8 +279,6 @@ class TypedField(object):
     def new_field(cls, field_type, field_value, field_label=None):
         # type: (str, Any, Optional[str]) -> 'TypedField'
         f_type = field_type or 'text'
-        if f_type not in record_types.RecordFields:
-            f_type = 'text'
         if not isinstance(field_value, list):
             if field_value:
                 field_value = [field_value]

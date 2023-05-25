@@ -353,8 +353,7 @@ class RecordEditMixin:
     def validate_json_value(self, field_type, field_value):        # type: (str, Any) -> Any
         record_field = record_types.RecordFields.get(field_type)
         if not record_field:
-            self.on_warning(f'Incorrect record field type: \"{field_type}\"')
-            return
+            return field_value
         value_type = record_types.FieldTypes[record_field.name]
         if isinstance(value_type.value, dict):
             f_fields = set(value_type.value.keys())
@@ -460,13 +459,11 @@ class RecordEditMixin:
         parsed_fields = collections.deque(fields)
         while len(parsed_fields) > 0:
             parsed_field = parsed_fields.popleft()
-            field_type = parsed_field.type or ''
+            field_type = parsed_field.type or 'text'
             field_label = parsed_field.label or ''
-            if field_type and field_type not in record_types.RecordFields:
-                if not field_label:
-                    field_label = field_type
-                    field_type = 'text'
-                else:
+            skip_validation = not parsed_field.value or parsed_field.value.startswith('$JSON')
+            if field_type not in record_types.RecordFields:
+                if not skip_validation:
                     self.on_warning(f'Field type \"{field_type}\" is not supported. Field: {field_type}.{field_label}')
                     continue
             rf = record_types.RecordFields.get(field_type)
@@ -589,7 +586,10 @@ class RecordEditMixin:
                         if len(record_field.value) == 0:
                             record_field.value.append(value)
                         else:
-                            record_field.value[0] = value
+                            if isinstance(value, dict) and isinstance(record_field.value[0], dict):
+                                record_field.value[0].update(value)
+                            else:
+                                record_field.value[0] = value
             else:
                 if is_field:
                     record_field.value.clear()
