@@ -97,7 +97,7 @@ def register_command_info(aliases, command_info):
     compliance.register_command_info(aliases, command_info)
 
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles', 'provisioning']
-SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles']
+SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles', 'alias']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
 
@@ -730,6 +730,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     user_status_dict = get_user_status_dict(u)
 
                     user_id = u['id']
+                    email = u['username']
                     row = [user_id, u['username']]
                     for column in displayed_columns:
                         if column == 'name':
@@ -750,7 +751,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'roles':
                             role_names = [r['name'] for r in roles.values() if r['users'] and user_id in r['users']]
                             row.append(role_names)
-
+                        elif column == 'alias':
+                            row.append([x['username'] for x in params.enterprise.get('user_aliases', [])
+                                        if x['enterprise_user_id'] == user_id and x['username'] != email])
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
