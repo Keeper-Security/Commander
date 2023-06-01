@@ -476,7 +476,10 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     'type': 'shared_folder'
                 }
                 if ufsf.folderUid:
-                    o['folder_uid'] = utils.base64_url_encode(ufsf.folderUid)
+                    is_fake_uid = ufsf.folderUid.endswith(b'\0\0\0\0\0\0\0\0\0\0') or \
+                                  ufsf.folderUid.startswith(b'\0\0\0\0\0\0\0\0\0\0')
+                    if not is_fake_uid:
+                        o['folder_uid'] = utils.base64_url_encode(ufsf.folderUid)
                 return o
 
             for ufsf in response.userFolderSharedFolders:
