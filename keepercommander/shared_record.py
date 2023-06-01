@@ -150,7 +150,7 @@ class SharedRecord:
     """Defines a Keeper Shared Record (shared either via Direct-Share or as a child of a Shared-Folder node)"""
 
     def __init__(self, params, record, sf_sharing_admins, team_members, role_restricted_members):
-        self.owner = ''
+        self.owner = params.user
         self.uid = record.record_uid
         self.name = record.title
         self.shared_folders = None
