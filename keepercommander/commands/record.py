@@ -1512,6 +1512,7 @@ class RecordRemoveCommand(Command):
     def execute(self, params, **kwargs):
         records_to_delete = []     # type: List[Tuple[BaseFolderNode, str]]
         record_names = kwargs.get('records')
+        rq_obj_limit = 999
         if not isinstance(record_names, list):
             if isinstance(record_names, str):
                 record_names = [record_names]
@@ -1554,13 +1555,16 @@ class RecordRemoveCommand(Command):
                 if len(records_to_delete) == orig_len:
                     raise CommandError('rm', f'Record {name} cannot be resolved')
 
-        if len(records_to_delete) > 0:
+        vault_changed = False
+        while len(records_to_delete) > 0:
             rq = {
                 'command': 'pre_delete',
                 'objects': []
             }
 
-            for folder, record_uid in records_to_delete:
+            chunk = records_to_delete[:rq_obj_limit]
+            records_to_delete = records_to_delete[rq_obj_limit:]
+            for folder, record_uid in chunk:
                 del_obj = {
                     'delete_resolution': 'unlink',
                     'object_uid': record_uid,
@@ -1592,5 +1596,8 @@ class RecordRemoveCommand(Command):
                         'pre_delete_token': pdr['pre_delete_token']
                     }
                     api.communicate(params, rq)
-                    BreachWatch.save_reused_pw_count(params)
-                    params.sync_data = True
+                    vault_changed = True
+
+        if vault_changed:
+            BreachWatch.save_reused_pw_count(params)
+            params.sync_data = True
