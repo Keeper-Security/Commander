@@ -232,6 +232,7 @@ class PAMCreateRecordRotationCommand(Command):
         rq.pwdComplexity = pwd_complexity_rule_list_encrypted
         rs = router_set_record_rotation_information(params, rq)
 
+        params.sync_data = True
 
         print(f"Successfully saved new Record Rotation Setting.")
 
