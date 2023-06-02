@@ -215,15 +215,23 @@ class PAMCreateRecordRotationCommand(Command):
             # Means that there is only one resource
             resource_uid = resources[0]
 
+        record_rotation_revision = params.record_rotation_cache.get(record_uid)
+
+        if not record_rotation_revision:
+            print(f"{bcolors.WARNING}Record rotation revision is not available. Please run 'pam rotation list' "
+                  f"to make sure that record rotation is enabled for this record.{bcolors.ENDC}")
+            return
 
         # 4. Construct Request object
         rq = router_pb2.RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)
+        rq.revision = record_rotation_revision.get('revision') if record_rotation_revision else 0
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
         rq.resourceUid = url_safe_str_to_bytes(resource_uid)
         rq.schedule = json.dumps(schedule_data) if schedule_data else ''
         rq.pwdComplexity = pwd_complexity_rule_list_encrypted
         rs = router_set_record_rotation_information(params, rq)
+
 
         print(f"Successfully saved new Record Rotation Setting.")
 
