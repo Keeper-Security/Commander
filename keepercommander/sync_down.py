@@ -77,6 +77,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         if response.cacheStatus == SyncDown_pb2.CLEAR:
             full_sync = True
             params.record_cache.clear()
+            params.record_rotation_cache.clear()
             params.meta_data_cache.clear()
             params.shared_folder_cache.clear()
             params.team_cache.clear()
@@ -535,6 +536,22 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             for user in response.users:
                 account_uid = utils.base64_url_encode(user.accountUid)
                 params.user_cache[account_uid] = user.username
+
+        if len(response.recordRotations) > 0:
+            for rr in response.recordRotations:
+                record_uid = utils.base64_url_encode(rr.recordUid)
+                rr_obj = {
+                    'record_uid': record_uid,
+                    'revision': rr.revision,
+                    'configuration_uid': utils.base64_url_encode(rr.configurationUid),
+                    'schedule': rr.schedule,
+                    'pwd_complexity': utils.base64_url_encode(rr.pwdComplexity),
+                    'disabled': rr.disabled,
+                    'resource_uid': utils.base64_url_encode(rr.resourceUid),
+                    'last_rotation': rr.lastRotation,
+                    'last_rotation_status': rr.lastRotationStatus,
+                }
+                params.record_rotation_cache[record_uid] = rr_obj
 
         params.sync_down_token = response.continuationToken
 

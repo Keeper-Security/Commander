@@ -326,7 +326,7 @@ class ThisDeviceCommand(Command):
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('persistent_login', value)
             loginv3.LoginV3API.set_user_setting(params, 'persistent_login', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
-            print("Successfully " + msg + " Persistent Login on this device")
+            print("Successfully " + msg + " Persistent Login on this account")
 
             register_device()
 

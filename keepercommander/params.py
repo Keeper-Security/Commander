@@ -119,6 +119,7 @@ class KeeperParams:
         self.shared_folder_cache = {}
         self.team_cache = {}
         self.record_link_cache = {}
+        self.record_rotation_cache = {}
         self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
         self.key_cache = {}            # type: Dict[str, PublicKeys]
         self.available_team_cache = None
@@ -184,6 +185,7 @@ class KeeperParams:
         self.shared_folder_cache.clear()
         self.team_cache.clear()
         self.record_link_cache.clear()
+        self.record_rotation_cache.clear()
         self.record_owner_cache.clear()
         self.available_team_cache = None
         self.key_cache.clear()
