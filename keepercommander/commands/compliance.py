@@ -67,7 +67,7 @@ class ComplianceCommand(GroupCommand):
         self.register_command('report', ComplianceReportCommand(), 'Run default SOX compliance report')
         self.register_command('team-report', ComplianceTeamReportCommand(), team_report_desc, 'tr')
         self.register_command('record-access-report', ComplianceRecordAccessReportCommand(), access_report_desc, 'rar')
-        self.register_command('summary-report', ComplianceSummaryReport(), summary_report_desc)
+        self.register_command('summary-report', ComplianceSummaryReportCommand(), summary_report_desc)
         self.default_verb = 'report'
 
     def validate(self, params):  # type: (KeeperParams) -> None
@@ -386,10 +386,10 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         return report_data
 
 
-class ComplianceSummaryReport(BaseComplianceReportCommand):
+class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
     def __init__(self):
         headers = ['email', 'records']
-        super(ComplianceSummaryReport, self).__init__(headers, allow_no_opts=True, prelim_only=True)
+        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=True)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return summary_report_parser
