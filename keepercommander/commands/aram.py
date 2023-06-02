@@ -1865,7 +1865,7 @@ class ActionReportCommand(EnterpriseCommand):
                 'no-logon':     {*default_allowed, 'lock'},
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
-                'invited':      default_allowed,
+                'invited':      {*default_allowed, 'delete'},
                 'no-security-question-update': default_allowed,
                 'blocked':      {*default_allowed, 'delete'}
             }
