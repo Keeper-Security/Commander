@@ -105,8 +105,9 @@ class KeeperPasswordGenerator(PasswordGenerator):
 
 
 class DicewarePasswordGenerator(PasswordGenerator):
-    def __init__(self, number_of_rolls, word_list_file=None):   # type: (int, Optional[str]) -> None
+    def __init__(self, number_of_rolls, word_list_file=None, delimiter=' '):   # type: (int, Optional[str], str) -> None
         self._number_of_rolls = number_of_rolls if number_of_rolls > 0 else 5
+        self.delimiter = delimiter
 
         if word_list_file:
             dice_path = os.path.join(os.path.dirname(__file__), 'resources', word_list_file)
@@ -141,7 +142,7 @@ class DicewarePasswordGenerator(PasswordGenerator):
 
         words = [secrets.choice(self._vocabulary) for _ in range(self._number_of_rolls)]
         shuffle(words)
-        return ' '.join(words)
+        return self.delimiter.join(words)
 
 
 class CryptoPassphraseGenerator(PasswordGenerator):

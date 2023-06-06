@@ -216,6 +216,8 @@ random_group.add_argument(
 dice_group = generate_parser.add_argument_group('Diceware')
 dice_group.add_argument('--dice-rolls', '-dr', type=int, dest='dice_rolls', action='store',
                         help='Number of dice rolls')
+dice_group.add_argument('--delimiter', '-dl', dest='delimiter', choices=('-', '+', ':', '.', '/', '_', '='),
+                        default=' ', action='store', help='Optional. Word delimiter (space if omitted)')
 dice_group.add_argument('--word-list',  dest='word_list', action='store',
                         help='Optional. File path to word list')
 
@@ -933,7 +935,8 @@ class GenerateCommand(Command):
             kpg = CryptoPassphraseGenerator()
         elif isinstance(kwargs.get('dice_rolls'), int):
             dice_rolls = kwargs.get('dice_rolls')
-            kpg = DicewarePasswordGenerator(dice_rolls, kwargs.get('word_list'))
+            delimiter = kwargs.get('delimiter') or ' '
+            kpg = DicewarePasswordGenerator(dice_rolls, word_list_file=kwargs.get('word_list'), delimiter=delimiter)
         else:
             if rules and all(i is None for i in (symbols, digits, uppercase, lowercase)):
                 kpg = KeeperPasswordGenerator.create_from_rules(rules, length)

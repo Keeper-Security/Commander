@@ -450,28 +450,28 @@ def loop(params):  # type: (KeeperParams) -> int
         versioning.welcome_print_version(params)
 
     else:
-
         logging.getLogger().setLevel(logging.DEBUG if params.debug else logging.WARNING)
 
-    if params.user:
-        try:
-            api.login(params)
-            if params.session_token:
-                do_command(params, 'sync-down')
-        except KeyboardInterrupt:
-            print('')
-        except EOFError:
-            return 0
-        except Exception as e:
-            logging.error(e)
-    else:
-        if params.device_token:
-            logging.info('Current Keeper region: %s', params.server)
+    if not params.batch_mode:
+        if params.user:
+            try:
+                api.login(params)
+                if params.session_token:
+                    do_command(params, 'sync-down')
+            except KeyboardInterrupt:
+                print('')
+            except EOFError:
+                return 0
+            except Exception as e:
+                logging.error(e)
         else:
-            logging.info('Use "server" command to change Keeper region > "server US"')
-            for region in KEEPER_PUBLIC_HOSTS:
-                logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
-        logging.info('To login type: login <email>')
+            if params.device_token:
+                logging.info('Current Keeper region: %s', params.server)
+            else:
+                logging.info('Use "server" command to change Keeper region > "server US"')
+                for region in KEEPER_PUBLIC_HOSTS:
+                    logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
+            logging.info('To login type: login <email>')
 
     while True:
         if params.session_token:
