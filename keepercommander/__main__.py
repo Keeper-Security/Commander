@@ -183,7 +183,7 @@ def main(from_package=False):
             flags.clear()
             opts.command = '?'
 
-    if (opts.command or '') in {'?', 'help'}:
+    if (opts.command or '') in {'?'}:
         if opts.command == '?' or not params.commands:
             usage('')
 
