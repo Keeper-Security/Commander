@@ -100,7 +100,7 @@ class KeeperCsvImporter(BaseFileImporter):
 
 
 class KeeperCsvExporter(BaseExporter):
-    def do_export(self, filename, records, file_password=None):
+    def do_export(self, filename, records, **kwargs):
         csvfile = open(filename, 'w', encoding='utf-8', newline='') if filename else sys.stdout
         writer = csv.writer(csvfile)
         for r in records:

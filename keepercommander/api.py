@@ -33,10 +33,10 @@ from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
 from .record import Record
 from .recordv3 import RecordV3
 from .shared_folder import SharedFolder
-from .subfolder import BaseFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, RootFolderNode
+from .subfolder import BaseFolderNode
+from .sync_down import sync_down
 from .team import Team
 from .ttk import TTK
-from .sync_down import sync_down
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 
@@ -401,7 +401,6 @@ def search_records(params, searchstring):
     search_results = []
 
     for record_uid in params.record_cache:
-        target = ''
         rec = get_record(params, record_uid)
         cached_rec = params.record_cache[record_uid] or {}
 
@@ -559,7 +558,6 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
 
     audit_data = None
     data = ''
-    unencrypted_key = None
     if record.record_uid in params.record_cache:
         path = resolve_record_write_path(params, record.record_uid)
         if path:
@@ -575,14 +573,9 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
 
         data = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else rec['data_unencrypted']
         try:
-            d = json.loads(data)
-            rt_name = d.get('type') or ''
-            rt_def = RecordV3.resolve_record_type_by_name(params, rt_name)
-            res = RecordV3.is_valid_record_type(data, rt_def)
-            if not res.get('is_valid'):
-                logging.info(res.get('error'))
-
             if params.enterprise_ec_key:
+                d = json.loads(data)
+                rt_name = d.get('type') or ''
                 fields = itertools.chain(d.get('fields') or [], (d.get('custom') or []))
                 url_field = next((u.get('value') for u in fields if u.get('type') == 'url' and u.get('value')), None)
                 url = ''

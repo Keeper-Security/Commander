@@ -323,11 +323,30 @@ def extract_typed_record_data(record):      # type: (vault.TypedRecord) -> dict
 def extract_typed_record_refs(record):  # type: (vault.TypedRecord) -> Set[str]
     refs = set()
     for field in itertools.chain(record.fields, record.custom):
-        if field.type in {'fileRef', 'addressRef', 'cardRef'}:
-            if isinstance(field.value, list):
-                for ref in field.value:
+        if field.type in {'fileRef', 'addressRef', 'cardRef', 'recordRef'}:
+            if not isinstance(field.value, list):
+                continue
+            for ref in field.value:
+                if isinstance(ref, str):
+                    refs.add(ref)
+        elif field.type == 'script':
+            if not isinstance(field.value, list):
+                continue
+            for script in field.value:
+                if not isinstance(script, dict):
+                    continue
+                if 'fileRef' in script:
+                    ref = script['fileRef']
                     if isinstance(ref, str):
                         refs.add(ref)
+                if 'recordRef' in script:
+                    record_refs = script['recordRef']
+                    if not isinstance(record_refs, list):
+                        continue
+                    for ref in record_refs:
+                        if isinstance(ref, str):
+                            refs.add(ref)
+
     return refs
 
 

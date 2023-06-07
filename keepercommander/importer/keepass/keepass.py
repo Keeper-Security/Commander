@@ -222,7 +222,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
         else:
             return str(keeper_value)
 
-    def do_export(self, filename, records, file_password=None):
+    def do_export(self, filename, records, file_password=None, **kwargs):
         master_password = file_password
         if not master_password:
             print('Choose password for your Keepass file')

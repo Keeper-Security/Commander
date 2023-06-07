@@ -148,6 +148,7 @@ class Attachment(abc.ABC):
         pass
 
     def prepare(self):   # type: () -> None
+        """ populate size if empty """
         pass
 
 
@@ -192,17 +193,7 @@ class RecordField:
             value = [RecordField.hash_value(x) for x in value]
             value = '|'.join((x for x in value if x))
         elif isinstance(value, dict):
-            keys = [x for x in value]
-            if 'privateKey' in keys:
-                if value['privateKey']:
-                    try:
-                        keys.remove('publicKey')
-                    except:
-                        pass
-            keys.sort()
-            kvp = [(x, RecordField.hash_value(value[x])) for x in keys]
-            kvp = [x for x in kvp if x[1]]
-            value = ';'.join((f'{x[0]}:{x[1]}' for x in kvp))
+            value = json.dumps(value, sort_keys=True, separators=(',', ':'))
         else:
             value = str(value)
         return value
@@ -419,8 +410,8 @@ class BaseExporter(abc.ABC):
     def __init__(self):
         self.max_size = 10 * 1024 * 1024
 
-    def execute(self, filename, items, file_password=None):
-        # type: (str, List[Union[Record, SharedFolder, File, Team]], Optional[str]) -> None
+    def execute(self, filename, items, **kwargs):
+        # type: (str, List[Union[Record, SharedFolder, File, Team]], ...) -> None
         if filename:
             filename = os.path.expanduser(filename)
             if filename.find('.') < 0:
@@ -430,13 +421,13 @@ class BaseExporter(abc.ABC):
         elif not self.supports_stdout():
             raise CommandError('export', 'File name parameter is required.')
 
-        self.do_export(filename, items, file_password)
+        self.do_export(filename, items, **kwargs)
         if filename and os.path.isfile(filename):
             logging.info('Vault has been exported to: %s', os.path.abspath(filename))
 
     @abc.abstractmethod
-    def do_export(self, filename, records, file_password=None):
-        # type: (str, List[Record, File], Optional[str]) -> None
+    def do_export(self, filename, records, **kwargs):
+        # type: (str, List[Union[Record, SharedFolder, File, Team]], ...) -> None
         pass
 
     def has_shared_folders(self):

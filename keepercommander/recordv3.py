@@ -486,6 +486,10 @@ class RecordV3:
             '$id': 'multiline',
             'type': 'multiline'
         },
+        'passkey': {
+            '$id': 'passkey',
+            'type': 'passkey'
+        },
         # 'custom: {
         #   '$id': 'custom',
         #   'type': 'custom'
@@ -644,6 +648,19 @@ class RecordV3:
             'value': {  # object
                 'publicKey': '',  # string
                 'privateKey': ''  # string
+            }
+        },
+        'passkey': {
+            'type': 'passkey',
+            'value_description': 'Password-less login',
+            'value': {   # object
+                'privateKey': {},     # EC private key in JsonWebKey format (RFC 7517)
+                'credentialId': '',   # 32 bytes; base64url encoded
+                'signCount': 0,       # we don't currently implement incrementing signCount
+                'userId': '',         # supplied by relyingParty at registration; base64url encoded
+                'relyingParty': '',   # utf8; i.e. "keepersecurity.com"
+                'username': '',       # user.name from webauthn create request
+                'createdDate': 0,     # unix timestamp
             }
         }
     }
