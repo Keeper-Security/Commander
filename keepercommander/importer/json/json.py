@@ -9,14 +9,21 @@
 # Contact: ops@keepersecurity.com
 #
 
+import io
 import json
+import logging
+import os.path
+import pathlib
 import sys
+import zipfile
 
 from typing import List, Optional, Any, Dict
+from contextlib import contextmanager
 
 from .. import imp_exp
-from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences, Folder, SharedFolder, Permission,
-                        Team, BaseDownloadMembership, BaseDownloadRecordType, RecordType, RecordTypeField)
+from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences,
+                        Folder, SharedFolder, Permission, Team, Attachment,
+                        BaseDownloadMembership, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ... import api, utils, record_types
 from ...proto import enterprise_pb2
 
@@ -53,14 +60,11 @@ class KeeperJsonMixin:
                     field_type = ''
                     field_name = name
 
-                ft = record_types.RecordFields.get(field_type or 'text')
-                if ft:
-                    is_multiple = ft.multiple != record_types.Multiple.Never
-                else:
-                    is_multiple = False
-                    if not field_name:
-                        field_name = name
-                        field_type = ''
+                is_multiple = False
+                if field_type:
+                    ft = record_types.RecordFields.get(field_type)
+                    if ft:
+                        is_multiple = ft.multiple != record_types.Multiple.Never
 
                 if isinstance(value, list) and not is_multiple:
                     for v in value:
@@ -127,73 +131,122 @@ class KeeperJsonMixin:
         return record
 
 
+class ZipAttachment(Attachment):
+    def __init__(self, zip_filename, file_uid):
+        super().__init__()
+        self.zip_filename = zip_filename
+        self.file_uid = file_uid
+
+    @contextmanager
+    def open(self):
+        with zipfile.ZipFile(self.zip_filename, mode='r') as zf:
+            yield io.BytesIO(zf.read(f'files/{self.file_uid}'))
+
+    def prepare(self):
+        try:
+            with zipfile.ZipFile(self.zip_filename, mode='r') as zf:
+                try:
+                    zi = zf.getinfo(f'files/{self.file_uid}')
+                    self.size = zi.file_size
+                except KeyError:
+                    logging.debug('ZipAttachment: file \"%s\" not found', self.file_uid)
+        except Exception as e:
+            logging.debug('ZipAttachment: %s', e)
+            self.size = 0
+
+
 class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
     def do_import(self, filename, **kwargs):
         users_only = kwargs.get('users_only') or False
-        with open(filename, "r", encoding='utf-8') as json_file:
-            j = json.load(json_file)
-            records = None
-            folders = None
-            if type(j) == list:
-                records = j
-            elif type(j) == dict:
-                records = j.get('records')
-                folders = j.get('shared_folders')
-                teams = j.get('teams') if users_only else None
+        if not os.path.isfile(filename):
+            zip_name = pathlib.Path(filename).with_suffix('.zip').name
+            if os.path.isfile(zip_name):
+                if zipfile.is_zipfile(zip_name):
+                    filename = zip_name
+        file_path = pathlib.Path(filename)
+        zip_archive = file_path.suffix == '.zip'
+        if zip_archive:
+            with zipfile.ZipFile(filename, 'r') as zf:
+                export = json.loads(zf.read('export.json'))
+        else:
+            with open(filename, "r", encoding='utf-8') as jf:
+                export = json.load(jf)
 
-            if folders:
-                for shf in folders:
-                    fol = SharedFolder()
-                    fol.uid = shf.get('uid')
-                    fol.path = shf.get('path')
-                    fol.manage_records = shf.get('manage_records') or False
-                    fol.manage_users = shf.get('manage_users') or False
-                    fol.can_edit = shf.get('can_edit') or False
-                    fol.can_share = shf.get('can_share') or False
-                    if users_only and 'permissions' in shf:
-                        fol.permissions = []
-                        permissions = shf['permissions']
-                        if not isinstance(permissions, list):
-                            permissions = [permissions]
-                        for perm in permissions:
-                            if isinstance(perm, dict):
-                                p = Permission()
-                                p.uid = perm.get('uid')
-                                p.name = perm.get('name')
-                                if p.uid or p.name:
-                                    p.manage_records = perm.get('manage_records') or False
-                                    p.manage_users = perm.get('manage_users') or False
-                                    fol.permissions.append(p)
+        records = None
+        folders = None
+        teams = None
+        if type(export) == list:
+            records = export
 
-                    yield fol
+        elif type(export) == dict:
+            records = export.get('records')
+            folders = export.get('shared_folders')
+            teams = export.get('teams') if users_only else None
 
-            if isinstance(teams, list):
-                for t in teams:
-                    team = Team()
-                    team.name = t.get('name')
-                    if team.name:
-                        team.uid = t.get('uid')
-                        ms = t.get('members')
-                        if isinstance(ms, list):
-                            team.members = [x for x in ms if isinstance(x, str) and len(x) > 3]
+        if folders:
+            for shf in folders:
+                fol = SharedFolder()
+                fol.uid = shf.get('uid')
+                fol.path = shf.get('path')
+                fol.manage_records = shf.get('manage_records') or False
+                fol.manage_users = shf.get('manage_users') or False
+                fol.can_edit = shf.get('can_edit') or False
+                fol.can_share = shf.get('can_share') or False
+                if users_only and 'permissions' in shf:
+                    fol.permissions = []
+                    permissions = shf['permissions']
+                    if not isinstance(permissions, list):
+                        permissions = [permissions]
+                    for perm in permissions:
+                        if isinstance(perm, dict):
+                            p = Permission()
+                            p.uid = perm.get('uid')
+                            p.name = perm.get('name')
+                            if p.uid or p.name:
+                                p.manage_records = perm.get('manage_records') or False
+                                p.manage_users = perm.get('manage_users') or False
+                                fol.permissions.append(p)
 
-                        yield team
+                yield fol
 
-            if not users_only and records:
-                for r in records:
-                    record = KeeperJsonMixin.json_to_record(r)
-                    yield record
+        if isinstance(teams, list):
+            for t in teams:
+                team = Team()
+                team.name = t.get('name')
+                if team.name:
+                    team.uid = t.get('uid')
+                    ms = t.get('members')
+                    if isinstance(ms, list):
+                        team.members = [x for x in ms if isinstance(x, str) and len(x) > 3]
+                    yield team
+
+        if not users_only and records:
+            for r in records:
+                record = KeeperJsonMixin.json_to_record(r)
+                if zip_archive and 'attachments' in r:
+                    attachments = r['attachments']
+                    record.attachments = []
+                    if isinstance(attachments, list):
+                        for atta in attachments:
+                            file_uid = atta.get('file_uid')
+                            a = ZipAttachment(filename, file_uid)
+                            a.name = atta.get('name') or file_uid
+                            a.mime = atta.get('mime')
+                            record.attachments.append(a)
+                yield record
 
     def extension(self):
         return 'json'
 
 
 class KeeperJsonExporter(BaseExporter):
-
-    def do_export(self, filename, items, file_password=None):
+    def do_export(self, filename, items, zip_archive=None, **kwargs):
         shared_folders = []     # type: List[SharedFolder]
         records = []            # type: List[Record]
         teams = []              # type: List[Team]
+
+        if zip_archive is True and not filename:
+            raise ValueError('Please provide zip archive file name')
 
         for item in items:
             if isinstance(item, Record):
@@ -202,20 +255,7 @@ class KeeperJsonExporter(BaseExporter):
                 shared_folders.append(item)
             elif isinstance(item, Team):
                 teams.append(item)
-        """
-        external_uids = {}
-        external_id = 1
-        for record in records:
-            if record.uid:
-                external_uids[record.uid] = external_id
-                external_id += 1
-        for record in records:
-            if record.uid:
-                record.uid = external_uids.get(record.uid)
-            if record.references:
-                for ref in record.references:
-                    ref.uids = [external_uids[x] for x in ref.uids if x in external_uids]
-        """
+
         ts = []
         for t in teams:
             team = {
@@ -257,6 +297,7 @@ class KeeperJsonExporter(BaseExporter):
             sfs.append(sfo)
 
         rs = []
+        atta = {}
         for r in records:
             ro = {
                 'title': r.title or ''
@@ -333,6 +374,20 @@ class KeeperJsonExporter(BaseExporter):
                             fo['can_edit'] = True
                         if folder.can_share:
                             fo['can_share'] = True
+
+            if r.attachments and zip_archive:
+                ro['attachments'] = []
+                for at in r.attachments:
+                    file_uid = utils.generate_uid()
+                    atta[file_uid] = at
+                    a = {
+                        'file_uid': file_uid,
+                        'name': at.name
+                    }
+                    if at.mime:
+                        a['mime'] = at.mime
+                    ro['attachments'].append(a)
+
             rs.append(ro)
 
         jo = {}
@@ -343,7 +398,23 @@ class KeeperJsonExporter(BaseExporter):
         if rs:
             jo['records'] = rs
 
-        if filename:
+        if zip_archive and filename:
+            zip_name = pathlib.Path(filename).with_suffix('.zip').name
+            with zipfile.ZipFile(zip_name, mode='w', compresslevel=zipfile.ZIP_DEFLATED) as zf:
+                f = json.dumps(jo, indent=2, ensure_ascii=False)
+                zf.writestr('export.json', f)
+                total = len(atta)
+                if total > 0:
+                    logging.info('Downloading attachments...')
+                    i = 1
+                    for file_uid, at in atta.items():
+                        logging.info(f'{i:>3} of {total:3} {at.name}')
+                        i += 1
+                        with at.open() as fs:
+                            data = fs.read()
+                            if data:
+                                zf.writestr(f'files/{file_uid}', data)
+        elif filename:
             with open(filename, mode="w", encoding='utf-8') as f:
                 json.dump(jo, f, indent=2, ensure_ascii=False)
         else:
@@ -354,7 +425,7 @@ class KeeperJsonExporter(BaseExporter):
         return True
 
     def has_attachments(self):
-        return False
+        return True
 
     def extension(self):
         return 'json'

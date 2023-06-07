@@ -85,9 +85,14 @@ import_parser.exit = suppress_exit
 
 
 export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to a local file.')
-export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True, help='file format')
-export_parser.add_argument('--max-size', dest='max_size', help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
-export_parser.add_argument('-kp', '--keepass-file-password', dest='keepass_file_password', action='store', help='Password for the exported Keepass file')
+export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True,
+                           help='file format')
+export_parser.add_argument('--max-size', dest='max_size',
+                           help='Maximum file attachment file. Example: 100K, 50M, 2G. Default: 10M')
+export_parser.add_argument('-kp', '--keepass-file-password', dest='file_password', action='store',
+                           help='Password for the exported file')
+export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
+                           help='Create ZIP archive for file attachments. JSON only')
 export_parser.add_argument('--force', dest='force', action='store_true', help='Suppress user interaction. Assume "yes"')
 export_parser.add_argument('--folder', dest='folder', action='store', help='Export data from the specific folder only.')
 export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')

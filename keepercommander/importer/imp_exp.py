@@ -385,8 +385,9 @@ def export(params, file_format, filename, **kwargs):
     rec_count = len(to_export) - sf_count
 
     if len(to_export) > 0:
-        file_password = kwargs.get('keepass_file_password')
-        exporter.execute(filename, to_export, file_password)
+        file_password = kwargs.get('file_password')
+        zip_archive = kwargs.get('zip_archive')
+        exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
         params.queue_audit_event('exported_records', file_format=file_format)
         logging.info('%d records exported', rec_count)
 
