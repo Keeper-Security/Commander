@@ -17,11 +17,11 @@ import collections
 import copy
 import datetime
 import hashlib
+import itertools
 import json
 import logging
 import os
 import re
-import itertools
 import math
 import requests
 import time
@@ -33,8 +33,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
-from .. import api, sync_down
-from .. import utils, crypto
+from .. import api, sync_down, utils, crypto, vault, vault_extensions
 from ..commands import base
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
@@ -221,6 +220,8 @@ def convert_keeper_record(record, has_attachments=False):
                     if base_field:
                         continue
                 rec.fields.append(rf)
+                if field_type == 'script' and has_attachments:
+                    pass
     else:
         return
 
@@ -345,20 +346,35 @@ def export(params, file_format, filename, **kwargs):
                 elif record_version == 3:
                     if 'data_unencrypted' in record:
                         data = json.loads(record['data_unencrypted'])
-                        file_ref = next((x.get('value') for x in data.get('fields', []) if x.get('type', '') == 'fileRef'), None)
-                        if isinstance(file_ref, list) and len(file_ref) > 0:
-                            rec.attachments = []
-                            for file_uid in file_ref:
-                                if file_uid in params.record_cache:
-                                    file = params.record_cache[file_uid]
-                                    if file.get('version') == 4:
-                                        a = json.loads(file['data_unencrypted'])
-                                        atta = KeeperV3Attachment(params, file_uid)
-                                        atta.key = file['record_key_unencrypted']
-                                        atta.name = a.get('name', '')
-                                        atta.size = a.get('size', 0)
-                                        atta.mime = a.get('type', '')
-                                        rec.attachments.append(atta)
+                        fields = itertools.chain(data.get('fields', []), data.get('custom', []))
+                        attachment_fields = [x for x in fields if x.get('type', '') in ('fileRef', 'script')]
+                        if isinstance(attachment_fields, list) and len(attachment_fields) > 0:
+                            file_uids = set()
+                            for attachment_field in attachment_fields:
+                                field_type = attachment_field.get('type', '')
+                                field_value = attachment_field.get('value')
+                                if not isinstance(field_value, list):
+                                    continue
+                                if field_type == 'fileRef':
+                                    file_uids.update(field_value)
+                                elif field_type == 'script':
+                                    if len(field_value) == 1:
+                                        script = field_value[0]
+                                        if isinstance(script, dict):
+                                            if 'fileRef' in script:
+                                                file_uids.add(script['fileRef'])
+                            if len(file_uids) > 0:
+                                rec.attachments = []
+                                for file_uid in file_uids:
+                                    if file_uid in params.record_cache:
+                                        file = vault.KeeperRecord.load(params, file_uid)
+                                        if isinstance(file, vault.FileRecord):
+                                            atta = KeeperV3Attachment(params, file_uid)
+                                            atta.key = file.record_key
+                                            atta.name = file.name or file.title
+                                            atta.size = file.size
+                                            atta.mime = file.mime_type
+                                            rec.attachments.append(atta)
 
             for folder_uid in find_folders(params, record_uid):
                 if folder_filter:
@@ -718,6 +734,11 @@ def _import(params, file_format, filename, **kwargs):
             if import_record.references:
                 for ref in import_record.references:
                     reference_uids.update([x for x in ref.uids if x in params.record_cache])
+            if import_record.fields:
+                for field in import_record.fields:
+                    if field.type == 'script' and isinstance(field.value, dict):
+                        if 'fileRef' in field.value:
+                            reference_uids.add(field.value['fileRef'])
 
             if import_record.type and import_record.fields:
                 for field in import_record.fields:
@@ -735,33 +756,26 @@ def _import(params, file_format, filename, **kwargs):
             if existing_record:
                 version = existing_record.get('version', 0)
                 if version == 3:   # V3
-                    orig_data = json.loads(existing_record['data_unencrypted'])
+                    orig_record = vault.KeeperRecord.load(params, existing_record)
+                    if not isinstance(orig_record, vault.TypedRecord):
+                        continue
+
                     if not import_record.type:
-                        import_record.type = orig_data.get('type', 'login')
+                        import_record.type = orig_record.record_type
+
                     v3_upd_rq = record_pb2.RecordUpdate()
                     v3_upd_rq.record_uid = utils.base64_url_decode(import_record.uid)
                     import_uids[import_record.uid] = {'ver': 'v3', 'op': 'update'}
                     v3_upd_rq.client_modified_time = utils.current_milli_time()
                     v3_upd_rq.revision = existing_record.get('revision') or 0
-                    data = _construct_record_v3_data(import_record, orig_data)
+                    data = _construct_record_v3_data(import_record, orig_record)
                     v3_upd_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
                     data_size = len(v3_upd_rq.data)
                     if data_size > RECORD_MAX_DATA_LEN:
                         logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
                         continue
 
-                    orig_refs = set()
-                    if 'fields' in orig_data:
-                        for field in itertools.chain(orig_data['fields'], orig_data['custom'] if 'custom' in orig_data else []):
-                            if 'type' in field and 'value' in field:
-                                if field['type'].endswith('Ref'):
-                                    uids = field['value']
-                                    if type(uids) is not list:
-                                        uids = [uids]
-                                    for uid in uids:
-                                        if uid in params.record_cache:
-                                            orig_refs.add(uid)
-
+                    orig_refs = vault_extensions.extract_typed_record_refs(orig_record)
                     for uid in orig_refs.difference(reference_uids):
                         v3_upd_rq.record_links_remove.append(utils.base64_url_decode(uid))
 
@@ -1176,7 +1190,7 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
         files_add_rs = record_pb2.FilesAddResponse()
         files_add_rs.ParseFromString(rs)
 
-        new_attachments_by_parent_uid = {}  # type: Dict[Tuple[ImportAttachment, bytes, bytes]]
+        new_attachments_by_parent_uid = {}  # type: Dict[str, List[Tuple[ImportAttachment, bytes, bytes]]]
         for f in files_add_rs.files:
             atta, parent_uid, file_key = uid_to_attachment[f.record_uid]
             status = record_pb2.FileAddResult.DESCRIPTOR.values_by_number[f.status].name
@@ -1205,8 +1219,17 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
 
         rec_list = []
         record_links_add = {}
+        external_file_uids = {}    # type: Dict[str, str]
+        new_attachments_uids = []
         for parent_uid, attachments in new_attachments_by_parent_uid.items():
-            new_attachments_uids = [utils.base64_url_encode(a[1]) for a in attachments]
+            external_file_uids.clear()
+            new_attachments_uids.clear()
+            for a in attachments:
+                orig_file_uid = a[0].file_uid
+                new_file_uid = utils.base64_url_encode(a[1])
+                if orig_file_uid:
+                    external_file_uids[orig_file_uid] = new_file_uid
+                new_attachments_uids.append(new_file_uid)
 
             record_data = params.record_cache[parent_uid].get('data_unencrypted')
             if record_data:
@@ -1218,6 +1241,22 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
             if 'fields' not in data:
                 data['fields'] = []
 
+            # attachments for script fields
+            all_fields = itertools.chain(data['fields'], data.get('custom', []))
+            script_fields = [x for x in all_fields if x.get('type') == 'script']
+            for sf in script_fields:
+                field_value = sf.get('value')
+                if not isinstance(field_value, list):
+                    continue
+                for script in field_value:
+                    if not isinstance(script, dict):
+                        continue
+                    file_uid = script.get('fileRef')
+                    if isinstance(file_uid, str) and  file_uid in external_file_uids:
+                        new_uid = external_file_uids[file_uid]
+                        script['fileRef'] = new_uid
+                        new_attachments_uids.remove(new_uid)
+
             # find first fileRef or create new fileRef if missing
             file_ref = next((ft for ft in data['fields'] if ft['type'] == 'fileRef'), None)
             if file_ref:
@@ -1227,7 +1266,6 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
 
             new_data = json.dumps(data)
             params.record_cache[parent_uid]['data_unencrypted'] = new_data
-            params.sync_data = True
             rec = api.get_record(params, parent_uid)
             rec_list.append(rec)
 
@@ -1237,6 +1275,7 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
             ]
 
         api.update_records_v3(params, rec_list, record_links_by_uid={'record_links_add': record_links_add}, silent=True)
+        params.sync_data = True
 
 
 def upload_attachment(params, attachments):
@@ -1681,11 +1720,11 @@ def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
     return field
 
 
-def _construct_record_v3_data(rec_to_import, orig_data=None, map_data_custom_to_rec_fields=None):
-    # type: (ImportRecord, Optional[dict], Optional[dict]) -> dict
+def _construct_record_v3_data(rec_to_import, orig_record=None, map_data_custom_to_rec_fields=None):
+    # type: (ImportRecord, Optional[vault.TypedRecord], Optional[dict]) -> dict
     data = {}
-    if orig_data:
-        data.update(orig_data)
+    if isinstance(orig_record, vault.TypedRecord):
+        data.update(vault_extensions.extract_typed_record_data(orig_record))
     data['title'] = rec_to_import.title or ''
     data['type'] = rec_to_import.type or ''
     data['notes'] = rec_to_import.notes or ''
@@ -1872,10 +1911,17 @@ def prepare_record_add_or_update(update_flag, params, records):
                             f.required = True
                     import_record.schema.append(f)
 
+    # re-link references
     for import_record in record_to_import:
         if import_record.references:
             for ref in import_record.references:
                 ref.uids = [external_lookup[x] for x in ref.uids if x in external_lookup]
+        if import_record.fields:
+            scripts = [x for x in import_record.fields if x.type == 'script']
+            for script in scripts:
+                if isinstance(script, dict):
+                    if 'recordRef' in script:
+                        script['recordRef'] = [external_lookup.get(x) or x for x in script['recordRef']]
 
     return record_to_import, external_lookup
 

@@ -339,13 +339,6 @@ def extract_typed_record_refs(record):  # type: (vault.TypedRecord) -> Set[str]
                     ref = script['fileRef']
                     if isinstance(ref, str):
                         refs.add(ref)
-                if 'recordRef' in script:
-                    record_refs = script['recordRef']
-                    if not isinstance(record_refs, list):
-                        continue
-                    for ref in record_refs:
-                        if isinstance(ref, str):
-                            refs.add(ref)
 
     return refs
 

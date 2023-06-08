@@ -559,14 +559,14 @@ class OnePasswordAttachment(Attachment):
     def __init__(self, zip_file, zip_path, name, size):
         super().__init__()
         self.zip_file = zip_file
-        self.zip_path = zip_path
+        self.file_uid = zip_path
         self.name = name
         self.size = size
 
     @contextmanager
     def open(self):  # type: () -> io.BufferedIOBase
         with zipfile.ZipFile(self.zip_file, mode='r') as zip_file:
-            yield zip_file.open(self.zip_path, mode='r')
+            yield zip_file.open(self.file_uid, mode='r')
 
 
 

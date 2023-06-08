@@ -131,7 +131,9 @@ class KeepassImporter(BaseFileImporter):
                                     if isinstance(a, KeepassAttachment):
                                         if record.attachments is None:
                                             record.attachments = []
-                                        record.attachments.append(BytesAttachment(a.filename, a.binary))
+                                        atta = BytesAttachment(a.filename, a.binary)
+                                        atta.file_uid = a.id
+                                        record.attachments.append(atta)
 
                             records.append(record)
                 id_map = None

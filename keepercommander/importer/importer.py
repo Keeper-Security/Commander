@@ -139,6 +139,7 @@ class Team:
 
 class Attachment(abc.ABC):
     def __init__(self):
+        self.file_uid = None
         self.name = None
         self.size = None
         self.mime = None
