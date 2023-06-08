@@ -378,7 +378,7 @@ class KeeperJsonExporter(BaseExporter):
             if r.attachments and zip_archive:
                 ro['attachments'] = []
                 for at in r.attachments:
-                    file_uid = utils.generate_uid()
+                    file_uid = at.file_uid or utils.generate_uid()
                     atta[file_uid] = at
                     a = {
                         'file_uid': file_uid,
