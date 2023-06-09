@@ -2,7 +2,7 @@ import argparse
 import datetime
 import logging
 import operator
-from typing import Optional, Dict, Tuple, Union
+from typing import Optional, Dict, Tuple, Union, List
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
@@ -10,6 +10,7 @@ from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
 from ..error import Error
 from ..params import KeeperParams
+from ..sox import sox_types
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
 compliance_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
@@ -41,6 +42,7 @@ default_report_parser.add_argument('--shared', action='store_true',
 team_report_desc = 'Run a report showing which shared folders enterprise teams have access to'
 team_report_parser = argparse.ArgumentParser(prog='compliance team-report', description=team_report_desc,
                                              parents=[compliance_parser])
+team_report_parser.add_argument('-tu', '--show-team-users', action='store_true', help='show all members of each team')
 
 access_report_desc = 'Run a report showing all records a user has accessed'
 access_report_parser = argparse.ArgumentParser(prog='compliance record-access-report', description=access_report_desc,
@@ -50,6 +52,11 @@ access_report_parser.add_argument('user', metavar='USER', type=str, help='userna
 summary_report_desc = 'Run a summary SOX compliance report'
 summary_report_parser = argparse.ArgumentParser(prog='compliance summary-report', description=summary_report_desc,
                                                 parents=[compliance_parser])
+sf_report_desc = 'Run an enterprise-wide shared-folder report'
+sf_report_parser = argparse.ArgumentParser(prog='compliance shared-folder-report', description=sf_report_desc,
+                                           parents=[compliance_parser])
+sf_report_parser.add_argument('-tu', '--show-team-users', action='store_true', help='show all members of each team')
+
 
 def register_commands(commands):
     commands['compliance'] = ComplianceCommand()
@@ -61,13 +68,23 @@ def register_command_info(aliases, command_info):
     command_info['compliance'] = 'SOX Compliance Reporting'
 
 
+def get_email(params, user_uid):    # type: (KeeperParams, int) -> str
+    user_uid_key = 'enterprise_user_id'
+    return next(u.get('username') for u in params.enterprise.get('users') if u.get(user_uid_key) == user_uid)
+
+
+def get_team_usernames(params, team):  # type: (KeeperParams, sox_types.Team) -> List[str]
+    return [get_email(params, userid) for userid in team.users]
+
+
 class ComplianceCommand(GroupCommand):
     def __init__(self):
         super(ComplianceCommand, self).__init__()
         self.register_command('report', ComplianceReportCommand(), 'Run default SOX compliance report')
         self.register_command('team-report', ComplianceTeamReportCommand(), team_report_desc, 'tr')
         self.register_command('record-access-report', ComplianceRecordAccessReportCommand(), access_report_desc, 'rar')
-        self.register_command('summary-report', ComplianceSummaryReportCommand(), summary_report_desc)
+        self.register_command('summary-report', ComplianceSummaryReportCommand(), summary_report_desc, 'stats')
+        self.register_command('shared-folder-report', ComplianceSharedFolderReportCommand(), sf_report_desc, 'sfr')
         self.default_verb = 'report'
 
     def validate(self, params):  # type: (KeeperParams) -> None
@@ -77,6 +94,7 @@ class ComplianceCommand(GroupCommand):
 class BaseComplianceReportCommand(EnterpriseCommand):
     def __init__(self, report_headers, allow_no_opts=True, prelim_only=False):
         super(BaseComplianceReportCommand, self).__init__()
+        self.title = None
         self.report_headers = report_headers
         self.allow_no_opts = allow_no_opts
         self.prelim_only = prelim_only
@@ -121,7 +139,9 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         report_fmt = kwargs.get('format', 'table')
         headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report_data = self.generate_report_data(params, kwargs, sd, report_fmt, node_id, root_node_id)
-        return dump_report_data(report_data, headers, fmt=report_fmt, filename=kwargs.get('output'), column_width=32)
+        report = dump_report_data(report_data, headers, title=self.title, fmt=report_fmt, filename=kwargs.get('output'),
+                                  column_width=32)
+        return report
 
 
 class ComplianceReportCommand(BaseComplianceReportCommand):
@@ -267,7 +287,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
 
 class ComplianceTeamReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['team_name', 'shared_folder_name', 'shared_folder_uid', 'permissions']
+        headers = ['team_name', 'team_uid', 'shared_folder_name', 'shared_folder_uid', 'permissions', 'records']
         super(ComplianceTeamReportCommand, self).__init__(headers, allow_no_opts=True)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
@@ -279,21 +299,34 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
             sf = params.shared_folder_cache.get(uid, {})
             return sf.get('name_unencrypted', '')
 
+        show_team_users = kwargs.get('show_team_users')
         shared_folders = sox_data.get_shared_folders().items()
         team_lookup = sox_data.get_teams()
         report_data = []
         for sf_uid, folder in shared_folders:
-            if not folder.record_permissions:
-                continue
+            num_recs = len(folder.record_permissions) if folder.record_permissions else 0
             for team_uid in folder.teams:
                 team = team_lookup.get(team_uid)
-                perms = next(iter(folder.record_permissions)).permissions
-                report_data.append([team.team_name, get_sf_name(sf_uid), sf_uid, perms])
+                perms = [not team.restrict_share and 'Can Share', not team.restrict_edit and 'Can Edit']
+                perms = [p for p in perms if p]
+                perms = ', '.join(perms) if perms else 'Read Only'
+                row = [team.team_name, team_uid, get_sf_name(sf_uid), sf_uid, perms, num_recs]
+                if show_team_users:
+                    row.append(get_team_usernames(params, team))
+                report_data.append(row)
 
         return report_data
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
         kwargs['shared'] = True
+        tu_header = 'team_users'
+        show_team_users = kwargs.get('show_team_users')
+        if show_team_users:
+            if tu_header not in self.report_headers:
+                self.report_headers.append(tu_header)
+        else:
+            if tu_header in self.report_headers:
+                self.report_headers.remove(tu_header)
         return super().execute(params, **kwargs)
 
 
@@ -398,5 +431,32 @@ class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
         report_data = [(user.email, len(user.records)) for user in sox_data.get_users().values()]
         report_data.append(('TOTAL', sum([num_recs for email, num_recs in report_data])))
 
+        return report_data
+
+
+class ComplianceSharedFolderReportCommand(BaseComplianceReportCommand):
+    def __init__(self):
+        headers = ['shared_folder_uid', 'team_uid', 'team_name', 'record_uid', 'email']
+        super(ComplianceSharedFolderReportCommand, self).__init__(headers, allow_no_opts=True)
+
+    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
+        return sf_report_parser
+
+    def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
+        show_team_users = kwargs.get('show_team_users')
+        team_users_title = '(TU) denotes a user whose membership in a team grants them access to the shared folder'
+        self.title = team_users_title if show_team_users else None
+        sfs = sox_data.get_shared_folders()
+        teams = sox_data.get_teams()
+        report_data = []
+        for sfuid, sf in sfs.items():
+            sf_team_uids = list(sf.teams)
+            sf_team_names = [teams.get(t).team_name for t in sf.teams]
+            records = [rp.record_uid for rp in sf.record_permissions]
+            users = [get_email(params, u) for u in sf.users]
+            team_users = [tu for tuid in sf_team_uids for tu in get_team_usernames(params, teams.get(tuid))] if show_team_users else []
+            team_users = [f'(TU){email}' for email in team_users]
+            row = [sfuid, sf_team_uids, sf_team_names, records, team_users + users]
+            report_data.append(row)
         return report_data
 
