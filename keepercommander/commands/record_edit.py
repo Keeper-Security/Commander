@@ -28,7 +28,7 @@ from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 
-record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder')
+record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.')
 record_add_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                                help='Display help on field parameters.')
 record_add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
@@ -40,7 +40,7 @@ record_add_parser.add_argument('--folder', dest='folder', action='store',
 record_add_parser.add_argument('fields', nargs='*', type=str,
                                help='load record type data from strings with dot notation')
 
-record_update_parser = argparse.ArgumentParser(prog='record-update', description='Update a record')
+record_update_parser = argparse.ArgumentParser(prog='record-update', description='Update a record.')
 record_update_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                                   help='Display help on field parameters.')
 record_update_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
@@ -53,17 +53,19 @@ record_update_parser.add_argument('fields', nargs='*', type=str,
                                   help='load record type data from strings with dot notation')
 
 
-append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record')
+append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record.')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
-delete_attachment_parser = argparse.ArgumentParser(prog='delete-attachment', description='Delete an attachment from a record.', usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
+delete_attachment_parser = argparse.ArgumentParser(
+    prog='delete-attachment', description='Delete an attachment from a record.',
+    usage="Example to remove two files for a record: delete-attachment {uid} --name secrets.txt --name photo.jpg")
 delete_attachment_parser.add_argument('--name', dest='name', action='append', required=True, help='attachment file name or ID. Can be repeated.')
 delete_attachment_parser.add_argument('record', action='store', help='record path or UID')
 
 
-download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments')
+download_parser = argparse.ArgumentParser(prog='download-attachment', description='Download record attachments.')
 download_parser.add_argument('-r', '--recursive', dest='recursive', action='store_true',
                              help='Download recursively through subfolders')
 download_parser.add_argument('--out-dir', dest='out_dir', action='store', help='Local folder for downloaded files')
@@ -74,7 +76,7 @@ download_parser.add_argument('--record-title', dest='record_title', action='stor
 download_parser.add_argument('records', nargs='*', help='Record/Folder path or UID')
 
 
-upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments')
+upload_parser = argparse.ArgumentParser(prog='upload-attachment', description='Upload record attachments.')
 upload_parser.add_argument('--file', dest='file', action='append', required=True, help='file name to upload')
 upload_parser.add_argument('record', action='store', help='record path or UID')
 

@@ -293,7 +293,7 @@ user_report_parser.add_argument('-l', '--last-login', dest='last_login', action=
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
 
-ext_shares_report_desc = 'Run an external shares report'
+ext_shares_report_desc = 'Run an external shares report.'
 external_share_report_parser = argparse.ArgumentParser(prog='external-shares-report', description=ext_shares_report_desc)
 external_share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'],
                                 default='table', help='output format.')

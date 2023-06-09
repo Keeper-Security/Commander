@@ -73,10 +73,10 @@ def register_command_info(aliases, command_info):
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
               record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
         command_info[p.prog] = p.description
-    command_info['trash'] = 'Manage deleted items'
+    command_info['trash'] = 'Manage deleted items.'
 
 
-get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID')
+get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID.')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
@@ -126,7 +126,7 @@ record_history_parser.add_argument(
 )
 record_history_parser.add_argument(
     '-r', '--revision', dest='revision', type=int, action='store',
-    help='only show the details for a specific revision')
+    help='only show the details for a specific revision.')
 record_history_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
@@ -139,7 +139,7 @@ shared_records_report_parser.add_argument('-o', '--output', action='store',
                                           help='output file name (ignored for table format)')
 shared_records_report_parser.add_argument(
     '-tu', '--show-team-users', action='store_true',
-    help='show members of team for records shared via share team folders')
+    help='show members of team for records shared via share team folders.')
 shared_folder_help = 'Optional (w/ multiple values allowed). Path or UID of folder containing the records to be shown'
 shared_records_report_parser.add_argument('folder', type=str, nargs='*', help=shared_folder_help)
 
@@ -161,7 +161,7 @@ clipboard_copy_parser.add_argument(
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
-rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record')
+rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record.')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
