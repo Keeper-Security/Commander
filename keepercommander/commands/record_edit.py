@@ -13,6 +13,7 @@ import argparse
 import base64
 import collections
 import datetime
+import itertools
 import json
 import logging
 import os
@@ -398,8 +399,7 @@ class RecordEditMixin:
     @staticmethod
     def adjust_typed_record_fields(record, typed_fields):    # type: (vault.TypedRecord, List[Dict]) -> Optional[bool]
         new_fields = []
-        old_fields = list(record.fields)
-        custom = list(record.custom)
+        old_fields = [x for x in itertools.chain(record.fields, record.custom) if x.value]
         should_rebuild = False
         for typed_field in typed_fields:
             if not isinstance(typed_field, dict):
@@ -412,23 +412,23 @@ class RecordEditMixin:
             rf = record_types.RecordFields.get(field_type)
             ignore_label = rf.multiple == record_types.Multiple.Never if rf else False
 
+            # exact match
             field = next((x for x in old_fields if x.type == field_type and
                           (ignore_label or (x.label or '') == field_label)), None)
+            # match first not empty
+            if not field:
+                if field_label:
+                    field = next((x for x in old_fields if x.type == field_type and not x.label and x.value), None)
+                else:
+                    field = next((x for x in old_fields if x.type == field_type and x.value), None)
+
             if field:
-                new_fields.append(field)
                 old_fields.remove(field)
+                new_fields.append(field)
+                field.required = required
                 if field.label != field_label:
                     field.label = field_label
                     should_rebuild = True
-                continue
-
-            field = next((x for x in custom if x.type == field_type and
-                          (ignore_label or (x.label or '') == field_label)), None)
-            if field:
-                field.required = required
-                new_fields.append(field)
-                custom.remove(field)
-                should_rebuild = True
                 continue
 
             field = vault.TypedField.new_field(field_type, None, field_label)
@@ -436,12 +436,10 @@ class RecordEditMixin:
             new_fields.append(field)
             should_rebuild = True
 
+        custom = []
         if len(old_fields) > 0:
             custom.extend(old_fields)
             should_rebuild = True
-
-        if not should_rebuild:
-            should_rebuild = any(x for x in custom if not x.value)
 
         if should_rebuild:
             record.fields.clear()
