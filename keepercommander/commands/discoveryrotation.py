@@ -45,7 +45,7 @@ def register_commands(commands):
 
 
 def register_command_info(_, command_info):
-    command_info['pam'] = 'Manage PAM Components'
+    command_info['pam'] = 'Manage PAM Components.'
 
 
 class PAMControllerCommand(GroupCommand):

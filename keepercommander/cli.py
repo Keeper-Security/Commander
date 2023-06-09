@@ -49,38 +49,45 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'Company. \nIf you are an MSP administrator then try to run `switch-to-msp` ' \
                           'command before executing this command.'
 
-command_info['server'] = 'Sets or displays current Keeper region'
+command_info['server'] = 'Sets or displays current Keeper region.'
+
 
 def display_command_help(show_enterprise=False, show_shell=False):
-    headers = ['', 'Command', 'Alias', '', 'Description']
+    headers = ['Category', 'Command', 'Alias', '', 'Description']
     alias_lookup = {x[1]: x[0] for x in aliases.items()}
     table = []
     cmds = list(command_info.keys())
     cmds.sort()
+    group_shown = False
     for cmd in cmds:
-        table.append(['  ', cmd, alias_lookup.get(cmd) or '', '...', command_info.get(cmd, '')])
+        table.append(['Vault' if not group_shown else '', cmd, alias_lookup.get(cmd) or '', '...', command_info.get(cmd, '')])
+        group_shown = True
 
     if show_enterprise:
         cmds = list(enterprise_command_info.keys())
         cmds.sort()
+        group_shown = False
         for cmd in cmds:
-            table.append(['  ', cmd, alias_lookup.get(cmd) or '', '...', enterprise_command_info.get(cmd, '')])
+            table.append(['Enterprise' if not group_shown else '', cmd, alias_lookup.get(cmd) or '', '...', enterprise_command_info.get(cmd, '')])
+            group_shown = True
 
         cmds = list(msp_command_info.keys())
         cmds.sort()
+        group_shown = False
         for cmd in cmds:
-            table.append(['  ', cmd, alias_lookup.get(cmd) or '', '...', msp_command_info.get(cmd, '')])
+            table.append(['MSP' if not group_shown else '', cmd, alias_lookup.get(cmd) or '', '...', msp_command_info.get(cmd, '')])
+            group_shown = True
 
     if show_shell:
-        table.append(['  ', 'shell', '', '...', 'Use Keeper interactive shell'])
-        table.append(['  ', 'clear', 'c', '...', 'Clear the screen'])
-        table.append(['  ', 'history', 'h', '...', 'Show command history'])
-        table.append(['  ', 'quit', 'q', '...', 'Quit'])
+        table.append(['Misc', 'clear', 'c', '...', 'Clear the screen.'])
+        table.append(['', 'history', 'h', '...', 'Show command history.'])
+        table.append(['', 'shell', '', '...', 'Use Keeper interactive shell.'])
+        table.append(['', 'quit', 'q', '...', 'Quit.'])
 
     print('\nCommands:')
     dump_report_data(table, headers, no_header=True)
     print('')
-    print('Type \'command -h\' to display help on command')
+    print('Type \'help <command>\' to display help on command')
 
 
 msp_params = None
