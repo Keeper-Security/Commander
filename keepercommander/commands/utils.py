@@ -147,7 +147,7 @@ set_parser.exit = suppress_exit
 
 
 help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command.')
-help_parser.add_argument('command', action='store', type=str, help='Commander\'s command')
+help_parser.add_argument('command', action='store', type=str, nargs='+',  help='Commander\'s command')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
@@ -825,15 +825,16 @@ class HelpCommand(Command):
         return help_parser
 
     def execute(self, params, **kwargs):
-        cmd = kwargs.get('command')
-        if cmd:
+        help_commands = kwargs.get('command')
+        if isinstance(help_commands, list) and len(help_commands) > 0:
+            cmd = help_commands[0]
+            help_commands = help_commands[1:]
             if cmd in aliases:
                 ali = aliases[cmd]
                 if type(ali) == tuple:
                     cmd = ali[0]
                 else:
                     cmd = ali
-            parser = None
 
             if cmd in commands:
                 command = commands[cmd]
@@ -849,7 +850,24 @@ class HelpCommand(Command):
                 if parser:
                     parser.print_help()
             elif isinstance(command, GroupCommand):
-                command.print_help(command=cmd)
+                if len(help_commands) == 0:
+                    command.print_help(command=cmd)
+                else:
+                    while len(help_commands) > 0:
+                        cmd = help_commands[0]
+                        help_commands = help_commands[1:]
+                        if cmd in command.subcommands:
+                            subcommand = command.subcommands[cmd]
+                            if isinstance(subcommand, Command):
+                                parser = subcommand.get_parser()
+                                if parser:
+                                    parser.print_help()
+                                break
+                            elif isinstance(subcommand, GroupCommand):
+                                command = subcommand
+                        else:
+                            command.print_help(command=cmd)
+                            break
 
     def is_authorised(self):
         return False

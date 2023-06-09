@@ -179,13 +179,13 @@ def main(from_package=False):
         return
 
     if flags and len(flags) > 0:
-        if flags[0] == '-h':
+        if flags[0] in ('-h', '--help'):
             flags.clear()
             opts.command = '?'
-
-    if (opts.command or '') in {'?'}:
-        if opts.command == '?' or not params.commands:
-            usage('')
+    elif opts.command == 'help' and len(opts.options) == 0:
+        opts.command = '?'
+    if (opts.command or '') == '?':
+        usage('')
 
     if not opts.command and from_package:
         opts.command = 'shell'
