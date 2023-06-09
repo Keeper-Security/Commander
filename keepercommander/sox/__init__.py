@@ -262,6 +262,8 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 entity = sdata.storage.teams.get_entity(team_uid) or StorageTeam()
                 entity.team_uid = team_uid
                 entity.team_name = team.teamName
+                entity.restrict_edit = team.restrictEdit
+                entity.restrict_share = team.restrictShare
                 entities.append(entity)
             sdata.storage.teams.put_entities(entities)
 
