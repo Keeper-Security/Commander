@@ -19,7 +19,7 @@ from urllib import parse
 from .base32hex import b32decode
 
 
-def get_totp_code(url):   # type: (str) -> Optional[Tuple[str, int, int]]
+def get_totp_code(url, offset=None):   # type: (str, Optional[int]) -> Optional[Tuple[str, int, int]]
     comp = parse.urlparse(url)
     if comp.scheme == 'otpauth':
         secret = None
@@ -38,6 +38,8 @@ def get_totp_code(url):   # type: (str) -> Optional[Tuple[str, int, int]]
         if secret:
             tm_base = int(datetime.datetime.now().timestamp())
             tm = tm_base / period
+            if isinstance(offset, int):
+                tm += offset
             alg = algorithm.lower()
             if alg in hashlib.__dict__:
                 reminder = len(secret) % 8
