@@ -29,6 +29,7 @@ totp_parser = argparse.ArgumentParser(prog='totp', description='Display the Two 
 totp_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 totp_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 totp_parser.add_argument('--details', dest='details', action='store_true', help='display 2FA details')
+totp_parser.add_argument('--range', dest='range', type=int, action='store', help='display last and next [x] codes')
 
 
 class TotpEndpoint:
@@ -89,23 +90,34 @@ class TotpCommand(Command):
 
             if kwargs['details']:
                 record_common.display_totp_details(totp_url)
+            x_range = kwargs.get('range')
+            if isinstance(x_range, int) and x_range > 0:
+                x_range = min(x_range, 10)
+                last_codes = [x-x_range for x in range(x_range)] + [0] + [x+1 for x in range(x_range)]
+                table = []
+                for offset in last_codes:
+                    title = 'Current' if offset == 0 else str(offset)
+                    code, _, _ = get_totp_code(totp_url, offset)
+                    table.append([title, code])
+                dump_report_data(table, headers=('key', 'value'), no_header=True, right_align=(0,))
+            else:
+                tmer = None     # type: Optional[threading.Timer]
+                done = False
 
-            tmer = None     # type: Optional[threading.Timer]
-            done = False
-            def print_code():
-                nonlocal tmer
-                if not done:
-                    TotpCommand.display_code(totp_url)
-                    tmer = threading.Timer(1, print_code).start()
+                def print_code():
+                    nonlocal tmer
+                    if not done:
+                        TotpCommand.display_code(totp_url)
+                        tmer = threading.Timer(1, print_code).start()
 
-            try:
-                print('Press <Enter> to exit\n')
-                print_code()
-                input()
-            finally:
-                done = True
-                if tmer:
-                    tmer.cancel()
+                try:
+                    print('Press <Enter> to exit\n')
+                    print_code()
+                    input()
+                finally:
+                    done = True
+                    if tmer:
+                        tmer.cancel()
         else:
             TotpCommand.find_endpoints(params)
             logging.info('')
