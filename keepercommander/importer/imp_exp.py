@@ -408,7 +408,7 @@ def export(params, file_format, filename, **kwargs):
         logging.info('%d records exported', rec_count)
 
 
-def import_teams(params, teams):   # type: (KeeperParams, List[ImportTeam]) -> None
+def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[ImportTeam], bool) -> None
     if not params.enterprise:
         logging.warning('Only enterprise administrator can import teams.')
         return
@@ -435,11 +435,12 @@ def import_teams(params, teams):   # type: (KeeperParams, List[ImportTeam]) -> N
             if u['status'] == 'active' and u['lock'] == 0:
                 user_lookup[u['username'].lower()] = u['enterprise_user_id']
 
-    users_to_add = []    # type: List[Tuple[str, str]]
+    users_to_add = []       # type: List[Tuple[str, str]]
+    users_to_remove = []    # type: List[Tuple[str, int]]
     for team in teams:
         team_uid = None
         if team.uid and isinstance(team.uid, str):
-            for v in team_lookup:
+            for v in team_lookup.values():
                 if isinstance(v, str):
                     if v == team.uid:
                         team_uid = team.uid
@@ -461,21 +462,25 @@ def import_teams(params, teams):   # type: (KeeperParams, List[ImportTeam]) -> N
 
         if team_uid and isinstance(team.members, list):
             current_members = set((x['enterprise_user_id'] for x in params.enterprise.get('team_users', []) if x['team_uid'] == team_uid))
+            keep_members = set()
             for email in team.members:
                 if isinstance(email, str):
                     email = email.lower()
                     if email in user_lookup:
                         user_id = user_lookup[email]
+                        keep_members.add(user_id)
                         if user_id not in current_members:
                             users_to_add.append((email, team_uid))
+            if full_sync and len(keep_members) > 0:
+                users_to_remove.extend(((team_uid, x) for x in current_members.difference(keep_members)))
 
+    rqs = []
     if len(users_to_add) > 0:
         emails = set((x[0] for x in users_to_add))
         api.load_user_public_keys(params, list(emails))
         team_uids = set((x[1] for x in users_to_add))
         api.load_team_keys(params, list(team_uids))
 
-        rqs = []
         for email, team_uid in users_to_add:
             if team_uid in params.key_cache and email in params.key_cache and email in user_lookup:
                 team_key = params.key_cache[team_uid]
@@ -494,16 +499,44 @@ def import_teams(params, teams):   # type: (KeeperParams, List[ImportTeam]) -> N
                         })
                     except Exception as e:
                         logging.debug('Add user to team error: %s', str(e))
-        if rqs:
-            rs = api.execute_batch(params, rqs)
-            api.query_enterprise(params)
-            if rs:
-                users_added = sum((1 for x in rs if x.get('result') == 'success'))
-                if users_added > 0:
-                    logging.info("%d team membership(s) added", users_added)
+
+    if len(users_to_remove) > 0:
+        rqs.extend(({
+            'command': 'team_enterprise_user_remove',
+            'team_uid': team_uid,
+            'enterprise_user_id': user_id,
+        } for team_uid, user_id in users_to_remove))
+    if rqs:
+        rs = api.execute_batch(params, rqs)
+        api.query_enterprise(params)
+        if rs:
+            users_added = 0
+            users_removed = 0
+            error_count = 0
+            for q, s in zip(rqs, rs):
+                command = q.get('command') or ''
+                if s.get('result') == 'success':
+                    if command == 'team_enterprise_user_add':
+                        users_added += 1
+                    elif command == 'team_enterprise_user_remove':
+                        users_removed += 1
+                else:
+                    error_count += 1
+                    if error_count < 5:
+                        team_uid = q.get('team_uid') or ''
+                        logging.warning('%s: Team UID=%s failed: %s', command, team_uid, s.get('message'))
+                    if error_count > 5:
+                        logging.warning('%d errors more')
+
+            if users_added > 0:
+                logging.info("%d team membership(s) added", users_added)
+            if users_removed > 0:
+                logging.info("%d team membership(s) removed", users_removed)
 
 
-def import_user_permissions(params, shared_folders):  # type: (KeeperParams, List[ImportSharedFolder]) -> None
+def import_user_permissions(params,
+                            shared_folders,
+                            full_sync=False):  # type: (KeeperParams, List[ImportSharedFolder], bool) -> None
     if not shared_folders:
         return
 
@@ -517,7 +550,7 @@ def import_user_permissions(params, shared_folders):  # type: (KeeperParams, Lis
     if params.folder_cache:
         for f_uid in params.folder_cache:
             fol = params.folder_cache[f_uid]
-            f_key = '{0}|{1}'.format((fol.name or '').casefold(), fol.parent_uid or '')
+            f_key = '{0}|{1}'.format((fol.name or '').casefold().strip(), fol.parent_uid or '')
             folder_lookup[f_key] = f_uid, fol.type
 
     for fol in folders:
@@ -540,22 +573,42 @@ def import_user_permissions(params, shared_folders):  # type: (KeeperParams, Lis
 
     folders = [x for x in folders if x.uid in params.shared_folder_cache]
     if folders:
-        permissions = prepare_folder_permission(params, folders)
+        permissions = prepare_folder_permission(params, folders, full_sync)
         if permissions:
             rs = api.execute_batch(params, permissions)
             sync_down.sync_down(params)
             if rs:
                 teams_added = 0
                 users_added = 0
+                teams_updated = 0
+                users_updated = 0
+                teams_removed = 0
+                users_removed = 0
                 for r in rs:
                     if 'add_teams' in r:
                         teams_added += len([x for x in r['add_teams'] if x.get('status') == 'success'])
                     if 'add_users' in r:
                         users_added += len([x for x in r['add_users'] if x.get('status') == 'success'])
+                    if 'update_teams' in r:
+                        teams_updated += len([x for x in r['update_teams'] if x.get('status') == 'success'])
+                    if 'update_users' in r:
+                        users_updated += len([x for x in r['update_users'] if x.get('status') == 'success'])
+                    if 'remove_teams' in r:
+                        teams_removed += len([x for x in r['remove_teams'] if x.get('status') == 'success'])
+                    if 'remove_users' in r:
+                        users_removed += len([x for x in r['remove_users'] if x.get('status') == 'success'])
                 if teams_added > 0:
                     logging.info("%d team(s) added to shared folders", teams_added)
                 if users_added > 0:
                     logging.info("%d user(s) added to shared folders", users_added)
+                if teams_updated > 0:
+                    logging.info("%d team(s) updated in shared folders", teams_updated)
+                if users_updated > 0:
+                    logging.info("%d user(s) updated in shared folders", users_updated)
+                if teams_removed > 0:
+                    logging.info("%d team(s) removed from shared folders", teams_removed)
+                if users_removed > 0:
+                    logging.info("%d user(s) removed from shared folders", users_removed)
 
 
 def _import(params, file_format, filename, **kwargs):
@@ -2000,18 +2053,20 @@ def prepare_record_link(params, records):
     return record_links
 
 
-def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) -> list
+def prepare_folder_permission(params,
+                              folders,
+                              full_sync):    # type: (KeeperParams, List[ImportSharedFolder], bool) -> list
     """Prepare a list of API interactions for changes to folder permissions."""
     shared_folder_lookup = {}
     api.load_available_teams(params)
     for shared_folder_uid in params.shared_folder_cache:
         path = get_folder_path(params, shared_folder_uid)
         if path:
-            shared_folder_lookup[path] = shared_folder_uid
+            shared_folder_lookup[path.strip()] = shared_folder_uid
 
     email_pattern = re.compile(EMAIL_PATTERN)
-    emails = set()
-    teams = set()
+    emails_to_add = set()
+    teams_to_add = set()
     for fol in folders:
         shared_folder_uid = shared_folder_lookup.get(fol.path)
         if not shared_folder_uid:
@@ -2035,9 +2090,9 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                         found = next((True for x in shared_folder['teams'] if x['team_uid'] == perm.uid), False)
                         if found:
                             continue
-                    teams.add(perm.uid)
+                    teams_to_add.add(perm.uid)
                     if perm.name:
-                        teams.add(perm.name)
+                        teams_to_add.add(perm.name)
                 elif perm.name:
                     lower_name = perm.name.casefold()
                     match = email_pattern.match(perm.name)
@@ -2048,22 +2103,22 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                             found = next((True for x in shared_folder['users'] if x['username'].lower() == lower_name), False)
                             if found:
                                 continue
-                        emails.add(perm.name.lower())
+                        emails_to_add.add(perm.name.lower())
                     else:
                         if 'teams' in shared_folder:
                             found = next((True for x in shared_folder['teams'] if x['name'].lower() == lower_name), False)
                             if found:
                                 continue
-                        teams.add(perm.name)
+                        teams_to_add.add(perm.name)
 
-    if len(emails) > 0:
-        logging.debug('Loading public keys for %d user(s)', len(emails))
-        api.load_user_public_keys(params, list(emails))
+    if len(emails_to_add) > 0:
+        logging.debug('Loading public keys for %d user(s)', len(emails_to_add))
+        api.load_user_public_keys(params, list(emails_to_add))
 
-    if len(teams) > 0:
-        logging.debug('Resolving team UIDs for %d team(s)', len(teams))
+    if len(teams_to_add) > 0:
+        logging.debug('Resolving team UIDs for %d team(s)', len(teams_to_add))
         team_uids = set()
-        for t in teams:
+        for t in teams_to_add:
             team_uid = next((
                 x.get('team_uid') for x in (params.available_team_cache or []) if x.get('team_uid') == t or x.get('team_name').casefold() == t.casefold()
                 ), None)
@@ -2087,9 +2142,23 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
         if not shared_folder_key:
             continue
 
+        existing_teams = set()
+        if 'teams' in shared_folder:
+            existing_teams.update((x['team_uid'] for x in shared_folder['teams']))
+        existing_users = set()
+        if 'users' in shared_folder:
+            existing_users.update((x['username'] for x in shared_folder['users']))
+            existing_users.remove(params.user)
+        keep_teams = set()
+        keep_users = set()
+
         if fol.permissions:
             add_users = []
             add_teams = []
+            update_users = []
+            update_teams = []
+            remove_users = []
+            remove_teams = []
             for perm in fol.permissions:
                 team_uid = None
                 username = None
@@ -2103,68 +2172,151 @@ def prepare_folder_permission(params, folders):    # type: (KeeperParams, list) 
                             username = name
 
                     if team_uid:
+                        folder_team = None
                         if 'teams' in shared_folder:
-                            found = next((True for x in shared_folder['teams'] if x['team_uid'] == team_uid), False)
-                            if found:
-                                continue
-                        rq = {
-                            'team_uid': team_uid,
-                            'manage_users': perm.manage_users,
-                            'manage_records': perm.manage_records,
-                        }
-                        if team_uid in params.team_cache:
-                            team = params.team_cache[team_uid]
-                            if 'team_key_unencrypted' in team:
-                                team_key = team['team_key_unencrypted']
-                                rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_key))
-                                add_teams.append(rq)
-                        elif team_uid in params.key_cache:
-                            team_keys = params.key_cache[team_uid]
-                            if team_keys.rsa:
-                                rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
-                                rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
-                                add_teams.append(rq)
-                            elif team_keys.aes:
-                                rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes))
-                                add_teams.append(rq)
+                            folder_team = next((x for x in shared_folder['teams'] if x['team_uid'] == team_uid), None)
+                        if folder_team:
+                            manage_users = folder_team.get('manage_users') or False
+                            manage_records = folder_team.get('manage_records') or False
+                            keep_teams.add(team_uid)
+                            if manage_users != perm.manage_users or manage_records != perm.manage_records:
+                                update_teams.append({
+                                    'team_uid': team_uid,
+                                    'manage_users': perm.manage_users,
+                                    'manage_records': perm.manage_records,
+                                })
+                        else:
+                            rq = {
+                                'team_uid': team_uid,
+                                'manage_users': perm.manage_users,
+                                'manage_records': perm.manage_records,
+                            }
+                            if team_uid in params.team_cache:
+                                team = params.team_cache[team_uid]
+                                if 'team_key_unencrypted' in team:
+                                    team_key = team['team_key_unencrypted']
+                                    rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_key))
+                                    keep_teams.add(team_uid)
+                                    add_teams.append(rq)
+                            elif team_uid in params.key_cache:
+                                team_keys = params.key_cache[team_uid]
+                                if team_keys.rsa:
+                                    rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
+                                    rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
+                                    keep_teams.add(team_uid)
+                                    add_teams.append(rq)
+                                elif team_keys.aes:
+                                    rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes))
+                                    keep_teams.add(team_uid)
+                                    add_teams.append(rq)
                         continue
 
                     if username:
-                        if username in params.key_cache:
-                            if 'users' in shared_folder:
-                                found = next((True for x in shared_folder['users'] if x['username'].lower() == username), False)
-                                if found:
-                                    continue
-
-                            public_keys = params.key_cache[username]
-                            if public_keys.rsa:
-                                rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
-                                rq = {
+                        folder_user = None
+                        if 'users' in shared_folder:
+                            folder_user = next((x for x in shared_folder['users'] if x['username'].lower() == username), None)
+                        if folder_user:
+                            manage_users = folder_user.get('manage_users') or False
+                            manage_records = folder_user.get('manage_records') or False
+                            keep_users.add(username)
+                            if manage_users != perm.manage_users or manage_records != perm.manage_records:
+                                update_users.append({
                                     'username': username,
                                     'manage_users': perm.manage_users,
                                     'manage_records': perm.manage_records,
-                                    'shared_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
-                                }
-                                add_users.append(rq)
+                                })
+                        else:
+                            if username in params.key_cache:
+                                public_keys = params.key_cache[username]
+                                if public_keys.rsa:
+                                    rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+                                    rq = {
+                                        'username': username,
+                                        'manage_users': perm.manage_users,
+                                        'manage_records': perm.manage_records,
+                                        'shared_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
+                                    }
+                                    keep_users.add(username)
+                                    add_users.append(rq)
                         continue
                 except Exception as e:
                     logging.debug(e)
 
-            while len(add_teams) > 0 or len(add_users) > 0:
-                team_chunk = add_teams[:400]
-                add_teams = add_teams[400:]
-                user_chunk = add_users[:400]
-                add_users = add_users[400:]
+            update_defaults = False
+            if full_sync:
+                for prop in ('manage_users', 'manage_records', 'can_edit', 'can_share'):
+                    if hasattr(fol, prop) and f'default_{prop}' in shared_folder:
+                        b1 = getattr(fol, prop) is True
+                        b2 = shared_folder.get(f'default_{prop}') is True
+                        if b2 != b1:
+                            update_defaults = True
+                            break
+
+                if len(keep_teams) > 0 or len(keep_users) > 0:
+                    remove_users.extend(({'username': x} for x in existing_users.difference(keep_users)))
+                    remove_teams.extend(({'team_uid': x} for x in existing_teams.difference(keep_teams)))
+            else:
+                update_users.clear()
+                update_teams.clear()
+
+            while True:
                 request = {
                     'command': 'shared_folder_update',
                     'operation': 'update',
                     'pt': 'Commander',
                     'shared_folder_uid': shared_folder_uid,
                     'force_update': True,
-                    'add_teams': team_chunk,
-                    'add_users': user_chunk,
                 }
-                folder_permissions.append(request)
+                if update_defaults:
+                    if isinstance(fol.manage_records, bool):
+                        request['default_manage_records'] = fol.manage_records
+                    if isinstance(fol.manage_users, bool):
+                        request['default_manage_users'] = fol.manage_users
+                    if isinstance(fol.can_edit, bool):
+                        request['default_can_edit'] = fol.can_edit
+                    if isinstance(fol.can_share, bool):
+                        request['default_can_share'] = fol.can_share
+
+                left = 100
+                if len(add_users) > 0 and left > 0:
+                    chunk = add_users[:min(len(add_users), left)]
+                    add_users = add_users[len(chunk):]
+                    request['add_users'] = chunk
+                    left -= len(chunk)
+                if len(add_teams) > 0 and left > 0:
+                    chunk = add_teams[:min(len(add_teams), left)]
+                    add_teams = add_teams[len(chunk):]
+                    request['add_teams'] = chunk
+                    left -= len(chunk)
+
+                if len(update_users) > 0 and left > 0:
+                    chunk = update_users[:min(len(update_users), left)]
+                    update_users = update_users[len(chunk):]
+                    request['update_users'] = chunk
+                    left -= len(chunk)
+                if len(update_teams) > 0 and left > 0:
+                    chunk = update_teams[:min(len(update_teams), left)]
+                    update_teams = update_teams[len(chunk):]
+                    request['update_teams'] = chunk
+                    left -= len(chunk)
+
+                if len(remove_users) > 0 and left > 0:
+                    chunk = remove_users[:min(len(remove_users), left)]
+                    remove_users = remove_users[len(chunk):]
+                    request['remove_users'] = chunk
+                    left -= len(chunk)
+                if len(remove_teams) > 0 and left > 0:
+                    chunk = remove_teams[:min(len(remove_teams), left)]
+                    remove_teams = remove_teams[len(chunk):]
+                    request['remove_teams'] = chunk
+                    left -= len(chunk)
+
+                if left < 100 or update_defaults:
+                    folder_permissions.append(request)
+                    update_defaults = False
+
+                if left == 100:
+                    break
 
     return folder_permissions
 
