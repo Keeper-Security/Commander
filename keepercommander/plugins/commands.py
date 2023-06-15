@@ -162,7 +162,13 @@ def rotate_password(params, record_uid, rotate_name=None, plugin_name=None, host
         )
         return False
 
-    plugin_name, plugin_kwargs, plugin = plugin_manager.get_plugin(record, rotate_name, plugin_name, host, port)
+    rs = plugin_manager.get_plugin(record, rotate_name, plugin_name, host, port)
+    if not isinstance(rs, tuple):
+        return False
+    if len(rs) != 3:
+        return False
+
+    plugin_name, plugin_kwargs, plugin = rs
     if not plugin:
         return False
 
@@ -273,6 +279,8 @@ class RecordRotateCommand(Command):
         elif match:
             results = api.search_records(params, match)
             for r in results:
+                if r.version not in (2, 3):
+                    continue
                 if force or confirm(f'Rotate password for record {r.title}?'):
                     rotate_password(
                         params, r.record_uid, plugin_name=kwargs.get('plugin'), new_password=kwargs.get('password'),

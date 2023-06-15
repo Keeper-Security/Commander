@@ -164,7 +164,7 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
     """
     cmdr_kwargs = get_custom_cmdr_fields(record)
     if cmdr_kwargs is None:
-        return None, None
+        return
 
     if plugin_name is None and len(cmdr_kwargs) > 0:
         rotate_value = cmdr_kwargs.get(f'plugin:{rotate_name}') if rotate_name else None
@@ -209,9 +209,9 @@ def get_plugin(record, rotate_name, plugin_name=None, host=None, port=None):
     if not plugin_name:
         logging.error('Record is not marked for password rotation (i.e. \'cmdr:plugin\' custom field).\n'
                       'Add custom field \'cmdr:plugin\'=\'noop\' to enable password rotation for this record')
-        return None, None
+        return
     elif check_missing_kwargs(plugin_name, plugin_kwargs):
-        return None, None
+        return
 
     plugin = load_plugin(plugin_name)
     if hasattr(plugin, 'Rotator'):
