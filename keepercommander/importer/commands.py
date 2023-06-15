@@ -113,6 +113,7 @@ download_membership_parser.exit = suppress_exit
 
 
 apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', description='Loads shared folder membership from JSON file into Keeper.')
+apply_membership_parser.add_argument('--full-sync', dest='full_sync', action='store_true', help='Update and remove membership also.')
 apply_membership_parser.add_argument('name', type=str, nargs='?', help='Input file name. "shared_folder_membership.json" if omitted.')
 apply_membership_parser.error = raise_parse_exception
 apply_membership_parser.exit = suppress_exit
@@ -435,11 +436,12 @@ class ApplyMembershipCommand(Command):
             if isinstance(obj, Team):
                 teams.append(obj)
 
+        full_sync = kwargs.get('full_sync') is True
         if len(shared_folders) > 0:
-            imp_exp.import_user_permissions(params, shared_folders)
+            imp_exp.import_user_permissions(params, shared_folders, full_sync)
 
         if len(teams) > 0:
-            imp_exp.import_teams(params, teams)
+            imp_exp.import_teams(params, teams, full_sync)
 
 
 class DownloadRecordTypeCommand(EnterpriseCommand):
