@@ -729,7 +729,7 @@ class ScimPushCommand(EnterpriseCommand):
                   'https://www.googleapis.com/auth/admin.directory.group.member.readonly',
                   'https://www.googleapis.com/auth/admin.directory.user.readonly']
         cred = service_account.Credentials.from_service_account_info(info, scopes=scopes).with_subject(admin_user)
-        directory = googleapiclient.discovery.build('admin', 'directory_v1', credentials=cred)
+        directory = googleapiclient.discovery.build('admin', 'directory_v1', credentials=cred, static_discovery=False)
 
         user_lookup = {}
         users = directory.users().list(customer='my_customer').execute()
