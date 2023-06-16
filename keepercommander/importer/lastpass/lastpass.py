@@ -151,7 +151,11 @@ class LastPassImporter(BaseImporter):
             vault = Vault.open_remote(username, password, multifactor_password=twofa_code, users_only=users_only,
                                       tmpdir=tmpdir, get_attachments=not dry_run, **request_settings)
         except LastPassUnknownError as lpe:
-            logging.warning(lpe)
+            message = str(lpe)
+            if message.startswith('Try again OR look for an email'):
+                message += 'If you do not receive an email, go to LastPass > Account Settings > Advanced Settings ' \
+                           'and ensure that "Disable Email Verification" is unchecked.'
+            logging.warning(message)
             return
         else:
             self.vault = vault
