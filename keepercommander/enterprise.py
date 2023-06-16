@@ -449,7 +449,7 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'node_id', proto_entity.nodeId)
         _set_or_remove(keeper_entity, 'username', proto_entity.username)
         _set_or_remove(keeper_entity, 'encrypted_data', proto_entity.encryptedData)
-        _set_or_remove(keeper_entity, 'key_type', proto_entity.keyType)
+        _set_or_remove(keeper_entity, 'key_type', proto_entity.keyType.lower())
         _set_or_remove(keeper_entity, 'status', proto_entity.status)
         _set_or_remove(keeper_entity, 'lock', proto_entity.lock)
         _set_or_remove(keeper_entity, 'user_id', proto_entity.userId)

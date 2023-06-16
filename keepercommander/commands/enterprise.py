@@ -38,7 +38,6 @@ from .base import user_choice, suppress_exit, raise_parse_exception, dump_report
 from .enterprise_common import EnterpriseCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .register import ShareRecordCommand, ShareFolderCommand
-from .scim import ScimCommand
 from .transfer_account import EnterpriseTransferUserCommand, transfer_user_parser
 from .. import api, crypto, utils, constants
 from ..display import bcolors
@@ -58,7 +57,6 @@ def register_commands(commands):
     commands['enterprise-push'] = EnterprisePushCommand()
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
-    commands['scim'] = ScimCommand()
     commands['transfer-user'] = EnterpriseTransferUserCommand()
 
     commands['audit-log'] = aram.AuditLogCommand()

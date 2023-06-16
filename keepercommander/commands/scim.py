@@ -11,26 +11,31 @@
 import argparse
 import base64
 import datetime
+import io
 import json
 import logging
 import os
+import requests
+from typing import Iterable, Union, Optional, Dict
 from urllib.parse import urlparse, urlunparse
 
 from .base import user_choice, dump_report_data, report_output_parser, field_to_title, GroupCommand
-from .enterprise import EnterpriseCommand
-from .. import api
+from .enterprise import TeamApproveCommand, EnterpriseCommand
+from .. import api, vault, attachment, vault_extensions
 from ..display import bcolors
 from ..params import KeeperParams
 
-scim_list_parser = argparse.ArgumentParser(prog='scim-list', parents=[report_output_parser],
+scim_list_parser = argparse.ArgumentParser(prog='scim list', parents=[report_output_parser],
                                            description='Display a list of available SCIM endpoints.')
 
-scim_view_parser = argparse.ArgumentParser(prog='scim-view', description='Display a SCIM endpoint details.')
+scim_view_parser = argparse.ArgumentParser(prog='scim view', description='Display a SCIM endpoint details.')
 scim_view_parser.add_argument('target', help='SCIM ID')
-scim_view_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table', help='output format.')
-scim_view_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+scim_view_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                              help='output format.')
+scim_view_parser.add_argument('--output', dest='output', action='store',
+                              help='output file name. (ignored for table format)')
 
-scim_create_parser = argparse.ArgumentParser(prog='scim-create', description='Create SCIM endpoint.')
+scim_create_parser = argparse.ArgumentParser(prog='scim create', description='Create SCIM endpoint.')
 scim_create_parser.add_argument('--node', dest='node', required=True, help='Node Name or ID.')
 scim_create_parser.add_argument(
     '--prefix', dest='prefix', action='store',
@@ -38,7 +43,7 @@ scim_create_parser.add_argument(
 scim_create_parser.add_argument(
     '--unique-groups', dest='unique_groups', action='store', choices=['on', 'off'], help='Unique Groups.')
 
-scim_edit_parser = argparse.ArgumentParser(prog='scim-edit', description='Edit SCIM endpoint.')
+scim_edit_parser = argparse.ArgumentParser(prog='scim edit', description='Edit SCIM endpoint.')
 scim_edit_parser.add_argument('target', help='SCIM ID')
 scim_edit_parser.add_argument(
     '--prefix', dest='prefix', action='store',
@@ -46,9 +51,16 @@ scim_edit_parser.add_argument(
 scim_edit_parser.add_argument(
     '--unique-groups', dest='unique_groups', action='store', choices=['on', 'off'], help='Unique Groups.')
 
-scim_delete_parser = argparse.ArgumentParser(prog='scim-delete', description='Delete SCIM endpoint.')
+scim_delete_parser = argparse.ArgumentParser(prog='scim delete', description='Delete SCIM endpoint.')
 scim_delete_parser.add_argument('target', help='SCIM ID')
 scim_delete_parser.add_argument('--force', '-f', dest='force', action='store_true', help='Delete with no confirmation')
+
+scim_push_parser = argparse.ArgumentParser(prog='scim push', description='Push SCIM data to endpoint.')
+scim_push_parser.add_argument('--source', dest='source', action='store', choices=['google'], default='google',
+                              help='Record UID with credentials')
+scim_push_parser.add_argument('--record', '-r', dest='record', action='store',
+                              help='Record UID with SCIM configuration')
+scim_push_parser.add_argument('target', help='SCIM ID')
 
 
 def register_commands(commands):
@@ -67,6 +79,7 @@ class ScimCommand(GroupCommand):
         self.register_command('create', ScimCreateCommand())
         self.register_command('edit', ScimEditCommand())
         self.register_command('delete', ScimDeleteCommand())
+        self.register_command('push', ScimPushCommand())
         self.default_verb = 'list'
 
 
@@ -139,7 +152,7 @@ class ScimCreateCommand(EnterpriseCommand):
         return token
 
 
-def find_scim(param, name):   # type: (KeeperParams, any) -> dict
+def find_scim(param, name):  # type: (KeeperParams, any) -> dict
     if not name:
         raise Exception('SCIM ID cannot be empty')
     if 'scims' in param.enterprise:
@@ -191,8 +204,10 @@ class ScimViewCommand(EnterpriseCommand):
                 return json.dumps(j_output, indent=2)
         else:
             table = [
-                ['SCIM ID', scim['scim_id']], ['SCIM URL', get_scim_url(params, node_id)], ['Node ID', node_id], ['Node Name', node_name],
-                ['Status', scim['status']], ['Prefix', scim.get('role_prefix') or ''], ['Unique Groups', scim.get('unique_groups', False)]
+                ['SCIM ID', scim['scim_id']], ['SCIM URL', get_scim_url(params, node_id)], ['Node ID', node_id],
+                ['Node Name', node_name],
+                ['Status', scim['status']], ['Prefix', scim.get('role_prefix') or ''],
+                ['Unique Groups', scim.get('unique_groups', False)]
             ]
             if last_synced:
                 table.append(['Last Synced', last_synced.strftime('%c')])
@@ -253,3 +268,535 @@ class ScimDeleteCommand(EnterpriseCommand):
 def get_scim_url(params, node_id):  # type:  (KeeperParams, int) -> any
     p = urlparse(params.rest_context.server_base)
     return urlunparse((p.scheme, p.netloc, '/api/rest/scim/v2/' + str(node_id), None, None, None))
+
+
+class ScimUser:
+    def __init__(self):
+        self.id = ''
+        self.external_id = ''
+        self.email = ''
+        self.full_name = ''
+        self.first_name = ''
+        self.last_name = ''
+        self.active = False
+        self.groups = []
+
+
+class ScimGroup:
+    def __init__(self):
+        self.id = ''
+        self.external_id = ''
+        self.name = ''
+
+
+class ScimPushCommand(EnterpriseCommand):
+    def get_parser(self):
+        return scim_push_parser
+
+    def execute(self, params, target=None, **kwargs):
+        scim = find_scim(params, target)
+
+        scim_url = get_scim_url(params, scim['node_id'])
+        record_uid = kwargs.get('record')
+        record = None  # type: Optional[vault.TypedRecord]
+        if record_uid:
+            if record_uid in params.record_cache:
+                r = vault.KeeperRecord.load(params, record_uid)
+                if isinstance(r, vault.TypedRecord):
+                    record = r
+                else:
+                    raise Exception(f'Record UID "{record_uid}": invalid record type ')
+            else:
+                raise Exception(f'Record UID "{record_uid}": does not exist')
+        else:
+            for r in vault_extensions.find_records(params, record_version=3):
+                if not isinstance(r, vault.TypedRecord):
+                    continue
+                field = next((x for x in r.fields if x.type == 'url'), None)
+                if field:
+                    url = field.get_default_value(str)
+                    if url and url == scim_url:
+                        record = r
+                        break
+            if not isinstance(record, vault.TypedRecord):
+                raise Exception(f'Cannot find SCIM record with URL: {scim_url}')
+
+        field = next((x for x in record.custom if (x.label or '').lower().strip() == 'scim token'), None)
+        if not field:
+            raise Exception(f'"SCIM Token" field not found on record "{record.title}"')
+        token = field.get_default_value(str)
+
+        keeper_users = {}  # type: Dict[str, ScimUser]
+        keeper_groups = {}  # type: Dict[str, ScimGroup]
+        for element in ScimPushCommand.scim_keeper(scim_url, token):
+            if isinstance(element, ScimUser):
+                keeper_users[element.id] = element
+            elif isinstance(element, ScimGroup):
+                keeper_groups[element.id] = element
+
+        external_func = None
+        source = kwargs.get('source')
+        if not source:
+            raise Exception(f'SCIM source {source} cannot be empty')
+        if source == 'google':
+            external_func = ScimPushCommand.scim_google
+        else:
+            raise Exception(f'SCIM source {source} is not supported')
+
+        other_users = {}  # type: Dict[str, ScimUser]
+        other_groups = {}  # type: Dict[str, ScimGroup]
+
+        for element in external_func(params, record):
+            if isinstance(element, ScimUser):
+                other_users[element.id] = element
+            elif isinstance(element, ScimGroup):
+                other_groups[element.id] = element
+
+        self.sync_groups(scim_url, token, keeper_groups, other_groups)
+        self.sync_users(scim_url, token, keeper_users, other_users)
+        self.sync_membership(scim_url, token, keeper_groups, keeper_users, other_users)
+        api.query_enterprise(params)
+        team_approve = TeamApproveCommand()
+        team_approve.execute(params)
+        api.query_enterprise(params)
+
+    @staticmethod
+    def sync_groups(scim_url, token,
+                    keeper_groups,
+                    external_groups):  # type: (str, str, Dict[str, ScimGroup], Dict[str, ScimGroup]) -> None
+        keeper_group_copy = keeper_groups.copy()
+        external_group_copy = external_groups.copy()
+        for match_round in range(3):  # 0 - external ID, 1 - name, 2 - reuse groups
+            if len(keeper_group_copy) == 0 or len(external_group_copy) == 0:
+                break
+            if match_round == 0:
+                group_lookup = {x.external_id: x for x in keeper_group_copy.values() if x.external_id}
+            elif match_round == 1:
+                group_lookup = {x.name.casefold(): x for x in keeper_group_copy.values()}
+            elif match_round == 2:
+                group_lookup = {key: value for key, value in
+                                zip(external_group_copy.keys(), keeper_group_copy.values())}
+            else:
+                continue
+
+            for group_id in list(external_group_copy.keys()):
+                group = external_group_copy[group_id]
+                if match_round in (0, 2):
+                    key = group.id
+                elif match_round == 1:
+                    key = group.name.casefold()
+                else:
+                    continue
+                if key in group_lookup:
+                    keeper_group = group_lookup[key]
+                    op = {
+                        'op': 'replace',
+                        'value': {}
+                    }
+                    if keeper_group.external_id != group.id:
+                        op['value']['externalId'] = group.external_id
+                    if keeper_group.name != group.name:
+                        op['value']['displayName'] = group.name
+                    if len(op['value']) > 0:
+                        payload = {
+                            'schemas': ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+                            'Operations': [op]
+                        }
+                        try:
+                            ScimPushCommand.patch_scim_resource(f'{scim_url}/Groups', keeper_group.id, token, payload)
+                            keeper_group.external_id = group.id
+                            keeper_group.name = group.name
+                            logging.debug('SCIM updated group "%s"', group.name)
+                        except Exception as e:
+                            logging.warning('PATCH group "%s" error: %s', group.name, e)
+
+                    del keeper_group_copy[keeper_group.id]
+                    del external_group_copy[group.id]
+
+        if len(external_group_copy) > 0:  # add groups
+            for group in external_group_copy.values():
+                payload = {
+                    'schemas': ['urn:ietf:params:scim:schemas:core:2.0:Group;'],
+                    'displayName': group.name,
+                    'externalId': group.id
+                }
+                try:
+                    rs = ScimPushCommand.post_scim_resource(f'{scim_url}/Groups', token, payload)
+                    group_id = rs.get('id')
+                    if group_id:
+                        keeper_group = ScimGroup()
+                        keeper_group.id = group_id
+                        keeper_group.external_id = rs.get('externalId')
+                        keeper_group.name = rs.get('displayName')
+                        keeper_groups[group_id] = keeper_group
+                        logging.debug('SCIM added group "%s"', group.name)
+                except Exception as e:
+                    logging.warning('POST group "%s" error: %s', group.name, e)
+        external_group_copy.clear()
+
+        if len(keeper_group_copy) > 0:  # delete groups
+            for keeper_group_id in keeper_group_copy:
+                keeper_group = keeper_group_copy[keeper_group_id]
+                try:
+                    ScimPushCommand.delete_scim_resource(f'{scim_url}/Groups', keeper_group_id, token)
+                    del keeper_groups[keeper_group_id]
+                    logging.debug('SCIM deleted group "%s"', keeper_group.name)
+                except Exception as e:
+                    logging.warning('DELETE group "%s" error: %s', keeper_group.name, e)
+        keeper_group_copy.clear()
+
+    @staticmethod
+    def sync_users(scim_url, token,
+                   keeper_users,
+                   external_users):  # type: (str, str, Dict[str, ScimUser], Dict[str, ScimUser]) -> None
+        keeper_user_copy = keeper_users.copy()
+        external_user_copy = external_users.copy()
+        for match_round in range(1):  # 0 - email
+            if len(keeper_user_copy) == 0 or len(external_user_copy) == 0:
+                break
+            if match_round == 0:
+                user_lookup = {x.email.casefold(): x for x in keeper_user_copy.values()}  # type: Dict[str, ScimUser]
+            else:
+                continue
+
+            for user_id in list(external_user_copy.keys()):
+                user = external_user_copy[user_id]
+                if match_round == 0:
+                    key = user.email.casefold()
+                else:
+                    continue
+                if key in user_lookup:
+                    keeper_user = user_lookup[key]
+                    op = {
+                        'op': 'replace',
+                        'value': {}
+                    }
+                    if keeper_user.full_name != user.full_name:
+                        op['value']['displayName'] = user.full_name
+                    if keeper_user.last_name != user.last_name:
+                        op['value']['name.familyName'] = user.last_name
+                    if keeper_user.first_name != user.first_name:
+                        op['value']['name.givenName'] = user.first_name
+                    if keeper_user.active != user.active:
+                        op['value']['active'] = user.active
+
+                    if len(op['value']) > 0:
+                        payload = {
+                            'schemas': ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+                            'Operations': [op]
+                        }
+                        try:
+                            ScimPushCommand.patch_scim_resource(f'{scim_url}/Users', keeper_user.id, token, payload)
+                            keeper_user.external_id = user.id
+                            keeper_user.full_name = user.full_name
+                            keeper_user.first_name = user.first_name
+                            keeper_user.last_name = user.last_name
+                            keeper_user.active = user.active
+                            logging.debug('SCIM updated user "%s"', user.email)
+                        except Exception as e:
+                            logging.warning('PATCH user "%s" error: %s', user.email, e)
+
+                    del keeper_user_copy[keeper_user.id]
+                    del external_user_copy[user.id]
+
+        if len(external_user_copy) > 0:  # add users
+            for user in external_user_copy.values():
+                payload = {
+                    'schemas': ["urn:ietf:params:scim:schemas:core:2.0:User",
+                                "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+                    'userName': user.email,
+                    'externalId': user.id,
+                    'name': {
+                        "givenName": user.first_name,
+                        "familyName": user.last_name
+                    },
+                    'active': user.active
+                }
+                try:
+                    rs = ScimPushCommand.post_scim_resource(f'{scim_url}/Users', token, payload)
+                    user_id = rs.get('id')
+                    if user_id:
+                        keeper_user = ScimUser()
+                        keeper_user.id = user_id
+                        keeper_user.email = user.email
+                        keeper_user.active = user.active
+                        keeper_user.external_id = user.id
+                        keeper_user.first_name = user.first_name
+                        keeper_user.last_name = user.last_name
+                        keeper_users[user_id] = keeper_user
+                        logging.debug('SCIM added user "%s"', user.email)
+                except Exception as e:
+                    logging.warning('POST email "%s" error: %s', user.email, e)
+        external_user_copy.clear()
+
+        if len(keeper_user_copy) > 0:  # delete users
+            for keeper_user_id in keeper_user_copy:
+                keeper_user = keeper_user_copy[keeper_user_id]
+                if not keeper_user.active:
+                    continue
+                try:
+                    ScimPushCommand.delete_scim_resource(f'{scim_url}/Users', keeper_user_id, token)
+                    del keeper_users[keeper_user_id]
+                    logging.debug('SCIM deleted user "%s"', keeper_user.email)
+                except Exception as e:
+                    logging.warning('DELETE user "%s" error: %s', keeper_user.email, e)
+        keeper_user_copy.clear()
+
+    @staticmethod
+    def sync_membership(scim_url,  # type: str
+                        token,  # type: str
+                        keeper_groups,  # type: Dict[str, ScimGroup]
+                        keeper_users,  # type: Dict[str, ScimUser]
+                        external_users  # type: Dict[str, ScimUser]
+                        ):  # type: (...) -> None
+        keeper_user_lookup = {x.email: x for x in keeper_users.values()}   # type: Dict[str, ScimUser]
+        keeper_group_map = {x.external_id: x.id for x in keeper_groups.values() if x.external_id}
+        for user in external_users.values():
+            if user.email not in keeper_user_lookup:
+                continue
+            keeper_user = keeper_user_lookup[user.email]
+            keeper_user_groups = set(keeper_user.groups or [])
+            skip_deletion = False
+            add_groups = []
+            remove_groups = []
+            for external_group_id in user.groups:
+                if external_group_id in keeper_group_map:
+                    keeper_group_id = keeper_group_map[external_group_id]
+                    if keeper_group_id in keeper_user_groups:
+                        keeper_user_groups.remove(keeper_group_id)
+                    else:
+                        add_groups.append(keeper_group_id)
+                else:
+                    skip_deletion = True
+            if skip_deletion:
+                logging.warning('User "%s" membership: skip deletion')
+            elif len(keeper_user_groups) > 0:
+                remove_groups.extend(keeper_user_groups)
+
+            if len(add_groups) > 0 or len(remove_groups) > 0:
+                payload = {
+                    'schemas': ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+                    'Operations': []
+                }
+                if len(add_groups) > 0:
+                    payload['Operations'].append({
+                        'op': 'add',
+                        'path': 'groups',
+                        'value': [{'value': x} for x in add_groups]
+                    })
+                if len(remove_groups) > 0:
+                    payload['Operations'].append({
+                        'op': 'remove',
+                        'path': 'groups',
+                        'value': [{'value': x} for x in remove_groups]
+                    })
+                try:
+                    ScimPushCommand.patch_scim_resource(f'{scim_url}/Users', keeper_user.id, token, payload)
+                    logging.debug('SCIM changed user "%s" membership: %d added; %d removed',
+                                  keeper_user.email, len(add_groups), len(remove_groups))
+                except Exception as e:
+                    logging.warning('PATCH user "%s" membership error: %s', keeper_user.email, e)
+
+    @staticmethod
+    def post_scim_resource(url, token, payload):
+        headers = {
+            'Authorization': f'Bearer {token}',
+        }
+        rs = requests.post(url, headers=headers, json=payload)
+        if rs.status_code >= 300:
+            raise Exception(f'POST error: {rs.status_code}')
+        if rs.status_code in (200, 201):
+            return rs.json()
+
+    @staticmethod
+    def patch_scim_resource(url, resource_id, token, payload):
+        headers = {
+            'Authorization': f'Bearer {token}',
+        }
+        patch_url = f'{url}/{resource_id}'
+        rs = requests.patch(patch_url, headers=headers, json=payload)
+        if rs.status_code >= 300:
+            raise Exception(f'PATCH error: {rs.status_code}')
+        if rs.status_code == 200:
+            return rs.json()
+
+    @staticmethod
+    def delete_scim_resource(url, resource_id, token):
+        headers = {
+            'Authorization': f'Bearer {token}',
+        }
+        patch_url = f'{url}/{resource_id}'
+        rs = requests.delete(patch_url, headers=headers)
+        if rs.status_code >= 300:
+            raise Exception(f'DELETE error: {rs.status_code}')
+
+    @staticmethod
+    def get_scim_resource(url, token):
+        resources = []
+        start_index = 0
+        headers = {
+            'Authorization': f'Bearer {token}'
+        }
+        while True:
+            headers['startIndex'] = str(start_index)
+            rs = requests.get(url, headers=headers)
+            if rs.status_code != 200:
+                raise Exception(f'SCIM GET error code "{rs.status_code}"')
+            response = rs.json()
+            if 'Resources' in response:
+                resources.extend(response['Resources'])
+            total_results = response['totalResults']
+            items_per_page = response['itemsPerPage']
+            start_index = response['startIndex'] + items_per_page
+            if start_index >= total_results:
+                break
+        return resources
+
+    @staticmethod
+    def scim_keeper(scim_url, token):  # type: (str, str) -> Iterable[Union[ScimUser, ScimGroup]]
+        user_resource = ScimPushCommand.get_scim_resource(f'{scim_url}/Users', token)
+        group_resource = ScimPushCommand.get_scim_resource(f'{scim_url}/Groups', token)
+        for group in group_resource:
+            group_id = group.get('id')
+            group_name = group.get('displayName')
+            if group_id and group_name:
+                g = ScimGroup()
+                g.id = group_id
+                g.name = group_name
+                g.external_id = group.get('externalId')
+                yield g
+        for user in user_resource:
+            user_id = user.get('id')
+            email = user.get('userName')
+            if user_id and email:
+                u = ScimUser()
+                u.id = user_id
+                u.email = email
+                u.active = user.get('active') is True
+                u.external_id = user.get('externalId')
+                u.full_name = user.get('displayName')
+                if 'name' in user:
+                    name = user['name']
+                    u.first_name = name.get('givenName')
+                    u.last_name = name.get('familyName')
+                if 'groups' in user:
+                    for group in user['groups']:
+                        if 'value' in group:
+                            group_id = group.get('value')
+                            if group_id:
+                                u.groups.append(group_id)
+                yield u
+
+    @staticmethod
+    def scim_google(params, record):  # type: (KeeperParams, vault.TypedRecord) -> Iterable[Union[ScimUser, ScimGroup]]
+        try:
+            from google.oauth2 import service_account
+            import googleapiclient.discovery
+            logging.getLogger('googleapicliet.discovery_cache').setLevel(logging.ERROR)
+        except ModuleNotFoundError:
+            raise Exception('Google Cloud client is not installed.\npip install google-api-python-client')
+
+        # SCIM group
+        field = next((x for x in record.custom if (x.label or '').lower().strip() == 'scim group'), None)
+        if not field:
+            raise Exception(f'Google SCIM record "{record.title}" does not have "SCIM Group" field.\n'
+                            'This field contains a Google group name with users to be imported to Keeper.\n'
+                            'Leave this field empty to import all users from Google Workspace.')
+        scim_group = field.get_default_value(str)
+
+        # Admin user
+        field = next((x for x in record.fields if x.type == 'login'), None)
+        if field is None:
+            raise Exception(f'Google SCIM record "{record.title}" does not have "login" field.\n'
+                            'Please use "login" record type to store Google SCIM configuration.')
+        admin_user = field.get_default_value(str)
+        if not admin_user:
+            raise Exception(f'"login" field in Google SCIM record "{record.title}" should be populated with '
+                            f'Google Workspace administrator email')
+
+        ad = next(attachment.prepare_attachment_download(
+            params, record_uid=record.record_uid, attachment_name='credentials.json'), None)
+        if not ad:
+            raise Exception('Google SCIM configuration: Service account credentials are not found')
+
+        with io.BytesIO() as mem:
+            ad.download_to_stream(params, mem)
+            mem.seek(0, io.SEEK_SET)
+            info = json.load(mem)
+        scopes = ['https://www.googleapis.com/auth/admin.directory.group.readonly',
+                  'https://www.googleapis.com/auth/admin.directory.group.member.readonly',
+                  'https://www.googleapis.com/auth/admin.directory.user.readonly']
+        cred = service_account.Credentials.from_service_account_info(info, scopes=scopes).with_subject(admin_user)
+        directory = googleapiclient.discovery.build('admin', 'directory_v1', credentials=cred)
+
+        user_lookup = {}
+        users = directory.users().list(customer='my_customer').execute()
+        if not isinstance(users, dict):
+            raise Exception('Google Cloud: Invalid users response')
+        if 'users' not in users:
+            raise Exception('Google Cloud: Invalid users response')
+        for user in users['users']:
+            u = ScimUser()
+            u.id = user['id']
+            u.email = user['primaryEmail']
+            u.active = not (user.get('suspended') is True)
+            if 'name' in user:
+                user_name = user['name']
+                if 'givenName' in user_name:
+                    u.first_name = user['name']['givenName']
+                if 'familyName' in user_name:
+                    u.last_name = user['name']['familyName']
+            if u.first_name or u.last_name:
+                u.full_name = f'{(u.first_name or "")} {(u.last_name or "")}'.strip()
+            user_lookup[u.email] = u
+
+        groups = directory.groups().list(customer='my_customer').execute()
+        if not isinstance(groups, dict):
+            raise Exception('Google Cloud: Invalid groups response')
+        if 'groups' not in groups:
+            raise Exception('Google Cloud: Invalid groups response')
+        group_lookup = {x['id']: x['name'] for x in groups['groups']}
+
+        if scim_group:
+            group_id = next((g_id for g_id, g_name in group_lookup.items()), None)
+            if not group_id:
+                raise Exception(f'Google Workspace: group "{scim_group}" not found')
+            del group_lookup[group_id]
+            members = directory.members().list(groupKey=group_id).execute()
+            if 'members' in members:
+                all_emails = set(user_lookup.keys())
+                all_emails.difference_update((x['email'] for x in members['members']))
+                for email in all_emails:
+                    if email in user_lookup:
+                        del user_lookup[email]
+
+        for group_id in group_lookup:
+            logging.debug('Google Workspace: membership for group %s', group_lookup[group_id])
+            members = directory.members().list(groupKey=group_id).execute()
+            if 'members' in members:
+                for member in members['members']:
+                    email = member.get('email') or ''
+                    if email in user_lookup:
+                        user = user_lookup[email]
+                        if user.groups is None:
+                            user.groups = []
+                        user.groups.append(group_id)
+
+        # delete groups that are not referenced
+        # all_groups = set(group_lookup.keys())
+        # for user in user_lookup.values():
+        #     if isinstance(user.groups, list):
+        #         all_groups.difference_update(user.groups)
+        # if len(all_groups) > 0:
+        #     for group_id in all_groups:
+        #         if group_id in group_lookup:
+        #             del group_lookup[group_id]
+
+        for group_id, group_name in group_lookup.items():
+            g = ScimGroup()
+            g.id = group_id
+            g.name = group_name
+            yield g
+
+        for u in user_lookup.values():
+            yield u

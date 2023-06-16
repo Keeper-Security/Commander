@@ -117,6 +117,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import discoveryrotation
     discoveryrotation.register_commands(commands)
     discoveryrotation.register_command_info(aliases, command_info)
+    from . import scim
+    scim.register_commands(commands)
+    scim.register_command_info(aliases, command_info)
 
 
 def register_msp_commands(commands, aliases, command_info):
