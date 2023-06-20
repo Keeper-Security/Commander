@@ -18,7 +18,7 @@ import os
 from typing import Set, Dict, List, Iterable, Any, Tuple, Union
 from urllib.parse import urlparse, urlunparse
 
-from .base import dump_report_data, user_choice, field_to_title
+from .base import dump_report_data, user_choice, field_to_title, report_output_parser
 from .enterprise import EnterpriseCommand
 from .. import api, crypto, utils, loginv3, error, constants
 from ..params import KeeperParams
@@ -48,18 +48,19 @@ def register_command_info(aliases, command_info):
     aliases['mlr'] = 'msp-legacy-report'
     aliases['mbr'] = 'msp-billing-report'
 
-    for p in [msp_data_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_update_parser,
+    for p in [msp_down_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_update_parser,
               msp_copy_role_parser, msp_legacy_report_parser, msp_billing_report_parser]:
         command_info[p.prog] = p.description
 
 
-msp_data_parser = argparse.ArgumentParser(prog='msp-down', usage='msp-down',
+msp_down_parser = argparse.ArgumentParser(prog='msp-down', usage='msp-down',
                                           description='Download current MSP data from the Keeper Cloud.')
 
-msp_info_parser = argparse.ArgumentParser(prog='msp-info', usage='msp-info',
+msp_info_parser = argparse.ArgumentParser(prog='msp-info', usage='msp-info', parents=[report_output_parser],
                                           description='Displays MSP details, such as managed companies and pricing.')
 msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_true', help='Display pricing information')
-msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true', help='Display MSP restriction information')
+msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true',
+                             help='Display MSP restriction information')
 msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Print details')
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 
@@ -80,12 +81,8 @@ msp_update_parser.add_argument('mc', action='store',
                                help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 
 ranges = ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']
-msp_legacy_report_parser = argparse.ArgumentParser(prog='msp-legacy-report',
+msp_legacy_report_parser = argparse.ArgumentParser(prog='msp-legacy-report', parents=[report_output_parser],
                                                    description='Generate MSP Legacy Report.')
-msp_legacy_report_parser.add_argument('--format', dest='format', choices=['table', 'csv', 'json'], default='table',
-                                      help='Format of the report output')
-msp_legacy_report_parser.add_argument('--output', dest='output', action='store',
-                                      help='Output file name. (ignored for table format)')
 group = msp_legacy_report_parser.add_argument_group('Pre-defined date ranges')
 group.add_argument('--range', dest='range', choices=ranges, default='last_30_days',
                    help="Pre-defined data ranges to run the report.")
@@ -100,12 +97,8 @@ group.add_argument('--to', dest='to_date',
                         'when there is no `range` specified.'
                         'Example: `2020-08-18` or `1596265200`')
 
-msp_billing_report_parser = argparse.ArgumentParser(prog='msp-billing-report',
+msp_billing_report_parser = argparse.ArgumentParser(prog='msp-billing-report', parents=[report_output_parser],
                                                     description='Generate MSP Billing Reports.')
-msp_billing_report_parser.add_argument('--format', dest='format', choices=['table', 'csv', 'json'], default='table',
-                                       help='Format of the report output')
-msp_billing_report_parser.add_argument('--output', dest='output', action='store',
-                                       help='Output file name. (ignored for table format)')
 msp_billing_report_parser.add_argument('--month', dest='month', action='store', metavar='YYYY-MM', help='Month for billing report: 2022-02')
 msp_billing_report_parser.add_argument('-d', '--show-date', dest='show_date', action='store_true', help='Breakdown report by date')
 msp_billing_report_parser.add_argument('-c', '--show-company', dest='show_company', action='store_true', help='Breakdown report by managed company')
@@ -130,7 +123,8 @@ msp_remove_parser.add_argument('-f', '--force', dest='force', action='store_true
 msp_remove_parser.add_argument('mc', action='store',
                                help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 
-msp_convert_node_parser = argparse.ArgumentParser(prog='msp-convert-node', description='Converts MSP node into Managed Company.')
+msp_convert_node_parser = argparse.ArgumentParser(prog='msp-convert-node',
+                                                  description='Converts MSP node into Managed Company.')
 msp_convert_node_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
                                      help='Number of seats')
 msp_convert_node_parser.add_argument('-p', '--plan', dest='plan', action='store',
@@ -154,7 +148,7 @@ def bi_url(params, endpoint):
 class GetMSPDataCommand(EnterpriseCommand):
 
     def get_parser(self):
-        return msp_data_parser
+        return msp_down_parser
 
     def execute(self, params, **kwargs):
         api.query_enterprise(params)
@@ -255,6 +249,8 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
         return msp_info_parser
 
     def execute(self, params, **kwargs):
+        report_format = kwargs.get('format')
+        output_file = kwargs.get('output')
         if kwargs.get('restriction'):
             permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
             if permits:
@@ -268,7 +264,7 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                     ['Allowed Add-Ons', [x + f' ({all_addons.get(x.lower(), "")})' for x in permits['allowed_add_ons']]],
                     ['Max File Storage plan', all_file_plans.get(max_file_plan.lower(), max_file_plan)]
                 ]
-                dump_report_data(table, ['Permit Name', 'Value'])
+                return dump_report_data(table, ['Permit Name', 'Value'], fmt=report_format, filename=output_file)
             else:
                 logging.info('MSP has no restrictions')
             return
@@ -276,7 +272,7 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
         if kwargs.get('pricing'):
             pricing = MSPMixin.get_msp_pricing(params)
 
-            header = ['Name', 'Code', 'Price']
+            header = ['category', 'name', 'code', 'price']
             table = []
             if 'mc_base_plans' in pricing:
                 plans = pricing['mc_base_plans']
@@ -284,37 +280,33 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                     code = plan[1]
                     if code in plans:
                         info = plans[code]
-                        row = [plan[2], code, MSPMixin.price_text(info)]
+                        row = ['Product', plan[2], code, MSPMixin.price_text(info)]
                         table.append(row)
             if 'mc_addons' in pricing:
-                table.append([])
-                table.append(['Addons'])
                 addons = pricing['mc_addons']
                 for addon in constants.MSP_ADDONS:
                     code = addon[0]
                     if code in addons:
                         info = addons[code]
-                        row = [addon[1], code, MSPMixin.price_text(info)]
+                        row = ['Addon', addon[1], code, MSPMixin.price_text(info)]
                         table.append(row)
 
             if 'mc_file_plans' in pricing:
-                table.append([])
-                table.append(['File Plans'])
                 plans = pricing['mc_file_plans']
                 for addon in constants.MSP_FILE_PLANS:
                     plan = addon[1]
                     if plan in plans:
                         info = plans[plan]
-                        row = [addon[2], plan, MSPMixin.price_text(info)]
+                        row = ['File Plan', addon[2], plan, MSPMixin.price_text(info)]
                         table.append(row)
-
-            dump_report_data(table, header)
-            return
+            if report_format != 'json':
+                header = [field_to_title(x) for x in header]
+            return dump_report_data(table, header, fmt=report_format, filename=output_file)
 
         if 'managed_companies' in params.enterprise:
             sort_dict = {x[0]: i for i, x in enumerate(constants.MSP_ADDONS)}
             verbose = kwargs.get('verbose')
-            header = ['ID', 'Name', 'Node', 'Plan', 'Storage', 'Addons', 'Allocated', 'Active']
+            header = ['company_id', 'company_name', 'node', 'plan', 'storage', 'addons', 'allocated', 'active']
             table = []
             plan_map = {x[1]: x[2] for x in constants.MSP_PLANS}
             file_plan_map = {x[1]: x[2] for x in constants.MSP_FILE_PLANS}
@@ -323,7 +315,7 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                 if verbose:
                     node_path = str(node_id)
                 else:
-                    node_path = self.get_node_path(params, node_id, True)
+                    node_path = self.get_node_path(params, node_id, False)
                 file_plan = mc['file_plan_type']
                 file_plan = file_plan_map.get(file_plan, file_plan)
                 addons = [x['name'] for x in mc.get('add_ons', [])]
@@ -339,7 +331,9 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                 table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
                               plan, file_plan, addons, seats, mc['number_of_users']])
             table.sort(key=lambda x: x[1].lower())
-            dump_report_data(table, header, row_number=True)
+            if report_format != 'json':
+                header = [field_to_title(x) for x in header]
+            return dump_report_data(table, header, row_number=True, fmt=report_format, filename=output_file)
         else:
             logging.info("No Managed Companies")
 
