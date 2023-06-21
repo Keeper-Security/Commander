@@ -1752,21 +1752,20 @@ class ActionReportCommand(EnterpriseCommand):
 
         def get_excluded(candidates, query_filter, username_field='username'):
             excluded = set()
-            report_type = 'raw' if 'send_invitation' in query_filter.get('audit_event_type') else 'span'
-            req_limit = API_EVENT_RAW_ROW_LIMIT if report_type == 'raw' else API_EVENT_SUMMARY_ROW_LIMIT
+            req_limit = API_EVENT_SUMMARY_ROW_LIMIT
             columns = [username_field]
 
             def adjust_filter(q_filter, max_ts=0):
                 if max_ts:
                     q_filter['created']['max'] = max_ts
-                if report_type != 'raw':
+                if username_field != 'email':
                     q_filter[username_field] = candidates
                 return q_filter
 
             get_events = len(candidates) > len(excluded)
             query_filter = adjust_filter(query_filter)
             while get_events:
-                rq = report_rq(query_filter, req_limit, columns, report_type=report_type)
+                rq = report_rq(query_filter, req_limit, columns, report_type='span')
                 rs = api.communicate(params, rq)
                 events = rs['audit_event_overview_report_rows']
                 to_exclude = {event.get(username_field) for event in events}
@@ -1774,7 +1773,7 @@ class ActionReportCommand(EnterpriseCommand):
                 get_events = len(events) >= req_limit
                 if get_events:
                     candidates = [user for user in candidates if user not in excluded]
-                    end = int(events[-1]['last_created'])
+                    end = int(events[-1]['last_created']) + 1
                     query_filter = adjust_filter(query_filter, end)
             return excluded
 
@@ -1909,10 +1908,10 @@ class ActionReportCommand(EnterpriseCommand):
             days = 90 if target_status == 'locked' else 30
 
         args_by_status = {
-            'no-logon': [active, days, ['login']],
+            'no-logon': [active, days, ['login', 'login_console', 'chat_login', 'accept_invitation']],
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
-            'invited': [invited, days, ['send_invitation'], 'email'],
+            'invited': [invited, days, ['send_invitation', 'auto_invite_user'], 'email'],
             'no-security-question-update': [active, days, ['change_security_question']],
             'blocked': [blocked, days, ['accept_transfer']]
         }
