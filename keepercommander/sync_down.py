@@ -536,6 +536,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             for user in response.users:
                 account_uid = utils.base64_url_encode(user.accountUid)
                 params.user_cache[account_uid] = user.username
+        account_uid = utils.base64_url_encode(params.account_uid_bytes)
+        if account_uid not in params.user_cache:
+            params.user_cache[account_uid] = params.user
 
         if len(response.recordRotations) > 0:
             for rr in response.recordRotations:
