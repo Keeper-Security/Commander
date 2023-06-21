@@ -575,40 +575,48 @@ def import_user_permissions(params,
     if folders:
         permissions = prepare_folder_permission(params, folders, full_sync)
         if permissions:
-            rs = api.execute_batch(params, permissions)
+            teams_added = 0
+            users_added = 0
+            teams_updated = 0
+            users_updated = 0
+            teams_removed = 0
+            users_removed = 0
+            for sfu in permissions:
+                if isinstance(sfu, folder_pb2.SharedFolderUpdateV3Request):
+                    try:
+                        rs = api.communicate_rest(params, sfu, 'vault/shared_folder_update_v3',
+                                                  rs_type=folder_pb2.SharedFolderUpdateV3Response)
+                        if len(rs.sharedFolderAddUserStatus) > 0:
+                            users_added += len([x for x in rs.sharedFolderAddUserStatus if x.status == 'success'])
+                        if len(rs.sharedFolderAddTeamStatus) > 0:
+                            teams_added += len([x for x in rs.sharedFolderAddTeamStatus if x.status == 'success'])
+                        if len(rs.sharedFolderUpdateUserStatus) > 0:
+                            users_updated += len([x for x in rs.sharedFolderUpdateUserStatus if x.status == 'success'])
+                        if len(rs.sharedFolderUpdateTeamStatus) > 0:
+                            teams_updated += len([x for x in rs.sharedFolderUpdateTeamStatus if x.status == 'success'])
+                        if len(rs.sharedFolderRemoveUserStatus) > 0:
+                            users_removed += len([x for x in rs.sharedFolderRemoveUserStatus if x.status == 'success'])
+                        if len(rs.sharedFolderRemoveTeamStatus) > 0:
+                            teams_removed += len([x for x in rs.sharedFolderRemoveTeamStatus if x.status == 'success'])
+                    except Exception as e:
+                        shared_folder_uid = utils.base64_url_encode(sfu.sharedFolderUid)
+                        logging.warning('Shared Folder "%s" update error: %s', shared_folder_uid, e)
+                else:
+                    logging.warning('Incorrect shared folder update request')
             sync_down.sync_down(params)
-            if rs:
-                teams_added = 0
-                users_added = 0
-                teams_updated = 0
-                users_updated = 0
-                teams_removed = 0
-                users_removed = 0
-                for r in rs:
-                    if 'add_teams' in r:
-                        teams_added += len([x for x in r['add_teams'] if x.get('status') == 'success'])
-                    if 'add_users' in r:
-                        users_added += len([x for x in r['add_users'] if x.get('status') == 'success'])
-                    if 'update_teams' in r:
-                        teams_updated += len([x for x in r['update_teams'] if x.get('status') == 'success'])
-                    if 'update_users' in r:
-                        users_updated += len([x for x in r['update_users'] if x.get('status') == 'success'])
-                    if 'remove_teams' in r:
-                        teams_removed += len([x for x in r['remove_teams'] if x.get('status') == 'success'])
-                    if 'remove_users' in r:
-                        users_removed += len([x for x in r['remove_users'] if x.get('status') == 'success'])
-                if teams_added > 0:
-                    logging.info("%d team(s) added to shared folders", teams_added)
-                if users_added > 0:
-                    logging.info("%d user(s) added to shared folders", users_added)
-                if teams_updated > 0:
-                    logging.info("%d team(s) updated in shared folders", teams_updated)
-                if users_updated > 0:
-                    logging.info("%d user(s) updated in shared folders", users_updated)
-                if teams_removed > 0:
-                    logging.info("%d team(s) removed from shared folders", teams_removed)
-                if users_removed > 0:
-                    logging.info("%d user(s) removed from shared folders", users_removed)
+
+            if teams_added > 0:
+                logging.info("%d team(s) added to shared folders", teams_added)
+            if users_added > 0:
+                logging.info("%d user(s) added to shared folders", users_added)
+            if teams_updated > 0:
+                logging.info("%d team(s) updated in shared folders", teams_updated)
+            if users_updated > 0:
+                logging.info("%d user(s) updated in shared folders", users_updated)
+            if teams_removed > 0:
+                logging.info("%d team(s) removed from shared folders", teams_removed)
+            if users_removed > 0:
+                logging.info("%d user(s) removed from shared folders", users_removed)
 
 
 def _import(params, file_format, filename, **kwargs):
@@ -2148,17 +2156,18 @@ def prepare_folder_permission(params,
         existing_users = set()
         if 'users' in shared_folder:
             existing_users.update((x['username'] for x in shared_folder['users']))
-            existing_users.remove(params.user)
+            if params.user in existing_users:
+                existing_users.remove(params.user)
         keep_teams = set()
         keep_users = set()
 
         if fol.permissions:
-            add_users = []
-            add_teams = []
-            update_users = []
-            update_teams = []
-            remove_users = []
-            remove_teams = []
+            add_users = []        # type: List[folder_pb2.SharedFolderUpdateUser]
+            add_teams = []        # type: List[folder_pb2.SharedFolderUpdateTeam]
+            update_users = []     # type: List[folder_pb2.SharedFolderUpdateUser]
+            update_teams = []     # type: List[folder_pb2.SharedFolderUpdateTeam]
+            remove_users = []     # type: List[str]
+            remove_teams = []     # type: List[str]
             for perm in fol.permissions:
                 team_uid = None
                 username = None
@@ -2180,64 +2189,63 @@ def prepare_folder_permission(params,
                             manage_records = folder_team.get('manage_records') or False
                             keep_teams.add(team_uid)
                             if manage_users != perm.manage_users or manage_records != perm.manage_records:
-                                update_teams.append({
-                                    'team_uid': team_uid,
-                                    'manage_users': perm.manage_users,
-                                    'manage_records': perm.manage_records,
-                                })
+                                sft = folder_pb2.SharedFolderUpdateTeam()
+                                sft.teamUid = utils.base64_url_decode(team_uid)
+                                sft.manageUsers = perm.manage_users
+                                sft.manageRecords = perm.manage_records
+                                update_teams.append(sft)
                         else:
-                            rq = {
-                                'team_uid': team_uid,
-                                'manage_users': perm.manage_users,
-                                'manage_records': perm.manage_records,
-                            }
+                            sft = folder_pb2.SharedFolderUpdateTeam()
+                            sft.teamUid = utils.base64_url_decode(team_uid)
+                            sft.manageUsers = perm.manage_users
+                            sft.manageRecords = perm.manage_records
+                            keep_teams.add(team_uid)
                             if team_uid in params.team_cache:
                                 team = params.team_cache[team_uid]
                                 if 'team_key_unencrypted' in team:
                                     team_key = team['team_key_unencrypted']
-                                    rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_key))
-                                    keep_teams.add(team_uid)
-                                    add_teams.append(rq)
+                                    sft.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, team_key)
+                                else:
+                                    continue
                             elif team_uid in params.key_cache:
                                 team_keys = params.key_cache[team_uid]
-                                if team_keys.rsa:
+                                if team_keys.aes:
+                                    sft.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes)
+                                elif team_keys.rsa:
                                     rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
-                                    rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
-                                    keep_teams.add(team_uid)
-                                    add_teams.append(rq)
-                                elif team_keys.aes:
-                                    rq['shared_folder_key'] = utils.base64_url_encode(crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes))
-                                    keep_teams.add(team_uid)
-                                    add_teams.append(rq)
+                                    sft.sharedFolderKey = crypto.encrypt_rsa(shared_folder_key, rsa_key)
+                                else:
+                                    continue
+                            add_teams.append(sft)
                         continue
 
                     if username:
                         folder_user = None
                         if 'users' in shared_folder:
-                            folder_user = next((x for x in shared_folder['users'] if x['username'].lower() == username), None)
+                            folder_user = next(
+                                (x for x in shared_folder['users'] if x['username'].lower() == username), None)
+                        sfu = folder_pb2.SharedFolderUpdateUser()
+                        sfu.username = username
+                        sfu.manageUsers = folder_pb2.BOOLEAN_TRUE \
+                            if perm.manage_users else folder_pb2.BOOLEAN_FALSE
+                        sfu.manageRecords = folder_pb2.BOOLEAN_TRUE \
+                            if perm.manage_records else folder_pb2.BOOLEAN_FALSE
+
                         if folder_user:
+                            keep_users.add(username)
                             manage_users = folder_user.get('manage_users') or False
                             manage_records = folder_user.get('manage_records') or False
-                            keep_users.add(username)
                             if manage_users != perm.manage_users or manage_records != perm.manage_records:
-                                update_users.append({
-                                    'username': username,
-                                    'manage_users': perm.manage_users,
-                                    'manage_records': perm.manage_records,
-                                })
+                                update_users.append(sfu)
                         else:
                             if username in params.key_cache:
                                 public_keys = params.key_cache[username]
                                 if public_keys.rsa:
-                                    rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
-                                    rq = {
-                                        'username': username,
-                                        'manage_users': perm.manage_users,
-                                        'manage_records': perm.manage_records,
-                                        'shared_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, rsa_key))
-                                    }
                                     keep_users.add(username)
-                                    add_users.append(rq)
+
+                                    rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+                                    sfu.sharedFolderKey = crypto.encrypt_rsa(shared_folder_key, rsa_key)
+                                    add_users.append(sfu)
                         continue
                 except Exception as e:
                     logging.debug(e)
@@ -2253,70 +2261,45 @@ def prepare_folder_permission(params,
                             break
 
                 if len(keep_teams) > 0 or len(keep_users) > 0:
-                    remove_users.extend(({'username': x} for x in existing_users.difference(keep_users)))
-                    remove_teams.extend(({'team_uid': x} for x in existing_teams.difference(keep_teams)))
+                    remove_users.extend(x for x in existing_users.difference(keep_users))
+                    remove_teams.extend(x for x in existing_teams.difference(keep_teams))
             else:
                 update_users.clear()
                 update_teams.clear()
 
-            while True:
-                request = {
-                    'command': 'shared_folder_update',
-                    'operation': 'update',
-                    'pt': 'Commander',
-                    'shared_folder_uid': shared_folder_uid,
-                    'force_update': True,
-                }
-                if update_defaults:
-                    if isinstance(fol.manage_records, bool):
-                        request['default_manage_records'] = fol.manage_records
-                    if isinstance(fol.manage_users, bool):
-                        request['default_manage_users'] = fol.manage_users
-                    if isinstance(fol.can_edit, bool):
-                        request['default_can_edit'] = fol.can_edit
-                    if isinstance(fol.can_share, bool):
-                        request['default_can_share'] = fol.can_share
+            request_v3 = folder_pb2.SharedFolderUpdateV3Request()
+            request_v3.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+            request_v3.forceUpdate = True
 
-                left = 100
-                if len(add_users) > 0 and left > 0:
-                    chunk = add_users[:min(len(add_users), left)]
-                    add_users = add_users[len(chunk):]
-                    request['add_users'] = chunk
-                    left -= len(chunk)
-                if len(add_teams) > 0 and left > 0:
-                    chunk = add_teams[:min(len(add_teams), left)]
-                    add_teams = add_teams[len(chunk):]
-                    request['add_teams'] = chunk
-                    left -= len(chunk)
+            # request_v3.fromTeamUid = ...
+            if update_defaults:
+                if isinstance(fol.manage_records, bool):
+                    request_v3.defaultManageRecords = \
+                        folder_pb2.BOOLEAN_TRUE if fol.manage_records else folder_pb2.BOOLEAN_FALSE
+                if isinstance(fol.manage_users, bool):
+                    request_v3.defaultManageUsers = \
+                        folder_pb2.BOOLEAN_TRUE if fol.manage_users else folder_pb2.BOOLEAN_FALSE
+                if isinstance(fol.can_edit, bool):
+                    request_v3.defaultCanEdit = \
+                        folder_pb2.BOOLEAN_TRUE if fol.can_edit else folder_pb2.BOOLEAN_FALSE
+                if isinstance(fol.can_share, bool):
+                    request_v3.defaultCanShare = \
+                        folder_pb2.BOOLEAN_TRUE if fol.can_share else folder_pb2.BOOLEAN_FALSE
 
-                if len(update_users) > 0 and left > 0:
-                    chunk = update_users[:min(len(update_users), left)]
-                    update_users = update_users[len(chunk):]
-                    request['update_users'] = chunk
-                    left -= len(chunk)
-                if len(update_teams) > 0 and left > 0:
-                    chunk = update_teams[:min(len(update_teams), left)]
-                    update_teams = update_teams[len(chunk):]
-                    request['update_teams'] = chunk
-                    left -= len(chunk)
+            if len(add_users) > 0:
+                request_v3.sharedFolderAddUser.extend(add_users)
+            if len(add_teams) > 0:
+                request_v3.sharedFolderAddTeam.extend(add_teams)
+            if len(update_users) > 0:
+                request_v3.sharedFolderUpdateUser.extend(update_users)
+            if len(update_teams) > 0:
+                request_v3.sharedFolderUpdateTeam.extend(update_teams)
+            if len(remove_users) > 0:
+                request_v3.sharedFolderRemoveUser.extend(remove_users)
+            if len(remove_teams) > 0:
+                request_v3.sharedFolderRemoveTeam.extend((utils.base64_url_decode(x) for x in remove_teams))
 
-                if len(remove_users) > 0 and left > 0:
-                    chunk = remove_users[:min(len(remove_users), left)]
-                    remove_users = remove_users[len(chunk):]
-                    request['remove_users'] = chunk
-                    left -= len(chunk)
-                if len(remove_teams) > 0 and left > 0:
-                    chunk = remove_teams[:min(len(remove_teams), left)]
-                    remove_teams = remove_teams[len(chunk):]
-                    request['remove_teams'] = chunk
-                    left -= len(chunk)
-
-                if left < 100 or update_defaults:
-                    folder_permissions.append(request)
-                    update_defaults = False
-
-                if left == 100:
-                    break
+            folder_permissions.append(request_v3)
 
     return folder_permissions
 
