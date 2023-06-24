@@ -160,7 +160,8 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
             header = ['ID', 'MSP Name', '# MC\'s']
             if show_mc_details:
                 header.extend(('MC Name', 'Plan', 'Storage'))
-            header.extend(['Unlimited allowed', 'Licenses used'])
+            header.extend(['Unlimited allowed', 'Licenses used', 'Addons'])
+            addon_lookup = {x[0]: x[3] for x in constants.MSP_ADDONS}
 
             table = []
             for msp in msps:
@@ -172,7 +173,8 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                 row = [msp.get('enterprise_id'), msp_name, len(msp.get('managed_companies', []))]
                 if show_mc_details:
                     row.extend((None, None, None))
-                row.extend(('Allowed' if unlimited_allowed else 'Not Allowed', used))
+                row.extend(('Allowed' if unlimited_allowed else 'Not Allowed', used,
+                            [addon_lookup.get(x.lower(), x) for x in msp.get('allowed_add_ons', [])]))
                 table.append(row)
 
                 if show_mc_details:
@@ -191,7 +193,19 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                         if allowed > 2000000000:
                             allowed = 'Unlimited'
                         used = '-' if is_expired else mc.get('number_of_users')
-                        row = [mc.get('mc_enterprise_id'), msp_name, None, mc_name, product, file_plan, allowed, used]
+                        add_ons = list(mc.get('add_ons'))
+                        ao = []
+                        for x in add_ons:
+                            addon_name = addon_lookup.get(x['name'], x['name'])
+                            seats = x.get('seats', 0)
+                            if seats > 0:
+                                addon_name += f' ({seats})'
+                            ao.append(addon_name)
+                        ao.sort()
+                        addons = '\n'.join(ao)
+
+                        row = [mc.get('mc_enterprise_id'), msp_name, None, mc_name, product, file_plan,
+                               allowed, used, ao]
                         table.append(row)
 
             return dump_report_data(table, header, fmt=output_format, filename=kwargs.get('output'), row_number=True, right_align=right_align)
