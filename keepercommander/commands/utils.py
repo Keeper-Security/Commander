@@ -213,6 +213,10 @@ random_group.add_argument(
     help='Minimum number of lowercase letters in password or 0 for none'
 )
 
+passphrase_group = generate_parser.add_argument_group('Keeper Passphrase')
+passphrase_group.add_argument('--recoveryphrase', dest='recoveryphrase', action='store_true',
+                              help='Generate Generate a 24-word recovery phrase')
+
 dice_group = generate_parser.add_argument_group('Diceware')
 dice_group.add_argument('--dice-rolls', '-dr', type=int, dest='dice_rolls', action='store',
                         help='Number of dice rolls')
@@ -951,6 +955,8 @@ class GenerateCommand(Command):
 
         if kwargs.get('crypto') is True:
             kpg = CryptoPassphraseGenerator()
+        if kwargs.get('recoveryphrase') is True:
+            kpg = DicewarePasswordGenerator(24, word_list_file='bip-39.english.txt', delimiter=' ')
         elif isinstance(kwargs.get('dice_rolls'), int):
             dice_rolls = kwargs.get('dice_rolls')
             delimiter = kwargs.get('delimiter') or ' '
