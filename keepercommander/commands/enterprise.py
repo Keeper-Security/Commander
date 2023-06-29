@@ -2217,10 +2217,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             if privilege not in all_privileges:
                                 logging.warning('Add/Remove managed node privilege: invalid privilege: %s', privilege)
                                 return
-                            if is_add:
-                                if privilege in ['transfer_account', 'manage_companies']:
-                                    logging.warning('Add managed node privilege: Commander does not support \"%s\" privilege', privilege)
-                                    return
+                            # if is_add:
+                            #     if privilege in ['transfer_account', 'manage_companies']:
+                            #         logging.warning('Add managed node privilege: Commander does not support \"%s\" privilege', privilege)
+                            #         return
                             if is_add and privilege in privileges:
                                 logging.info('Add privilege: Role "%d", Mode "%s" already contains privilege "%s" ',
                                              role_id, node_id, privilege)
@@ -2236,6 +2236,39 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 'managed_node_id': node_id,
                                 'privilege': privilege
                             }
+                            if is_add and privilege in ('transfer_account', 'manage_companies'):
+                                role_key = utils.generate_aes_key()
+                                encrypted_role_key = crypto.encrypt_aes_v2(
+                                    role_key, params.enterprise['unencrypted_tree_key'])
+                                rq['role_key_enc_with_tree_key'] = utils.base64_url_encode(encrypted_role_key)
+                                priv_key, pub_key = crypto.generate_rsa_key()
+                                public_key = crypto.unload_rsa_public_key(pub_key)
+                                rq['role_public_key'] = utils.base64_url_encode(public_key)
+                                private_key = crypto.unload_rsa_private_key(priv_key)
+                                rq['role_private_key'] = utils.base64_url_encode(
+                                    crypto.encrypt_aes_v1(private_key, role_key))
+                                # TODO resolve actual user list
+                                if 'role_users' in params.enterprise:
+                                    rq['role_keys'] = []
+                                    user_ids = {x['enterprise_user_id']: None for x in
+                                                params.enterprise['role_users'] if x['role_id'] == role_id}
+                                    if len(user_ids) > 0:
+                                        user_lookup = {x['enterprise_user_id']: x['username'] for x in
+                                                       params.enterprise['users'] if x['enterprise_user_id'] in user_ids}
+                                        emails = {user_lookup[x]: None for x in user_ids if x in user_lookup}
+                                        if len(emails) > 0:
+                                            self.get_public_keys(params, emails)
+                                            reverse_lookup = {value: key for key, value in user_lookup.items()}
+                                            for email, key in emails.items():
+                                                if not key:
+                                                    continue
+                                                if email in reverse_lookup:
+                                                    encrypted_key = crypto.encrypt_rsa(role_key, key)
+                                                    rq['role_keys'].append({
+                                                        'enterprise_user_id': reverse_lookup[email],
+                                                        'role_key': utils.base64_url_encode(encrypted_key)
+                                                    })
+
                             request_batch.append(rq)
 
             elif kwargs.get('copy') or kwargs.get('clone'):
