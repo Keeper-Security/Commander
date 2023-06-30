@@ -402,6 +402,8 @@ def search_records(params, searchstring):
 
     for record_uid in params.record_cache:
         rec = get_record(params, record_uid)
+        if not rec:
+            continue
         cached_rec = params.record_cache[record_uid] or {}
 
         if cached_rec.get('version') == 3:
