@@ -799,7 +799,7 @@ class LoginV3Flow:
 
             if mfa_expiration > channel.maxExpiration:
                 mfa_expiration = channel.maxExpiration
-                
+
             allowed_expirations = ['login']     # type: List[str]
             if channel.maxExpiration >= proto.TWO_FA_EXP_12_HOURS:
                 allowed_expirations.append('12_hours')
@@ -1082,6 +1082,7 @@ class LoginV3API:
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
         elif backup_type == proto.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
+            print('Please enter your Recovery Phrase ')
             if os.isatty(0):
                 phrase = prompt('Recovery Phrase: ', lexer=p, completer=p, key_bindings=p.kb, validator=p,
                                 validate_while_typing=False, editing_mode=EditingMode.VI, wrap_lines=True,
