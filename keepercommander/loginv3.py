@@ -797,18 +797,32 @@ class LoginV3Flow:
                             proto.TWO_FA_EXP_24_HOURS if config_expiration == '24_hours' else \
                                 proto.TWO_FA_EXP_30_DAYS
 
+            if mfa_expiration > channel.maxExpiration:
+                mfa_expiration = channel.maxExpiration
+                
+            allowed_expirations = ['login']     # type: List[str]
+            if channel.maxExpiration >= proto.TWO_FA_EXP_12_HOURS:
+                allowed_expirations.append('12_hours')
+            if channel.maxExpiration >= proto.TWO_FA_EXP_24_HOURS:
+                allowed_expirations.append('24_hours')
+            if channel.maxExpiration >= proto.TWO_FA_EXP_30_DAYS:
+                allowed_expirations.append('30_days')
+            if channel.maxExpiration >= proto.TWO_FA_EXP_NEVER:
+                allowed_expirations.append('forever')
+
             otp_code = ''
             show_duration = True
             mfa_pattern = re.compile(r'2fa_duration\s*=\s*(.+)', re.IGNORECASE)
             while not otp_code:
                 if show_duration:
                     show_duration = False
-                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration=login|12_hours|24_hours|30_days|forever' \
-                        .format('Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
-                                'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
-                                'Ask Every 12 hours' if mfa_expiration == proto.TWO_FA_EXP_12_HOURS else
-                                'Ask Every 24 hours' if mfa_expiration == proto.TWO_FA_EXP_24_HOURS else
-                                'Ask Every 30 days')
+                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration={1}'.format(
+                        'Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
+                        'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
+                        'Ask Every 12 hours' if mfa_expiration == proto.TWO_FA_EXP_12_HOURS else
+                        'Ask Every 24 hours' if mfa_expiration == proto.TWO_FA_EXP_24_HOURS else
+                        'Ask Every 30 days',
+                        "|".join(allowed_expirations))
                     print(prompt_exp)
 
                 try:
@@ -819,7 +833,7 @@ class LoginV3Flow:
                 m_duration = re.match(mfa_pattern, answer)
                 if m_duration:
                     answer = m_duration.group(1).strip().lower()
-                    if answer not in ['login', '12_hours', '24_hours', '30_days', 'forever']:
+                    if answer not in allowed_expirations:
                         print(f'Invalid 2FA Duration: {answer}')
                         answer = ''
 

@@ -1989,12 +1989,17 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         elif enforcement_type == 'two_factor_duration':
                             if enforcement_value == 'login':
                                 enforcement_value = '0'
+                            elif enforcement_value == '12_hours':
+                                enforcement_value = '0,12'
+                            elif enforcement_value == '24_hours':
+                                enforcement_value = '0,12,24'
                             elif enforcement_value == '30_days':
-                                enforcement_value = '0,30'
+                                enforcement_value = '0,12,24,30'
                             elif enforcement_value == 'forever':
-                                enforcement_value = '0,30,9999'
+                                enforcement_value = '0,12,24,30,9999'
                             else:
-                                logging.warning('Enforcement %s expects "login", "30_days", or "forever"', key)
+                                logging.warning('Enforcement %s expects "login", "12_hours", "24_hours", '
+                                                '"30_days", or "forever"', key)
                                 continue
                         elif enforcement_type == 'ip_whitelist':
                             ip_ranges = [x.strip().lower() for x in enforcement_value.split(',')]
@@ -2648,6 +2653,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         elif value_type == 'two_factor_duration':
                             value = [x.strip() for x in value.split(',')]
                             value = ['login' if x == '0' else
+                                     '12_hours' if x == '12' else
+                                     '24_hours' if x == '24' else
                                      '30_days' if x == '30' else
                                      'forever' if x == '9999' else x for x in value]
                             value = ', '.join(value)
