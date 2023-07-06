@@ -156,6 +156,8 @@ clipboard_copy_parser.add_argument(
 clipboard_copy_parser.add_argument(
     '-t', '--totp', dest='totp', action='store_true', help='output totp code')
 clipboard_copy_parser.add_argument(
+    '--field', dest='field', action='store', help='output custom field')
+clipboard_copy_parser.add_argument(
     '-r', '--revision', dest='revision', type=int, action='store',
     help='use a specific record revision')
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
@@ -1486,6 +1488,37 @@ class ClipboardCommand(Command, RecordMixin):
                     res = get_totp_code(totp_url)
                     if res:
                         txt, _, _ = res
+            elif kwargs.get('field'):
+                field_name = kwargs['field']
+                if field_name == 'notes':
+                    copy_item = f'Notes'
+                    if isinstance(rec, vault.PasswordRecord):
+                        txt = rec.notes
+                    elif isinstance(rec, vault.TypedRecord):
+                        txt = rec.notes
+                else:
+                    copy_item = f'Custom Field "{field_name}"'
+                    if isinstance(rec, vault.PasswordRecord):
+                        txt = rec.get_custom_value(field_name)
+                    elif isinstance(rec, vault.TypedRecord):
+                        field = rec.get_typed_field(field_name)
+                        if field:
+                            copy_item = f'Field "{field_name}"'
+                        else:
+                            ft, sep, fl = field_name.partition('.')
+                            if not sep:
+                                fl = ft
+                                ft = 'text'
+                            field = rec.get_typed_field(ft, label=fl)
+                        if field:
+                            field_value = field.get_default_value(str)
+                            if field_value:
+                                if isinstance(field_value, str):
+                                    txt = field_value
+                                elif isinstance(field_value, int):
+                                    txt = str(field_value)
+                                elif isinstance(field_value, dict):
+                                    txt = json.dumps(field_value)
             else:
                 copy_item = 'Password'
                 if isinstance(rec, vault.PasswordRecord):
