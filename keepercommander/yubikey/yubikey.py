@@ -45,10 +45,6 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[dict]
             if isinstance(c.get('id'), str):
                 c['id'] = utils.base64_url_decode(c['id'])
 
-        rq_options = PublicKeyCredentialRequestOptions(utils.base64_url_decode(options['challenge']),
-                                                       rp_id=options['rpId'], user_verification='discouraged',
-                                                       allow_credentials=credentials)
-
         if WindowsClient.is_available():
             client = WindowsClient(origin, verify=verify_rp_id_none)
         else:
@@ -60,11 +56,17 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[dict]
 
         def auth_func():
             nonlocal response
-            nonlocal rq_options
             attempt = 0
             while attempt < 2:
                 attempt += 1
                 try:
+                    rq_options = PublicKeyCredentialRequestOptions(
+                        utils.base64_url_decode(options['challenge']),
+                        rp_id=options['rpId'] if attempt == 0 else origin,
+                        user_verification=options.get('userVerification', 'discouraged'),
+                        allow_credentials=credentials)
+
+                    time.sleep(0.1)
                     rs = client.get_assertion(rq_options, event=evt)
                     response = rs.get_response(0)
                     break
@@ -77,9 +79,6 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[dict]
                                   'https://docs.keeper.io/enterprise-guide/two-factor-authentication#security-keys-fido-webauthn\n'
                                   'Commander will use the fallback security key authentication method.\n\n'
                                   'To use your Yubikey with Commander, please touch the flashing Security key one more time.\n')
-                            rq_options = PublicKeyCredentialRequestOptions(
-                                utils.base64_url_decode(options['challenge']), rp_id=origin, user_verification='discouraged',
-                                allow_credentials=credentials)
                             continue
                     raise err
     else:
@@ -92,7 +91,6 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[dict]
         nonlocal prompt_session
         nonlocal evt
         try:
-            time.sleep(0.1)
             auth_func()
         except:
             pass
