@@ -36,24 +36,25 @@ if not my_params.session_token:
 # Load Vault data
 api.sync_down(my_params)
 
-# There are few distinct record formats internally
-# Version 2 or Legacy or General records or V2
-# Version 3 or Typed records or V3
-# Version 4 or File records
+# Keeper supports several record formats internally
+# Version 2 or Legacy or General records, V2
+# Version 3 or Typed records, V3
+# Version 4 or File records, V4
 # ...
 # Record versions 3 and up replace legacy v2 record format
 
 # Commander has 2 class sets for Keeper records
 # 1. "Record" class in the record.py
-#    This class represents V2 records originally. When used with V3 records it maps V3 record to V2 data structure.
-#    Convenient when reading record data
-#    Loaded with api.get_record(param, record_uid) method
+#    This class represents V2 records originally.
+#    When used with V3 records it maps V3 record fields to V2 data structure.
+#    Convenient when reading records
+#    Use api.get_record(param, record_uid) method to load record
 # 2. Newer record classes in the vault.py
 #    "KeeperRecord" the base class for all record types
 #    "PasswordRecord" represents V2 or legacy records
-#    "TypedRecord" represent V3 or typed records
-#    "FileRecord" V4 or file attachment
-#    Loaded with vault.KeeperRecord.load(params, record_uid)
+#    "TypedRecord" - V3 or typed records
+#    "FileRecord" - V4 or file attachment
+#    Use vault.KeeperRecord.load(params, record_uid) to load a record
 
 # Old record class example
 # Enumerated all records in all shared folders.
@@ -78,7 +79,7 @@ if my_params.shared_folder_cache:
 # New record class example
 new_record: Optional[vault.KeeperRecord] = None
 
-# get random shared folder or shared folder subfolder in the folder tree
+# get a random shared folder/subfolder in the vault tree
 folder: Optional[subfolder.BaseFolderNode] = None
 records: Optional[Set[str]] = None
 for f_uid, recs in my_params.subfolder_record_cache.items():
@@ -89,7 +90,7 @@ for f_uid, recs in my_params.subfolder_record_cache.items():
     if f_uid not in my_params.folder_cache:
         continue
     f: Optional[subfolder.BaseFolderNode] = my_params.folder_cache[f_uid]    # folder description
-    # pick a shared folder
+    # pick a shared folder/subfolder
     if f.type in (subfolder.BaseFolderNode.SharedFolderType, subfolder.BaseFolderNode.SharedFolderFolderType):
         folder = f
         records = recs
