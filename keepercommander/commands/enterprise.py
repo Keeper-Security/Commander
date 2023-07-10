@@ -345,8 +345,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         return enterprise_info_parser
 
     def execute(self, params, **kwargs):
-
-        print('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
+        logging.info('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
         user_managed_nodes = set(self.get_user_managed_nodes(params))
         node_scope = set()
@@ -603,10 +602,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if len(root_nodes) > 1:
                 tree = OD([('', tree)])
             else:
-                print('')
+                logging.info('')
 
             tr = LeftAligned()
-            print(tr(tree))
+            return tr(tree)
         else:
             columns = set()
             if kwargs.get('columns'):
@@ -706,7 +705,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 rows.sort(key=lambda x: x[1])
 
-                print('')
+                logging.info('')
                 headers = ['node_id', 'name']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
@@ -758,7 +757,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     rows.append(row)
                 rows.sort(key=lambda x: x[1])
 
-                print('')
+                logging.info('')
                 headers = ['user_id', 'email']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
@@ -820,7 +819,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 rows.sort(key=lambda x: x[1])
 
-                print('')
+                logging.info('')
                 headers = ['team_uid', 'name']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
@@ -861,15 +860,13 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                 rows.sort(key=lambda x: x[1])
 
-                print('')
+                logging.info('')
 
                 headers = ['role_id', 'name']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
                     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
-
-        print('')
 
 
 class EnterpriseNodeCommand(EnterpriseCommand):
