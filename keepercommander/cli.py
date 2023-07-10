@@ -402,7 +402,9 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
             if not quiet:
                 logging.info('Executing [%s]...', command)
             try:
-                do_command(params, command)
+                result = do_command(params, command)
+                if result is not None:
+                    print(result)
             except CommandError as e:
                 msg = f'{e.command}: {e.message}' if e.command else f'{e.message}'
                 logging.error(msg)
