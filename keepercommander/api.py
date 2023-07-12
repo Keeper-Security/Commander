@@ -1215,7 +1215,7 @@ def get_record_shares(params, record_uids, is_share_admin=False):
     def need_share_info(uid):
         if uid in params.record_cache:
             r = params.record_cache[uid]
-            return r.get('shared') and 'shares' not in r
+            return 'shares' not in r
         return is_share_admin
 
     result = []
