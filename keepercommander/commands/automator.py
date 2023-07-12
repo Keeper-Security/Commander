@@ -38,7 +38,7 @@ automator_edit_parser = argparse.ArgumentParser(prog='automator-edit')
 automator_edit_parser.add_argument('target', help='Automator ID or Name.')
 automator_edit_parser.add_argument('--name', dest='name', action='store', help='Automator name.')
 automator_edit_parser.add_argument('--url', dest='url', action='store', help='Automator Webhook URL.')
-automator_edit_parser.add_argument('--skill', dest='skill', action='append', choices=['device', 'team'],
+automator_edit_parser.add_argument('--skill', dest='skill', action='append', choices=['device', 'team', 'team_for_user'],
                                    help='Automator Skills.')
 automator_edit_parser.add_argument('--set', dest='setting', metavar="KEY=VALUE", action='append',
                                    help='Automator Settings. Use value: '
@@ -91,6 +91,8 @@ class AutomatorMixin(object):
             return 'Device Approval'
         elif skill == automator_proto.TEAM_APPROVAL:
             return 'Team Approval'
+        elif skill == automator_proto.TEAM_FOR_USER_APPROVAL:
+            return 'Team For User Approval'
         else:
             return str(skill)
 
@@ -273,6 +275,8 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
                     rq.skillTypes.append(automator_proto.DEVICE_APPROVAL)
                 elif skill == 'team':
                     rq.skillTypes.append(automator_proto.TEAM_APPROVAL)
+                elif skill == 'team_for_user':
+                    rq.skillTypes.append(automator_proto.TEAM_FOR_USER_APPROVAL)
                 else:
                     logging.warning('Unsupported skill: \"%s\"', skill)
                     return
