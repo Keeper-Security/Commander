@@ -141,7 +141,7 @@ def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
                     (out_child, error_child) = child.communicate(timeout=10)
                     if child.poll() == 0:
                         keys = out_child.decode().splitlines()
-                        keys = [x for x in keys if len(x) > 0 and x != old_public_ssh_key]
+                        keys = [x.replace('\'', '') for x in keys if len(x) > 0 and x != old_public_ssh_key]
                         keys.append(new_public_ssh_key)
 
                         set_ssh_keys = list(ssh_command)
