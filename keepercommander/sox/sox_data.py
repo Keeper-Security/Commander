@@ -47,7 +47,15 @@ class SoxData:
         return self._teams if team_uids is None else {uid: self.get_team(uid) for uid in team_uids}
 
     def get_user_records(self, user_uids=None):
-        users = self._users.values() if user_uids is None else {self.get_user(uid) for uid in user_uids}
+        if user_uids:
+            users = set()
+            for uid in user_uids:
+                user = self.get_user(uid)
+                if user:
+                    users.add(user)
+        else:
+            users = self._users.values()
+
         recs = set()
         for user in users:
             for r_uid in user.records:

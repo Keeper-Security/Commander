@@ -1600,6 +1600,12 @@ class AgingReportCommand(Command):
 
         users = {uid: user for uid, user in sd.get_users().items() if user.status == enterprise_pb2.OK}
         uid_lookup = {user.email: uid for uid, user in users.items()}
+        if 'user_aliases' in params.enterprise:
+            for alias in params.enterprise['user_aliases']:
+                username = alias['username'].lower()
+                if username not in uid_lookup:
+                    user_id = alias['enterprise_user_id']
+                    uid_lookup[username] = user_id
         username = kwargs.get('username')
         if username and username not in uid_lookup:
             logging.info(f'User {username} is not a valid enterprise user')
