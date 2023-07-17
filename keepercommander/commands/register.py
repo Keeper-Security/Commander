@@ -1241,9 +1241,9 @@ class RecordPermissionCommand(Command):
             fols.add(folder.uid)
             pos = 0
             while pos < len(flat_subfolders):
-                folder = flat_subfolders[pos]
-                if folder.subfolders:
-                    for f_uid in folder.subfolders:
+                subfolder = flat_subfolders[pos]
+                if subfolder.subfolders:
+                    for f_uid in subfolder.subfolders:
                         if f_uid not in fols:
                             f = params.folder_cache[f_uid]
                             if f:
