@@ -1096,7 +1096,7 @@ class LoginV3API:
             if len(words) != 24:
                 raise Exception('Recovery phrase should contain 24 words')
             recovery_phrase = ' '.join(words)
-            auth_hash = crypto.generate_hkdf_key('recovery_auth_token', phrase)
+            auth_hash = crypto.generate_hkdf_key('recovery_auth_token', recovery_phrase)
         else:
             logging.info('Unsupported account recovery type')
             return
@@ -1240,8 +1240,9 @@ class LoginV3API:
         api_request_payload.payload = rq.SerializeToString()
         rs = rest_api.execute_rest(params.rest_context, 'authentication/register_device_in_region', api_request_payload)
         if isinstance(rs, dict):
-            if 'error' in rs and rs['error'] == 'exists':
-                return
+            # KA has a bug where it returns 'exists' for non-existing device token
+            # if 'error' in rs and rs['error'] == 'exists':
+            #     return
             raise InvalidDeviceToken()
 
     @staticmethod
