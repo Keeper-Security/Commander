@@ -101,6 +101,9 @@ def register_commands(commands, aliases, command_info):
     rsync.register_commands(commands)
     rsync.register_command_info(aliases, command_info)
 
+    from .keeper_fill import KeeperFillCommand
+    commands['keeper-fill'] = KeeperFillCommand()
+
 
 def register_enterprise_commands(commands, aliases, command_info):
     from . import enterprise
@@ -721,8 +724,9 @@ class FolderMixin:
         records = set()
 
         def add_records(f):   # type: (BaseFolderNode) -> None
-            if f.uid in params.subfolder_record_cache:
-                records.update(params.subfolder_record_cache[f.uid])
+            folder_uid = f.uid or ''
+            if folder_uid in params.subfolder_record_cache:
+                records.update(params.subfolder_record_cache[folder_uid])
 
         FolderMixin.traverse_folder_tree(params, folder_uid, add_records)
         return records
