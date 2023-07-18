@@ -168,7 +168,7 @@ class CommandCompleter(Completer):
                         elif isinstance(command, GroupCommand):
                             c, sep, rest = raw_input.partition(' ')
                             if sep == ' ':
-                                cmd = f'{cmd}-{c.lower()}'
+                                cmd = f'{cmd} {c.lower()}'
                                 raw_input = rest.strip()
                                 if c in command.subcommands:
                                     sub_command = command.subcommands[c]

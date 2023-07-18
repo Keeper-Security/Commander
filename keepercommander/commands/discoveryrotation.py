@@ -11,13 +11,14 @@
 import argparse
 import json
 import logging
+import os.path
 from datetime import datetime
 from typing import Dict, Optional, Any
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from .base import Command, GroupCommand, dump_report_data
+from .base import Command, GroupCommand, dump_report_data, report_output_parser, field_to_title
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -32,7 +33,7 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, get_router_url
 from .record_edit import RecordEditMixin
-from .. import api, utils, vault_extensions, vault, record_management
+from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -89,6 +90,7 @@ class PAMRotationCommand(GroupCommand):
         self.register_command('new',  PAMCreateRecordRotationCommand(), 'Create New Record Rotation Schedule', 'n')
         self.register_command('list', PAMListRecordRotationCommand(), 'List Record Rotation Schedulers', 'l')
         self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info', 'i')
+        self.register_command('script', PAMRouterScriptCommand(), 'Add, delete, or edit script field')
         self.default_verb = 'list'
 
 
@@ -137,7 +139,7 @@ class PAMCreateRecordRotationCommand(Command):
     parser = argparse.ArgumentParser(prog='pam rotation new')
     parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
     parser.add_argument('--config',       '-c',  required=True, dest='config_uid', action='store', help='UID of the PAM Configuration.')
-    parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
+    parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource record.')
     parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
@@ -1009,6 +1011,253 @@ class PAMRouterGetRotationInfo(Command):
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
+
+
+class PAMRouterScriptCommand(GroupCommand):
+    def __init__(self):
+        super().__init__()
+        self.register_command('list',  PAMScriptListCommand(), 'List script fields')
+        self.register_command('add', PAMScriptAddCommand(), 'List Record Rotation Schedulers')
+        self.register_command('edit', PAMScriptEditCommand(), 'Add, delete, or edit script field')
+        self.register_command('delete', PAMScriptDeleteCommand(), 'Delete script field')
+        self.default_verb = 'list'
+
+
+class PAMScriptListCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam rotate script view', parents=[report_output_parser],
+                                     description='List script fields')
+    parser.add_argument('pattern', nargs='?', help='Record UID, path, or search pattern')
+
+    def get_parser(self):
+        return PAMScriptListCommand.parser
+
+    def execute(self, params, **kwargs):
+        pattern = kwargs.get('pattern')
+
+        table = []
+        header = ['record_uid', 'title', 'record_type', 'script_uid', 'script_name', 'records', 'command']
+        for record in vault_extensions.find_records(params, search_str=pattern, record_version=3,
+                                                    record_type=('pamUser', 'pamDirectory')):
+            if not isinstance(record, vault.TypedRecord):
+                continue
+            for field in (x for x in record.fields if x.type == 'script'):
+                value = field.get_default_value(dict)
+                if not value:
+                    continue
+                file_ref = value.get('fileRef')
+                if not file_ref:
+                    continue
+                file_record = vault.KeeperRecord.load(params, file_ref)
+                if not file_record:
+                    continue
+                records = value.get('recordRef')
+                command = value.get('command')
+                table.append([record.record_uid, record.title, record.record_type, file_record.record_uid,
+                              file_record.title, records, command])
+        fmt = kwargs.get('format')
+        if fmt != 'json':
+            header = [field_to_title(x) for x in header]
+        return dump_report_data(table, header, fmt=fmt, filename=kwargs.get('output'), row_number=True)
+
+
+class PAMScriptAddCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam rotate script add', description='Add script to record')
+    parser.add_argument('--script', required=True, dest='script', action='store',
+                        help='Script file name')
+    parser.add_argument('--add-credential', dest='add_credential', action='append',
+                        help='Record with rotation credential')
+    parser.add_argument('--script-command', dest='script_command', action='store',
+                        help='Script command')
+    parser.add_argument('record', help='Record UID or Title')
+
+    def get_parser(self):
+        return PAMScriptAddCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        if not record_name:
+            raise CommandError('rotate script', '"record" argument is required')
+        records = list(vault_extensions.find_records(
+            params, search_str=record_name, record_version=3, record_type=('pamUser', 'pamDirectory')))
+        if len(records) == 0:
+            raise CommandError('rotate script', f'Record "{record_name}" not found')
+        if len(records) > 1:
+            raise CommandError('rotate script', f'Record "{record_name}" is not unique. Use record UID.')
+        record = records[0]
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('rotate script', f'Record "{record.title}" is not a rotation record.')
+
+        script_field = next((x for x in record.fields if x.type == 'script'), None)
+        if not script_field:
+            script_field = vault.TypedField.new_field('script', [], 'rotationScripts')
+            record.fields.append(script_field)
+
+        file_name = kwargs.get('script')
+        full_name = os.path.expanduser(file_name)
+        if not os.path.isfile(full_name):
+            raise CommandError('rotate script', f'File "{file_name}" not found.')
+
+        facade = record_facades.FileRefRecordFacade()
+        facade.record = record
+        pre = set(facade.file_ref)
+        upload_task = attachment.FileUploadTask(full_name)
+        attachment.upload_attachments(params, record, [upload_task])
+        post = set(facade.file_ref)
+        df = post.difference(pre)
+        if len(df) == 1:
+            file_uid = df.pop()
+            facade.file_ref.remove(file_uid)
+            script_value = {
+                'fileRef': file_uid,
+                'recordRef': [],
+                'command': '',
+            }
+            script_field.value.append(script_value)
+            record_refs = kwargs.get('add_credential')
+            if isinstance(record_refs, list):
+                for ref in record_refs:
+                    if ref in params.record_cache:
+                        script_value['recordRef'].append(ref)
+            cmd = kwargs.get('script_command')
+            if cmd:
+                script_value['command'] = cmd
+
+        record_management.update_record(params, record)
+        params.sync_data = True
+
+
+class PAMScriptEditCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam rotate script edit', description='Edit script field')
+    parser.add_argument('--script', required=True, dest='script', action='store',
+                        help='Script UID or name')
+    parser.add_argument('-ac', '--add-credential', dest='add_credential', action='append',
+                        help='Add a record with rotation credential')
+    parser.add_argument('-rc', '--remove-credential', dest='remove_credential', action='append',
+                        help='Remove a record with rotation credential')
+    parser.add_argument('--script-command', dest='script_command', action='store',
+                        help='Script command')
+    parser.add_argument('record', help='Record UID or Title')
+
+    def get_parser(self):
+        return PAMScriptEditCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        if not record_name:
+            raise CommandError('rotate script', '"record" argument is required')
+
+        script_name = kwargs.get('script')   # type: Optional[str]
+        if not script_name:
+            raise CommandError('rotate script', '"script" argument is required')
+
+        records = list(vault_extensions.find_records(
+            params, search_str=record_name, record_version=3, record_type=('pamUser', 'pamDirectory')))
+        if len(records) == 0:
+            raise CommandError('rotate script', f'Record "{record_name}" not found')
+        if len(records) > 1:
+            raise CommandError('rotate script', f'Record "{record_name}" is not unique. Use record UID.')
+        record = records[0]
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('rotate script', f'Record "{record.title}" is not a rotation record.')
+
+        script_field = next((x for x in record.fields if x.type == 'script'), None)
+        if script_field is None:
+            raise CommandError('rotate script', f'Record "{record.title}" has no rotation scripts.')
+        script_value = next((x for x in script_field.value if x.get('fileRef') == script_name), None)
+        if script_value is None:
+            s_name = script_name.casefold()
+            for x in script_field.value:
+                file_uid = x.get('fileRef')
+                file_record = vault.KeeperRecord.load(params, file_uid)
+                if isinstance(file_record, vault.FileRecord):
+                    if file_record.title.casefold() == s_name:
+                        script_value = x
+                        break
+                    elif file_record.name.casefold() == s_name:
+                        script_value = x
+                        break
+
+        if not isinstance(script_value, dict):
+            raise CommandError('rotate script', f'Record "{record.title}" does not have script "{script_name}"')
+
+        modified = False
+        refs = set()
+        record_refs = script_value.get('recordRef')
+        if isinstance(record_refs, list):
+            refs.update(record_refs)
+        remove_credential = kwargs.get('remove_credential')
+        if isinstance(remove_credential, list) and remove_credential:
+            refs.difference_update(remove_credential)
+            modified = True
+        add_credential = kwargs.get('add_credential')
+        if isinstance(add_credential, list) and add_credential:
+            refs.update(add_credential)
+            modified = True
+        if modified:
+            script_value['recordRef'] = list(refs)
+        command = kwargs.get('script_command')
+        if command:
+            script_value['command'] = command
+            modified = True
+
+        if not modified:
+            raise CommandError('rotate script', 'Nothing to do')
+
+        record_management.update_record(params, record)
+        params.sync_data = True
+
+
+class PAMScriptDeleteCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam rotate script delete', description='Delete script field')
+    parser.add_argument('--script', required=True, dest='script', action='store',
+                        help='Script UID or name')
+    parser.add_argument('record', help='Record UID or Title')
+
+    def get_parser(self):
+        return PAMScriptDeleteCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record')
+        if not record_name:
+            raise CommandError('rotate script', '"record" argument is required')
+
+        script_name = kwargs.get('script')   # type: Optional[str]
+        if not script_name:
+            raise CommandError('rotate script', '"script" argument is required')
+
+        records = list(vault_extensions.find_records(
+            params, search_str=record_name, record_version=3, record_type=('pamUser', 'pamDirectory')))
+        if len(records) == 0:
+            raise CommandError('rotate script', f'Record "{record_name}" not found')
+        if len(records) > 1:
+            raise CommandError('rotate script', f'Record "{record_name}" is not unique. Use record UID.')
+        record = records[0]
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('rotate script', f'Record "{record.title}" is not a rotation record.')
+
+        script_field = next((x for x in record.fields if x.type == 'script'), None)
+        if script_field is None:
+            raise CommandError('rotate script', f'Record "{record.title}" has no rotation scripts.')
+        script_value = next((x for x in script_field.value if x.get('fileRef') == script_name), None)
+        if script_value is None:
+            s_name = script_name.casefold()
+            for x in script_field.value:
+                file_uid = x.get('fileRef')
+                file_record = vault.KeeperRecord.load(params, file_uid)
+                if isinstance(file_record, vault.FileRecord):
+                    if file_record.title.casefold() == s_name:
+                        script_value = x
+                        break
+                    elif file_record.name.casefold() == s_name:
+                        script_value = x
+                        break
+
+        if not isinstance(script_value, dict):
+            raise CommandError('rotate script', f'Record "{record.title}" does not have script "{script_name}"')
+
+        script_field.value.remove(script_value)
+        record_management.update_record(params, record)
+        params.sync_data = True
 
 
 class PAMGatewayActionJobCancelCommand(Command):
