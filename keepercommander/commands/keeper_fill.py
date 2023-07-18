@@ -20,6 +20,7 @@ from typing import Union, Iterable, Optional, List
 from .base import GroupCommand, Command, FolderMixin, try_resolve_path, report_output_parser, dump_report_data
 from .. import vault, utils, crypto, api
 from ..params import KeeperParams
+from ..error import CommandError
 from ..proto import record_pb2
 
 
@@ -57,7 +58,7 @@ class KeeperFillMixin:
 
         paths = kwargs.get('paths')
         if not paths:
-            raise Exception('"paths" parameter is required.')
+            raise CommandError('', '"paths" parameter is required.')
 
         for path in paths:
             if path in params.folder_cache:
@@ -67,7 +68,7 @@ class KeeperFillMixin:
             else:
                 rs = try_resolve_path(params, path)
                 if rs is None:
-                    raise Exception(f'Folder or record path {path} not found')
+                    raise CommandError('', f'Folder or record path {path} not found')
 
                 folder, pattern = rs
                 folder_uid = folder.uid or ''
@@ -189,7 +190,7 @@ class KeeperFillSetCommand(Command, KeeperFillMixin):
         auto_fill = kwargs.get('auto_fill')
         auto_submit = kwargs.get('auto_submit')
         if auto_fill is None and auto_submit is None:
-            raise Exception('Nothing to set.')
+            raise CommandError('', 'Nothing to set.')
 
         record_v3_updates = []   # type: List[record_pb2.RecordUpdate]
         record_v2_updates = []   # type: List[dict]
