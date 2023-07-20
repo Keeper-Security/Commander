@@ -103,6 +103,11 @@ def register_commands(commands, aliases, command_info):
 
     from .keeper_fill import KeeperFillCommand
     commands['keeper-fill'] = KeeperFillCommand()
+    command_info['keeper-fill'] = 'KeeperFill management'
+
+    from .two_fa import TwoFaCommand
+    commands['2fa'] = TwoFaCommand()
+    command_info['2fa'] = '2FA management'
 
 
 def register_enterprise_commands(commands, aliases, command_info):
