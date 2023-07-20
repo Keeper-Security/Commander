@@ -25,6 +25,7 @@ from .enterprise import TeamApproveCommand, EnterpriseCommand
 from .. import api, utils, vault, attachment, vault_extensions
 from ..display import bcolors
 from ..params import KeeperParams
+from ..error import CommandError
 
 scim_list_parser = argparse.ArgumentParser(prog='scim list', parents=[report_output_parser],
                                            description='Display a list of available SCIM endpoints.')
@@ -330,9 +331,9 @@ class ScimPushCommand(EnterpriseCommand):
                 if isinstance(r, vault.TypedRecord):
                     record = r
                 else:
-                    raise Exception(f'Record UID "{record_uid}": invalid record type ')
+                    raise CommandError('', f'Record UID "{record_uid}": invalid record type ')
             else:
-                raise Exception(f'Record UID "{record_uid}": does not exist')
+                raise CommandError('', f'Record UID "{record_uid}": does not exist')
         else:
             for r in vault_extensions.find_records(params, record_version=3):
                 if not isinstance(r, vault.TypedRecord):
@@ -344,14 +345,14 @@ class ScimPushCommand(EnterpriseCommand):
                         record = r
                         break
             if not isinstance(record, vault.TypedRecord):
-                raise Exception(f'Cannot find SCIM record with URL: {scim_url}')
+                raise CommandError('', f'Cannot find SCIM record with URL: {scim_url}')
 
         field = next((x for x in record.fields if x.type == 'password'), None)
         if not field:
-            raise Exception(f'"Password" field not found on record "{record.title}"')
+            raise CommandError('', f'"Password" field not found on record "{record.title}"')
         token = field.get_default_value(str)
         if not token:
-            raise Exception(f'"Password" field is empty on record "{record.title}"')
+            raise CommandError('', f'"Password" field is empty on record "{record.title}"')
 
         keeper_users = {}  # type: Dict[str, ScimUser]
         keeper_groups = {}  # type: Dict[str, ScimGroup]
@@ -367,13 +368,13 @@ class ScimPushCommand(EnterpriseCommand):
         external_func = None
         source = kwargs.get('source')
         if not source:
-            raise Exception(f'SCIM source {source} cannot be empty')
+            raise CommandError('', f'SCIM source {source} cannot be empty')
         if source == 'google':
             external_func = ScimPushCommand.scim_google
         elif source == 'ad':
             external_func = ScimPushCommand.scim_ad
         else:
-            raise Exception(f'SCIM source {source} is not supported')
+            raise CommandError('', f'SCIM source {source} is not supported')
 
         other_users = {}  # type: Dict[str, ScimUser]
         other_groups = {}  # type: Dict[str, ScimGroup]
@@ -658,7 +659,7 @@ class ScimPushCommand(EnterpriseCommand):
             }
             rs = requests.post(url, headers=headers, json=payload)
             if rs.status_code >= 300:
-                raise Exception(f'POST error: {rs.status_code}')
+                raise CommandError('', f'POST error: {rs.status_code}')
             if rs.status_code in (200, 201):
                 return rs.json()
 
@@ -674,7 +675,7 @@ class ScimPushCommand(EnterpriseCommand):
             }
             rs = requests.patch(patch_url, headers=headers, json=payload)
             if rs.status_code >= 300:
-                raise Exception(f'PATCH error: {rs.status_code}')
+                raise CommandError('', f'PATCH error: {rs.status_code}')
             if rs.status_code == 200:
                 return rs.json()
 
@@ -689,7 +690,7 @@ class ScimPushCommand(EnterpriseCommand):
             }
             rs = requests.delete(patch_url, headers=headers)
             if rs.status_code >= 300:
-                raise Exception(f'DELETE error: {rs.status_code}')
+                raise CommandError('', f'DELETE error: {rs.status_code}')
 
     @staticmethod
     def get_scim_resource(url, token):
@@ -754,12 +755,12 @@ class ScimPushCommand(EnterpriseCommand):
             import ldap3
             from ldap3.utils.conv import escape_filter_chars
         except ModuleNotFoundError:
-            raise Exception('LDAP3 client is not installed.\npip install ldap3')
+            raise CommandError('', 'LDAP3 client is not installed.\npip install ldap3')
 
         # SCIM group
         field = next((x for x in record.custom if (x.label or '').lower().strip() == 'scim group'), None)
         if not field:
-            raise Exception(f'Active Directory SCIM record "{record.title}" does not have "SCIM Group" field.\n'
+            raise CommandError('', f'Active Directory SCIM record "{record.title}" does not have "SCIM Group" field.\n'
                             'This field contains a Google group name with users to be imported to Keeper.\n'
                             'Leave this field empty to import all users from Google Workspace.')
         scim_group = field.get_default_value(str)
@@ -770,7 +771,7 @@ class ScimPushCommand(EnterpriseCommand):
         if field:
             ad_url = field.get_default_value(str)
         if not ad_url:
-            raise Exception(f'Active Directory SCIM record "{record.title}" does not have "AD URL" field.\n'
+            raise CommandError('', f'Active Directory SCIM record "{record.title}" does not have "AD URL" field.\n'
                             'This field contains URL to connect to Active Directory.\n'
                             'Format: ldap(s)://<DOMAIN_CONTROLLER_HOSTNAME_OR_IP_ADDRESS>')
 
@@ -780,7 +781,7 @@ class ScimPushCommand(EnterpriseCommand):
         if field:
             ad_user = field.get_default_value(str)
         if not ad_user:
-            raise Exception(f'Active Directory SCIM record "{record.title}" does not have "AD User" field.\n'
+            raise CommandError('', f'Active Directory SCIM record "{record.title}" does not have "AD User" field.\n'
                             'This field contains username to connect to Active Directory.\n'
                             'Username should be either DOMAIN\\USERNAME or user distinguished name')
 
@@ -790,7 +791,7 @@ class ScimPushCommand(EnterpriseCommand):
         if field:
             ad_password = field.get_default_value(str)
         if not ad_password:
-            raise Exception(f'Active Directory SCIM record "{record.title}" does not have "AD Password" field.\n'
+            raise CommandError('', f'Active Directory SCIM record "{record.title}" does not have "AD Password" field.\n'
                             'This field contains AD user password.')
 
         server = ldap3.Server(ad_url)
@@ -798,9 +799,9 @@ class ScimPushCommand(EnterpriseCommand):
                               authentication=ldap3.SIMPLE if server.ssl else ldap3.NTLM) as connection:
             connection.bind()
             if not connection.search('', '(class=*)', search_scope=ldap3.BASE, attributes=["*"]):
-                raise Exception('Active Directory: cannot query Root DSE')
+                raise CommandError('', 'Active Directory: cannot query Root DSE')
             if len(connection.entries) == 0:
-                raise Exception('Active Directory: cannot query Root DSE')
+                raise CommandError('', 'Active Directory: cannot query Root DSE')
             root_dn = ''
             entry = connection.entries[0]
             entry_attributes = set(entry.entry_attributes)
@@ -823,7 +824,7 @@ class ScimPushCommand(EnterpriseCommand):
                     search_scope=ldap3.SUBTREE, generator=False)
             group_entry = next((x for x in rs if x.get('type') == 'searchResEntry'), None)
             if not group_entry:
-                raise Exception(f'Active Directory search error: SCIM Group "{scim_group}" not found')
+                raise CommandError('', f'Active Directory search error: SCIM Group "{scim_group}" not found')
             group_dn = group_entry['dn']
 
             scim_users = {}           # type: Dict[str, ScimUser]
@@ -905,12 +906,12 @@ class ScimPushCommand(EnterpriseCommand):
             import googleapiclient.discovery
             logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
         except ModuleNotFoundError:
-            raise Exception('Google Cloud client is not installed.\npip install google-api-python-client')
+            raise CommandError('', 'Google Cloud client is not installed.\npip install google-api-python-client')
 
         # SCIM group
         field = next((x for x in record.custom if (x.label or '').lower().strip() == 'scim group'), None)
         if not field:
-            raise Exception(f'Google SCIM record "{record.title}" does not have "SCIM Group" field.\n'
+            raise CommandError('', f'Google SCIM record "{record.title}" does not have "SCIM Group" field.\n'
                             'This field contains a Google group name with users to be imported to Keeper.\n'
                             'Leave this field empty to import all users from Google Workspace.')
         scim_group = field.get_default_value(str)
@@ -918,17 +919,17 @@ class ScimPushCommand(EnterpriseCommand):
         # Admin user
         field = next((x for x in record.fields if x.type == 'login'), None)
         if field is None:
-            raise Exception(f'Google SCIM record "{record.title}" does not have "login" field.\n'
+            raise CommandError('', f'Google SCIM record "{record.title}" does not have "login" field.\n'
                             'Please use "login" record type to store Google SCIM configuration.')
         admin_user = field.get_default_value(str)
         if not admin_user:
-            raise Exception(f'"login" field in Google SCIM record "{record.title}" should be populated with '
+            raise CommandError('', f'"login" field in Google SCIM record "{record.title}" should be populated with '
                             f'Google Workspace administrator email')
 
         ad = next(attachment.prepare_attachment_download(
             params, record_uid=record.record_uid, attachment_name='credentials.json'), None)
         if not ad:
-            raise Exception('Google SCIM configuration: Service account credentials are not found')
+            raise CommandError('', 'Google SCIM configuration: Service account credentials are not found')
 
         with io.BytesIO() as mem:
             ad.download_to_stream(params, mem)
@@ -943,9 +944,9 @@ class ScimPushCommand(EnterpriseCommand):
         user_lookup = {}
         users = directory.users().list(customer='my_customer').execute()
         if not isinstance(users, dict):
-            raise Exception('Google Cloud: Invalid users response')
+            raise CommandError('', 'Google Cloud: Invalid users response')
         if 'users' not in users:
-            raise Exception('Google Cloud: Invalid users response')
+            raise CommandError('', 'Google Cloud: Invalid users response')
         for user in users['users']:
             u = ScimUser()
             u.id = user['id']
@@ -963,15 +964,15 @@ class ScimPushCommand(EnterpriseCommand):
 
         groups = directory.groups().list(customer='my_customer').execute()
         if not isinstance(groups, dict):
-            raise Exception('Google Cloud: Invalid groups response')
+            raise CommandError('', 'Google Cloud: Invalid groups response')
         if 'groups' not in groups:
-            raise Exception('Google Cloud: Invalid groups response')
+            raise CommandError('', 'Google Cloud: Invalid groups response')
         group_lookup = {x['id']: x['name'] for x in groups['groups']}
 
         if scim_group:
             group_id = next((g_id for g_id, g_name in group_lookup.items()), None)
             if not group_id:
-                raise Exception(f'Google Workspace: group "{scim_group}" not found')
+                raise CommandError('', f'Google Workspace: group "{scim_group}" not found')
             del group_lookup[group_id]
             members = directory.members().list(groupKey=group_id).execute()
             if 'members' in members:
