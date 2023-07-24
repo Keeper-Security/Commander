@@ -152,6 +152,7 @@ paymentCard       Payment Card           object         {"cardNumber": "", "card
 bankAccount       Bank Account           object         {"accountType": "", "routingNumber": "", "accountNumber": ""}
                                                         Checking: 123456789 987654321
 privateKey        Key Pair               object         {"publicKey": "", "privateKey": ""}
+
 oneTimeCode       TOTP URL               string         otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&issuer=Keeper
 note              Masked multiline text  string         
 multiline         Multiline text         string         
@@ -173,7 +174,7 @@ $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        privateKey         Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc 
 $JSON:<JSON TEXT>       any object         Sets a field value as JSON       
-                                           phone.Cell=$JSON:{"number": "(555) 555-1234", "type": "Mobile"} 
+                                           phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}' 
 '''
 
 
@@ -357,7 +358,7 @@ class RecordEditMixin:
         record_field = record_types.RecordFields.get(field_type)
         if not record_field:
             return field_value
-        value_type = record_types.FieldTypes[record_field.name]
+        value_type = record_types.FieldTypes[record_field.type]
         if isinstance(value_type.value, dict):
             f_fields = set(value_type.value.keys())
             if isinstance(field_value, (list, dict)):

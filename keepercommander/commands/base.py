@@ -105,6 +105,10 @@ def register_commands(commands, aliases, command_info):
     commands['keeper-fill'] = KeeperFillCommand()
     command_info['keeper-fill'] = 'KeeperFill management'
 
+    from .password_report import PasswordReportCommand
+    commands['password-report'] = PasswordReportCommand()
+    command_info['password-report'] = 'Display record password report'
+
     from .two_fa import TwoFaCommand
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
