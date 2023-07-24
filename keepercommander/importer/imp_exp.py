@@ -629,6 +629,7 @@ def _import(params, file_format, filename, **kwargs):
     record_type = kwargs.get('record_type')
     filter_folder = kwargs.get('filter_folder')
     dry_run = kwargs.get('dry_run') is True
+    show_skipped = kwargs.get('show_skipped') is True
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -759,7 +760,23 @@ def _import(params, file_format, filename, **kwargs):
         records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
         import_uids = {}
 
-        records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records)
+        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, params, records)
+        if show_skipped and record_exists:
+            for existing_record in record_exists:
+                folder_name = ''
+                if existing_record.folders:
+                    f = existing_record.folders[0]
+                    if f.domain:
+                        folder_name = f.domain + '\\'
+                    if f.path:
+                        folder_name += f.path
+
+                if folder_name:
+                    logging.info('Record "%s" appearing in Folder "%s" was skipped due to a duplicate record [%s] found.',
+                                 existing_record.title, folder_name, existing_record.uid)
+                else:
+                    logging.info('Record "%s" was skipped due to a duplicate record [%s] found.',
+                                 existing_record.title, existing_record.uid)
         reference_uids = set()
 
         table = []
@@ -1865,7 +1882,7 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
 
 
 def prepare_record_add_or_update(update_flag, params, records):
-    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], dict]
+    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -1889,6 +1906,7 @@ def prepare_record_add_or_update(update_flag, params, records):
             pass
 
     record_to_import = []   # type: List[ImportRecord]
+    record_exists = []   # type: List[ImportRecord]
     record_uid_to_update = set()
     external_lookup = {}
 
@@ -1916,9 +1934,11 @@ def prepare_record_add_or_update(update_flag, params, records):
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:
+            record_uid = preexisting_entire_record_hash[record_hash]
             if import_record.uid:
-                record_uid = preexisting_entire_record_hash[record_hash]
                 external_lookup[import_record.uid] = record_uid
+            import_record.uid = record_uid
+            record_exists.append(import_record)
             continue
 
         if import_record.uid and import_record.uid in params.record_cache:
@@ -1984,7 +2004,7 @@ def prepare_record_add_or_update(update_flag, params, records):
                     if 'recordRef' in script:
                         script['recordRef'] = [external_lookup.get(x) or x for x in script['recordRef']]
 
-    return record_to_import, external_lookup
+    return record_to_import, record_exists, external_lookup
 
 
 def prepare_record_link(params, records):
