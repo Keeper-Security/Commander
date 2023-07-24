@@ -16,6 +16,7 @@ import secrets
 import string
 from secrets import choice
 from typing import Optional, List, Iterator
+from collections import namedtuple
 
 from . import crypto
 
@@ -23,6 +24,28 @@ from Cryptodome.Random.random import shuffle
 
 DEFAULT_PASSWORD_LENGTH = 32
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
+
+PasswordStrength = namedtuple('PasswordStrength', 'length caps lower digits symbols')
+
+
+def get_password_strength(password):  # type: (str) -> PasswordStrength
+    length = len(password)
+    caps = 0
+    lower = 0
+    digits = 0
+    symbols = 0
+
+    for ch in password:
+        if ch.isalpha():
+            if ch.isupper():
+                caps += 1
+            else:
+                lower += 1
+        elif ch.isdigit():
+            digits += 1
+        elif ch in PW_SPECIAL_CHARACTERS:
+            symbols += 1
+    return PasswordStrength(length=length, caps=caps, lower=lower, digits=digits, symbols=symbols)
 
 
 def generate(length=64):
