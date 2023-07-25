@@ -24,6 +24,7 @@ from ..constants import EMAIL_PATTERN
 from ..loginv3 import LoginV3API
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
+from ..error import CommandError
 
 
 def register_commands(commands):
@@ -116,11 +117,11 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         for user_rs in rs.results:
             if user_rs.code and user_rs.code not in ['success', 'ok']:
                 email_provisioning_doc = 'https://docs.keeper.io/enterprise-guide/user-and-team-provisioning/email-auto-provisioning'
-                logging.warning('Failed to auto-create account "%s".\n'
-                                'Creating user accounts without email verification is only permitted on reserved domains.\n' +
-                                'To reserve a domain please contact Keeper support. Learn more about domain reservation here:\n%s',
-                                email, email_provisioning_doc)
-                return
+                raise CommandError(
+                    '', f'Failed to auto-create account "{email}".\nCreating user accounts without email '
+                        'verification is only permitted on reserved domains.\n'
+                        'To reserve a domain please contact Keeper support. '
+                        f'Learn more about domain reservation here:\n{email_provisioning_doc}')
 
         login_facade = vault_extensions.LoginFacade()
         ots_command = OneTimeShareCreateCommand()
