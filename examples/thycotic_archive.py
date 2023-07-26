@@ -22,7 +22,7 @@ for folder_name, _, file_names in os.walk(ATTACHMENT_FOLDER):
     for file_name in file_names:
         full_path = os.path.join(folder_name, file_name)
         if file_name in attachment_files:
-            logging.infols ('Filename at "%s" is not unique. Skipping', full_path)
+            logging.info('Filename at "%s" is not unique. Skipping', full_path)
         else:
             attachment_files[file_name] = full_path
 
