@@ -1279,7 +1279,7 @@ def query_enterprise(params, force=False):
         if share_account_expired:
             params.enterprise = None
         else:
-            logging.warning(e)
+            logging.warning(e, exc_info=True)
 
 
 def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
