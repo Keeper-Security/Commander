@@ -884,8 +884,9 @@ def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List
     record_rq_by_uid = {}
     for rec in rec_list:
         record_rq = get_pb2_record_update(params, rec, **kwargs)
-        record_rq_by_uid[rec.record_uid] = record_rq
-        rq.records.append(record_rq['pb2_record_update'])
+        if record_rq:
+            record_rq_by_uid[rec.record_uid] = record_rq
+            rq.records.append(record_rq['pb2_record_update'])
 
     return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid)
 
