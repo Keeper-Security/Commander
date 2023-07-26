@@ -199,7 +199,7 @@ def convert_keeper_record(record, has_attachments=False):
                 rec.login_url = field_value
             elif field_type.endswith('Ref'):
                 ref_type = field_type[:-3]
-                if ref_type == 'file' and not has_attachments:
+                if ref_type == 'file':
                     continue
                 uids = field_value if isinstance(field_value, list) else [str(field_value)]
                 uids = [x for x in uids if x]

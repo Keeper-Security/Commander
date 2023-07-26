@@ -21,7 +21,7 @@ password_report_parser.add_argument('--policy', dest='policy', action='store',
                                     help='Password complexity policy. Length,Lower,Upper,Digits,Special. Default is 12,2,2,2,0')
 password_report_parser.add_argument('-l', '--length', dest='length', type=int, action='store', help='Minimum password length.')
 password_report_parser.add_argument('-u', '--upper', dest='upper', type=int, action='store', help='Minimum uppercase characters.')
-password_report_parser.add_argument('--lower', dest='lower', type=int, action='store', help='Minimum uppercase characters.')
+password_report_parser.add_argument('--lower', dest='lower', type=int, action='store', help='Minimum lowercase characters.')
 password_report_parser.add_argument('-d', '--digits', dest='digits', type=int, action='store', help='Minimum digits.')
 password_report_parser.add_argument('-s', '--special', dest='special', type=int, action='store', help='Minimum special characters.')
 password_report_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
