@@ -3,6 +3,7 @@ import base64
 import json
 
 from keepercommander import crypto
+from keepercommander.loginv3 import CommonHelperMethods
 
 
 class RouterRequest:
@@ -49,7 +50,7 @@ class GatewayAction(metaclass=abc.ABCMeta):
         if is_bytes:
             return message_id_bytes
         else:
-            message_id = base64.b64encode(message_id_bytes).decode()
+            message_id = CommonHelperMethods.bytes_to_url_safe_str(message_id_bytes)
             return message_id
 
 

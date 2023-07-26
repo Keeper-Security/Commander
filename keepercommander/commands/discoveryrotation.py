@@ -11,11 +11,14 @@
 import argparse
 import json
 import logging
+import os
+import time
 from datetime import datetime
+from threading import Thread
 from typing import Dict, Optional, Any
 
 import requests
-from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64
 
 from .base import Command, GroupCommand, dump_report_data
 from .folder import FolderMoveCommand
@@ -30,11 +33,13 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs, \
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
-    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, get_router_url
+    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
+    get_router_url, get_controller_cookie, request_cookie_jar_to_str, get_router_ws_url, router_send_message_to_gateway
 from .record_edit import RecordEditMixin
-from .. import api, utils, vault_extensions, vault, record_management
+from .. import api, utils, vault_extensions, vault, record_management, rest_api, crypto
 from ..display import bcolors
 from ..error import CommandError
+from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
 from ..subfolder import find_parent_top_folder
@@ -103,7 +108,7 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
-        # self.register_command('tunnel', DRTunnelCommand(), 'Tunnel to the server')
+        self.register_command('tunnel', PAMTunnelCommand(), 'Tunnel to the server')
 
 
 class PAMCmdListJobs(Command):
@@ -1209,35 +1214,70 @@ class PAMGatewayActionDiscoverCommand(Command):
 
 class PAMTunnelCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-tunnel-command')
-    parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
+    parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
                         help='UID of the record that has server credentials')
-    parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
-                        help='Controller ID')
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+                        help='Gateway UID')
 
     def get_parser(self):
         return PAMTunnelCommand.parser
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('record_uid')
-
         print(f'record_uid = [{record_uid}]')
 
-        if getattr(params, 'ws', None) is None:
-            logging.warning(f'Connection doesn\'t exist. Please connect to the router before executing '
-                            f'actions using following command {bcolors.OKGREEN}dr connect{bcolors.ENDC}')
-            return
 
-        destinations = kwargs.get('destinations', [])
+        convo_id = GatewayAction.generate_conversation_id()
+        gateway_uid = kwargs.get('gateway')
 
-        action = kwargs.get('action', [])
 
-        command_payload = {
-            'action': action,
-            # 'args': command_arr[1:] if len(command_arr) > 1 else []
-            # 'kwargs': kwargs
+
+
+        ws = PAMConnection()
+        ws.connect(params, convo_id, gateway_uid)
+        logging.info(f'Connected {params.config["device_token"]}')
+
+
+
+
+
+        payload = {
+            ''
+            'conversationId': convo_id,
         }
+        ws.send(payload, gateway_uid)
 
-        params.ws.send(command_payload, destinations)
+        print("hi mom")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        # action = kwargs.get('action', [])
+        #
+        # command_payload = {
+        #     'action': action,
+        #     # 'args': command_arr[1:] if len(command_arr) > 1 else []
+        #     # 'kwargs': kwargs
+        # }
+        #
+        # params.ws.send(command_payload, destinations)
 
 class PAMGatewayRemoveCommand(Command):
     dr_remove_controller_parser = argparse.ArgumentParser(prog='dr-remove-gateway')
@@ -1316,7 +1356,8 @@ class PAMCreateGatewayCommand(Command):
             print('-----------------------------------------------')
 
 
-"""
+
+WS_URL = "ws://localhost:8081/tunnel"
 WS_INIT = {'kind': 'init'}
 WS_LOG_FOLDER = 'dr-logs'
 WS_HEADERS = {
@@ -1342,7 +1383,7 @@ class PAMConnection:
         self.ws_app = None
         self.thread = None
 
-    def connect(self, session_token):
+    def connect(self, params, convo_id, gateway_uid):
         try:
             import websocket
         except ImportError:
@@ -1351,16 +1392,39 @@ class PAMConnection:
                             f'`{bcolors.OKGREEN}pip3 install -U websocket-client{bcolors.ENDC}`')
             return
 
-        headers = WS_HEADERS
-        headers['Authorization'] = f'User {session_token}'
+
+
+        cookies_jar = get_controller_cookie(params, gateway_uid)
+        cookies_str = request_cookie_jar_to_str(cookies_jar)
+
+
+
+        transmission_key = utils.generate_aes_key()
+        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+
+        if params.rest_context.server_key_id < 7:
+            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+        else:
+            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+
+
+        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
+
+
+        router_url = get_router_ws_url(params)
+
+        connection_url = f'{router_url}/tunnel/{convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}'
+
         self.ws_app = websocket.WebSocketApp(
-            f'{WS_URL}?Auth={session_token}&AuthType=User',
-            header=headers,
+            connection_url,
             on_open=self.on_open,
             on_message=self.on_message,
             on_error=self.on_error,
-            on_close=self.on_close
+            on_close=self.on_close,
+            cookie=cookies_str
         )
+
+        # self.ws_app.run_forever(ping_interval=WS_SERVER_PING_INTERVAL_SEC, ping_payload='client-hello')
         self.thread = Thread(target=self.ws_app.run_forever, kwargs={
             'ping_interval': WS_SERVER_PING_INTERVAL_SEC,
             # frequency how ofter ping is send to the server to keep the connection alive
@@ -1368,6 +1432,31 @@ class PAMConnection:
         },
                              daemon=True)
         self.thread.start()
+
+
+        payload_dict = {
+                'kind': 'start',
+                'encryptTunnel': True,
+                'conversationType': 'tunnel'
+        }
+        payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+        payload_bytes = payload_json.encode('utf-8')
+
+        rq_proto = router_pb2.RouterControllerMessage()
+        rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
+        rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
+        rq_proto.messageType = pam_pb2.CMT_STREAM
+        rq_proto.streamResponse = False
+        rq_proto.payload = payload_bytes
+        rq_proto.timeout = 15000  # Default time out how long the response from the Gateway should be
+
+        router_send_message_to_gateway(
+            params,
+            transmission_key,
+            rq_proto,
+            gateway_uid)
+
+        print("Connected to websocket")
 
     def disconnect(self):
         if self.thread and self.thread.is_alive():
@@ -1383,15 +1472,12 @@ class PAMConnection:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f ') if time else ''
             ws_log.write(f'{timestamp}{msg}\n')
 
-    def send(self, command_payload, destination_client_ids=None):
+    def send(self, command_payload, controller_uid):
         data_dict = {}
 
-        data_dict['kind'] = 'command'
+        data_dict['kind'] = 'STREAM'
         data_dict['payload'] = command_payload
-
-        if destination_client_ids:
-            # Send only to specified clients, else will send to all clients
-            data_dict['clientIds'] = [destination_client_ids]
+        data_dict['controllerUid'] = controller_uid
 
         data_json = json.dumps(data_dict)
 
@@ -1460,7 +1546,7 @@ class PAMConnect(Command):
     def execute(self, params, **kwargs):
         if getattr(params, 'ws', None) is None:
             params.ws = PAMConnection()
-            params.ws.connect(params.session_token)
+            params.ws.connect(params)
             logging.info(f'Connected {params.config["device_token"]}')
         else:
             logging.warning('Connection exists')
@@ -1478,4 +1564,3 @@ class PAMDisconnect(Command):
         else:
             params.ws.disconnect()
             params.ws = None
-"""

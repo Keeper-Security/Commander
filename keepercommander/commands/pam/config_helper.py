@@ -139,6 +139,8 @@ def pam_configuration_get_one(params, config_uid_urlsafe):
     # rq.uid = config_uid_bytes
     # rs = api.communicate_rest(params, rq, 'pam/get_configuration', rs_type=pam_pb2.PAMConfiguration)
 
+    if config_uid_urlsafe not in params.record_cache:
+        raise Exception(f'PAM Configuration record uid {config_uid_urlsafe} not found in cache. Make sure you are entering the correct uid.')
     config_record = params.record_cache[config_uid_urlsafe]
 
     data_unencrypted_bytes = crypto.decrypt_aes_v2(utils.base64_url_decode(config_record['data']), config_record['record_key_unencrypted'])

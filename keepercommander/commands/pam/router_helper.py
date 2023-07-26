@@ -32,6 +32,11 @@ def get_router_url(params: KeeperParams):
 
     return krouter_server_url
 
+def get_router_ws_url(params: KeeperParams):
+    router_url = get_router_url(params)
+    router_url = router_url.replace('http', 'ws')
+    return router_url
+
 
 def router_get_connected_gateways(params):  # type: (KeeperParams) -> pam_pb2.PAMOnlineControllers
     rs = _post_request_to_router(params, 'get_controllers')
@@ -181,6 +186,11 @@ def get_controller_cookie(params, destination_controller_uid_str):
         else:
             logging.warning("Looks like there is no such controller connected to the router.")
             return None
+
+def request_cookie_jar_to_str(cookie_jar):
+    cookie_dict = dict(cookie_jar)
+    found = ['%s=%s' % (name, value) for (name, value) in cookie_dict.items()]
+    return ';'.join(found)
 
 
 def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming, destination_gateway_uid_str=None):
