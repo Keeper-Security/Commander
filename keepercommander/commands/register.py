@@ -25,7 +25,8 @@ from urllib.parse import urlunparse
 from tabulate import tabulate
 
 from . import base
-from .base import dump_report_data, field_to_title, raise_parse_exception, suppress_exit, Command, GroupCommand, FolderMixin
+from .base import dump_report_data, field_to_title, fields_to_titles, raise_parse_exception, suppress_exit, Command, \
+    GroupCommand, FolderMixin
 from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
 from .record import RecordRemoveCommand
@@ -35,6 +36,7 @@ from ..error import KeeperApiError, CommandError, Error
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions, get_shared_records, SharedRecord
+from ..sox.sox_types import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
     get_folder_uids, get_contained_record_uids
 from ..loginv3 import LoginV3API
@@ -165,7 +167,12 @@ dry_run_help = 'Simulate removing duplicates (with this flog, no records are eve
 find_duplicate_parser.add_argument('-n', '--dry-run', action='store_true', help=dry_run_help)
 find_duplicate_parser.add_argument('-q', '--quiet', action='store_true',
                                    help='Suppress screen output, valid only w/ --force flag')
-
+scope_help = 'The scope of the search (limited to current vault if not specified)'
+find_duplicate_parser.add_argument('-s', '--scope', action='store', choices=['vault', 'enterprise'], default='vault',
+                                   help=scope_help)
+find_duplicate_parser.add_argument('--format', action='store', choices=['table', 'csv', 'json'], default='table',
+                                   help='output format.')
+find_duplicate_parser.add_argument('--output', action='store', help='output file name. (ignored for table format)')
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
 
@@ -1601,6 +1608,62 @@ class FindDuplicateCommand(Command):
         return find_duplicate_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        out_fmt = kwargs.get('format', 'table')
+        out_dst = kwargs.get('output')
+
+        def scan_enterprise_vaults():
+            cmd = self.get_parser().prog
+            if not params.enterprise:
+                raise CommandError(cmd, 'This feature is available only to enterprise account administrators')
+            from keepercommander import sox
+            sox.validate_data_access(params, cmd)
+
+            field_keys = ['title', 'url', 'record_type']
+            node_id = sox.get_node_id(params, None)
+            enterprise_id = node_id >> 32
+            sox_data = sox.get_compliance_data(params, node_id, enterprise_id)
+            records = sox_data.get_records().values()
+            recs_by_hash = {}
+
+            for sd_rec in records:
+                h_gen = hashlib.sha256()
+                field_vals = [sd_rec.data.get(k) for k in field_keys]
+                if not field_vals or not all(field_vals):
+                    continue
+
+                token_tuples = zip(field_keys, field_vals)
+                for k, v in token_tuples:
+                    h_gen.update(f'{k}={v};'.encode())
+
+                hv = h_gen.hexdigest()
+                grouped_records = recs_by_hash.get(hv, [])
+                grouped_records.append(sd_rec)
+                recs_by_hash[hv] = grouped_records
+
+            dupe_groups = [recs for recs in recs_by_hash.values() if len(recs) > 1]  # type: List[List[Record]]
+            if not dupe_groups:
+                logging.info('No duplicates found.')
+                return
+            else:
+                report_headers = ['group', 'record_uid', 'title', 'url', 'record_type', 'owner', 'shared',
+                                  'shared_folder_uid']
+                report_headers = fields_to_titles(report_headers) if out_fmt != 'json' else report_headers
+                report_data = []
+                for i, group in enumerate(dupe_groups):
+                    for j, sd_rec in enumerate(group):
+                        record_owner = sox_data.get_record_owner(sd_rec.record_uid).email
+                        field_vals = [sd_rec.data.get(k) for k in field_keys]
+                        sf_uids = sox_data.get_record_sfs(sd_rec.record_uid)
+                        sf_uids = '\n'.join(sf_uids)
+                        report_row = [i + 1, sd_rec.record_uid, *field_vals, record_owner, sd_rec.shared, sf_uids]
+                        report_data.append(report_row)
+                report_title = 'Duplicate Search Results (Enterprise Scope):'
+                return dump_report_data(report_data, report_headers, fmt=out_fmt, filename=out_dst, title=report_title, group_by=0)
+
+        scope = kwargs.get('scope', 'vault')
+        if scope == 'enterprise':
+            return scan_enterprise_vaults()
+
         quiet = kwargs.get('quiet', False)
         dry_run = kwargs.get('dry_run', False)
         quiet = quiet and not dry_run
@@ -1633,13 +1696,15 @@ class FindDuplicateCommand(Command):
 
         def remove_duplicates(dupe_info, col_headers, dupe_uids):
             # type: (List[List[str]], List[str], Set[str]) -> None
-            prompt_title = f'\nThe following duplicate {"records have" if len(dupe_uids) > 1 else "record has"}' \
-                    f' been marked for removal:\n'
-            indices = (idx + 1 for idx in range(len(dupe_info)))
-            prompt_report = prompt_title + '\n' + tabulate(dupe_info, col_headers, showindex=indices)
-            prompt_msg = prompt_report + '\n\nDo you wish to proceed?'
+            def confirm_removal(cols):
+                prompt_title = f'\nThe following duplicate {"records have" if len(dupe_uids) > 1 else "record has"}' \
+                        f' been marked for removal:\n'
+                indices = (idx + 1 for idx in range(len(dupe_info)))
+                prompt_report = prompt_title + '\n' + tabulate(dupe_info, col_headers, showindex=indices)
+                prompt_msg = prompt_report + '\n\nDo you wish to proceed?'
+                return confirm(prompt_msg)
 
-            if kwargs.get('force') or confirm(prompt_msg):
+            if kwargs.get('force') or confirm_removal(col_headers):
                 logging_fn(f'Deleting {len(dupe_uids)} records...')
                 if not dry_run:
                     rm_cmd = RecordRemoveCommand()
@@ -1755,10 +1820,11 @@ class FindDuplicateCommand(Command):
         if by_shares:
             partitions = partition_by_shares(partitions, shared_records_lookup)
         if partitions:
-            headers = ['#', 'Title', 'Login']
+            headers = ['group', 'title', 'login']
             if by_url:
-                headers.append('Website Address')
-            headers.extend(['UID', 'Record Owner', 'Shared To'])
+                headers.append('url')
+            headers.extend(['uid', 'record_owner', 'shared_to'])
+            headers = fields_to_titles(headers) if out_fmt != 'json' else headers
             table_raw = []
             table = []
             to_remove = set()
@@ -1766,9 +1832,8 @@ class FindDuplicateCommand(Command):
                 for j, record_uid in enumerate(partition):
                     shared_record = shared_records_lookup.get(record_uid)
                     record = api.get_record(params, record_uid)
-                    row_no = not j and i + 1 or None
-                    title = (not j or not by_title) and record.title or ''
-                    login = (not j or not by_login) and record.login or ''
+                    title = record.title or ''
+                    login = record.login or ''
                     url = record.login_url or ''
                     url = urllib.parse.urlparse(url.encode()).hostname
                     url = url.decode()[:30] if url else ''
@@ -1783,20 +1848,22 @@ class FindDuplicateCommand(Command):
                     perms = [perms.get(k) for k in keys]
                     perms = [p for p in perms if team_user_type not in p.types or len(p.types) > 1]
                     shares = '\n'.join([p.to_name for p in perms if owner != p.to_name])
-                    row = [row_no, title, login] + url + [record_uid, owner, shares]
+                    row = [i + 1, title, login] + url + [record_uid, owner, shares]
+                    table.append(row)
 
                     if j != 0:
-                        raw_row = [record.title, record.login] + url + [record_uid, owner, shares]
                         to_remove.add(record_uid)
-                        table_raw.append(raw_row)
-                    table.append(row)
+                        table_raw.append(row)
             if consolidate:
-                uid_txt = 'UID'
-                record_uid_index = headers.index(uid_txt) - 1 if uid_txt in headers else 0
+                uid_header = field_to_title('uid')
+                record_uid_index = headers.index(uid_header) if uid_header in headers else None
+                if not record_uid_index:
+                    raise CommandError(self.get_parser().prog, 'Cannot find record UID for duplicate record')
                 dup_info = [r for r in table_raw for rec_uid in to_remove if r[record_uid_index] == rec_uid]
-                remove_duplicates(dup_info, headers, to_remove)
+                return remove_duplicates(dup_info, headers, to_remove)
             else:
-                return dump_report_data(table, headers=headers, title='Duplicates Found:')
+                title = 'Duplicates Found:'
+                return dump_report_data(table, headers, title=title, fmt=out_fmt, filename=out_dst, group_by=0)
         else:
             logging_fn('No duplicates found')
 
