@@ -133,11 +133,15 @@ class _EnterpriseLoader(object):
             keys = {}    # type: Dict[str, str]
             if rs.enterpriseKeys:
                 if rs.enterpriseKeys.rsaEncryptedPrivateKey:
-                    self._enterprise._rsa_key = \
-                        crypto.decrypt_aes_v2(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
-                    keys['rsa_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.rsaPublicKey)
-                    keys['rsa_encrypted_private_key'] = \
-                        utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
+                    try:
+                        self._enterprise._rsa_key = \
+                            crypto.decrypt_aes_v2(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
+                        keys['rsa_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.rsaPublicKey)
+                        keys['rsa_encrypted_private_key'] = \
+                            utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
+                    except:
+                        logging.warning('Error decrypting enterprise RSA key')
+                        keys['rsa_encrypted_private_key'] = ''
                 if rs.enterpriseKeys.eccEncryptedPrivateKey:
                     keys['ecc_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.eccPublicKey)
                     keys['ecc_encrypted_private_key'] = \
