@@ -170,6 +170,8 @@ find_duplicate_parser.add_argument('-q', '--quiet', action='store_true',
 scope_help = 'The scope of the search (limited to current vault if not specified)'
 find_duplicate_parser.add_argument('-s', '--scope', action='store', choices=['vault', 'enterprise'], default='vault',
                                    help=scope_help)
+refresh_help = 'Populate local cache with latest compliance data . Valid only w/ --scope=enterprise option.'
+find_duplicate_parser.add_argument('-r', '--refresh-data', action='store_true', help=refresh_help)
 find_duplicate_parser.add_argument('--format', action='store', choices=['table', 'csv', 'json'], default='table',
                                    help='output format.')
 find_duplicate_parser.add_argument('--output', action='store', help='output file name. (ignored for table format)')
@@ -1619,9 +1621,15 @@ class FindDuplicateCommand(Command):
             sox.validate_data_access(params, cmd)
 
             field_keys = ['title', 'url', 'record_type']
+            refresh_data = kwargs.get('refresh_data')
             node_id = sox.get_node_id(params, None)
             enterprise_id = node_id >> 32
-            sox_data = sox.get_compliance_data(params, node_id, enterprise_id)
+            now = datetime.datetime.now()
+            update_floor_dt = now - datetime.timedelta(days=1)
+            update_floor_ts = int(update_floor_dt.timestamp())
+
+            sox_data = sox.get_compliance_data(params, node_id, enterprise_id, rebuild=refresh_data,
+                                               min_updated=update_floor_ts)
             records = sox_data.get_records().values()
             recs_by_hash = {}
 
