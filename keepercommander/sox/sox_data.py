@@ -65,6 +65,10 @@ class SoxData:
     def get_shared_folders(self, sf_uids=None):
         return self._shared_folders if sf_uids is None else {uid: self._shared_folders.get(uid) for uid in sf_uids}
 
+    def get_record_sfs(self, record_uid):
+        get_ruids = lambda sf: [rp.record_uid for rp in sf.record_permissions]
+        return [sf.folder_uid for sf in self._shared_folders.values() if record_uid in get_ruids(sf)]
+
     def get_record_owner(self, rec_uid):
         owner = None
         if rec_uid in self._records:

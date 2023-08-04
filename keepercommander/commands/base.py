@@ -196,6 +196,11 @@ def is_json_value_field(obj):
 WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim'}
 
 
+def fields_to_titles(fields): # type: (List[str]) -> Optional[List[str]]
+    titles = [field_to_title(f) for f in fields]
+    return titles
+
+
 def field_to_title(field):   # type: (str) -> str
     words = field.split('_')
     words = [x.capitalize() for x in words if x]
