@@ -54,14 +54,17 @@ class Rotator:
                 if affected == 1:
                     rs = cursor.fetchone()
                     version = rs[0]     # type: str
+                    version, _, _ = version.partition('-')
                     vc = version.split('.')
                     vn = 0
                     if len(vc) == 3:
-                        for n in vc:
-                            vn *= 1000
-                            vn += int(n)
-                        is_old_version = vn < 5007006
-
+                        try:
+                            for n in vc:
+                                vn *= 1000
+                                vn += int(n)
+                            is_old_version = vn < 5007006
+                        except ValueError:
+                            pass
                 escape_new_password = pymysql.converters.escape_string(new_password)
                 if is_old_version:
                     sql = f"set password for '{self.login}'@'{self.user_host}' = password('{escape_new_password}')"
