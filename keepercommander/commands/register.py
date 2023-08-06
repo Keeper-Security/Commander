@@ -601,7 +601,7 @@ class ShareRecordCommand(Command):
                         shared_folder_uid = shared_folder['shared_folder_uid']
                         break
 
-            if shared_folder_uid is not None and record_uid is not None:
+            if shared_folder_uid is None and record_uid is None:
                 rs = try_resolve_path(params, name)
                 if rs is not None:
                     folder, name = rs
