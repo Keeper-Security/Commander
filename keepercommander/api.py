@@ -626,7 +626,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
     return record_object, audit_data
 
 
-def communicate_rest(params, request, endpoint, rs_type=None):
+def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None):
     api_request_payload = APIRequest_pb2.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
@@ -635,6 +635,8 @@ def communicate_rest(params, request, endpoint, rs_type=None):
             js = google.protobuf.json_format.MessageToJson(request)
             logging.debug('>>> [RQ] %s: %s', endpoint, js)
         api_request_payload.payload = request.SerializeToString()
+    if isinstance(payload_version, int):
+        api_request_payload.apiVersion = payload_version
 
     rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
     if type(rs) == bytes:
