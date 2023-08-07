@@ -135,18 +135,25 @@ class KeeperRecord(abc.ABC):
 
     @staticmethod
     def size_to_str(size):    # type: (Union[int, float]) -> str
-        scale = 'Bytes'
-        if size > 0:
-            if size > 1000:
-                size = size / 1024
-                scale = 'Kb'
-            if size > 1000:
-                size = size / 1024
-                scale = 'Mb'
-            if size > 1000:
-                size = size / 1024
-                scale = 'Gb'
-        return f'{size:.2f}'.rstrip('0').rstrip('.') + f' {scale}'
+        if isinstance(size, (int, float)):
+            scale = 'Bytes'
+            if size > 0:
+                if size > 1000:
+                    size = size / 1024
+                    scale = 'Kb'
+                if size > 1000:
+                    size = size / 1024
+                    scale = 'Mb'
+                if size > 1000:
+                    size = size / 1024
+                    scale = 'Gb'
+            return f'{size:.2f}'.rstrip('0').rstrip('.') + f' {scale}'
+        elif isinstance(size, str):
+            return size
+        elif size:
+            return str(size)
+        else:
+            return ''
 
 
 class CustomField(object):
