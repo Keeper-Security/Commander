@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0crecord.proto\x12\x07Records\"\\\n\nRecordType\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\'\n\x05scope\x18\x03 \x01(\x0e\x32\x18.Records.RecordTypeScope\"U\n\x12RecordTypesRequest\x12\x10\n\x08standard\x18\x01 \x01(\x08\x12\x0c\n\x04user\x18\x02 \x01(\x08\x12\x12\n\nenterprise\x18\x03 \x01(\x08\x12\x0b\n\x03pam\x18\x04 \x01(\x08\"\x9c\x01\n\x13RecordTypesResponse\x12(\n\x0brecordTypes\x18\x01 \x03(\x0b\x32\x13.Records.RecordType\x12\x17\n\x0fstandardCounter\x18\x02 \x01(\x05\x12\x13\n\x0buserCounter\x18\x03 \x01(\x05\x12\x19\n\x11\x65nterpriseCounter\x18\x04 \x01(\x05\x12\x12\n\npamCounter\x18\x05 \x01(\x05\"A\n\x18RecordTypeModifyResponse\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ounter\x18\x02 \x01(\x05\"=\n\x11RecordsGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xd1\x01\n\x06Record\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12/\n\x0frecord_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\r\n\x05\x65xtra\x18\x05 \x01(\x0c\x12\x0f\n\x07version\x18\x06 \x01(\x05\x12\x1c\n\x14\x63lient_modified_time\x18\x07 \x01(\x03\x12\x10\n\x08revision\x18\x08 \x01(\x03\x12\x10\n\x08\x66ile_ids\x18\t \x03(\x0c\"M\n\x0f\x46olderRecordKey\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_uid\x18\x02 \x01(\x0c\x12\x12\n\nrecord_key\x18\x03 \x01(\x0c\"a\n\x06\x46older\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nfolder_key\x18\x02 \x01(\x0c\x12/\n\x0f\x66older_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\"\x95\x01\n\x04Team\x12\x10\n\x08team_uid\x18\x01 \x01(\x0c\x12\x10\n\x08team_key\x18\x02 \x01(\x0c\x12\x18\n\x10team_private_key\x18\x03 \x01(\x0c\x12-\n\rteam_key_type\x18\x04 \x01(\x0e\x32\x16.Records.RecordKeyType\x12 \n\x07\x66olders\x18\x05 \x03(\x0b\x32\x0f.Records.Folder\"\xac\x01\n\x12RecordsGetResponse\x12 \n\x07records\x18\x01 \x03(\x0b\x32\x0f.Records.Record\x12\x34\n\x12\x66older_record_keys\x18\x02 \x03(\x0b\x32\x18.Records.FolderRecordKey\x12 \n\x07\x66olders\x18\x03 \x03(\x0b\x32\x0f.Records.Folder\x12\x1c\n\x05teams\x18\x04 \x03(\x0b\x32\r.Records.Team\"4\n\nRecordLink\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\",\n\x0bRecordAudit\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\xa0\x02\n\tRecordAdd\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12.\n\x0b\x66older_type\x18\x06 \x01(\x0e\x32\x19.Records.RecordFolderType\x12\x12\n\nfolder_uid\x18\x07 \x01(\x0c\x12\x12\n\nfolder_key\x18\x08 \x01(\x0c\x12)\n\x0crecord_links\x18\t \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\n \x01(\x0b\x32\x14.Records.RecordAudit\"M\n\x11RecordsAddRequest\x12#\n\x07records\x18\x01 \x03(\x0b\x32\x12.Records.RecordAdd\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xea\x01\n\x0cRecordUpdate\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x02 \x01(\x03\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12-\n\x10record_links_add\x18\x06 \x03(\x0b\x32\x13.Records.RecordLink\x12\x1b\n\x13record_links_remove\x18\x07 \x03(\x0c\x12#\n\x05\x61udit\x18\x08 \x01(\x0b\x32\x14.Records.RecordAudit\"S\n\x14RecordsUpdateRequest\x12&\n\x07records\x18\x01 \x03(\x0b\x32\x15.Records.RecordUpdate\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\x8e\x01\n\x17RecordFileForConversion\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x14\n\x0c\x66ile_file_id\x18\x02 \x01(\t\x12\x15\n\rthumb_file_id\x18\x03 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x12\n\nrecord_key\x18\x05 \x01(\x0c\x12\x10\n\x08link_key\x18\x06 \x01(\x0c\"J\n\x19RecordFolderForConversion\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x19\n\x11record_folder_key\x18\x02 \x01(\x0c\"\x92\x02\n\x11RecordConvertToV3\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x02 \x01(\x03\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12#\n\x05\x61udit\x18\x06 \x01(\x0b\x32\x14.Records.RecordAudit\x12\x35\n\x0brecord_file\x18\x07 \x03(\x0b\x32 .Records.RecordFileForConversion\x12\x36\n\nfolder_key\x18\x08 \x03(\x0b\x32\".Records.RecordFolderForConversion\"]\n\x19RecordsConvertToV3Request\x12+\n\x07records\x18\x01 \x03(\x0b\x32\x1a.Records.RecordConvertToV3\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\'\n\x14RecordsRemoveRequest\x12\x0f\n\x07records\x18\x01 \x03(\x0c\">\n\x0cRecordRevert\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1a\n\x12revert_to_revision\x18\x02 \x01(\x03\">\n\x14RecordsRevertRequest\x12&\n\x07records\x18\x01 \x03(\x0b\x32\x15.Records.RecordRevert\"c\n\x0fRecordLinkError\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.Records.RecordModifyResult\x12\x0f\n\x07message\x18\x03 \x01(\t\"\x95\x01\n\x12RecordModifyStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.Records.RecordModifyResult\x12\x0f\n\x07message\x18\x03 \x01(\t\x12-\n\x0blink_errors\x18\x04 \x03(\x0b\x32\x18.Records.RecordLinkError\"W\n\x15RecordsModifyResponse\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordModifyStatus\x12\x10\n\x08revision\x18\x02 \x01(\x03\"Y\n\x12RecordAddAuditData\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x0f\n\x07version\x18\x04 \x01(\x05\"C\n\x13\x41\x64\x64\x41uditDataRequest\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordAddAuditData\"a\n\x04\x46ile\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x10\n\x08\x66ileSize\x18\x04 \x01(\x03\x12\x11\n\tthumbSize\x18\x05 \x01(\x05\"D\n\x0f\x46ilesAddRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.Records.File\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xa7\x01\n\rFileAddStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileAddResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x12\n\nparameters\x18\x04 \x01(\t\x12\x1c\n\x14thumbnail_parameters\x18\x05 \x01(\t\x12\x1b\n\x13success_status_code\x18\x06 \x01(\x05\"K\n\x10\x46ilesAddResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileAddStatus\x12\x10\n\x08revision\x18\x02 \x01(\x03\"f\n\x0f\x46ilesGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x16\n\x0e\x66or_thumbnails\x18\x02 \x01(\x08\x12&\n\x1e\x65mergency_access_account_owner\x18\x03 \x01(\t\"\xa2\x01\n\rFileGetStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileGetResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x1b\n\x13success_status_code\x18\x04 \x01(\x05\x12+\n\x0b\x66ileKeyType\x18\x05 \x01(\x0e\x32\x16.Records.RecordKeyType\"9\n\x10\x46ilesGetResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileGetStatus\"h\n\x15\x41pplicationAddRequest\x12\x0f\n\x07\x61pp_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"\x88\x01\n\"GetRecordDataWithAccessInfoRequest\x12\x12\n\nclientTime\x18\x01 \x01(\x03\x12\x11\n\trecordUid\x18\x02 \x03(\x0c\x12;\n\x14recordDetailsInclude\x18\x03 \x01(\x0e\x32\x1d.Records.RecordDetailsInclude\"\xab\x01\n\x0eUserPermission\x12\x10\n\x08username\x18\x01 \x01(\t\x12\r\n\x05owner\x18\x02 \x01(\x08\x12\x12\n\nshareAdmin\x18\x03 \x01(\x08\x12\x10\n\x08sharable\x18\x04 \x01(\x08\x12\x10\n\x08\x65\x64itable\x18\x05 \x01(\x08\x12\x18\n\x10\x61waitingApproval\x18\x06 \x01(\x08\x12\x12\n\nexpiration\x18\x07 \x01(\x03\x12\x12\n\naccountUid\x18\x08 \x01(\x0c\"}\n\x16SharedFolderPermission\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x12\n\nresharable\x18\x02 \x01(\x08\x12\x10\n\x08\x65\x64itable\x18\x03 \x01(\x08\x12\x10\n\x08revision\x18\x04 \x01(\x03\x12\x12\n\nexpiration\x18\x05 \x01(\x03\"\xe8\x02\n\nRecordData\x12\x10\n\x08revision\x18\x01 \x01(\x03\x12\x0f\n\x07version\x18\x02 \x01(\x05\x12\x0e\n\x06shared\x18\x03 \x01(\x08\x12\x1b\n\x13\x65ncryptedRecordData\x18\x04 \x01(\t\x12\x1a\n\x12\x65ncryptedExtraData\x18\x05 \x01(\t\x12\x1a\n\x12\x63lientModifiedTime\x18\x06 \x01(\x03\x12\x15\n\rnonSharedData\x18\x07 \x01(\t\x12-\n\x10linkedRecordData\x18\x08 \x03(\x0b\x32\x13.Records.RecordData\x12\x0e\n\x06\x66ileId\x18\t \x03(\x0c\x12\x10\n\x08\x66ileSize\x18\n \x01(\x03\x12\x15\n\rthumbnailSize\x18\x0b \x01(\x03\x12-\n\rrecordKeyType\x18\x0c \x01(\x0e\x32\x16.Records.RecordKeyType\x12\x11\n\trecordKey\x18\r \x01(\x0c\x12\x11\n\trecordUid\x18\x0e \x01(\x0c\"\xc8\x01\n\x18RecordDataWithAccessInfo\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\'\n\nrecordData\x18\x02 \x01(\x0b\x32\x13.Records.RecordData\x12/\n\x0euserPermission\x18\x03 \x03(\x0b\x32\x17.Records.UserPermission\x12?\n\x16sharedFolderPermission\x18\x04 \x03(\x0b\x32\x1f.Records.SharedFolderPermission\"\x89\x01\n#GetRecordDataWithAccessInfoResponse\x12\x43\n\x18recordDataWithAccessInfo\x18\x01 \x03(\x0b\x32!.Records.RecordDataWithAccessInfo\x12\x1d\n\x15noPermissionRecordUid\x18\x02 \x03(\x0c\"j\n\x12IsObjectShareAdmin\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0f\n\x07isAdmin\x18\x02 \x01(\x08\x12\x36\n\nobjectType\x18\x03 \x01(\x0e\x32\".Records.CheckShareAdminObjectType\"H\n\rAmIShareAdmin\x12\x37\n\x12isObjectShareAdmin\x18\x01 \x03(\x0b\x32\x1b.Records.IsObjectShareAdmin\"\xbc\x01\n\x18RecordShareUpdateRequest\x12.\n\x0f\x61\x64\x64SharedRecord\x18\x01 \x03(\x0b\x32\x15.Records.SharedRecord\x12\x31\n\x12updateSharedRecord\x18\x02 \x03(\x0b\x32\x15.Records.SharedRecord\x12\x31\n\x12removeSharedRecord\x18\x03 \x03(\x0b\x32\x15.Records.SharedRecord\x12\n\n\x02pt\x18\x04 \x01(\t\"\xe9\x01\n\x0cSharedRecord\x12\x12\n\ntoUsername\x18\x01 \x01(\t\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x11\n\trecordKey\x18\x03 \x01(\x0c\x12\x17\n\x0fsharedFolderUid\x18\x04 \x01(\x0c\x12\x0f\n\x07teamUid\x18\x05 \x01(\x0c\x12\x10\n\x08\x65\x64itable\x18\x06 \x01(\x08\x12\x11\n\tshareable\x18\x07 \x01(\x08\x12\x10\n\x08transfer\x18\x08 \x01(\x08\x12\x11\n\tuseEccKey\x18\t \x01(\x08\x12\x17\n\x0fremoveVaultData\x18\n \x01(\x08\x12\x12\n\nexpiration\x18\x0b \x01(\x03\"\xd5\x01\n\x19RecordShareUpdateResponse\x12:\n\x15\x61\x64\x64SharedRecordStatus\x18\x01 \x03(\x0b\x32\x1b.Records.SharedRecordStatus\x12=\n\x18updateSharedRecordStatus\x18\x02 \x03(\x0b\x32\x1b.Records.SharedRecordStatus\x12=\n\x18removeSharedRecordStatus\x18\x03 \x03(\x0b\x32\x1b.Records.SharedRecordStatus\"Z\n\x12SharedRecordStatus\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x10\n\x08username\x18\x04 \x01(\t\"G\n\x1bGetRecordPermissionsRequest\x12\x12\n\nrecordUids\x18\x01 \x03(\x0c\x12\x14\n\x0cisShareAdmin\x18\x02 \x01(\x08\"T\n\x1cGetRecordPermissionsResponse\x12\x34\n\x11recordPermissions\x18\x01 \x03(\x0b\x32\x19.Records.RecordPermission\"l\n\x10RecordPermission\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\r\n\x05owner\x18\x02 \x01(\x08\x12\x0f\n\x07\x63\x61nEdit\x18\x03 \x01(\x08\x12\x10\n\x08\x63\x61nShare\x18\x04 \x01(\x08\x12\x13\n\x0b\x63\x61nTransfer\x18\x05 \x01(\x08\"h\n\x16GetShareObjectsRequest\x12\x11\n\tstartWith\x18\x01 \x01(\t\x12\x10\n\x08\x63ontains\x18\x02 \x01(\t\x12\x10\n\x08\x66iltered\x18\x03 \x01(\x08\x12\x17\n\x0fsharedFolderUid\x18\x04 \x01(\x0c\"\xe7\x02\n\x17GetShareObjectsResponse\x12.\n\x12shareRelationships\x18\x01 \x03(\x0b\x32\x12.Records.ShareUser\x12,\n\x10shareFamilyUsers\x18\x02 \x03(\x0b\x32\x12.Records.ShareUser\x12\x30\n\x14shareEnterpriseUsers\x18\x03 \x03(\x0b\x32\x12.Records.ShareUser\x12&\n\nshareTeams\x18\x04 \x03(\x0b\x32\x12.Records.ShareTeam\x12(\n\x0cshareMCTeams\x18\x05 \x03(\x0b\x32\x12.Records.ShareTeam\x12\x32\n\x16shareMCEnterpriseUsers\x18\x06 \x03(\x0b\x32\x12.Records.ShareUser\x12\x36\n\x14shareEnterpriseNames\x18\x07 \x03(\x0b\x32\x18.Records.ShareEnterprise\"\xa5\x01\n\tShareUser\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08\x66ullname\x18\x02 \x01(\t\x12\x14\n\x0c\x65nterpriseId\x18\x03 \x01(\x05\x12$\n\x06status\x18\x04 \x01(\x0e\x32\x14.Records.ShareStatus\x12\x14\n\x0cisShareAdmin\x18\x05 \x01(\x08\x12\"\n\x1aisAdminOfSharedFolderOwner\x18\x06 \x01(\x08\"D\n\tShareTeam\x12\x10\n\x08teamname\x18\x01 \x01(\t\x12\x14\n\x0c\x65nterpriseId\x18\x02 \x01(\x05\x12\x0f\n\x07teamUid\x18\x03 \x01(\x0c\"?\n\x0fShareEnterprise\x12\x16\n\x0e\x65nterprisename\x18\x01 \x01(\t\x12\x14\n\x0c\x65nterpriseId\x18\x02 \x01(\x05\"S\n\x1fRecordsOnwershipTransferRequest\x12\x30\n\x0ftransferRecords\x18\x01 \x03(\x0b\x32\x17.Records.TransferRecord\"[\n\x0eTransferRecord\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x11\n\trecordKey\x18\x03 \x01(\x0c\x12\x11\n\tuseEccKey\x18\x04 \x01(\x08\"_\n RecordsOnwershipTransferResponse\x12;\n\x14transferRecordStatus\x18\x01 \x03(\x0b\x32\x1d.Records.TransferRecordStatus\"\\\n\x14TransferRecordStatus\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\"y\n\x15RecordsUnshareRequest\x12\x34\n\rsharedFolders\x18\x01 \x03(\x0b\x32\x1d.Records.RecordsUnshareFolder\x12*\n\x05users\x18\x02 \x03(\x0b\x32\x1b.Records.RecordsUnshareUser\"\x86\x01\n\x16RecordsUnshareResponse\x12:\n\rsharedFolders\x18\x01 \x03(\x0b\x32#.Records.RecordsUnshareFolderStatus\x12\x30\n\x05users\x18\x02 \x03(\x0b\x32!.Records.RecordsUnshareUserStatus\"B\n\x14RecordsUnshareFolder\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x17\n\x0fsharedFolderUid\x18\x02 \x01(\x0c\";\n\x12RecordsUnshareUser\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\"H\n\x1aRecordsUnshareFolderStatus\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x17\n\x0fsharedFolderUid\x18\x02 \x01(\x0c\"A\n\x18RecordsUnshareUserStatus\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x12\n\naccountUid\x18\x02 \x01(\x0c*h\n\x0fRecordTypeScope\x12\x0f\n\x0bRT_STANDARD\x10\x00\x12\x0b\n\x07RT_USER\x10\x01\x12\x11\n\rRT_ENTERPRISE\x10\x02\x12\n\n\x06RT_PAM\x10\x03\x12\x18\n\x14RT_PAM_CONFIGURATION\x10\x04*\xd1\x01\n\rRecordKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x19\n\x15\x45NCRYPTED_BY_DATA_KEY\x10\x01\x12\x1b\n\x17\x45NCRYPTED_BY_PUBLIC_KEY\x10\x02\x12\x1d\n\x19\x45NCRYPTED_BY_DATA_KEY_GCM\x10\x03\x12\x1f\n\x1b\x45NCRYPTED_BY_PUBLIC_KEY_ECC\x10\x04\x12\x1d\n\x19\x45NCRYPTED_BY_ROOT_KEY_CBC\x10\x05\x12\x1d\n\x19\x45NCRYPTED_BY_ROOT_KEY_GCM\x10\x06*P\n\x10RecordFolderType\x12\x0f\n\x0buser_folder\x10\x00\x12\x11\n\rshared_folder\x10\x01\x12\x18\n\x14shared_folder_folder\x10\x02*\xc6\x02\n\x12RecordModifyResult\x12\x0e\n\nRS_SUCCESS\x10\x00\x12\x12\n\x0eRS_OUT_OF_SYNC\x10\x01\x12\x14\n\x10RS_ACCESS_DENIED\x10\x02\x12\x13\n\x0fRS_SHARE_DENIED\x10\x03\x12\x14\n\x10RS_RECORD_EXISTS\x10\x04\x12\x1e\n\x1aRS_OLD_RECORD_VERSION_TYPE\x10\x05\x12\x1e\n\x1aRS_NEW_RECORD_VERSION_TYPE\x10\x06\x12\x16\n\x12RS_FILES_NOT_MATCH\x10\x07\x12\x1b\n\x17RS_RECORD_NOT_SHAREABLE\x10\x08\x12\x1f\n\x1bRS_ATTACHMENT_NOT_SHAREABLE\x10\t\x12\x19\n\x15RS_FILE_LIMIT_REACHED\x10\n\x12\x1a\n\x16RS_SIZE_EXCEEDED_LIMIT\x10\x0b*-\n\rFileAddResult\x12\x0e\n\nFA_SUCCESS\x10\x00\x12\x0c\n\x08\x46\x41_ERROR\x10\x01*C\n\rFileGetResult\x12\x0e\n\nFG_SUCCESS\x10\x00\x12\x0c\n\x08\x46G_ERROR\x10\x01\x12\x14\n\x10\x46G_ACCESS_DENIED\x10\x02*J\n\x14RecordDetailsInclude\x12\x13\n\x0f\x44\x41TA_PLUS_SHARE\x10\x00\x12\r\n\tDATA_ONLY\x10\x01\x12\x0e\n\nSHARE_ONLY\x10\x02*b\n\x19\x43heckShareAdminObjectType\x12\x19\n\x15\x43HECK_SA_INVALID_TYPE\x10\x00\x12\x12\n\x0e\x43HECK_SA_ON_SF\x10\x01\x12\x16\n\x12\x43HECK_SA_ON_RECORD\x10\x02*1\n\x0bShareStatus\x12\n\n\x06\x41\x43TIVE\x10\x00\x12\t\n\x05\x42LOCK\x10\x01\x12\x0b\n\x07INVITED\x10\x02*:\n\x15RecordTransactionType\x12\x0f\n\x0bRTT_GENERAL\x10\x00\x12\x10\n\x0cRTT_ROTATION\x10\x01\x42#\n\x18\x63om.keepersecurity.protoB\x07Recordsb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0crecord.proto\x12\x07Records\"\\\n\nRecordType\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\x12\'\n\x05scope\x18\x03 \x01(\x0e\x32\x18.Records.RecordTypeScope\"U\n\x12RecordTypesRequest\x12\x10\n\x08standard\x18\x01 \x01(\x08\x12\x0c\n\x04user\x18\x02 \x01(\x08\x12\x12\n\nenterprise\x18\x03 \x01(\x08\x12\x0b\n\x03pam\x18\x04 \x01(\x08\"\x9c\x01\n\x13RecordTypesResponse\x12(\n\x0brecordTypes\x18\x01 \x03(\x0b\x32\x13.Records.RecordType\x12\x17\n\x0fstandardCounter\x18\x02 \x01(\x05\x12\x13\n\x0buserCounter\x18\x03 \x01(\x05\x12\x19\n\x11\x65nterpriseCounter\x18\x04 \x01(\x05\x12\x12\n\npamCounter\x18\x05 \x01(\x05\"A\n\x18RecordTypeModifyResponse\x12\x14\n\x0crecordTypeId\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ounter\x18\x02 \x01(\x05\"=\n\x11RecordsGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xd1\x01\n\x06Record\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12/\n\x0frecord_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\r\n\x05\x65xtra\x18\x05 \x01(\x0c\x12\x0f\n\x07version\x18\x06 \x01(\x05\x12\x1c\n\x14\x63lient_modified_time\x18\x07 \x01(\x03\x12\x10\n\x08revision\x18\x08 \x01(\x03\x12\x10\n\x08\x66ile_ids\x18\t \x03(\x0c\"M\n\x0f\x46olderRecordKey\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_uid\x18\x02 \x01(\x0c\x12\x12\n\nrecord_key\x18\x03 \x01(\x0c\"a\n\x06\x46older\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x12\n\nfolder_key\x18\x02 \x01(\x0c\x12/\n\x0f\x66older_key_type\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\"\x95\x01\n\x04Team\x12\x10\n\x08team_uid\x18\x01 \x01(\x0c\x12\x10\n\x08team_key\x18\x02 \x01(\x0c\x12\x18\n\x10team_private_key\x18\x03 \x01(\x0c\x12-\n\rteam_key_type\x18\x04 \x01(\x0e\x32\x16.Records.RecordKeyType\x12 \n\x07\x66olders\x18\x05 \x03(\x0b\x32\x0f.Records.Folder\"\xac\x01\n\x12RecordsGetResponse\x12 \n\x07records\x18\x01 \x03(\x0b\x32\x0f.Records.Record\x12\x34\n\x12\x66older_record_keys\x18\x02 \x03(\x0b\x32\x18.Records.FolderRecordKey\x12 \n\x07\x66olders\x18\x03 \x03(\x0b\x32\x0f.Records.Folder\x12\x1c\n\x05teams\x18\x04 \x03(\x0b\x32\r.Records.Team\"4\n\nRecordLink\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\",\n\x0bRecordAudit\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\xa0\x02\n\tRecordAdd\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12.\n\x0b\x66older_type\x18\x06 \x01(\x0e\x32\x19.Records.RecordFolderType\x12\x12\n\nfolder_uid\x18\x07 \x01(\x0c\x12\x12\n\nfolder_key\x18\x08 \x01(\x0c\x12)\n\x0crecord_links\x18\t \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\n \x01(\x0b\x32\x14.Records.RecordAudit\"M\n\x11RecordsAddRequest\x12#\n\x07records\x18\x01 \x03(\x0b\x32\x12.Records.RecordAdd\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xea\x01\n\x0cRecordUpdate\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x02 \x01(\x03\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12-\n\x10record_links_add\x18\x06 \x03(\x0b\x32\x13.Records.RecordLink\x12\x1b\n\x13record_links_remove\x18\x07 \x03(\x0c\x12#\n\x05\x61udit\x18\x08 \x01(\x0b\x32\x14.Records.RecordAudit\"S\n\x14RecordsUpdateRequest\x12&\n\x07records\x18\x01 \x03(\x0b\x32\x15.Records.RecordUpdate\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\x8e\x01\n\x17RecordFileForConversion\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x14\n\x0c\x66ile_file_id\x18\x02 \x01(\t\x12\x15\n\rthumb_file_id\x18\x03 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x12\n\nrecord_key\x18\x05 \x01(\x0c\x12\x10\n\x08link_key\x18\x06 \x01(\x0c\"J\n\x19RecordFolderForConversion\x12\x12\n\nfolder_uid\x18\x01 \x01(\x0c\x12\x19\n\x11record_folder_key\x18\x02 \x01(\x0c\"\x92\x02\n\x11RecordConvertToV3\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x02 \x01(\x03\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x17\n\x0fnon_shared_data\x18\x05 \x01(\x0c\x12#\n\x05\x61udit\x18\x06 \x01(\x0b\x32\x14.Records.RecordAudit\x12\x35\n\x0brecord_file\x18\x07 \x03(\x0b\x32 .Records.RecordFileForConversion\x12\x36\n\nfolder_key\x18\x08 \x03(\x0b\x32\".Records.RecordFolderForConversion\"]\n\x19RecordsConvertToV3Request\x12+\n\x07records\x18\x01 \x03(\x0b\x32\x1a.Records.RecordConvertToV3\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\'\n\x14RecordsRemoveRequest\x12\x0f\n\x07records\x18\x01 \x03(\x0c\">\n\x0cRecordRevert\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x1a\n\x12revert_to_revision\x18\x02 \x01(\x03\">\n\x14RecordsRevertRequest\x12&\n\x07records\x18\x01 \x03(\x0b\x32\x15.Records.RecordRevert\"c\n\x0fRecordLinkError\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.Records.RecordModifyResult\x12\x0f\n\x07message\x18\x03 \x01(\t\"\x95\x01\n\x12RecordModifyStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12+\n\x06status\x18\x02 \x01(\x0e\x32\x1b.Records.RecordModifyResult\x12\x0f\n\x07message\x18\x03 \x01(\t\x12-\n\x0blink_errors\x18\x04 \x03(\x0b\x32\x18.Records.RecordLinkError\"W\n\x15RecordsModifyResponse\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordModifyStatus\x12\x10\n\x08revision\x18\x02 \x01(\x03\"Y\n\x12RecordAddAuditData\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x0f\n\x07version\x18\x04 \x01(\x05\"C\n\x13\x41\x64\x64\x41uditDataRequest\x12,\n\x07records\x18\x01 \x03(\x0b\x32\x1b.Records.RecordAddAuditData\"t\n\x04\x46ile\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x10\n\x08\x66ileSize\x18\x04 \x01(\x03\x12\x11\n\tthumbSize\x18\x05 \x01(\x05\x12\x11\n\tis_script\x18\x06 \x01(\x08\"D\n\x0f\x46ilesAddRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.Records.File\x12\x13\n\x0b\x63lient_time\x18\x02 \x01(\x03\"\xa7\x01\n\rFileAddStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileAddResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x12\n\nparameters\x18\x04 \x01(\t\x12\x1c\n\x14thumbnail_parameters\x18\x05 \x01(\t\x12\x1b\n\x13success_status_code\x18\x06 \x01(\x05\"K\n\x10\x46ilesAddResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileAddStatus\x12\x10\n\x08revision\x18\x02 \x01(\x03\"f\n\x0f\x46ilesGetRequest\x12\x13\n\x0brecord_uids\x18\x01 \x03(\x0c\x12\x16\n\x0e\x66or_thumbnails\x18\x02 \x01(\x08\x12&\n\x1e\x65mergency_access_account_owner\x18\x03 \x01(\t\"\xa2\x01\n\rFileGetStatus\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.Records.FileGetResult\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\x1b\n\x13success_status_code\x18\x04 \x01(\x05\x12+\n\x0b\x66ileKeyType\x18\x05 \x01(\x0e\x32\x16.Records.RecordKeyType\"9\n\x10\x46ilesGetResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Records.FileGetStatus\"\x8d\x01\n\x15\x41pplicationAddRequest\x12\x0f\n\x07\x61pp_uid\x18\x01 \x01(\x0c\x12\x12\n\nrecord_key\x18\x02 \x01(\x0c\x12\x1c\n\x14\x63lient_modified_time\x18\x03 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12#\n\x05\x61udit\x18\x05 \x01(\x0b\x32\x14.Records.RecordAudit\"\x88\x01\n\"GetRecordDataWithAccessInfoRequest\x12\x12\n\nclientTime\x18\x01 \x01(\x03\x12\x11\n\trecordUid\x18\x02 \x03(\x0c\x12;\n\x14recordDetailsInclude\x18\x03 \x01(\x0e\x32\x1d.Records.RecordDetailsInclude\"\xea\x01\n\x0eUserPermission\x12\x10\n\x08username\x18\x01 \x01(\t\x12\r\n\x05owner\x18\x02 \x01(\x08\x12\x12\n\nshareAdmin\x18\x03 \x01(\x08\x12\x10\n\x08sharable\x18\x04 \x01(\x08\x12\x10\n\x08\x65\x64itable\x18\x05 \x01(\x08\x12\x18\n\x10\x61waitingApproval\x18\x06 \x01(\x08\x12\x12\n\nexpiration\x18\x07 \x01(\x03\x12\x12\n\naccountUid\x18\x08 \x01(\x0c\x12=\n\x15timerNotificationType\x18\t \x01(\x0e\x32\x1e.Records.TimerNotificationType\"\xbc\x01\n\x16SharedFolderPermission\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x12\n\nresharable\x18\x02 \x01(\x08\x12\x10\n\x08\x65\x64itable\x18\x03 \x01(\x08\x12\x10\n\x08revision\x18\x04 \x01(\x03\x12\x12\n\nexpiration\x18\x05 \x01(\x03\x12=\n\x15timerNotificationType\x18\x06 \x01(\x0e\x32\x1e.Records.TimerNotificationType\"\xe8\x02\n\nRecordData\x12\x10\n\x08revision\x18\x01 \x01(\x03\x12\x0f\n\x07version\x18\x02 \x01(\x05\x12\x0e\n\x06shared\x18\x03 \x01(\x08\x12\x1b\n\x13\x65ncryptedRecordData\x18\x04 \x01(\t\x12\x1a\n\x12\x65ncryptedExtraData\x18\x05 \x01(\t\x12\x1a\n\x12\x63lientModifiedTime\x18\x06 \x01(\x03\x12\x15\n\rnonSharedData\x18\x07 \x01(\t\x12-\n\x10linkedRecordData\x18\x08 \x03(\x0b\x32\x13.Records.RecordData\x12\x0e\n\x06\x66ileId\x18\t \x03(\x0c\x12\x10\n\x08\x66ileSize\x18\n \x01(\x03\x12\x15\n\rthumbnailSize\x18\x0b \x01(\x03\x12-\n\rrecordKeyType\x18\x0c \x01(\x0e\x32\x16.Records.RecordKeyType\x12\x11\n\trecordKey\x18\r \x01(\x0c\x12\x11\n\trecordUid\x18\x0e \x01(\x0c\"\xc8\x01\n\x18RecordDataWithAccessInfo\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\'\n\nrecordData\x18\x02 \x01(\x0b\x32\x13.Records.RecordData\x12/\n\x0euserPermission\x18\x03 \x03(\x0b\x32\x17.Records.UserPermission\x12?\n\x16sharedFolderPermission\x18\x04 \x03(\x0b\x32\x1f.Records.SharedFolderPermission\"\x89\x01\n#GetRecordDataWithAccessInfoResponse\x12\x43\n\x18recordDataWithAccessInfo\x18\x01 \x03(\x0b\x32!.Records.RecordDataWithAccessInfo\x12\x1d\n\x15noPermissionRecordUid\x18\x02 \x03(\x0c\"j\n\x12IsObjectShareAdmin\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0f\n\x07isAdmin\x18\x02 \x01(\x08\x12\x36\n\nobjectType\x18\x03 \x01(\x0e\x32\".Records.CheckShareAdminObjectType\"H\n\rAmIShareAdmin\x12\x37\n\x12isObjectShareAdmin\x18\x01 \x03(\x0b\x32\x1b.Records.IsObjectShareAdmin\"\xbc\x01\n\x18RecordShareUpdateRequest\x12.\n\x0f\x61\x64\x64SharedRecord\x18\x01 \x03(\x0b\x32\x15.Records.SharedRecord\x12\x31\n\x12updateSharedRecord\x18\x02 \x03(\x0b\x32\x15.Records.SharedRecord\x12\x31\n\x12removeSharedRecord\x18\x03 \x03(\x0b\x32\x15.Records.SharedRecord\x12\n\n\x02pt\x18\x04 \x01(\t\"\xa8\x02\n\x0cSharedRecord\x12\x12\n\ntoUsername\x18\x01 \x01(\t\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x11\n\trecordKey\x18\x03 \x01(\x0c\x12\x17\n\x0fsharedFolderUid\x18\x04 \x01(\x0c\x12\x0f\n\x07teamUid\x18\x05 \x01(\x0c\x12\x10\n\x08\x65\x64itable\x18\x06 \x01(\x08\x12\x11\n\tshareable\x18\x07 \x01(\x08\x12\x10\n\x08transfer\x18\x08 \x01(\x08\x12\x11\n\tuseEccKey\x18\t \x01(\x08\x12\x17\n\x0fremoveVaultData\x18\n \x01(\x08\x12\x12\n\nexpiration\x18\x0b \x01(\x03\x12=\n\x15timerNotificationType\x18\x0c \x01(\x0e\x32\x1e.Records.TimerNotificationType\"\xd5\x01\n\x19RecordShareUpdateResponse\x12:\n\x15\x61\x64\x64SharedRecordStatus\x18\x01 \x03(\x0b\x32\x1b.Records.SharedRecordStatus\x12=\n\x18updateSharedRecordStatus\x18\x02 \x03(\x0b\x32\x1b.Records.SharedRecordStatus\x12=\n\x18removeSharedRecordStatus\x18\x03 \x03(\x0b\x32\x1b.Records.SharedRecordStatus\"Z\n\x12SharedRecordStatus\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x10\n\x08username\x18\x04 \x01(\t\"G\n\x1bGetRecordPermissionsRequest\x12\x12\n\nrecordUids\x18\x01 \x03(\x0c\x12\x14\n\x0cisShareAdmin\x18\x02 \x01(\x08\"T\n\x1cGetRecordPermissionsResponse\x12\x34\n\x11recordPermissions\x18\x01 \x03(\x0b\x32\x19.Records.RecordPermission\"l\n\x10RecordPermission\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\r\n\x05owner\x18\x02 \x01(\x08\x12\x0f\n\x07\x63\x61nEdit\x18\x03 \x01(\x08\x12\x10\n\x08\x63\x61nShare\x18\x04 \x01(\x08\x12\x13\n\x0b\x63\x61nTransfer\x18\x05 \x01(\x08\"h\n\x16GetShareObjectsRequest\x12\x11\n\tstartWith\x18\x01 \x01(\t\x12\x10\n\x08\x63ontains\x18\x02 \x01(\t\x12\x10\n\x08\x66iltered\x18\x03 \x01(\x08\x12\x17\n\x0fsharedFolderUid\x18\x04 \x01(\x0c\"\xe7\x02\n\x17GetShareObjectsResponse\x12.\n\x12shareRelationships\x18\x01 \x03(\x0b\x32\x12.Records.ShareUser\x12,\n\x10shareFamilyUsers\x18\x02 \x03(\x0b\x32\x12.Records.ShareUser\x12\x30\n\x14shareEnterpriseUsers\x18\x03 \x03(\x0b\x32\x12.Records.ShareUser\x12&\n\nshareTeams\x18\x04 \x03(\x0b\x32\x12.Records.ShareTeam\x12(\n\x0cshareMCTeams\x18\x05 \x03(\x0b\x32\x12.Records.ShareTeam\x12\x32\n\x16shareMCEnterpriseUsers\x18\x06 \x03(\x0b\x32\x12.Records.ShareUser\x12\x36\n\x14shareEnterpriseNames\x18\x07 \x03(\x0b\x32\x18.Records.ShareEnterprise\"\xa5\x01\n\tShareUser\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08\x66ullname\x18\x02 \x01(\t\x12\x14\n\x0c\x65nterpriseId\x18\x03 \x01(\x05\x12$\n\x06status\x18\x04 \x01(\x0e\x32\x14.Records.ShareStatus\x12\x14\n\x0cisShareAdmin\x18\x05 \x01(\x08\x12\"\n\x1aisAdminOfSharedFolderOwner\x18\x06 \x01(\x08\"D\n\tShareTeam\x12\x10\n\x08teamname\x18\x01 \x01(\t\x12\x14\n\x0c\x65nterpriseId\x18\x02 \x01(\x05\x12\x0f\n\x07teamUid\x18\x03 \x01(\x0c\"?\n\x0fShareEnterprise\x12\x16\n\x0e\x65nterprisename\x18\x01 \x01(\t\x12\x14\n\x0c\x65nterpriseId\x18\x02 \x01(\x05\"S\n\x1fRecordsOnwershipTransferRequest\x12\x30\n\x0ftransferRecords\x18\x01 \x03(\x0b\x32\x17.Records.TransferRecord\"[\n\x0eTransferRecord\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x11\n\trecordKey\x18\x03 \x01(\x0c\x12\x11\n\tuseEccKey\x18\x04 \x01(\x08\"_\n RecordsOnwershipTransferResponse\x12;\n\x14transferRecordStatus\x18\x01 \x03(\x0b\x32\x1d.Records.TransferRecordStatus\"\\\n\x14TransferRecordStatus\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\"y\n\x15RecordsUnshareRequest\x12\x34\n\rsharedFolders\x18\x01 \x03(\x0b\x32\x1d.Records.RecordsUnshareFolder\x12*\n\x05users\x18\x02 \x03(\x0b\x32\x1b.Records.RecordsUnshareUser\"\x86\x01\n\x16RecordsUnshareResponse\x12:\n\rsharedFolders\x18\x01 \x03(\x0b\x32#.Records.RecordsUnshareFolderStatus\x12\x30\n\x05users\x18\x02 \x03(\x0b\x32!.Records.RecordsUnshareUserStatus\"B\n\x14RecordsUnshareFolder\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x17\n\x0fsharedFolderUid\x18\x02 \x01(\x0c\";\n\x12RecordsUnshareUser\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\"H\n\x1aRecordsUnshareFolderStatus\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x17\n\x0fsharedFolderUid\x18\x02 \x01(\x0c\"A\n\x18RecordsUnshareUserStatus\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\"\xfd\x01\n\x18TimeLimitedAccessRequest\x12\x12\n\naccountUid\x18\x01 \x03(\x0c\x12\x0f\n\x07teamUid\x18\x02 \x03(\x0c\x12\x11\n\trecordUid\x18\x03 \x03(\x0c\x12\x17\n\x0fsharedObjectUid\x18\x04 \x01(\x0c\x12=\n\x15timeLimitedAccessType\x18\x05 \x01(\x0e\x32\x1e.Records.TimeLimitedAccessType\x12\x12\n\nexpiration\x18\x06 \x01(\x03\x12=\n\x15timerNotificationType\x18\x07 \x01(\x0e\x32\x1e.Records.TimerNotificationType\"7\n\x17TimeLimitedAccessStatus\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0f\n\x07message\x18\x02 \x01(\t\"\xe3\x01\n\x19TimeLimitedAccessResponse\x12\x10\n\x08revision\x18\x01 \x01(\x03\x12:\n\x10userAccessStatus\x18\x02 \x03(\x0b\x32 .Records.TimeLimitedAccessStatus\x12:\n\x10teamAccessStatus\x18\x03 \x03(\x0b\x32 .Records.TimeLimitedAccessStatus\x12<\n\x12recordAccessStatus\x18\x04 \x03(\x0b\x32 .Records.TimeLimitedAccessStatus*h\n\x0fRecordTypeScope\x12\x0f\n\x0bRT_STANDARD\x10\x00\x12\x0b\n\x07RT_USER\x10\x01\x12\x11\n\rRT_ENTERPRISE\x10\x02\x12\n\n\x06RT_PAM\x10\x03\x12\x18\n\x14RT_PAM_CONFIGURATION\x10\x04*\xd1\x01\n\rRecordKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x19\n\x15\x45NCRYPTED_BY_DATA_KEY\x10\x01\x12\x1b\n\x17\x45NCRYPTED_BY_PUBLIC_KEY\x10\x02\x12\x1d\n\x19\x45NCRYPTED_BY_DATA_KEY_GCM\x10\x03\x12\x1f\n\x1b\x45NCRYPTED_BY_PUBLIC_KEY_ECC\x10\x04\x12\x1d\n\x19\x45NCRYPTED_BY_ROOT_KEY_CBC\x10\x05\x12\x1d\n\x19\x45NCRYPTED_BY_ROOT_KEY_GCM\x10\x06*P\n\x10RecordFolderType\x12\x0f\n\x0buser_folder\x10\x00\x12\x11\n\rshared_folder\x10\x01\x12\x18\n\x14shared_folder_folder\x10\x02*\xec\x02\n\x12RecordModifyResult\x12\x0e\n\nRS_SUCCESS\x10\x00\x12\x12\n\x0eRS_OUT_OF_SYNC\x10\x01\x12\x14\n\x10RS_ACCESS_DENIED\x10\x02\x12\x13\n\x0fRS_SHARE_DENIED\x10\x03\x12\x14\n\x10RS_RECORD_EXISTS\x10\x04\x12\x1e\n\x1aRS_OLD_RECORD_VERSION_TYPE\x10\x05\x12\x1e\n\x1aRS_NEW_RECORD_VERSION_TYPE\x10\x06\x12\x16\n\x12RS_FILES_NOT_MATCH\x10\x07\x12\x1b\n\x17RS_RECORD_NOT_SHAREABLE\x10\x08\x12\x1f\n\x1bRS_ATTACHMENT_NOT_SHAREABLE\x10\t\x12\x19\n\x15RS_FILE_LIMIT_REACHED\x10\n\x12\x1a\n\x16RS_SIZE_EXCEEDED_LIMIT\x10\x0b\x12$\n RS_ONLY_OWNER_CAN_MODIFY_SCRIPTS\x10\x0c*-\n\rFileAddResult\x12\x0e\n\nFA_SUCCESS\x10\x00\x12\x0c\n\x08\x46\x41_ERROR\x10\x01*C\n\rFileGetResult\x12\x0e\n\nFG_SUCCESS\x10\x00\x12\x0c\n\x08\x46G_ERROR\x10\x01\x12\x14\n\x10\x46G_ACCESS_DENIED\x10\x02*J\n\x14RecordDetailsInclude\x12\x13\n\x0f\x44\x41TA_PLUS_SHARE\x10\x00\x12\r\n\tDATA_ONLY\x10\x01\x12\x0e\n\nSHARE_ONLY\x10\x02*b\n\x19\x43heckShareAdminObjectType\x12\x19\n\x15\x43HECK_SA_INVALID_TYPE\x10\x00\x12\x12\n\x0e\x43HECK_SA_ON_SF\x10\x01\x12\x16\n\x12\x43HECK_SA_ON_RECORD\x10\x02*1\n\x0bShareStatus\x12\n\n\x06\x41\x43TIVE\x10\x00\x12\t\n\x05\x42LOCK\x10\x01\x12\x0b\n\x07INVITED\x10\x02*:\n\x15RecordTransactionType\x12\x0f\n\x0bRTT_GENERAL\x10\x00\x12\x10\n\x0cRTT_ROTATION\x10\x01*\xa4\x01\n\x15TimeLimitedAccessType\x12$\n INVALID_TIME_LIMITED_ACCESS_TYPE\x10\x00\x12\x19\n\x15USER_ACCESS_TO_RECORD\x10\x01\x12\'\n#USER_OR_TEAM_ACCESS_TO_SHAREDFOLDER\x10\x02\x12!\n\x1dRECORD_ACCESS_TO_SHAREDFOLDER\x10\x03*\\\n\x15TimerNotificationType\x12\x14\n\x10NOTIFICATION_OFF\x10\x00\x12\x10\n\x0cNOTIFY_OWNER\x10\x01\x12\x1b\n\x17NOTIFY_PRIVILEGED_USERS\x10\x02\x42#\n\x18\x63om.keepersecurity.protoB\x07Recordsb\x06proto3')
 
 _RECORDTYPESCOPE = DESCRIPTOR.enum_types_by_name['RecordTypeScope']
 RecordTypeScope = enum_type_wrapper.EnumTypeWrapper(_RECORDTYPESCOPE)
@@ -37,6 +37,10 @@ _SHARESTATUS = DESCRIPTOR.enum_types_by_name['ShareStatus']
 ShareStatus = enum_type_wrapper.EnumTypeWrapper(_SHARESTATUS)
 _RECORDTRANSACTIONTYPE = DESCRIPTOR.enum_types_by_name['RecordTransactionType']
 RecordTransactionType = enum_type_wrapper.EnumTypeWrapper(_RECORDTRANSACTIONTYPE)
+_TIMELIMITEDACCESSTYPE = DESCRIPTOR.enum_types_by_name['TimeLimitedAccessType']
+TimeLimitedAccessType = enum_type_wrapper.EnumTypeWrapper(_TIMELIMITEDACCESSTYPE)
+_TIMERNOTIFICATIONTYPE = DESCRIPTOR.enum_types_by_name['TimerNotificationType']
+TimerNotificationType = enum_type_wrapper.EnumTypeWrapper(_TIMERNOTIFICATIONTYPE)
 RT_STANDARD = 0
 RT_USER = 1
 RT_ENTERPRISE = 2
@@ -64,6 +68,7 @@ RS_RECORD_NOT_SHAREABLE = 8
 RS_ATTACHMENT_NOT_SHAREABLE = 9
 RS_FILE_LIMIT_REACHED = 10
 RS_SIZE_EXCEEDED_LIMIT = 11
+RS_ONLY_OWNER_CAN_MODIFY_SCRIPTS = 12
 FA_SUCCESS = 0
 FA_ERROR = 1
 FG_SUCCESS = 0
@@ -80,6 +85,13 @@ BLOCK = 1
 INVITED = 2
 RTT_GENERAL = 0
 RTT_ROTATION = 1
+INVALID_TIME_LIMITED_ACCESS_TYPE = 0
+USER_ACCESS_TO_RECORD = 1
+USER_OR_TEAM_ACCESS_TO_SHAREDFOLDER = 2
+RECORD_ACCESS_TO_SHAREDFOLDER = 3
+NOTIFICATION_OFF = 0
+NOTIFY_OWNER = 1
+NOTIFY_PRIVILEGED_USERS = 2
 
 
 _RECORDTYPE = DESCRIPTOR.message_types_by_name['RecordType']
@@ -148,6 +160,9 @@ _RECORDSUNSHAREFOLDER = DESCRIPTOR.message_types_by_name['RecordsUnshareFolder']
 _RECORDSUNSHAREUSER = DESCRIPTOR.message_types_by_name['RecordsUnshareUser']
 _RECORDSUNSHAREFOLDERSTATUS = DESCRIPTOR.message_types_by_name['RecordsUnshareFolderStatus']
 _RECORDSUNSHAREUSERSTATUS = DESCRIPTOR.message_types_by_name['RecordsUnshareUserStatus']
+_TIMELIMITEDACCESSREQUEST = DESCRIPTOR.message_types_by_name['TimeLimitedAccessRequest']
+_TIMELIMITEDACCESSSTATUS = DESCRIPTOR.message_types_by_name['TimeLimitedAccessStatus']
+_TIMELIMITEDACCESSRESPONSE = DESCRIPTOR.message_types_by_name['TimeLimitedAccessResponse']
 RecordType = _reflection.GeneratedProtocolMessageType('RecordType', (_message.Message,), {
   'DESCRIPTOR' : _RECORDTYPE,
   '__module__' : 'record_pb2'
@@ -610,30 +625,55 @@ RecordsUnshareUserStatus = _reflection.GeneratedProtocolMessageType('RecordsUnsh
   })
 _sym_db.RegisterMessage(RecordsUnshareUserStatus)
 
+TimeLimitedAccessRequest = _reflection.GeneratedProtocolMessageType('TimeLimitedAccessRequest', (_message.Message,), {
+  'DESCRIPTOR' : _TIMELIMITEDACCESSREQUEST,
+  '__module__' : 'record_pb2'
+  # @@protoc_insertion_point(class_scope:Records.TimeLimitedAccessRequest)
+  })
+_sym_db.RegisterMessage(TimeLimitedAccessRequest)
+
+TimeLimitedAccessStatus = _reflection.GeneratedProtocolMessageType('TimeLimitedAccessStatus', (_message.Message,), {
+  'DESCRIPTOR' : _TIMELIMITEDACCESSSTATUS,
+  '__module__' : 'record_pb2'
+  # @@protoc_insertion_point(class_scope:Records.TimeLimitedAccessStatus)
+  })
+_sym_db.RegisterMessage(TimeLimitedAccessStatus)
+
+TimeLimitedAccessResponse = _reflection.GeneratedProtocolMessageType('TimeLimitedAccessResponse', (_message.Message,), {
+  'DESCRIPTOR' : _TIMELIMITEDACCESSRESPONSE,
+  '__module__' : 'record_pb2'
+  # @@protoc_insertion_point(class_scope:Records.TimeLimitedAccessResponse)
+  })
+_sym_db.RegisterMessage(TimeLimitedAccessResponse)
+
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\007Records'
-  _RECORDTYPESCOPE._serialized_start=8120
-  _RECORDTYPESCOPE._serialized_end=8224
-  _RECORDKEYTYPE._serialized_start=8227
-  _RECORDKEYTYPE._serialized_end=8436
-  _RECORDFOLDERTYPE._serialized_start=8438
-  _RECORDFOLDERTYPE._serialized_end=8518
-  _RECORDMODIFYRESULT._serialized_start=8521
-  _RECORDMODIFYRESULT._serialized_end=8847
-  _FILEADDRESULT._serialized_start=8849
-  _FILEADDRESULT._serialized_end=8894
-  _FILEGETRESULT._serialized_start=8896
-  _FILEGETRESULT._serialized_end=8963
-  _RECORDDETAILSINCLUDE._serialized_start=8965
-  _RECORDDETAILSINCLUDE._serialized_end=9039
-  _CHECKSHAREADMINOBJECTTYPE._serialized_start=9041
-  _CHECKSHAREADMINOBJECTTYPE._serialized_end=9139
-  _SHARESTATUS._serialized_start=9141
-  _SHARESTATUS._serialized_end=9190
-  _RECORDTRANSACTIONTYPE._serialized_start=9192
-  _RECORDTRANSACTIONTYPE._serialized_end=9250
+  _RECORDTYPESCOPE._serialized_start=8910
+  _RECORDTYPESCOPE._serialized_end=9014
+  _RECORDKEYTYPE._serialized_start=9017
+  _RECORDKEYTYPE._serialized_end=9226
+  _RECORDFOLDERTYPE._serialized_start=9228
+  _RECORDFOLDERTYPE._serialized_end=9308
+  _RECORDMODIFYRESULT._serialized_start=9311
+  _RECORDMODIFYRESULT._serialized_end=9675
+  _FILEADDRESULT._serialized_start=9677
+  _FILEADDRESULT._serialized_end=9722
+  _FILEGETRESULT._serialized_start=9724
+  _FILEGETRESULT._serialized_end=9791
+  _RECORDDETAILSINCLUDE._serialized_start=9793
+  _RECORDDETAILSINCLUDE._serialized_end=9867
+  _CHECKSHAREADMINOBJECTTYPE._serialized_start=9869
+  _CHECKSHAREADMINOBJECTTYPE._serialized_end=9967
+  _SHARESTATUS._serialized_start=9969
+  _SHARESTATUS._serialized_end=10018
+  _RECORDTRANSACTIONTYPE._serialized_start=10020
+  _RECORDTRANSACTIONTYPE._serialized_end=10078
+  _TIMELIMITEDACCESSTYPE._serialized_start=10081
+  _TIMELIMITEDACCESSTYPE._serialized_end=10245
+  _TIMERNOTIFICATIONTYPE._serialized_start=10247
+  _TIMERNOTIFICATIONTYPE._serialized_end=10339
   _RECORDTYPE._serialized_start=25
   _RECORDTYPE._serialized_end=117
   _RECORDTYPESREQUEST._serialized_start=119
@@ -691,79 +731,85 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _ADDAUDITDATAREQUEST._serialized_start=3199
   _ADDAUDITDATAREQUEST._serialized_end=3266
   _FILE._serialized_start=3268
-  _FILE._serialized_end=3365
-  _FILESADDREQUEST._serialized_start=3367
-  _FILESADDREQUEST._serialized_end=3435
-  _FILEADDSTATUS._serialized_start=3438
-  _FILEADDSTATUS._serialized_end=3605
-  _FILESADDRESPONSE._serialized_start=3607
-  _FILESADDRESPONSE._serialized_end=3682
-  _FILESGETREQUEST._serialized_start=3684
-  _FILESGETREQUEST._serialized_end=3786
-  _FILEGETSTATUS._serialized_start=3789
-  _FILEGETSTATUS._serialized_end=3951
-  _FILESGETRESPONSE._serialized_start=3953
-  _FILESGETRESPONSE._serialized_end=4010
-  _APPLICATIONADDREQUEST._serialized_start=4012
-  _APPLICATIONADDREQUEST._serialized_end=4116
-  _GETRECORDDATAWITHACCESSINFOREQUEST._serialized_start=4119
-  _GETRECORDDATAWITHACCESSINFOREQUEST._serialized_end=4255
-  _USERPERMISSION._serialized_start=4258
-  _USERPERMISSION._serialized_end=4429
-  _SHAREDFOLDERPERMISSION._serialized_start=4431
-  _SHAREDFOLDERPERMISSION._serialized_end=4556
-  _RECORDDATA._serialized_start=4559
-  _RECORDDATA._serialized_end=4919
-  _RECORDDATAWITHACCESSINFO._serialized_start=4922
-  _RECORDDATAWITHACCESSINFO._serialized_end=5122
-  _GETRECORDDATAWITHACCESSINFORESPONSE._serialized_start=5125
-  _GETRECORDDATAWITHACCESSINFORESPONSE._serialized_end=5262
-  _ISOBJECTSHAREADMIN._serialized_start=5264
-  _ISOBJECTSHAREADMIN._serialized_end=5370
-  _AMISHAREADMIN._serialized_start=5372
-  _AMISHAREADMIN._serialized_end=5444
-  _RECORDSHAREUPDATEREQUEST._serialized_start=5447
-  _RECORDSHAREUPDATEREQUEST._serialized_end=5635
-  _SHAREDRECORD._serialized_start=5638
-  _SHAREDRECORD._serialized_end=5871
-  _RECORDSHAREUPDATERESPONSE._serialized_start=5874
-  _RECORDSHAREUPDATERESPONSE._serialized_end=6087
-  _SHAREDRECORDSTATUS._serialized_start=6089
-  _SHAREDRECORDSTATUS._serialized_end=6179
-  _GETRECORDPERMISSIONSREQUEST._serialized_start=6181
-  _GETRECORDPERMISSIONSREQUEST._serialized_end=6252
-  _GETRECORDPERMISSIONSRESPONSE._serialized_start=6254
-  _GETRECORDPERMISSIONSRESPONSE._serialized_end=6338
-  _RECORDPERMISSION._serialized_start=6340
-  _RECORDPERMISSION._serialized_end=6448
-  _GETSHAREOBJECTSREQUEST._serialized_start=6450
-  _GETSHAREOBJECTSREQUEST._serialized_end=6554
-  _GETSHAREOBJECTSRESPONSE._serialized_start=6557
-  _GETSHAREOBJECTSRESPONSE._serialized_end=6916
-  _SHAREUSER._serialized_start=6919
-  _SHAREUSER._serialized_end=7084
-  _SHARETEAM._serialized_start=7086
-  _SHARETEAM._serialized_end=7154
-  _SHAREENTERPRISE._serialized_start=7156
-  _SHAREENTERPRISE._serialized_end=7219
-  _RECORDSONWERSHIPTRANSFERREQUEST._serialized_start=7221
-  _RECORDSONWERSHIPTRANSFERREQUEST._serialized_end=7304
-  _TRANSFERRECORD._serialized_start=7306
-  _TRANSFERRECORD._serialized_end=7397
-  _RECORDSONWERSHIPTRANSFERRESPONSE._serialized_start=7399
-  _RECORDSONWERSHIPTRANSFERRESPONSE._serialized_end=7494
-  _TRANSFERRECORDSTATUS._serialized_start=7496
-  _TRANSFERRECORDSTATUS._serialized_end=7588
-  _RECORDSUNSHAREREQUEST._serialized_start=7590
-  _RECORDSUNSHAREREQUEST._serialized_end=7711
-  _RECORDSUNSHARERESPONSE._serialized_start=7714
-  _RECORDSUNSHARERESPONSE._serialized_end=7848
-  _RECORDSUNSHAREFOLDER._serialized_start=7850
-  _RECORDSUNSHAREFOLDER._serialized_end=7916
-  _RECORDSUNSHAREUSER._serialized_start=7918
-  _RECORDSUNSHAREUSER._serialized_end=7977
-  _RECORDSUNSHAREFOLDERSTATUS._serialized_start=7979
-  _RECORDSUNSHAREFOLDERSTATUS._serialized_end=8051
-  _RECORDSUNSHAREUSERSTATUS._serialized_start=8053
-  _RECORDSUNSHAREUSERSTATUS._serialized_end=8118
+  _FILE._serialized_end=3384
+  _FILESADDREQUEST._serialized_start=3386
+  _FILESADDREQUEST._serialized_end=3454
+  _FILEADDSTATUS._serialized_start=3457
+  _FILEADDSTATUS._serialized_end=3624
+  _FILESADDRESPONSE._serialized_start=3626
+  _FILESADDRESPONSE._serialized_end=3701
+  _FILESGETREQUEST._serialized_start=3703
+  _FILESGETREQUEST._serialized_end=3805
+  _FILEGETSTATUS._serialized_start=3808
+  _FILEGETSTATUS._serialized_end=3970
+  _FILESGETRESPONSE._serialized_start=3972
+  _FILESGETRESPONSE._serialized_end=4029
+  _APPLICATIONADDREQUEST._serialized_start=4032
+  _APPLICATIONADDREQUEST._serialized_end=4173
+  _GETRECORDDATAWITHACCESSINFOREQUEST._serialized_start=4176
+  _GETRECORDDATAWITHACCESSINFOREQUEST._serialized_end=4312
+  _USERPERMISSION._serialized_start=4315
+  _USERPERMISSION._serialized_end=4549
+  _SHAREDFOLDERPERMISSION._serialized_start=4552
+  _SHAREDFOLDERPERMISSION._serialized_end=4740
+  _RECORDDATA._serialized_start=4743
+  _RECORDDATA._serialized_end=5103
+  _RECORDDATAWITHACCESSINFO._serialized_start=5106
+  _RECORDDATAWITHACCESSINFO._serialized_end=5306
+  _GETRECORDDATAWITHACCESSINFORESPONSE._serialized_start=5309
+  _GETRECORDDATAWITHACCESSINFORESPONSE._serialized_end=5446
+  _ISOBJECTSHAREADMIN._serialized_start=5448
+  _ISOBJECTSHAREADMIN._serialized_end=5554
+  _AMISHAREADMIN._serialized_start=5556
+  _AMISHAREADMIN._serialized_end=5628
+  _RECORDSHAREUPDATEREQUEST._serialized_start=5631
+  _RECORDSHAREUPDATEREQUEST._serialized_end=5819
+  _SHAREDRECORD._serialized_start=5822
+  _SHAREDRECORD._serialized_end=6118
+  _RECORDSHAREUPDATERESPONSE._serialized_start=6121
+  _RECORDSHAREUPDATERESPONSE._serialized_end=6334
+  _SHAREDRECORDSTATUS._serialized_start=6336
+  _SHAREDRECORDSTATUS._serialized_end=6426
+  _GETRECORDPERMISSIONSREQUEST._serialized_start=6428
+  _GETRECORDPERMISSIONSREQUEST._serialized_end=6499
+  _GETRECORDPERMISSIONSRESPONSE._serialized_start=6501
+  _GETRECORDPERMISSIONSRESPONSE._serialized_end=6585
+  _RECORDPERMISSION._serialized_start=6587
+  _RECORDPERMISSION._serialized_end=6695
+  _GETSHAREOBJECTSREQUEST._serialized_start=6697
+  _GETSHAREOBJECTSREQUEST._serialized_end=6801
+  _GETSHAREOBJECTSRESPONSE._serialized_start=6804
+  _GETSHAREOBJECTSRESPONSE._serialized_end=7163
+  _SHAREUSER._serialized_start=7166
+  _SHAREUSER._serialized_end=7331
+  _SHARETEAM._serialized_start=7333
+  _SHARETEAM._serialized_end=7401
+  _SHAREENTERPRISE._serialized_start=7403
+  _SHAREENTERPRISE._serialized_end=7466
+  _RECORDSONWERSHIPTRANSFERREQUEST._serialized_start=7468
+  _RECORDSONWERSHIPTRANSFERREQUEST._serialized_end=7551
+  _TRANSFERRECORD._serialized_start=7553
+  _TRANSFERRECORD._serialized_end=7644
+  _RECORDSONWERSHIPTRANSFERRESPONSE._serialized_start=7646
+  _RECORDSONWERSHIPTRANSFERRESPONSE._serialized_end=7741
+  _TRANSFERRECORDSTATUS._serialized_start=7743
+  _TRANSFERRECORDSTATUS._serialized_end=7835
+  _RECORDSUNSHAREREQUEST._serialized_start=7837
+  _RECORDSUNSHAREREQUEST._serialized_end=7958
+  _RECORDSUNSHARERESPONSE._serialized_start=7961
+  _RECORDSUNSHARERESPONSE._serialized_end=8095
+  _RECORDSUNSHAREFOLDER._serialized_start=8097
+  _RECORDSUNSHAREFOLDER._serialized_end=8163
+  _RECORDSUNSHAREUSER._serialized_start=8165
+  _RECORDSUNSHAREUSER._serialized_end=8224
+  _RECORDSUNSHAREFOLDERSTATUS._serialized_start=8226
+  _RECORDSUNSHAREFOLDERSTATUS._serialized_end=8298
+  _RECORDSUNSHAREUSERSTATUS._serialized_start=8300
+  _RECORDSUNSHAREUSERSTATUS._serialized_end=8365
+  _TIMELIMITEDACCESSREQUEST._serialized_start=8368
+  _TIMELIMITEDACCESSREQUEST._serialized_end=8621
+  _TIMELIMITEDACCESSSTATUS._serialized_start=8623
+  _TIMELIMITEDACCESSSTATUS._serialized_end=8678
+  _TIMELIMITEDACCESSRESPONSE._serialized_start=8681
+  _TIMELIMITEDACCESSRESPONSE._serialized_end=8908
 # @@protoc_insertion_point(module_scope)

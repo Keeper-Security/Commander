@@ -581,28 +581,35 @@ def import_user_permissions(params,
             users_updated = 0
             teams_removed = 0
             users_removed = 0
-            for sfu in permissions:
-                if isinstance(sfu, folder_pb2.SharedFolderUpdateV3Request):
-                    try:
-                        rs = api.communicate_rest(params, sfu, 'vault/shared_folder_update_v3',
-                                                  rs_type=folder_pb2.SharedFolderUpdateV3Response)
-                        if len(rs.sharedFolderAddUserStatus) > 0:
-                            users_added += len([x for x in rs.sharedFolderAddUserStatus if x.status == 'success'])
-                        if len(rs.sharedFolderAddTeamStatus) > 0:
-                            teams_added += len([x for x in rs.sharedFolderAddTeamStatus if x.status == 'success'])
-                        if len(rs.sharedFolderUpdateUserStatus) > 0:
-                            users_updated += len([x for x in rs.sharedFolderUpdateUserStatus if x.status == 'success'])
-                        if len(rs.sharedFolderUpdateTeamStatus) > 0:
-                            teams_updated += len([x for x in rs.sharedFolderUpdateTeamStatus if x.status == 'success'])
-                        if len(rs.sharedFolderRemoveUserStatus) > 0:
-                            users_removed += len([x for x in rs.sharedFolderRemoveUserStatus if x.status == 'success'])
-                        if len(rs.sharedFolderRemoveTeamStatus) > 0:
-                            teams_removed += len([x for x in rs.sharedFolderRemoveTeamStatus if x.status == 'success'])
-                    except Exception as e:
-                        shared_folder_uid = utils.base64_url_encode(sfu.sharedFolderUid)
-                        logging.warning('Shared Folder "%s" update error: %s', shared_folder_uid, e)
-                else:
-                    logging.warning('Incorrect shared folder update request')
+            while len(permissions) > 0:
+                chunk = permissions[:999]
+                permissions = permissions[999:]
+                rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                for rq in chunk:
+                    if isinstance(rq, folder_pb2.SharedFolderUpdateV3Request):
+                        rqs.sharedFoldersUpdateV3.append(rq)
+                try:
+                    rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
+                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                    for rs in rss.sharedFoldersUpdateV3Response:
+                        if rs.status == 'success':
+                            if len(rs.sharedFolderAddUserStatus) > 0:
+                                users_added += len([x for x in rs.sharedFolderAddUserStatus if x.status == 'success'])
+                            if len(rs.sharedFolderAddTeamStatus) > 0:
+                                teams_added += len([x for x in rs.sharedFolderAddTeamStatus if x.status == 'success'])
+                            if len(rs.sharedFolderUpdateUserStatus) > 0:
+                                users_updated += len([x for x in rs.sharedFolderUpdateUserStatus if x.status == 'success'])
+                            if len(rs.sharedFolderUpdateTeamStatus) > 0:
+                                teams_updated += len([x for x in rs.sharedFolderUpdateTeamStatus if x.status == 'success'])
+                            if len(rs.sharedFolderRemoveUserStatus) > 0:
+                                users_removed += len([x for x in rs.sharedFolderRemoveUserStatus if x.status == 'success'])
+                            if len(rs.sharedFolderRemoveTeamStatus) > 0:
+                                teams_removed += len([x for x in rs.sharedFolderRemoveTeamStatus if x.status == 'success'])
+                        else:
+                            shared_folder_uid = utils.base64_url_encode(rs.sharedFolderUid)
+                            logging.warning('Shared Folder "%s" update error: %s', shared_folder_uid, rs.status)
+                except Exception as e:
+                    logging.warning('Shared Folders update error: %s', e)
             sync_down.sync_down(params)
 
             if teams_added > 0:
@@ -2081,9 +2088,8 @@ def prepare_record_link(params, records):
     return record_links
 
 
-def prepare_folder_permission(params,
-                              folders,
-                              full_sync):    # type: (KeeperParams, List[ImportSharedFolder], bool) -> list
+def prepare_folder_permission(params, folders, full_sync):
+    # type: (KeeperParams, List[ImportSharedFolder], bool) -> list
     """Prepare a list of API interactions for changes to folder permissions."""
     shared_folder_lookup = {}
     api.load_available_teams(params)
@@ -2319,7 +2325,10 @@ def prepare_folder_permission(params,
             if len(remove_teams) > 0:
                 request_v3.sharedFolderRemoveTeam.extend((utils.base64_url_decode(x) for x in remove_teams))
 
-            folder_permissions.append(request_v3)
+            if (request_v3.sharedFolderAddUser or request_v3.sharedFolderAddTeam or
+                    request_v3.sharedFolderUpdateUser or request_v3.sharedFolderUpdateTeam or
+                    request_v3.sharedFolderRemoveUser or request_v3.sharedFolderRemoveTeam or update_defaults):
+                folder_permissions.append(request_v3)
 
     return folder_permissions
 
