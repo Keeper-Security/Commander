@@ -461,6 +461,7 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
                        proto_entity.accountShareExpiration if proto_entity.accountShareExpiration > 0 else None)
         _set_or_remove(keeper_entity, 'full_name', proto_entity.fullName if proto_entity.fullName else None)
         _set_or_remove(keeper_entity, 'job_title', proto_entity.jobTitle if proto_entity.jobTitle else None)
+        _set_or_remove(keeper_entity, 'tfa_enabled', proto_entity.tfaEnabled)
         data = {}
         encrypted_data = keeper_entity.get('encrypted_data')
         if encrypted_data:

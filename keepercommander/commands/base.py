@@ -193,7 +193,7 @@ def is_json_value_field(obj):
     return True
 
 
-WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim'}
+WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim', '2fa'}
 
 
 def fields_to_titles(fields): # type: (List[str]) -> Optional[List[str]]
