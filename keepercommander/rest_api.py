@@ -16,7 +16,7 @@ import logging
 import ssl
 import time
 
-from typing import Union, Dict
+from typing import Union, Dict, Optional
 
 from .params import RestApiContext
 from .error import KeeperApiError, Error
