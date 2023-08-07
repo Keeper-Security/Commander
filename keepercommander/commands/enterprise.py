@@ -34,7 +34,8 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from . import aram, audit_alerts
 from . import compliance
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
+    report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .enterprise_push import EnterprisePushCommand, enterprise_push_parser
 from .register import ShareRecordCommand, ShareFolderCommand
@@ -94,8 +95,11 @@ def register_command_info(aliases, command_info):
 
     compliance.register_command_info(aliases, command_info)
 
-SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles', 'provisioning']
-SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles', 'alias']
+
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
+                          'provisioning']
+SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
+                          'roles', 'alias', '2fa_enabled']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
 
@@ -416,7 +420,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'username': user['username'] if 'username' in user else '[none]',
                     'name': user['data'].get('displayname') or '',
                     'status': user['status'],
-                    'lock': user['lock']
+                    'lock': user['lock'],
+                    'tfa_enabled': user['tfa_enabled']
                 }
                 if 'account_share_expiration' in user:
                     u['account_share_expiration'] = user['account_share_expiration']
@@ -751,6 +756,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'alias':
                             row.append([x['username'] for x in params.enterprise.get('user_aliases', [])
                                         if x['enterprise_user_id'] == user_id and x['username'] != email])
+                        elif column == '2fa_enabled':
+                            row.append(u.get('tfa_enabled') or '')
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -761,7 +768,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers = ['user_id', 'email']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
-                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                    headers = [field_to_title(x) for x in headers]
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_teams:
@@ -1758,6 +1765,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
         acct_transfer_status = status_dict['acct_transfer_status']
 
         print('{0:>16s}: {1}'.format('Status', acct_status))
+        tfa_enabled = user.get('tfa_enabled') or False
+        print('{0:>16s}: {1}'.format('2FA Enabled', tfa_enabled))
 
         if acct_transfer_status:
             print('{0:>16s}: {1}'.format('Transfer Status', acct_transfer_status))
