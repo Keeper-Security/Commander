@@ -364,6 +364,7 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
         if not rs.success:
             logging.warning('Automator \"%s\" setup step #1 error: %s', automator.name, rs.message)
             return
+
         rq = automator_proto.AdminSetupAutomatorRequest()
         rq.automatorId = automator.automatorId
         rq.automatorState = automator_proto.NEEDS_CRYPTO_STEP_2
@@ -381,6 +382,7 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
             encrypted_rsa_private_key = crypto.encrypt_ec(rsa_private_key, automator_public_key)
             rq.encryptedRsaEnterprisePrivateKey = encrypted_rsa_private_key
 
+        rq.encryptedTreeKey = crypto.encrypt_ec(params.enterprise['unencrypted_tree_key'], automator_public_key)
         rs = api.communicate_rest(params, rq, 'automator/automator_setup',
                                   rs_type=automator_proto.AdminSetupAutomatorResponse)
         if rs.success:
