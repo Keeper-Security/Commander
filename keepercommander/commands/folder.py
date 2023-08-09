@@ -1516,10 +1516,16 @@ class FolderTransformCommand(Command):
                     new_sfs = [get_sf_fn(cc) for cc in children_copies]
                     rqs = [get_sf_update_request(shared_folders.values(), sf) for sf in new_sfs]
 
-                for rq in rqs:
-                    rs = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3',
-                                              rs_type=folder_pb2.SharedFolderUpdateV3Response)
-                    params.sync_data = True
+                while len(rqs) > 0:
+                    chunk = rqs[:999]
+                    rqs = rqs[999:]
+                    rq = folder_pb2.SharedFolderUpdateV3RequestV2()
+                    for x in chunk:
+                        if isinstance(x, folder_pb2.SharedFolderUpdateV3Request):
+                            rq.sharedFoldersUpdateV3.append(x)
+                    rss = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3', payload_version=1,
+                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                params.sync_data = True
 
             apply_transform_shares()
             move_contained_records(root)
