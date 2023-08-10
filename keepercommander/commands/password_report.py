@@ -120,8 +120,9 @@ class PasswordReportCommand(Command):
             if len(title) > 32:
                 title = title[:30] + '...'
             description = vault_extensions.get_record_description(record)
-            if len(description) > 32:
-                description = description[:30] + '...'
+            if isinstance(description, str):
+                if len(description) > 32:
+                    description = description[:30] + '...'
             table.append([record_uid, title, description, strength.length, strength.lower, strength.caps, strength.digits, strength.symbols])
 
         if fmt != 'json':
