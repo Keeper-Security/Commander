@@ -29,6 +29,7 @@ from ..error import CommandError
 
 def register_commands(commands):
     commands['create-user'] = CreateEnterpriseUserCommand()
+    commands['store-user-keys'] = StoreUserKeysCommand()
 
 
 def register_command_info(_, command_info):
@@ -43,6 +44,9 @@ register_parser.add_argument('-v', '--verbose', dest='verbose', action='store_tr
 register_parser.add_argument('email', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
+
+
+store_user_keys_parser = argparse.ArgumentParser(prog='store-user-keys', description='Stores user keys')
 
 
 class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
@@ -180,3 +184,42 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                 if folder and not record_name:
                     if folder.uid:
                         return folder.uid
+
+
+class StoreUserKeysCommand(EnterpriseCommand):
+    def get_parser(self):
+        return store_user_keys_parser
+
+    def execute(self, params, **kwargs):
+
+        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
+        tree_key = params.enterprise['unencrypted_tree_key']
+        rs = api.communicate_rest(params, None, 'enterprise/get_transfer_keys',
+                                  rs_type=enterprise_pb2.EnterpriseUserDataKeys)
+        rqs = []
+        for key in rs.keys:
+            if not key.roleKey:
+                continue
+
+            user_id = key.enterpriseUserId
+            username = user_lookup.get(user_id) or str(user_id)
+            try:
+                decrypted_role_key = crypto.decrypt_aes_v2(key.roleKey, tree_key)
+                decrypted_private_key = crypto.decrypt_aes_v1(key.privateKey, decrypted_role_key)
+                private_key = crypto.load_rsa_private_key(decrypted_private_key)
+                user_data_key = crypto.decrypt_rsa(key.userEncryptedDataKey, private_key)
+
+                user_key = enterprise_pb2.EnterpriseUserDataKey()
+                user_key.enterpriseUserId = user_id
+                user_key.userEncryptedDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
+                rqs.append(user_key)
+                logging.info('Converting key for user "%s"', username)
+            except Exception as e:
+                logging.warning('Error converting key for user %s: %s', username, e)
+
+        while len(rqs) > 0:
+            chunk = rqs[:900]
+            rqs = rqs[900:]
+            set_rq = enterprise_pb2.EnterpriseUserDataKeys()
+            set_rq.keys.extend(chunk)
+            api.communicate_rest(params, set_rq, 'enterprise/set_enterprise_users_data_keys')
