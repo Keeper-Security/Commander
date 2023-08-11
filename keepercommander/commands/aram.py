@@ -23,7 +23,7 @@ import platform
 import re
 from functools import partial
 
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 
 import requests
 import socket
@@ -1653,73 +1653,87 @@ class AgingReportCommand(Command):
         # type: (KeeperParams, sox_data.SoxData, int, Optional[bool]) -> None
         if rebuild:
             sox.storage.clear_aging_data()
-        from_date = min(sox.storage.records_dated, sox.storage.last_pw_audit)
-        if from_date > period_start_ts:
-            return
-        if from_date == 0:
-            min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
-            from_date = int(min_dt.timestamp())
-
-        filter_period = {'min': from_date}
-        audit_filter = {
-            'audit_event_type': ['record_add', 'record_password_change', 'folder_add_record'],
-            'created': filter_period
-        }
-        limit = API_EVENT_RAW_ROW_LIMIT
-        rq = {
-            'command':      'get_audit_event_reports',
-            'scope':        'enterprise',
-            'report_type':  'span',
-            'columns':      ['record_uid', 'audit_event_type'],
-            'aggregate':    ['last_created'],
-            'filter':       audit_filter,
-            'limit':        limit
-        }
+            sox.rebuild_data(RebuildTask(False, load_compliance_data=False, load_aging_data=True))
+        else:
+            # Update aging-data cache only if older than 1 day
+            now = datetime.datetime.now()
+            min_last_update = (now - datetime.timedelta(days=1)).timestamp()
+            if sox.storage.last_pw_audit > min_last_update:
+                return
 
         rec_lookup = sox.get_records()
-        logging.info('Loading record password change information...')
-        folder_add_lookup = {}
-        created_lookup = {}
-        pw_change_lookup = {}
-        done = False
-        while not done:
-            rs = api.communicate(params, rq)
-            events = rs['audit_event_overview_report_rows']
-            done = len(events) < limit
-            if not done and events:
-                filter_period['max'] = int(events[-1].get('last_created')) + 1
+        last_aging_update = sox.storage.records_dated or sox.storage.last_pw_audit
+        search_min_ts = int((datetime.datetime.now() - datetime.timedelta(days=365) * 5).timestamp())
+        search_min_ts = last_aging_update or search_min_ts
 
-            for event in events:
-                record_uid = event['record_uid']
-                record = rec_lookup.get(record_uid)
-                if not record:
-                    logging.debug(f'record-aging: record {record_uid} does not exist')
-                    continue
-                event_type = event.get('audit_event_type')
-                event_ts = int(event.get('last_created'))
-                aging_obj = {record_uid: event_ts}
-                if event_type in ('record_add', 'folder_add_record'):
-                    lookup = created_lookup if event_type == 'record_add' else folder_add_lookup
-                    if record_uid not in created_lookup:
-                        lookup.update(aging_obj)
-                elif event_type == 'record_password_change' and event_ts > record.last_pw_change and record_uid not in pw_change_lookup:
-                    pw_change_lookup.update(aging_obj)
-        created_lookup.update({r_uid: ts for r_uid, ts in folder_add_lookup.items() if r_uid not in created_lookup})
-        records_to_update = {
-            'created': created_lookup,
-            'last_pw_change': pw_change_lookup
-        }
+        def get_event_lookups():
+            filter_period = {'min': search_min_ts}
+            audit_filter = {
+                'audit_event_type': ['record_add', 'record_password_change', 'folder_add_record'],
+                'created': filter_period
+            }
+            limit = API_EVENT_SUMMARY_ROW_LIMIT
+            rq = {
+                'command':      'get_audit_event_reports',
+                'scope':        'enterprise',
+                'report_type':  'span',
+                'columns':      ['record_uid', 'audit_event_type'],
+                'aggregate':    ['last_created'],
+                'filter':       audit_filter,
+                'limit':        limit
+            }
 
+            logging.info('Loading record password change information...')
+            folder_add_lookup = {}
+            created_lookup = {}
+            pw_change_lookup = {}
+            done = False
+            loops = 0
+            while not done:
+                loops += 1
+                rs = api.communicate(params, rq)
+                events = rs['audit_event_overview_report_rows']
+                done = len(events) < limit
+                if not done and events:
+                    filter_period['max'] = int(events[-1].get('last_created')) + 1
+
+                for event in events:
+                    record_uid = event['record_uid']
+                    record = rec_lookup.get(record_uid)
+                    if not record:
+                        logging.debug(f'record-aging: record {record_uid} does not exist')
+                        continue
+                    event_type = event.get('audit_event_type')
+                    event_ts = int(event.get('last_created'))
+                    if event_type in ('record_add', 'folder_add_record'):
+                        if record.created and record.created < event_ts:
+                            continue
+                        if event_type == 'record_add':
+                            created_lookup.setdefault(record_uid, event_ts)
+                        else:
+                            folder_add_lookup.update({record_uid: event_ts})
+                    elif event_type == 'record_password_change':
+                        if record.last_pw_change < event_ts:
+                            pw_change_lookup.setdefault(record_uid, event_ts)
+            for k, v in folder_add_lookup.items():
+                created_lookup.setdefault(k, v)
+            lookups = {
+                'created': created_lookup,
+                'last_pw_change': pw_change_lookup
+            }
+            return lookups
+
+        event_lookups = get_event_lookups()
         sox.storage.set_last_pw_audit()
         sox.storage.set_records_dated()
-
-        aging_entities = {}
-        for attr in records_to_update:
-            aging_objs = records_to_update.get(attr)
-            for uid, event_ts in aging_objs.items():
-                ra = aging_entities.get(uid) or sox.storage.record_aging.get_entity(uid) or StorageRecordAging(uid)
-                setattr(ra, attr, event_ts)
-                aging_entities[uid] = ra
+        aging_entities = dict()  # type: Dict[str, StorageRecordAging]
+        for e_type in event_lookups:
+            event_ts_lookup = event_lookups.get(e_type)
+            for uid, event_ts in event_ts_lookup.items():
+                entity = aging_entities.get(uid) or sox.storage.record_aging.get_entity(uid) or StorageRecordAging(uid)
+                if getattr(entity, e_type, 0) < event_ts:
+                    setattr(entity, e_type, event_ts)
+                    aging_entities[uid] = entity
 
         # Save updated record-aging entities and re-load local SOX data
         if aging_entities:
