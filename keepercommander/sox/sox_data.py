@@ -8,10 +8,12 @@ from .sox_types import RecordPermissions, SharedFolder
 
 
 class RebuildTask:
-    def __init__(self, is_full_sync, load_compliance_data=False):      # type: (bool, bool) -> None
+    def __init__(self, is_full_sync, load_compliance_data=False, load_aging_data=False):
+        # type: (bool, bool, bool) -> None
         self.is_full_sync = is_full_sync                    # type: bool
         self.load_compliance_data = load_compliance_data    # type: bool
         self.records = set()                                # type: Set[str]
+        self.load_aging_data = load_aging_data              # type: bool
 
     def update_records(self, record_ids):    # type: (Iterable[str]) -> None
         if self.is_full_sync:
@@ -77,6 +79,24 @@ class SoxData:
                     owner = user
                     break
         return owner
+
+    def clear_records(self, uids=None):
+        self._records.update({uid: None for uid in uids}) if uids else self._records.clear()
+
+    def clear_users(self, uids=None):
+        self._users.update({uid: None for uid in uids}) if uids else self._users.clear()
+
+    def clear_teams(self, uids=None):
+        self._teams.update({uid: None for uid in uids}) if uids else self._teams.clear()
+
+    def clear_shared_folders(self, uids=None):
+        self._shared_folders.update({uid: None for uid in uids}) if uids else self._shared_folders.clear()
+
+    def clear_all(self):
+        self.clear_records()
+        self.clear_users()
+        self.clear_teams()
+        self.clear_shared_folders()
 
     @property
     def record_count(self):   # type: () -> int
@@ -186,6 +206,10 @@ class SoxData:
 
             return folder_lookup
 
+        if changes.is_full_sync:
+            self.clear_all()
+        if changes.load_aging_data:
+            self.clear_records(changes.records)
         if changes.load_compliance_data:
             self._teams.update(load_teams(self.storage))
             self._shared_folders.update(load_shared_folders(self.storage))
