@@ -97,7 +97,8 @@ def get_enterprise_data(params):
             'encrypted_data': utils.base64_url_encode(
                 crypto.encrypt_aes_v1(json.dumps({'displayname': 'User 1'}).encode('utf-8'), _TREE_KEY)),
             'status': 'active',
-            'lock': 0
+            'lock': 0,
+            'tfa_enabled': True,
         },
         {
             'enterprise_user_id':  _USER2_ID,
@@ -106,7 +107,8 @@ def get_enterprise_data(params):
             'encrypted_data': utils.base64_url_encode(
                 crypto.encrypt_aes_v1(json.dumps({'displayname': 'User 2'}).encode('utf-8'), _TREE_KEY)),
             'status': 'active',
-            'lock': 1
+            'lock': 1,
+            'tfa_enabled': False,
         }
     ]
 

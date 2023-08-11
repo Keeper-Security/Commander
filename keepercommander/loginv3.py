@@ -538,6 +538,7 @@ class LoginV3Flow:
         sp_url_query = parse_qsl(sp_url_builder.query, keep_blank_values=True)
         if is_cloud:
             sso_rq = ssocloud.SsoCloudRequest()
+            sso_rq.messageSessionUid = crypto.get_random_bytes(16)
             sso_rq.clientVersion = rest_api.CLIENT_VERSION
             sso_rq.dest = 'commander'
             sso_rq.username = params.user.lower()
