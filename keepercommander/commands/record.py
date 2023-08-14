@@ -118,7 +118,7 @@ list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
 
 
-record_history_parser = argparse.ArgumentParser(prog='history', parents=[base.report_output_parser],
+record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
                                                 description='Show the history of a record modifications.')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
