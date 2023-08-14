@@ -161,6 +161,7 @@ class KeeperParams:
         self.ssh_agent = None
         self.unmask_all = False
         self.ws = None
+        self.tunnel_process = {}
 
     def clear_session(self):
         self.auth_verifier = None

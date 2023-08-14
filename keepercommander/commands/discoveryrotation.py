@@ -8,17 +8,15 @@
 # Copyright 2023 Keeper Security Inc.
 # Contact: sm@keepersecurity.com
 #
+import asyncio
 import argparse
 import json
 import logging
-import os
-import time
 from datetime import datetime
-from threading import Thread
 from typing import Dict, Optional, Any
 
 import requests
-from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data
 from .folder import FolderMoveCommand
@@ -34,12 +32,12 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url, get_controller_cookie, request_cookie_jar_to_str, get_router_ws_url, router_send_message_to_gateway
+    get_router_url
 from .record_edit import RecordEditMixin
-from .. import api, utils, vault_extensions, vault, record_management, rest_api, crypto
+from .tunnel.enpoint import TunnelEntrance
+from .. import api, utils, vault_extensions, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
-from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
 from ..subfolder import find_parent_top_folder
@@ -108,7 +106,9 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
-        self.register_command('tunnel', PAMTunnelCommand(), 'Tunnel to the server')
+        self.register_command('tunnel-start', PAMTunnelStartCommand(), 'Tunnel to the server')
+        self.register_command('tunnel-list', PAMTunnelListCommand(), 'List all Tunnels')
+        self.register_command('tunnel-stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server')
 
 
 class PAMCmdListJobs(Command):
@@ -1212,73 +1212,6 @@ class PAMGatewayActionDiscoverCommand(Command):
         print_router_response(router_response, conversation_id)
 
 
-class PAMTunnelCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-tunnel-command')
-    parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
-                        help='UID of the record that has server credentials')
-    parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
-                        help='Gateway UID')
-
-    def get_parser(self):
-        return PAMTunnelCommand.parser
-
-    def execute(self, params, **kwargs):
-        record_uid = kwargs.get('record_uid')
-        print(f'record_uid = [{record_uid}]')
-
-
-        convo_id = GatewayAction.generate_conversation_id()
-        gateway_uid = kwargs.get('gateway')
-
-
-
-
-        ws = PAMConnection()
-        ws.connect(params, convo_id, gateway_uid)
-        logging.info(f'Connected {params.config["device_token"]}')
-
-
-
-
-
-        payload = {
-            ''
-            'conversationId': convo_id,
-        }
-        ws.send(payload, gateway_uid)
-
-        print("hi mom")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        # action = kwargs.get('action', [])
-        #
-        # command_payload = {
-        #     'action': action,
-        #     # 'args': command_arr[1:] if len(command_arr) > 1 else []
-        #     # 'kwargs': kwargs
-        # }
-        #
-        # params.ws.send(command_payload, destinations)
-
 class PAMGatewayRemoveCommand(Command):
     dr_remove_controller_parser = argparse.ArgumentParser(prog='dr-remove-gateway')
     dr_remove_controller_parser.add_argument('--gateway', '-g', required=True, dest='gateway',
@@ -1356,211 +1289,128 @@ class PAMCreateGatewayCommand(Command):
             print('-----------------------------------------------')
 
 
+class PAMTunnelStartCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-start-command')
+    pam_cmd_parser.add_argument('--port', '-p', required=False, dest='port', action='store',
+                                help='Localhost port to listen on', default=0, type=int)
+    # TODO make this True
+    pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
+                                help='UID of the record that has network information')
+    pam_cmd_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
+                                help='Gateway UID')
+    pam_cmd_parser.add_argument('--not-encrypted', '-ne', required=False, dest='not_encrypted',
+                                action='store_true', help='Encrypt tunnel traffic', default=False)
+    pam_cmd_parser.add_argument('--timeout', '-t', required=False, dest='timeout',
+                                action='store', help='timeout in seconds to wait', default=20, type=int)
 
-WS_URL = "ws://localhost:8081/tunnel"
-WS_INIT = {'kind': 'init'}
-WS_LOG_FOLDER = 'dr-logs'
-WS_HEADERS = {
-    'ClientVersion': 'ms16.2.4'
-}
-WS_SERVER_PING_INTERVAL_SEC = 5
+    def get_parser(self):
+        return PAMTunnelStartCommand.pam_cmd_parser
 
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('record_uid')
+        convo_id = GatewayAction.generate_conversation_id()
+        gateway_uid = kwargs.get('gateway')
+        timeout = kwargs.get('timeout')
+        port = kwargs.get('port')
+        encrypt_tunnel = not(kwargs.get('not_encrypted'))
 
-pam_cmd_parser = argparse.ArgumentParser(prog='dr-cmd')
-pam_cmd_parser.add_argument('--dest', '-d', nargs='*', type=str, action='store', dest='destinations',
-                            help='Destination, usually Controller Client ID')
-pam_cmd_parser.add_argument('command', nargs='*', type=str, action='store', help='Controller command')
+        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Starting tunnel entrance"{bcolors.ENDC}')
+        tunnel = TunnelEntrance(params, convo_id, encrypt_tunnel, gateway_uid,
+                                record_uid, port, timeout)
 
+        params.tunnel_process[convo_id] = tunnel
 
-class PAMConnection:
-    def __init__(self):
-        if not os.path.isdir(WS_LOG_FOLDER):
-            os.makedirs(WS_LOG_FOLDER)
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Start tunnel task{bcolors.ENDC}')
+        tunnel.loop.run_until_complete(tunnel.start_task())
+        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Waiting for server to be ready{bcolors.ENDC}')
+        tunnel.loop.run_until_complete(tunnel.wait_for_ready())
+        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Server is ready{bcolors.ENDC}')
 
-        # one log file per opened connection
-        self.ws_log_file = os.path.join(WS_LOG_FOLDER, f'{timestamp}.log')
-        self.ws_app = None
-        self.thread = None
-
-    def connect(self, params, convo_id, gateway_uid):
-        try:
-            import websocket
-        except ImportError:
-            logging.warning(f'websocket-client module is missing. '
-                            f'Use following command to install it '
-                            f'`{bcolors.OKGREEN}pip3 install -U websocket-client{bcolors.ENDC}`')
+        if not tunnel.is_connected:
+            logging.warning(f"{bcolors.FAIL}[{convo_id}] is not connected{bcolors.ENDC}")
             return
 
+        logging.info(f'{bcolors.OKBLUE}\n\t[{convo_id}] Listening on "localhost:{tunnel.port}"\n{bcolors.ENDC}')
 
 
-        cookies_jar = get_controller_cookie(params, gateway_uid)
-        cookies_str = request_cookie_jar_to_str(cookies_jar)
-
-
-
-        transmission_key = utils.generate_aes_key()
-        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
-
-        if params.rest_context.server_key_id < 7:
-            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
-        else:
-            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
-
-
-        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
-
-
-        router_url = get_router_ws_url(params)
-
-        connection_url = f'{router_url}/tunnel/{convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}'
-
-        self.ws_app = websocket.WebSocketApp(
-            connection_url,
-            on_open=self.on_open,
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close,
-            cookie=cookies_str
-        )
-
-        # self.ws_app.run_forever(ping_interval=WS_SERVER_PING_INTERVAL_SEC, ping_payload='client-hello')
-        self.thread = Thread(target=self.ws_app.run_forever, kwargs={
-            'ping_interval': WS_SERVER_PING_INTERVAL_SEC,
-            # frequency how ofter ping is send to the server to keep the connection alive
-            'ping_payload': 'client-hello'
-        },
-                             daemon=True)
-        self.thread.start()
-
-
-        payload_dict = {
-                'kind': 'start',
-                'encryptTunnel': True,
-                'conversationType': 'tunnel'
-        }
-        payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
-        payload_bytes = payload_json.encode('utf-8')
-
-        rq_proto = router_pb2.RouterControllerMessage()
-        rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
-        rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
-        rq_proto.messageType = pam_pb2.CMT_STREAM
-        rq_proto.streamResponse = False
-        rq_proto.payload = payload_bytes
-        rq_proto.timeout = 15000  # Default time out how long the response from the Gateway should be
-
-        router_send_message_to_gateway(
-            params,
-            transmission_key,
-            rq_proto,
-            gateway_uid)
-
-        print("Connected to websocket")
-
-    def disconnect(self):
-        if self.thread and self.thread.is_alive():
-            self.ws_app.close()
-            self.thread.join()
-
-    def init(self):
-        # self.ws_app.send(json.dumps(WS_INIT))
-        self.log('Connection initialized')
-
-    def log(self, msg, time=True):
-        with open(self.ws_log_file, 'a') as ws_log:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f ') if time else ''
-            ws_log.write(f'{timestamp}{msg}\n')
-
-    def send(self, command_payload, controller_uid):
-        data_dict = {}
-
-        data_dict['kind'] = 'STREAM'
-        data_dict['payload'] = command_payload
-        data_dict['controllerUid'] = controller_uid
-
-        data_json = json.dumps(data_dict)
-
-        self.ws_app.send(data_json)
-        self.log(f'Data sent {data_json}')
-
-    def process_event(self, event):
-        self.log(f'New Event to process [{event}]')
-
-        event_kind = event.get('kind', None)
-
-        if event_kind:
-            if event_kind == 'ctl_state':
-                new_controllers = event['controllers']
-                # dropped = self.controllers - new_controllers
-                self.log(f'Controller state: {new_controllers}')
-            elif event_kind == 'ctl_response':
-                payload = event.get('payload')
-
-                if utils.is_json(payload):
-                    is_success = payload.get('success')
-                    status_message = payload.get('statusMessage')
-                    data = payload['data']
-                    self.log(f'is_success: [{is_success}], status_message: [{status_message}], data: [{data}]')
-
-                else:
-                    data = payload
-                    self.log(f'Guacd response data: [{data}]')
-
-            else:
-                self.log(f'Event: {event}')
-        else:
-            self.log(f'No event kind was sent')
-
-            if 'message' in event:
-                logging.warning(event.get('message'))
-            else:
-                logging.warning(str(event))
-
-    def on_open(self, ws):
-        self.log('Connection open')
-        self.init()
-
-    def on_message(self, ws, event_json):
-        self.log(f'ws.listener.on_message:{event_json}')
-
-        try:
-            event = json.loads(event_json)
-        except json.decoder.JSONDecodeError:
-            self.log(f'Raw event: {event_json}')
-        else:
-            self.process_event(event)
-
-    def on_error(self, ws, error_event):
-        self.log(f'ws.listener.on_error:{error_event}')
-
-    def on_close(self, ws, close_status_code, close_msg):
-        self.log(f'ws.listener.on_close: close_status_code=[{close_status_code}], close_msg=[{close_msg}]')
-
-
-class PAMConnect(Command):
-    parser = argparse.ArgumentParser(prog='pam gateway connect')
-    def get_parser(self):
-        return PAMConnect.parser
-
-    def execute(self, params, **kwargs):
-        if getattr(params, 'ws', None) is None:
-            params.ws = PAMConnection()
-            params.ws.connect(params)
-            logging.info(f'Connected {params.config["device_token"]}')
-        else:
-            logging.warning('Connection exists')
-
-
-class PAMDisconnect(Command):
-    parser = argparse.ArgumentParser(prog='dr-disconnect')
+class PAMTunnelListCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-list-command')
+    pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+                                help='Used to list all tunnels for the given Gateway UID')
+    pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
+                                help='Filter list with UID of the PAM record that was used to create the tunnel')
 
     def get_parser(self):
-        return PAMDisconnect.parser
+        return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        if getattr(params, 'ws', None) is None:
-            logging.warning("Connection doesn't exist")
+        if params.tunnel_process == {}:
+            logging.warning(f"{bcolors.OKBLUE}No Tunnels found{bcolors.ENDC}")
+            return
+        record_uid = kwargs.get('record_uid', None)
+        gateway_uid = kwargs.get('gateway', None)
+
+        tunnels = {key: obj for key, obj in params.tunnel_process.items()
+                   if (record_uid is None or obj.record_uid == record_uid) and
+                   (gateway_uid is None or obj.gateway_uid == gateway_uid)}
+
+        # If record_uid is None and gateway_uid is None, then all items will be included in tunnels.
+        # If record_uid is provided, only items with a matching record_uid will be included.
+        # If gateway_uid is provided, only items with a matching gateway_uid will be included.
+        # If both are provided, only items with both matching record_uid and gateway_uid will be included.
+        if len(tunnels) == 0:
+            logging.info(f'{bcolors.OKBLUE}No tunnels found.{bcolors.ENDC}')
         else:
-            params.ws.disconnect()
-            params.ws = None
+            logging.info(f'{bcolors.OKGREEN}Tunnels:{bcolors.ENDC}')
+            for k in tunnels.keys():
+                tunnel = params.tunnel_process[k]
+                opening = bcolors.OKGREEN
+                if not tunnel.is_connected:
+                    opening = bcolors.WARNING
+                logging.warning(f'{opening}[{tunnel.convo_id}], connected: {tunnel.is_connected}, port: "{tunnel.port}"'
+                                f', Uptime: "{tunnel.uptime}";{bcolors.ENDC}')
+
+
+class PAMTunnelStopCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-stop-command')
+    pam_cmd_parser.add_argument('--tid', '-t', required=False, dest='convo_id', action='store',
+                                help='The connection ID of the Tunnel to stop')
+    pam_cmd_parser.add_argument('--clean-up-stale', '-c', required=False, default=False,
+                                dest='clean_up_stale', action='store_true',
+                                help='Remove all tunnels that are not running')
+    # pam_cmd_parser.add_argument('--dest', '-d', nargs='*', type=str, action='store', dest='destinations',
+    #                             help='Destination, usually Controller Client ID')
+    # pam_cmd_parser.add_argument('command', nargs='*', type=str, action='store', help='Controller command')
+
+    def get_parser(self):
+        return PAMTunnelStopCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        def close_tunnel(_id):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            coroutine = params.tunnel_process[_id].disconnect()
+            loop.run_until_complete(coroutine)
+            loop.close()
+            del params.tunnel_process[_id]
+        if params.tunnel_process == {}:
+            logging.warning(f"{bcolors.OKBLUE}No Tunnels found{bcolors.ENDC}")
+            return
+        convo_id = kwargs.get('convo_id', None)
+        if convo_id is None:
+            if len(params.tunnel_process) == 1:
+                # if only one tunnel is running, stop it
+                convo_id = list(params.tunnel_process.keys())[0]
+                close_tunnel(convo_id)
+            else:
+                # we have more than one tunnel running, ask user to specify which one to stop
+                logging.error(f"{bcolors.FAIL}More than one Tunnel found and TunnelId was not specified. "
+                              f"Please specify TunnelId{bcolors.ENDC}")
+        elif convo_id in params.tunnel_process:
+            close_tunnel(convo_id)
+        else:
+            logging.warning(f"{bcolors.FAIL}TunnelId {convo_id} not found in the list of running tunnels{bcolors.ENDC}")
+        if kwargs.get('clean_up_stale', False):
+            for k in list(params.tunnel_process.keys()):
+                if not params.tunnel_process[k].is_connected:
+                    close_tunnel(k)
