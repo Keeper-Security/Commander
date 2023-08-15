@@ -10,7 +10,8 @@ from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
 from ..error import Error
 from ..params import KeeperParams
-from ..sox import sox_types
+from ..sox import sox_types, get_node_id
+from ..sox.sox_data import SoxData
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
 compliance_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
@@ -68,13 +69,12 @@ def register_command_info(aliases, command_info):
     command_info['compliance'] = 'SOX Compliance Reporting'
 
 
-def get_email(params, user_uid):    # type: (KeeperParams, int) -> str
-    user_uid_key = 'enterprise_user_id'
-    return next(u.get('username') for u in params.enterprise.get('users') if u.get(user_uid_key) == user_uid)
+def get_email(sdata, user_uid):    # type: (SoxData, int) -> str
+    return sdata.get_users().get(user_uid).email
 
 
-def get_team_usernames(params, team):  # type: (KeeperParams, sox_types.Team) -> List[str]
-    return [get_email(params, userid) for userid in team.users]
+def get_team_usernames(sdata, team):  # type: (SoxData, sox_types.Team) -> List[str]
+    return [get_email(sdata, userid) for userid in team.users]
 
 
 class ComplianceCommand(GroupCommand):
@@ -110,15 +110,10 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
         node_name_or_id = kwargs.get('node')
-        node_name_or_id = int(node_name_or_id) if node_name_or_id and node_name_or_id.isdecimal() else node_name_or_id
+        node_id = get_node_id(params, node_name_or_id)
+        enterprise_id = node_id >> 32
         nodes = params.enterprise['nodes']
         root_node_id = nodes[0].get('node_id', 0)
-        node_ids = (n.get('node_id') for n in nodes)
-        node_id_lookup = {n.get('data').get('displayname'): n.get('node_id') for n in nodes}
-        node_id = node_id_lookup.get(node_name_or_id) if node_name_or_id in node_id_lookup \
-            else node_name_or_id if node_name_or_id in node_ids \
-            else root_node_id
-        enterprise_id = node_id >> 32
         max_data_age = datetime.timedelta(days=1)
         min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
 
@@ -312,7 +307,7 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
                 perms = ', '.join(perms) if perms else 'Read Only'
                 row = [team.team_name, team_uid, get_sf_name(sf_uid), sf_uid, perms, num_recs]
                 if show_team_users:
-                    row.append(get_team_usernames(params, team))
+                    row.append(get_team_usernames(sox_data, team))
                 report_data.append(row)
 
         return report_data
@@ -453,8 +448,8 @@ class ComplianceSharedFolderReportCommand(BaseComplianceReportCommand):
             sf_team_uids = list(sf.teams)
             sf_team_names = [teams.get(t).team_name for t in sf.teams]
             records = [rp.record_uid for rp in sf.record_permissions]
-            users = [get_email(params, u) for u in sf.users]
-            team_users = [tu for tuid in sf_team_uids for tu in get_team_usernames(params, teams.get(tuid))] if show_team_users else []
+            users = [get_email(sox_data, u) for u in sf.users]
+            team_users = [tu for tuid in sf_team_uids for tu in get_team_usernames(sox_data, teams.get(tuid))] if show_team_users else []
             team_users = [f'(TU){email}' for email in team_users]
             row = [sfuid, sf_team_uids, sf_team_names, records, team_users + users]
             report_data.append(row)
