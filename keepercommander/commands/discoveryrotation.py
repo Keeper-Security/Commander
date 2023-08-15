@@ -33,12 +33,13 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url
+    get_router_url, router_send_message_to_gateway, get_router_ws_url
 from .record_edit import RecordEditMixin
 from .tunnel.enpoint import TunnelEntrance
-from .. import api, utils, vault_extensions, vault, record_management
+from .. import api, utils, vault_extensions, vault, record_management, rest_api, crypto
 from ..display import bcolors
 from ..error import CommandError
+from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
 from ..subfolder import find_parent_top_folder
@@ -110,6 +111,8 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('tunnel-start', PAMTunnelStartCommand(), 'Tunnel to the server')
         self.register_command('tunnel-list', PAMTunnelListCommand(), 'List all Tunnels')
         self.register_command('tunnel-stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server')
+
+        self.register_command('port-forward', alias='pf',command=PAMPortForwardCommand(), description='Port Forwarding')
 
 
 class PAMCmdListJobs(Command):
@@ -1420,3 +1423,67 @@ class PAMTunnelStopCommand(Command):
             for k in list(params.tunnel_process.keys()):
                 if not params.tunnel_process[k].is_connected:
                     close_tunnel(k)
+
+
+class PAMPortForwardCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
+    pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+                                help='Used to list all tunnels for the given Gateway UID')
+    pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
+                                help='Filter list with UID of the PAM record that was used to create the tunnel')
+
+    def get_parser(self):
+        return PAMPortForwardCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('record_uid')
+        convo_id = GatewayAction.generate_conversation_id()
+        gateway_uid = kwargs.get('gateway')
+
+
+        transmission_key = utils.generate_aes_key()
+        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+
+        if params.rest_context.server_key_id < 7:
+            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+        else:
+            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
+        router_url = get_router_ws_url(params)
+        connection_url = f'{router_url}/tunnel/{convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}'
+
+
+        ## 1. CONNECT TO WS HERE
+        ## ???
+
+
+
+        ## 2. SEND START MESSAGE OVER REST TO GATEWAY
+        ##
+        payload_dict = {
+            'kind': 'start',
+            'encryptTunnel': False,
+            'conversationType': 'tunnel'
+        }
+
+        payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+        payload_bytes = payload_json.encode('utf-8')
+
+        rq_proto = router_pb2.RouterControllerMessage()
+        rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
+        rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
+        rq_proto.messageType = pam_pb2.CMT_STREAM
+        rq_proto.streamResponse = False
+        rq_proto.payload = payload_bytes
+        rq_proto.timeout = 1500000  # Default time out how long the response from the Gateway should be
+
+        router_send_message_to_gateway(
+            params,
+            transmission_key,
+            rq_proto,
+            gateway_uid)
+
+
+
+        ## 3. SEND DATA OVER WS
+        ## ????
