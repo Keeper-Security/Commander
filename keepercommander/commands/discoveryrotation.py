@@ -12,6 +12,7 @@ import asyncio
 import argparse
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Dict, Optional, Any
 
@@ -1320,17 +1321,22 @@ class PAMTunnelStartCommand(Command):
 
         params.tunnel_process[convo_id] = tunnel
 
-        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Start tunnel task{bcolors.ENDC}')
-        tunnel.loop.run_until_complete(tunnel.start_task())
-        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Waiting for server to be ready{bcolors.ENDC}')
-        tunnel.loop.run_until_complete(tunnel.wait_for_ready())
-        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Server is ready{bcolors.ENDC}')
+        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Start tunnel initialization{bcolors.ENDC}')
 
-        if not tunnel.is_connected:
-            logging.warning(f"{bcolors.FAIL}[{convo_id}] is not connected{bcolors.ENDC}")
-            return
+        on_connected = asyncio.Event()
+        tunnel.loop.create_task(tunnel.ws.connect(on_connected))
+        t0 = tunnel.loop.create_task(on_connected.wait())
 
-        logging.info(f'{bcolors.OKBLUE}\n\t[{convo_id}] Listening on "localhost:{tunnel.port}"\n{bcolors.ENDC}')
+        done, pending = tunnel.synchronous_method([t0])
+
+        logging.debug(f'{bcolors.OKGREEN}[{convo_id}] Start indefinite tasks{bcolors.ENDC}')
+
+        t1 = tunnel.loop.create_task(tunnel.start_server())
+        t2 = tunnel.loop.create_task(tunnel.start_router_to_local_tunnel_task())
+        t3 = tunnel.loop.create_task(tunnel.start_local_to_router_tunnel_task())
+        t4 = tunnel.loop.create_task(tunnel.start_ping_task())
+        tasks = [t1, t2, t3, t4]
+        done, pending = tunnel.synchronous_method(tasks)
 
 
 class PAMTunnelListCommand(Command):

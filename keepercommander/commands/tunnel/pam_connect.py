@@ -1,10 +1,10 @@
 import asyncio
 import json
 import logging
-import os
-import time
-from datetime import datetime
-from threading import Thread
+from typing import Optional
+
+import websockets
+from websockets.client import WebSocketClientProtocol
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
@@ -22,40 +22,61 @@ WS_LOG_FOLDER = 'dr-logs'
 WS_SERVER_PING_INTERVAL_SEC = 5
 
 
-class PAMConnection:
-    def __init__(self, queue, convo_id, loop, params, gateway_uid, ws_is_ready, encrypt=True):
-        if not os.path.isdir(WS_LOG_FOLDER):
-            os.makedirs(WS_LOG_FOLDER)
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        self.convo_id = convo_id
+MAX_PACKET_SIZE = 31 * 1024
+MAX_BUFFER_SIZE = 24 * 1024
 
-        # one log file per opened connection
-        self.ws_log_file = os.path.join(WS_LOG_FOLDER, f'{timestamp}.log')
-        self.ws_app = None
-        self.thread = None
-        self.router_queue = queue
+
+class PAMConnection:
+    logger = logging.getLogger('keeper.aws_tunnel')
+
+    def __init__(self, queue, convo_id, loop, params, gateway_uid, encrypt=True):
+        self.ws = None  # type: Optional[WebSocketClientProtocol]
+        self.verify_cert = True
+        self.pair_id: Optional[str] = None
         self.loop = loop
+        self.input_queue = asyncio.Queue()
+        self.output_queue = queue
+        self.convo_id = convo_id
         self.params = params
         self.gateway_uid = gateway_uid
-        self.ws_is_ready = ws_is_ready
         self.encrypt = encrypt
 
     def log(self, message: str, log_level=logging.INFO, start_color: bcolors = bcolors.OKGREEN):
         logging.log(log_level, f'{start_color}[{self.convo_id}][PAMConnection]: {message}{bcolors.ENDC}')
 
-    def connect(self):
-        try:
-            import websocket
-        except ImportError:
-            self.log('websocket-client module is missing. Use following command to install it:', logging.WARNING,
-                     bcolors.WARNING)
-            self.log('pip3 install -U websocket-client', logging.WARNING, bcolors.OKBLUE)
-            return
+    @property
+    def is_connected(self) -> bool:
+        return self.ws is not None and self.pair_id is not None
+
+    # async def ws_writer(self):
+    #     ws = self.ws
+    #     while ws.open:
+    #         buffer = await self.input_queue.get()
+    #         if buffer:
+    #             await self.input_queue.put(buffer)
+    #
+    #     while not self.input_queue.empty():
+    #         _ = self.input_queue.get_nowait()
+    #         self.input_queue.task_done()
+    #
+    async def ws_reader(self):
+        ws = self.ws
+        async for message in ws:
+            try:
+                await self.output_queue.put(message)
+                self.log(f'ws_reader new router_queue size: {self.output_queue.qsize()}', logging.DEBUG)
+            except Exception as e:
+                self.logger.warning(f'Failed to parse message: {e}')
+                continue
+
+    async def connect(self, on_connected) -> None:
+        await self.disconnect()
 
         cookies_jar = get_controller_cookie(self.params, self.gateway_uid)
         if not cookies_jar:
             self.log('Unable to get controller cookie', logging.ERROR, bcolors.FAIL)
             return
+
         cookies_str = request_cookie_jar_to_str(cookies_jar)
 
         transmission_key = utils.generate_aes_key()
@@ -71,26 +92,17 @@ class PAMConnection:
         router_url = get_router_ws_url(self.params)
 
         connection_url = (f'{router_url}/tunnel/{self.convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}')
-        self.log(f'Connecting to router url', logging.DEBUG)
-        self.ws_app = websocket.WebSocketApp(
+        self.log(f'Connecting to router', logging.DEBUG)
+
+        extra_headers = {"Cookie": cookies_str}
+
+        self.ws = await websockets.connect(
             connection_url,
-            on_open=self.on_open,
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close,
-            cookie=cookies_str
+            extra_headers=extra_headers,
+            ping_interval=WS_SERVER_PING_INTERVAL_SEC
         )
 
-        self.thread = Thread(target=self.ws_app.run_forever, kwargs={
-            'ping_interval': WS_SERVER_PING_INTERVAL_SEC,
-            # frequency how ofter ping is send to the server to keep the connection alive
-            'ping_payload': 'client-hello'},
-                             daemon=True
-                             )
-        self.thread.start()
-        # Wait for the websocket to be ready
-        time.sleep(3)
-        self.log(f'ws ping thread started.', logging.DEBUG)
+        self.log(f'ws started.', logging.DEBUG)
 
         payload_dict = {
             'kind': 'start',
@@ -114,33 +126,59 @@ class PAMConnection:
             rq_proto,
             self.gateway_uid)
 
-        self.ws_is_ready.set()
-
         self.log(f'Connected to websocket finished', logging.DEBUG)
+        on_connected.set()
 
-    def disconnect(self):
-        if self.thread and self.thread.is_alive():
-            self.ws_app.close()
-            self.thread.join()
+        await self.ws_reader()
 
-    def send(self, command_payload, controller_uid):
+    async def disconnect(self) -> None:
+        if self.ws:
+            await self.ws.close()
+            self.ws = None
+        self.pair_id = None
+        await self.input_queue.put(b'')
+        while not self.output_queue.empty():
+            _ = self.output_queue.get_nowait()
+            self.output_queue.task_done()
+    #
+    # async def read(self, timeout: int = -1) -> bytes:
+    #     if timeout > 0:
+    #         buffer = await asyncio.wait_for(self.output_queue.get(), timeout)
+    #     else:
+    #         buffer = await self.output_queue.get()
+    #     self.output_queue.task_done()
+    #     return buffer
+    #
+    # async def write(self, data: bytes) -> None:
+    #     if self.is_connected:
+    #         while len(data) > 0:
+    #             buffer = data[:MAX_BUFFER_SIZE]
+    #             data = data[MAX_BUFFER_SIZE:]
+    #             await self.input_queue.put(buffer)
+    #     else:
+    #         raise Exception('Not connected')
+
+    # These methods are called by the websocket client running in a separate thread
+
+    async def write(self, command_payload, controller_uid):
         data_dict = {'kind': 'STREAM', 'payload': command_payload, 'controllerUid': controller_uid}
 
         data_json = json.dumps(data_dict)
 
-        self.ws_app.send(data_json)
+        await self.ws.send(data_json)
         self.log(f'Data sent {data_json}', logging.DEBUG)
 
-    # These methods are called by the websocket client running in a separate thread
     def on_open(self, ws):
-        # self.ws_app.send(json.dumps(WS_INIT))
         pass
 
     def on_message(self, ws, event_json):
         # this is the reception method for messages from the router
         self.log(f'on_message: {event_json}', logging.DEBUG)
-        self.router_queue.put(event_json)
-        self.log(f'on_message new router_queue size: {self.router_queue.qsize()}', logging.DEBUG)
+        t = self.schedule_task(self.output_queue.put(event_json))
+        self.log(f'on_message new router_queue size: {self.output_queue.qsize()}', logging.DEBUG)
+
+    def schedule_task(self, task):
+        return self.loop.create_task(task)
 
     def on_close(self, ws, reason, code):
         self.log(f'Connection closed: Status code: {code}, Message: {reason}', logging.INFO)

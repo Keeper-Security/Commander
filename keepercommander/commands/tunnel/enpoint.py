@@ -1,12 +1,10 @@
 import asyncio
 import logging
 import socket
-import threading
 import time
 from ...display import bcolors
 from datetime import timedelta
 from typing import Optional
-from queue import Queue
 
 from keeper_secrets_manager_core.crypto import CryptoUtils
 
@@ -34,18 +32,18 @@ class TunnelEntrance:
 
         self._client_reader = None
         self._client_writer = None
+        self.server_task = None
         self.ping_count = 0
         # TODO: ASK MAX what type of keep alive requirement we have for this!!!!
         self.max_ping_count = 0
 
-        self.loop = asyncio.new_event_loop()
+        self.loop = asyncio.get_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.server_task = None
-        self.ws_is_ready = threading.Event()
-        self.router_queue = Queue()
-        self.tasks_ready = threading.Event()
-        self.ws = PAMConnection(self.router_queue, self.convo_id, self.loop, params, self.gateway_uid, self.ws_is_ready,
-                                self.encrypt)
+        if logging.getLogger().getEffectiveLevel() == logging.DEBUG:
+            self.loop.set_debug(True)
+            self.log(f'Event loop logger in debug mode', logging.DEBUG)
+        self.router_queue = asyncio.Queue()
+        self.ws = PAMConnection(self.router_queue, self.convo_id, self.loop, params, self.gateway_uid, self.encrypt)
         self.log(f'End init tunnel entrance', logging.DEBUG)
 
     @property
@@ -65,31 +63,14 @@ class TunnelEntrance:
             return '0'
         return str(timedelta(seconds=int(time.time() - self.start_time)))
 
-    async def start_task(self):
-        self.ws.connect()
-        self.ws_is_ready.wait()
-        self.log(f'WS Connection is ready', logging.DEBUG)
+    def synchronous_method(self, tasks):
+        done, pending = self.loop.run_until_complete(asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED))
+        return done, pending
 
-        await self.start_server()
-        self.log(f'Local server is ready', logging.DEBUG)
-
-        self.is_connected = True
-
-        self.loop.create_task(self.start_router_to_local_tunnel_task())
-        self.loop.create_task(self.start_local_to_router_tunnel_task())
-
-        # Start ping task
-        # ping_task_coroutine = self.ping_task()
-        # asyncio.create_task(ping_task_coroutine)
-
-        await self.write_to_router(b"ping")
-        self.tasks_ready.set()
-        self.log(f'Tunnel tasks are running', logging.DEBUG)
-        return True
-
-    async def ping_task(self):
+    async def start_ping_task(self):
+        await self.wait_for_connected('ping_task')
         self.log(f'Starting commander to gateway ping task', logging.DEBUG)
-        while self.is_connected:
+        while self.ping_count < self.max_ping_count:
             try:
                 await asyncio.sleep(5)
                 self.log(f'Pinging tunnel connection', logging.DEBUG)
@@ -98,9 +79,6 @@ class TunnelEntrance:
             except Exception as e:
                 self.log(f'Exception in Tunnel connection ping failed: {str(e)}', logging.DEBUG)
                 return
-
-    async def wait_for_ready(self):
-        self.tasks_ready.wait()
 
     async def start_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         self.connection = (reader, writer)
@@ -124,14 +102,12 @@ class TunnelEntrance:
 
         self.log('Tunnel server is ready', logging.DEBUG)
 
-        self.server_task = self.loop.create_task(self.run_server())
-
-        self.log('Tunnel server started', logging.DEBUG)
-
-    async def run_server(self):
-        self.log(f'Tunnel server is {self.server}', logging.DEBUG)
         async with self.server:
+            self.log('Tunnel server started', logging.DEBUG)
+            self.is_connected = True
             await self.server.serve_forever()
+
+        self.log('Tunnel server exited', logging.DEBUG)
 
     async def disconnect(self):
         self.is_connected = False
@@ -149,20 +125,30 @@ class TunnelEntrance:
             f = asyncio.gather(*tasks)
             await f
 
+        # Close the server
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+
         tasks.clear()
         if len(tasks) > 0:
             await asyncio.gather(*tasks)
 
     async def start_router_to_local_tunnel_task(self) -> None:
+        await self.wait_for_connected('router_to_local_tunnel_task')
+
         if not self.is_connected:
-            self.log(f'[Tunnel reader] not connected', logging.ERROR, bcolors.FAIL)
+            self.log(f'[router_to_local_tunnel_task] not connected', logging.ERROR, bcolors.FAIL)
             return
+        else:
+            self.log(f'[router_to_local_tunnel_task] Connected', logging.DEBUG)
 
         while self.is_connected:
             try:
-                self.log(f'Waiting for data queue size: {self.router_queue.qsize()}', logging.DEBUG)
-                unencrypted_data = self.router_queue.get()
-                self.log(f'After data queue size: {self.router_queue.qsize()} '
+                self.log(f'[router_to_local_tunnel_task] Waiting for data queue size: {self.router_queue.qsize()}', logging.DEBUG)
+                await asyncio.sleep(.01)
+                unencrypted_data = await self.router_queue.get()
+                self.log(f'[router_to_local_tunnel_task] After data queue size: {self.router_queue.qsize()} '
                          f'Received type: {type(unencrypted_data)} len: {len(unencrypted_data)}', logging.DEBUG)
 
                 self.router_queue.task_done()
@@ -170,25 +156,25 @@ class TunnelEntrance:
                     if len(unencrypted_data) == 0:
                         unencrypted_data = b''
                     else:
-                        self.log(f'Received message: {unencrypted_data}', logging.DEBUG)
+                        self.log(f'[router_to_local_tunnel_task] Received message: {unencrypted_data}', logging.DEBUG)
                         if "ping" == unencrypted_data:
-                            self.log(f'Received ping', logging.DEBUG)
+                            self.log(f'[router_to_local_tunnel_task] Received ping', logging.DEBUG)
                             await self.write_to_router(b"pong")
-                            self.log(f'Sent pong', logging.DEBUG)
+                            self.log(f'[router_to_local_tunnel_task] Sent pong', logging.DEBUG)
                             continue
                         elif "pong" == unencrypted_data:
-                            self.log(f'Received pong', logging.DEBUG)
-                            await self.write_to_router(b"ping")
-                            # self.ping_count -= 1
+                            self.log(f'[router_to_local_tunnel_task] Received pong', logging.DEBUG)
+                            self.ping_count -= 1
                             continue
                         else:
-                            self.log(f'Read {len(unencrypted_data)} bytes', logging.DEBUG)
+                            self.log(f'[router_to_local_tunnel_task] Read {len(unencrypted_data)} bytes', logging.DEBUG)
 
                         if self.ping_count > self.max_ping_count:
                             self.is_connected = False
-                            self.log(f'Ping count exceeded {self.max_ping_count}', logging.DEBUG)
+                            self.log(f'[router_to_local_tunnel_task] Ping count exceeded {self.max_ping_count}', logging.DEBUG)
                             await self.disconnect()
                             continue
+                        unencrypted_data = unencrypted_data.encode('utf-8')
 
                     if not isinstance(unencrypted_data, bytes):
                         continue
@@ -196,20 +182,20 @@ class TunnelEntrance:
                         if self.encrypt:
                             unencrypted_data = CryptoUtils.decrypt_aes(unencrypted_data, self.record_key_bytes)
                     except Exception as e:
-                        self.log(f'Decryption error: {e}', logging.ERROR, bcolors.FAIL)
+                        self.log(f'[router_to_local_tunnel_task] Decryption error: {e}', logging.ERROR, bcolors.FAIL)
                         raise
                     await self.write_to_local(unencrypted_data)
 
                 else:
-                    self.log(f'Read type:{type(unencrypted_data)} length: {len(unencrypted_data)}', logging.DEBUG)
+                    self.log(f'[router_to_local_tunnel_task] Read type:{type(unencrypted_data)} length: {len(unencrypted_data)}', logging.DEBUG)
 
             except asyncio.TimeoutError:
-                self.log(f"Tunnel reader didn't receive data in {self.timeout} seconds", logging.DEBUG,
+                self.log(f"[router_to_local_tunnel_task] Tunnel reader didn't receive data in {self.timeout} seconds", logging.DEBUG,
                          bcolors.WARNING)
             except Exception as ex:
-                self.log(f'Failed to read from tunnel: {ex}', logging.ERROR, bcolors.FAIL)
+                self.log(f'[router_to_local_tunnel_task] Failed to read from tunnel: {ex}', logging.ERROR, bcolors.FAIL)
                 raise ex
-        self.log(f'Tunnel reader task stopped', logging.DEBUG)
+        self.log(f'[router_to_local_tunnel_task] Tunnel reader task stopped', logging.DEBUG)
 
     async def write_to_router(self, data: bytes):
         self.log(f'Sending message: {data}', logging.DEBUG)
@@ -224,7 +210,7 @@ class TunnelEntrance:
             'conversationId': self.convo_id,
             'value': f'{encrypted_data}'
         }
-        self.ws.send(payload, self.gateway_uid)
+        await self.ws.write(payload, self.gateway_uid)
 
     async def write_to_local(self, data: bytes) -> None:
         if self.connection is None:
@@ -258,7 +244,24 @@ class TunnelEntrance:
 
         self.log(f'[{self.convo_id}]: Connection "{self.convo_id}" closed', logging.DEBUG)
 
+    async def wait_for_connected(self, msg: str):
+        startup_count = 0
+        try:
+            while startup_count < 10 and not self.is_connected:
+                self.log(f'[{msg}] Connected: {self.is_connected}, wait {startup_count}', logging.DEBUG)
+                await asyncio.sleep(1)
+                startup_count += 1
+        except Exception as e:
+            self.log(f'[{msg}] Failed to wait for connected: {e}', logging.ERROR, bcolors.FAIL)
+        self.log(f'[{msg}] Exiting wait for connected: {self.is_connected}', logging.DEBUG)
+
     async def start_local_to_router_tunnel_task(self):
+        await self.wait_for_connected('local_to_router_tunnel_task')
+
+        if not self.is_connected:
+            self.log(f'[local_to_router_tunnel_task] not connected', logging.ERROR, bcolors.FAIL)
+            return
+
         while self.is_connected:
             data = await self.read_from_local()
             try:
@@ -266,8 +269,8 @@ class TunnelEntrance:
                     continue
                 await self.write_to_router(data)
             except Exception as e:
-                self.log(f'[{self.convo_id}]: Failed to write to tunnel: {e}', logging.ERROR, bcolors.FAIL)
-        self.log(f'Queue processor exited', logging.DEBUG)
+                self.log(f'[local_to_router_tunnel_task] Failed to write to tunnel: {e}', logging.ERROR, bcolors.FAIL)
+        self.log(f'[local_to_router_tunnel_task] Queue processor exited', logging.DEBUG)
 
     def log(self, message: str, log_level=logging.INFO, start_color: bcolors = bcolors.OKGREEN):
         logging.log(log_level, f'{start_color}[{self.convo_id}][TunnelEntrance]: {message}{bcolors.ENDC}')
