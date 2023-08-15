@@ -5,6 +5,9 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from . import sox_types, sqlite_storage, storage_types
 from .sox_types import RecordPermissions, SharedFolder
+from .. import crypto, utils
+from ..error import Error
+from ..params import KeeperParams
 
 
 class RebuildTask:
@@ -21,15 +24,30 @@ class RebuildTask:
         self.records.update(record_ids)
 
 
+def get_ec_private_key(params):  # type: (KeeperParams) -> EllipticCurvePrivateKey
+    tree_key = params.enterprise['unencrypted_tree_key']
+    ecc_key = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
+    ecc_key = crypto.decrypt_aes_v2(ecc_key, tree_key)
+    return crypto.load_ec_private_key(ecc_key)
+
+
+def clear_lookup(lookup, uids=None):  # type: (dict, Optional[Iterable]) -> None
+    if uids:
+        [lookup.pop(k) for k in uids]
+    else:
+        lookup.clear()
+
+
 class SoxData:
-    def __init__(self, ec_private_key, storage, no_cache=False):
-        # type: (EllipticCurvePrivateKey, sqlite_storage.SqliteSoxStorage, Optional[bool]) -> None
-        self.ec_private_key = ec_private_key    # type: EllipticCurvePrivateKey
+    def __init__(self, params, storage, no_cache=False):
+        # type: (KeeperParams, sqlite_storage.SqliteSoxStorage, Optional[bool]) -> None
         self.storage = storage                  # type: sqlite_storage.SqliteSoxStorage
         self._records = {}                      # type: Dict[str, sox_types.Record]
         self._users = {}                        # type: Dict[int, sox_types.EnterpriseUser]
         self._teams = {}                        # type: Dict[str, sox_types.Team]
         self._shared_folders = {}               # type: Dict[str, sox_types.SharedFolder]
+        self.ec_private_key = get_ec_private_key(params)
+        self.tree_key = params.enterprise.get('unencrypted_tree_key', b'')
         task = RebuildTask(True)
         self.rebuild_data(task, no_cache)
 
@@ -81,16 +99,16 @@ class SoxData:
         return owner
 
     def clear_records(self, uids=None):
-        self._records.update({uid: None for uid in uids}) if uids else self._records.clear()
+        clear_lookup(self._records, uids)
 
     def clear_users(self, uids=None):
-        self._users.update({uid: None for uid in uids}) if uids else self._users.clear()
+        clear_lookup(self._users, uids)
 
     def clear_teams(self, uids=None):
-        self._teams.update({uid: None for uid in uids}) if uids else self._teams.clear()
+        clear_lookup(self._teams, uids)
 
     def clear_shared_folders(self, uids=None):
-        self._shared_folders.update({uid: None for uid in uids}) if uids else self._shared_folders.clear()
+        clear_lookup(self._shared_folders, uids)
 
     def clear_all(self):
         self.clear_records()
@@ -103,6 +121,15 @@ class SoxData:
         return len(self._records)
 
     def rebuild_data(self, changes, no_cache=False):   # type: (RebuildTask, Optional[bool]) -> None
+        def decrypt(data):  # type: (bytes) -> str
+            decrypted = ''
+            try:
+                decrypted_bytes = crypto.decrypt_aes_v1(data, self.tree_key) if data else b''
+                decrypted = decrypted_bytes.decode()
+            except Error as e:
+                logging.info(f'Error decrypting data: type = {type(data)}, value = {data}, message = {e.message}')
+            return decrypted
+
         def link_record_permissions(store, record_lookup):
             links = store.get_record_permissions().get_all_links()
             for link in links:
@@ -153,7 +180,7 @@ class SoxData:
             return user_lookup
 
         def load_users(store):  # type: (sqlite_storage.SqliteSoxStorage) -> Dict[int, sox_types.EnterpriseUser]
-            users = [sox_types.EnterpriseUser.load(eu) for eu in store.users.get_all()]
+            users = [sox_types.EnterpriseUser.load(eu, decrypt_fn=decrypt) for eu in store.users.get_all()]
             u_lookup = {user.user_uid: user for user in users}
             return link_user_records(store, u_lookup)
 
