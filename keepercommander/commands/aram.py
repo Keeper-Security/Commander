@@ -110,7 +110,7 @@ aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
 aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
-                                 help='Delete local record database')
+                                 help='Delete local database cache containing encrypted compliance record data')
 aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='store_true',
                                  help='remove any local non-memory storage of data upon command completion')
 aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', default='last_changed',
