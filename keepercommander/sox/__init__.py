@@ -6,7 +6,7 @@ import sqlite3
 from typing import Dict
 
 from .. import api, crypto, utils
-from ..error import CommandError
+from ..error import CommandError, Error
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from . import sqlite_storage, sox_data
@@ -54,6 +54,16 @@ def is_compliance_reporting_enabled(params):
         return True
 
 
+def encrypt_data(params, data): # type: (KeeperParams, str) -> bytes
+    data_bytes = utils.string_to_bytes(data) if data else b''
+    encrypted = ''
+    try:
+        encrypted = crypto.encrypt_aes_v1(data_bytes, params.enterprise.get('unencrypted_tree_key'))
+    except Error as e:
+        logging.info(f'Error encrypting data, type = {type(data)}, value = {data}, message = {e.message}')
+    return encrypted
+
+
 def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -> str
     path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
     return os.path.join(path, f'sox_{enterprise_id}.db')
@@ -76,8 +86,10 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             def to_user_entity(user, email_lookup):
                 entity = store.get_users().get_entity(user.enterpriseUserId) or StorageUser()
                 entity.status = user.status
-                entity.user_uid = user.enterpriseUserId
-                entity.email = email_lookup.get(entity.user_uid)
+                user_id = user.enterpriseUserId
+                entity.user_uid = user_id
+                email = email_lookup.get(user_id)
+                entity.email = encrypt_data(params, email) if email else b''
                 return entity
 
             def to_user_record_link(uuid, ruid):
@@ -139,10 +151,9 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
     refresh_data = rebuild or not last_updated or min_updated > last_updated or only_shared_cached and not shared_only
     if refresh_data and not cache_only:
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
-        storage.clear_non_aging_data()
         sync_down(user_lookup, storage)
         storage.set_shared_records_only(shared_only)
-    return sox_data.SoxData(ec_private_key=key, storage=storage, no_cache=no_cache)
+    return sox_data.SoxData(params, storage=storage, no_cache=no_cache)
 
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
@@ -247,9 +258,9 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             for up in user_profiles:
                 entity = sdata.storage.users.get_entity(up.enterpriseUserId) or StorageUser()
                 entity.user_uid = entity.user_uid or up.enterpriseUserId
-                entity.email = entity.email or up.email
-                entity.job_title = entity.job_title or up.jobTitle
-                entity.full_name = entity.full_name or up.fullName
+                entity.email = entity.email or encrypt_data(params, up.email)
+                entity.job_title = entity.job_title or encrypt_data(params, up.jobTitle)
+                entity.full_name = entity.full_name or encrypt_data(params, up.fullName)
                 user_node = user_node_id_lookup.get(up.enterpriseUserId)
                 entity.node_id = user_node
                 entities.append(entity)
