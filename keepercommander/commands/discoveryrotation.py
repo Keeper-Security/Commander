@@ -12,7 +12,10 @@ import asyncio
 import argparse
 import json
 import logging
+import ssl
 import time
+import websockets
+
 from datetime import datetime
 from typing import Dict, Optional, Any
 
@@ -33,7 +36,8 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url, router_send_message_to_gateway, get_router_ws_url
+    get_router_url, router_send_message_to_gateway, get_router_ws_url, get_controller_cookie
+from .tunnel.port_forward import tunnel_connected, endpoint
 from .record_edit import RecordEditMixin
 from .tunnel.enpoint import TunnelEntrance
 from .. import api, utils, vault_extensions, vault, record_management, rest_api, crypto
@@ -1435,12 +1439,8 @@ class PAMPortForwardCommand(Command):
     def get_parser(self):
         return PAMPortForwardCommand.pam_cmd_parser
 
-    def execute(self, params, **kwargs):
-        record_uid = kwargs.get('record_uid')
-        convo_id = GatewayAction.generate_conversation_id()
-        gateway_uid = kwargs.get('gateway')
-
-
+    @staticmethod
+    async def connect(params, convo_id, gateway_uid):
         transmission_key = utils.generate_aes_key()
         server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
 
@@ -1452,11 +1452,11 @@ class PAMPortForwardCommand(Command):
         router_url = get_router_ws_url(params)
         connection_url = f'{router_url}/tunnel/{convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}'
 
-
         ## 1. CONNECT TO WS HERE
-        ## ???
-
-
+        cookies = get_controller_cookie(params, gateway_uid)
+        ssl_context = ssl.SSLContext()
+        ssl_context.verify_mode = ssl.CERT_NONE
+        entrance_ws = await websockets.connect(connection_url, ping_interval=10)
 
         ## 2. SEND START MESSAGE OVER REST TO GATEWAY
         ##
@@ -1483,7 +1483,17 @@ class PAMPortForwardCommand(Command):
             rq_proto,
             gateway_uid)
 
+        tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
+        entrance = endpoint.TunnelEntrance(tunnel, 'MySQL Listener')
+        t1 = tunnel.ws_reader()
+        t2 = tunnel.ws_writer()
+        t3 = entrance.connect()
+        await asyncio.gather(t1, t2, t3)
 
-
-        ## 3. SEND DATA OVER WS
-        ## ????
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('record_uid')
+        convo_id = GatewayAction.generate_conversation_id()
+        gateway_uid = kwargs.get('gateway')
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(self.connect(params, convo_id, gateway_uid))
+        pass
