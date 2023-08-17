@@ -112,7 +112,7 @@ class TunnelProtocol(abc.ABC):
                 if not self.pair_public_key:
                     logging.debug('Endpoint %s: Send key exchange request', self.endpoint_name)
                     await self.send_control_message(ControlMessage.SharePublicKey, pub_key)
-                buffer = await self.tunnel.read(30 if self.pair_public_key else 10)
+                buffer = await self.tunnel.read(300 if self.pair_public_key else 100)
             except asyncio.TimeoutError as e:
                 if self._ping_attempt > 3:
                     if self.tunnel.is_connected:
@@ -326,9 +326,11 @@ class TunnelEntrance(TunnelProtocol):
 
     async def start_server(self):
         self.server = await asyncio.start_server(
-            self.handle_connection, family=socket.AF_INET, host='127.0.0.1', port=0)
+            # TODO: this is where we define what can connect to this port. Need to make this configurable
+            # via the config file
+            self.handle_connection, family=socket.AF_INET, port=0)
         async with self.server:
-            self.logger.info('Endpoint %s: Listening on port %d', self.endpoint_name, self.port)
+            self.logger.info('Endpoint %s: Listening on port: %d', self.endpoint_name, self.port)
             await self.server.serve_forever()
 
     async def stop_server(self):

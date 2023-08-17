@@ -1452,13 +1452,16 @@ class PAMPortForwardCommand(Command):
         router_url = get_router_ws_url(params)
         connection_url = f'{router_url}/tunnel/{convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}'
 
-        ## 1. CONNECT TO WS HERE
+        print("--> 1. CONNECT TO WS --------")
         cookies = get_controller_cookie(params, gateway_uid)
         ssl_context = ssl.SSLContext()
         ssl_context.verify_mode = ssl.CERT_NONE
+
+        logging.basicConfig(level=logging.DEBUG)
+
         entrance_ws = await websockets.connect(connection_url, ping_interval=10)
 
-        ## 2. SEND START MESSAGE OVER REST TO GATEWAY
+        print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
         ##
         payload_dict = {
             'kind': 'start',
@@ -1488,7 +1491,38 @@ class PAMPortForwardCommand(Command):
         t1 = tunnel.ws_reader()
         t2 = tunnel.ws_writer()
         t3 = entrance.connect()
+
+        print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
         await asyncio.gather(t1, t2, t3)
+
+
+        # async with websockets.connect(connection_url) as websocket:
+        #
+        #     print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
+        #     ##
+        #     payload_dict = {
+        #         'kind': 'start',
+        #         'encryptTunnel': False,
+        #         'conversationType': 'tunnel'
+        #     }
+        #
+        #     payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+        #     payload_bytes = payload_json.encode('utf-8')
+        #
+        #     rq_proto = router_pb2.RouterControllerMessage()
+        #     rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
+        #     rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
+        #     rq_proto.messageType = pam_pb2.CMT_STREAM
+        #     rq_proto.streamResponse = False
+        #     rq_proto.payload = payload_bytes
+        #     rq_proto.timeout = 1500000  # Default time out how long the response from the Gateway should be
+        #
+        #     router_send_message_to_gateway(
+        #         params,
+        #         transmission_key,
+        #         rq_proto,
+        #         gateway_uid)
+
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('record_uid')

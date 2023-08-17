@@ -1,7 +1,10 @@
 import asyncio
+import json
 
 from websockets.client import WebSocketClientProtocol
 
+from keepercommander import utils
+from keepercommander.utils import is_json
 from .tunnel import ITunnel
 
 
@@ -24,12 +27,21 @@ class ConnectedTunnel(ITunnel):
     async def ws_reader(self):
         ws = self.ws
         async for frame in ws:
-            await self.output_queue.put(frame)
+            if isinstance(frame, str):
+                if is_json(frame):
+                    frame = json.loads(frame)
+                    frame_data = frame.get('data')
+                else:
+                    data = utils.base64_url_decode(frame)
+
+                    await self.output_queue.put(data)
 
     async def ws_writer(self):
         while not self._disconnect_requested:
             frame = await self.input_queue.get()
             if frame:
+                if isinstance(frame, bytes):
+                    frame = utils.base64_url_encode(frame)
                 await self.ws.send(frame)
 
     async def read(self, timeout: int = -1) -> bytes:
@@ -42,5 +54,5 @@ class ConnectedTunnel(ITunnel):
 
     async def write(self, data: bytes) -> None:
         if self.is_connected:
-            while len(data) > 0:
+            if len(data) > 0:
                 await self.input_queue.put(data)
