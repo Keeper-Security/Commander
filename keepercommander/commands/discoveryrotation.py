@@ -1454,16 +1454,23 @@ class PAMPortForwardCommand(Command):
                                 type=int, default=0,
                                 help='The port number on which the server will be listening for incoming connections. '
                                      'If not set, random open port on the machine will be used.')
+
+    pam_cmd_parser.add_argument('--remote-host', '-ro', required=False, dest='rhost', action='store', default=None,
+                                help='The address of the Remote Host to which the traffic will be forwarded. '
+                                     'IP address or a hostname. ')
+    pam_cmd_parser.add_argument('--remote-port', '-rp', required=False, dest='rport', action='store',
+                                type=int, default=0,
+                                help='The remote port number to which the traffic will be forwarded.')
     pam_cmd_parser.add_argument('--listener-name', '-l', required=False, dest='listener_name',
                                 action='store', default="Keeper PAM Tunnel", help='The name of the listener.')
+    pam_cmd_parser.add_argument('--encrypted', '-ne', required=False, dest='encrypted',
+                                action='store_true', help='Encrypt tunnel traffic', default=False)
 
     def get_parser(self):
         return PAMPortForwardCommand.pam_cmd_parser
 
     @staticmethod
-    async def connect(params, record_uid, convo_id, gateway_uid, host, port, listener_name):
-
-
+    async def connect(params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel):
         transmission_key = utils.generate_aes_key()
         server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
 
@@ -1490,8 +1497,9 @@ class PAMPortForwardCommand(Command):
         ##
         payload_dict = {
             'kind': 'start',
-            'encryptTunnel': False,
-            'conversationType': 'tunnel'
+            'encryptTunnel': encrypt_tunnel,
+            'conversationType': 'tunnel',
+            'value': {'rhost': rhost, 'rport': rport, 'host': host, 'port': port, 'listenerName': listener_name, "recordUid": record_uid }
         }
 
         payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -1520,14 +1528,16 @@ class PAMPortForwardCommand(Command):
         print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
         await asyncio.gather(t1, t2, t3)
 
-
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('record_uid')
         convo_id = GatewayAction.generate_conversation_id()
         gateway_uid = kwargs.get('gateway')
         host = kwargs.get('host')
         port = kwargs.get('port')
+        rhost = kwargs.get('rhost')
+        rport = kwargs.get('rport')
         listener_name = kwargs.get('listener_name')
+        encrypt_tunnel = kwargs.get('encrypted')
 
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.connect(
@@ -1537,6 +1547,9 @@ class PAMPortForwardCommand(Command):
             gateway_uid=gateway_uid,
             host=host,
             port=port,
-            listener_name=listener_name)
+            rhost=rhost,
+            rport=rport,
+            listener_name=listener_name,
+            encrypt_tunnel=encrypt_tunnel)
         )
         pass
