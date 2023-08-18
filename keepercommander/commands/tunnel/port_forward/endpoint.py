@@ -330,7 +330,7 @@ class TunnelEntrance(TunnelProtocol):
             self.handle_connection, family=socket.AF_INET, host=host, port=port)
         async with self.server:
             print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
-            print(f'{bcolors.OKGREEN}| Endpoint "{self.endpoint_name}": Listening on port: {bcolors.ENDC}{bcolors.BOLD}{bcolors.OKBLUE}{self.port}{bcolors.ENDC}')
+            print(f'{bcolors.OKGREEN}| Endpoint {bcolors.ENDC}{bcolors.OKBLUE}{self.endpoint_name}{bcolors.ENDC}{bcolors.OKGREEN}: Listening on port: {bcolors.ENDC}{bcolors.BOLD}{bcolors.OKBLUE}{self.port}{bcolors.ENDC}')
             print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
 
             await self.server.serve_forever()

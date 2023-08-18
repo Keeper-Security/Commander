@@ -65,6 +65,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('config', PAMConfigurationsCommand(), 'Manage PAM Configurations', 'c')
         self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations', 'r')
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
+        self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -78,6 +79,14 @@ class PAMGatewayCommand(GroupCommand):
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
 
+class PAMTunnelCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMTunnelCommand, self).__init__()
+        self.register_command('start', PAMPortForwardCommand(), 'Start Tunnel', 's')
+        # self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel', 'st')
+        # self.register_command('list', PAMTunnelListCommand(), 'List Tunnels', 'l')
+        # self.default_verb = 'list'
 
 class PAMConfigurationsCommand(GroupCommand):
 
