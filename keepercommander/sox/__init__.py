@@ -151,6 +151,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
     refresh_data = rebuild or not last_updated or min_updated > last_updated or only_shared_cached and not shared_only
     if refresh_data and not cache_only:
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
+        storage.clear_non_aging_data()
         sync_down(user_lookup, storage)
         storage.set_shared_records_only(shared_only)
     return sox_data.SoxData(params, storage=storage, no_cache=no_cache)
