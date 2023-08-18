@@ -1435,12 +1435,26 @@ class PAMPortForwardCommand(Command):
                                 help='Used to list all tunnels for the given Gateway UID')
     pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
                                 help='Filter list with UID of the PAM record that was used to create the tunnel')
+    pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store', default=None,
+                                help='The address on which the server will be accepting connections. It could be an '
+                                     'IP address or a hostname. '
+                                     'Ex. if set to 127.0.0.1 then only connections from the same machine will be '
+                                     'accepted. By default, if nothing is set, which means that the server will accept '
+                                     'connections from any IP address.')
+    pam_cmd_parser.add_argument('--port', '-p', required=False, dest='port', action='store',
+                                type=int, default=0,
+                                help='The port number on which the server will be listening for incoming connections. '
+                                     'If not set, random open port on the machine will be used.')
+    pam_cmd_parser.add_argument('--listener-name', '-l', required=False, dest='listener_name',
+                                action='store', default="Keeper PAM Tunnel", help='The name of the listener.')
 
     def get_parser(self):
         return PAMPortForwardCommand.pam_cmd_parser
 
     @staticmethod
-    async def connect(params, convo_id, gateway_uid):
+    async def connect(params, record_uid, convo_id, gateway_uid, host, port, listener_name):
+
+
         transmission_key = utils.generate_aes_key()
         server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
 
@@ -1450,7 +1464,9 @@ class PAMPortForwardCommand(Command):
             encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
         encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
         router_url = get_router_ws_url(params)
-        connection_url = f'{router_url}/tunnel/{convo_id}?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}'
+        connection_url = (f'{router_url}/tunnel/{convo_id}'
+                          f'?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}'
+                          f'&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}')
 
         print("--> 1. CONNECT TO WS --------")
         cookies = get_controller_cookie(params, gateway_uid)
@@ -1487,47 +1503,31 @@ class PAMPortForwardCommand(Command):
             gateway_uid)
 
         tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
-        entrance = endpoint.TunnelEntrance(tunnel, 'MySQL Listener')
+        entrance = endpoint.TunnelEntrance(tunnel, listener_name)
         t1 = tunnel.ws_reader()
         t2 = tunnel.ws_writer()
-        t3 = entrance.connect()
+        t3 = entrance.connect(host=host, port=port)
 
         print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
         await asyncio.gather(t1, t2, t3)
-
-
-        # async with websockets.connect(connection_url) as websocket:
-        #
-        #     print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
-        #     ##
-        #     payload_dict = {
-        #         'kind': 'start',
-        #         'encryptTunnel': False,
-        #         'conversationType': 'tunnel'
-        #     }
-        #
-        #     payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
-        #     payload_bytes = payload_json.encode('utf-8')
-        #
-        #     rq_proto = router_pb2.RouterControllerMessage()
-        #     rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
-        #     rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
-        #     rq_proto.messageType = pam_pb2.CMT_STREAM
-        #     rq_proto.streamResponse = False
-        #     rq_proto.payload = payload_bytes
-        #     rq_proto.timeout = 1500000  # Default time out how long the response from the Gateway should be
-        #
-        #     router_send_message_to_gateway(
-        #         params,
-        #         transmission_key,
-        #         rq_proto,
-        #         gateway_uid)
 
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('record_uid')
         convo_id = GatewayAction.generate_conversation_id()
         gateway_uid = kwargs.get('gateway')
+        host = kwargs.get('host')
+        port = kwargs.get('port')
+        listener_name = kwargs.get('listener_name')
+
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(self.connect(params, convo_id, gateway_uid))
+        loop.run_until_complete(self.connect(
+            params=params,
+            record_uid=record_uid,
+            convo_id=convo_id,
+            gateway_uid=gateway_uid,
+            host=host,
+            port=port,
+            listener_name=listener_name)
+        )
         pass

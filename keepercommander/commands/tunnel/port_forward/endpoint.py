@@ -7,6 +7,7 @@ from typing import Optional, Dict, Tuple, Iterable, Awaitable
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from keepercommander.display import bcolors
 from .crypto import generate_ec_key, unload_ec_public_key, load_ec_public_key, encrypt_ec, decrypt_ec
 from .tunnel import ITunnel
 
@@ -43,7 +44,7 @@ class TunnelProtocol(abc.ABC):
     def is_paired(self) -> bool:
         return self.pair_public_key is not None
 
-    async def connect(self):
+    async def connect(self, port=0, host=None):
         if not self.tunnel.is_connected:
             await self.tunnel.connect()
 
@@ -51,7 +52,7 @@ class TunnelProtocol(abc.ABC):
         t1 = asyncio.create_task(self.start_tunnel_reader())
         t2 = asyncio.create_task(self.start_process_queue())
         tasks = [t1, t2]
-        tasks.extend(self.start_extra_services())
+        tasks.extend(self.start_extra_services(port=port, host=host))
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
         await self.disconnect()
@@ -90,7 +91,7 @@ class TunnelProtocol(abc.ABC):
         if len(tasks) > 0:
             await asyncio.gather(*tasks)
 
-    def start_extra_services(self) -> Iterable[Awaitable]:
+    def start_extra_services(self, host=None, port=0) -> Iterable[Awaitable]:
         yield from ()
 
     def stop_extra_services(self) -> Iterable[Awaitable]:
@@ -324,13 +325,14 @@ class TunnelEntrance(TunnelProtocol):
                 return ep.getsockname()[1]
         return 0
 
-    async def start_server(self):
+    async def start_server(self, host=None, port=0):
         self.server = await asyncio.start_server(
-            # TODO: this is where we define what can connect to this port. Need to make this configurable
-            # via the config file
-            self.handle_connection, family=socket.AF_INET, port=0)
+            self.handle_connection, family=socket.AF_INET, host=host, port=port)
         async with self.server:
-            self.logger.info('Endpoint %s: Listening on port: %d', self.endpoint_name, self.port)
+            print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
+            print(f'{bcolors.OKGREEN}| Endpoint "{self.endpoint_name}": Listening on port: {bcolors.ENDC}{bcolors.BOLD}{bcolors.OKBLUE}{self.port}{bcolors.ENDC}')
+            print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
+
             await self.server.serve_forever()
 
     async def stop_server(self):
@@ -338,8 +340,8 @@ class TunnelEntrance(TunnelProtocol):
         if s and s.is_serving():
             await s.wait_closed()
 
-    def start_extra_services(self) -> Iterable[Awaitable]:
-        yield self.start_server()
+    def start_extra_services(self, host=None, port=0) -> Iterable[Awaitable]:
+        yield self.start_server(host=host, port=port)
 
     def stop_extra_services(self) -> Iterable[Awaitable]:
         yield self.stop_server()
