@@ -690,8 +690,12 @@ def execute_batch(params, requests):
     if not requests:
         return responses
 
-    chunk_size = 98
+    throttle_delay = 10
+    chunk_size = 999
     queue = requests.copy()
+    unthrottled = 0
+    delay_next_batch = False
+
     while len(queue) > 0:
         chunk = queue[:chunk_size]
         queue = queue[chunk_size:]
@@ -701,24 +705,27 @@ def execute_batch(params, requests):
             'requests': chunk
         }
         try:
+            if delay_next_batch:
+                time.sleep(throttle_delay)
+                unthrottled = 0
             rs = communicate(params, rq)
             if 'results' in rs:
                 results = rs['results']  # type: list
                 if len(results) > 0:
-                    responses.extend(results)
-                    if params.debug:
-                        pos = len(results) - 1
-                        req = chunk[pos]
-                        res = results[pos]
-                        if res['result'] != 'success':
-                            logging.info('execute failed: command %s: %s)', req.get('command'), res.get('message'))
-                    if len(results) < len(chunk):
-                        queue = chunk[len(results):] + queue
-
+                    throttled = [r for r in results if r['result'] != 'successs' and r['result_code'] == 'throttled']
+                    if throttled:
+                        throttled_rs = next(iter(throttled))
+                        throttled_idx = results.index(throttled_rs)
+                        queue = chunk[throttled_idx:] + queue
+                        responses.extend(results[:throttled_idx])
+                        unthrottled += throttled_idx
+                        chunk_size = unthrottled
+                        delay_next_batch = True
+                    else:
+                        responses.extend(results)
+                        unthrottled += len(results)
         except Exception as e:
             logging.error(e)
-        if len(chunk) > 50:
-            time.sleep(4)
 
     return responses
 
